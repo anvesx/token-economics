@@ -1,0 +1,240 @@
+TITLE: Your cache hit rate is lying to you. It's the caller mix.
+URL: https://dev.to/theagentloop/your-cache-hit-rate-is-lying-to-you-its-the-caller-mix-ec1
+ORG: dev.to  TYPE: blog  DATE: 2026-10
+
+Your cache hit rate is lying to you. It's the caller mix. - DEV Community
+
+ Add reaction
+
+ Like
+
+ Unicorn
+
+ Exploding Head
+
+ Raised Hands
+
+ Fire
+
+ Jump to Comments
+
+ Save
+
+ Boost
+
+Pick as gem
+
+ Copy link
+
+Copied to Clipboard
+
+ Share to X
+
+ Share to LinkedIn
+
+ Share to Facebook
+
+ Share to Mastodon
+
+ Share Post via...
+
+ Report Abuse
+
+ Your cache hit rate is lying to you. It's the caller mix.
+
+One Claude Code deployment: 77% cache hit rate, all green. Same account, one tab over, cron tasks at ~0%, because every run is a fresh session rewriting a ~30K-token static prefix. That is 672 runs a day times 30K tokens, roughly 20M input tokens daily that never touch a cache. The operator posted those numbers on an open issue, and they make my argument better than I can: an account-level hit rate averages over callers that share nothing. Same account, four realities.
+
+ The three numbers that decide the bill
+
+Forget dashboards for a second. Caching is priced with three multipliers, and they're the same on every model:
+
+Operation
+Multiplier
+Example: Opus 5.5 at $4/MTok input
+
+Write, 5-minute TTL
+1.25×
+$5.00/MTok
+
+Write, 1-hour TTL
+2×
+$8.00/MTok
+
+Read (either TTL)
+0.1× on most models
+$0.20/MTok (0.05× on Opus 5.5, 0.025× on Fable 5.1)
+
+Three rules fall out of that table, and I've been quoting all three this week.
+
+One read pays for the 5-minute cache. Write at 1.25×, read at 0.1×, you're at 1.35× against 2× for two uncached passes. The 1-hour write needs two reads.
+
+Match the TTL to the gap between calls. Under five minutes: default. Five to sixty minutes: pay the 2× write once, ride the cheap reads. Over an hour: don't cache. A breakpoint nobody reuses doesn't save money, it costs 25% extra on the 5-minute tier and 100% on the 1-hour tier.
+
+Refreshes are free, and the clock lies a little. Every hit renews the TTL at the read price, so a busy cache lives forever. Keepalive math crosses over at 62.5 minutes (5 × 1.25/0.10), same for every model because it's a ratio. The countdown starts when the request starts: a turn streaming four minutes leaves your next call one minute of window.
+
+ One account is not one cache
+
+Claude Code picks the TTL per request, in two buckets (their docs, not a blog post):
+
+Billing
+Main conversation
+Everything else
+
+Claude subscription, within plan usage
+1-hour
+5-minute
+
+API key, cloud provider, or past your plan limit
+5-minute
+5-minute
+
+"Everything else" is where agents live: subagents, workflows, forks, compaction calls, session titles. You can override both buckets (promptCacheTtl, subagentPromptCacheTtl, ENABLE_PROMPT_CACHING_1H, v2.1.242+). Hold off, though; the cliff section explains why blanket 1h is worse.
+
+The structural bit: a subagent's first request cannot read the parent's cache. Different prompt, different tools, prefixes diverge at token one, so it warms its own. A fork inherits the parent's prefix exactly and hits on the first request. Same account, opposite behavior, one screen apart.
+
+One honest wobble: the docs say subagents get 5 minutes, a user's transcripts showed 100% of their subagent writes in the 1-hour bucket, and a maintainer said the effective TTL gets decided further down the pipeline while they fix the docs. Don't trust the table or me. Trust usage.cache_creation.ephemeral_5m_input_tokens and ephemeral_1h_input_tokens in your own responses.
+
+ The five-minute cliff
+
+Here's the failure that pays for this post.
+
+A parent dispatches a subagent and waits. No requests go out, so nothing refreshes its cache. The measured median child runtime was about 9 minutes, just past the cliff, and 96% of those waits ended in a true cache death: when the parent resumed, at least half its cached prefix had to be rewritten at full price. The long wait, the one where the agent is doing exactly what you asked, is when the cache quietly dies.
+
+Then the finding I had to read twice: blanket 1-hour TTL made the bill 8.6% worse. 98% of reuse lands within about 34 seconds of the write (median gap: 7 seconds), so the 5-minute tier covers nearly all of it, and a universal 2× write premium taxes every write to rescue maybe 2% of reads. The fixes that worked: 1-hour write on the dispatch turn (−6.0%), persistent per-type static prefix (−1.0%), dynamic content after the stable prefix (−7.6%). All three: −13.6%.
+
+TTL is a property of one write at one moment, not a setting on an account. Get that backwards and you collect both failure modes: premium where you don't need it, death where you do.
+
+ The metric fix came from our own comments
+
+Reader hannune left this on our cost-loop post: his agent looked perfect in the logs, every response successful, then a three-day-weekend invoice made no sense. He pinned it to a context-retrieval step pulling full documents instead of chunks: 40K tokens per call, seven or eight calls per task. A hit-rate dashboard shows nothing wrong there. Every call succeeded.
+
+His rule, which I've adopted: record the TTL tier per caller, not per account. One extra label next to cache_creation and cache_read: caller × TTL tier. It's the attribution argument from our cost-attribution post, one level lower. We measured a single agent run at 3.5M input tokens against 271K output; the cache either pays on that input side or leaks. No third place for your money to go.
+
+ Where caches die quietly
+
+Each of these fails without an error:
+
+Token floors. Current-gen models cache at 512 tokens minimum; Opus 4.6/4.5 and Haiku 4.5 need 4,096. Below the floor the request doesn't cache and cache_creation just reads zero.
+
+The 20-block lookback. A breakpoint scans back at most 20 blocks for a prior write. Add more than that between writes and you get a miss that looks like a bug. One developer hit it with 23 blocks.
+
+Compaction with its own system prompt. Summarize through a different prompt and the call misses the parent's prefix entirely, so your longest transcript bills at full price, right when it's biggest. Anthropic's fix: reuse the parent's exact prefix. They alert on hit rate and declare SEVs when it drops.
+
+Scheduled runs. New session every time, static prefix rewritten every time. Cron at ~0% is architecture, not a bug a longer TTL fixes.
+
+ The caller grid
+
+Caller
+Default TTL
+Reads parent cache?
+Typical gap
+Do this
+
+Main loop
+1h (subscription) / 5m (API)
+n/a
+seconds
+On API key: set promptCacheTtl=1h
+
+Subagent
+5m
+No, own prefix
+seconds inside a type, minutes between types
+1h write on the shared per-type prefix; dynamic after the breakpoint
+
+Fork
+parent's
+Yes
+immediate
+Use it for side work that must see history
+
+Compaction
+parent's, only if same prefix
+
+must
+one call
+Verify the prefix is reused
+
+Cron / scheduled
+5m, fresh session
+No
+hours
+Expect ~0%; shrink the static prefix or budget the writes
+
+ Do this Monday
+
+Split the metric: hit rate per caller, or at minimum log ttl_tier × caller beside your cache fields.
+
+Read the raw buckets (ephemeral_5m, ephemeral_1h, cache_read) from response usage. Vendor summaries average away what you're looking for.
+
+Stable head behind cache_control; date, cwd, and branch after it.
+
+Use ttl:"1h" in two places only: the dispatch turn and shared static prefixes.
+
+Hit rate healthy but invoice ugly? Hunt write-never-read breakpoints, the ones billing 1.25× or 2× for work nobody reuses.
+
+ FAQ
+
+How do I see which TTL a request used? usage.cache_creation in the response, or the same field in your transcript files. ephemeral_1h_input_tokens vs ephemeral_5m_input_tokens are mutually exclusive buckets.
+
+Do other providers work like this? Differently, same lesson. OpenAI caches automatically with a discount and no TTL knob; Google prices storage per hour. Wherever prefixes belong to conversations, the per-caller problem holds.
+
+My hit rate is 90% and my bill is fine. Do I care? No. This one is for people whose dashboard and invoice disagree.
+
+ Over to you
+
+What's your worst cache own-goal? Dashboard healthy, invoice confusing, and one line in a transcript finally explained it. I'll go first if you do.
+
+Related: Your agent's cost problem isn't the model. It's the loop. · Your cost dashboard can't tell you which agent ran up the bill · What one agent run actually costs
+
+ Sources
+
+Anthropic prompt caching docs: multipliers, floors, refresh, lookback (verified 2026-10-02)
+
+Claude Code prompt caching docs: TTL buckets, subagent behavior, override settings
+
+Lessons from building Claude Code: compaction fix, SEV alerts
+
+claude-code #74318: subagent spend, 96% cache deaths, +8.6% blanket-1h, deployment numbers
+
+claude-code #84289: docs vs transcript TTL mismatch
+
+Artificial Analysis caching comparison: OpenAI and Google TTL behavior
+
+62.5-minute keepalive derivation, prior art: skids.dev tokenomics
+
+Our threads: cost-loop comments (hannune, 2026-09-26), cost attribution, one run costs
+
+Independent blog: not affiliated with Anthropic or the Claude Code team. Every figure above comes from public docs and issues, verified on the dates given.
+
+If you want the rest of this series when it drops: subscribe via Buttondown and reply with your cache horror story. One of these turns into a post.
+
+ The Agent Loop
+
+ Follow
+
+ Short, sourced posts on AI agents, MCP, and what actually breaks. The Agent Loop runs daily - follow so the next one lands in your feed.
+
+ Joined
+
+ Sep 24, 2026
+
+ 0 rows, 3 checks, and none of them said empty
+
+ #aiagents
+ #discuss
+ #ai
+ #llm
+
+ 81% of my views have no referrer and my dashboard calls that direct
+
+ #aiagents
+ #discuss
+ #ai
+ #llm
+
+ We're a place where coders share, stay up-to-date and grow their careers.
+
+ Log in
+
+ Create account

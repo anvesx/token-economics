@@ -1,0 +1,218 @@
+TITLE: Monitor model serving costs
+URL: https://docs.databricks.com/aws/en/admin/system-tables/model-serving-cost
+ORG: Databricks  TYPE: doc  DATE: 
+
+Monitor model serving costs | Databricks on AWS
+
+Skip to main content
+
+On this page
+
+Last updated on Sep 11, 2026
+
+This article provides examples of how to use system tables to monitor the cost of Model Serving endpoints in your Databricks account.
+
+Requirements​
+
+To access system tables, your workspace must be enabled for Unity Catalog. For more information, see Enable system tables.
+
+Billing usage system table SKU​
+
+You can track model serving costs in Databricks using the billable usage system table. After the billing usage system table is enabled, the table automatically populates with the latest usage in your Databricks account. Costs appear in the system.billing.usage table with column sku_name as one of the following:
+
+sku_name
+Description
+
+<tier>_SERVERLESS_REAL_TIME_INFERENCE_LAUNCH_<region>
+This SKU includes all DBUs accrued when an endpoint starts after scaling to zero.
+
+<tier>_SERVERLESS_REAL_TIME_INFERENCE_<region>
+All other model serving costs are grouped under this SKU. Where tier corresponds to your Databricks platform tier and region corresponds to the cloud region of your Databricks deployment.
+
+sku_name
+Description
+
+<tier>_SERVERLESS_REAL_TIME_INFERENCE_LAUNCH_<region>
+This SKU includes all DBUs accrued when an endpoint starts after scaling to zero.
+
+<tier>_SERVERLESS_REAL_TIME_INFERENCE_<region>
+All other model serving costs are grouped under this SKU. Where tier corresponds to your Databricks platform tier and region corresponds to the cloud region of your Databricks deployment.
+
+Query and visualize usage​
+
+You can query the system.billing.usage table to aggregate all DBUs (Databricks Units) associated with Model Serving. The following is an example query that aggregates model serving DBUs per day for the last 30 days using SQL:
+
+SQL
+
+SELECT SUM(usage_quantity) AS model_serving_dbus,
+
+usage_date
+
+FROM system.billing.usage
+
+WHERE sku_name LIKE '%SERVERLESS_REAL_TIME_INFERENCE%'
+
+GROUP BY(usage_date)
+
+ORDER BY usage_date DESC
+
+LIMIT 30
+
+Batch inference workloads usage​
+
+You can query the system.billing.usage table to isolate DBUs (Databricks Units) that have been used for batch inference workloads.
+
+SQL
+
+SELECT *
+
+FROM system.billing.usage u
+
+WHERE u.workspace_id = <workspace_id>
+
+ AND u.billing_origin_product = "MODEL_SERVING"
+
+ AND u.product_features.model_serving.offering_type = "BATCH_INFERENCE"
+
+For a list of all model serving endpoints that have batch inference workloads, use the following:
+
+SQL
+
+SELECT DISTINCT(usage_metadata.endpoint_name)
+
+FROM system.billing.usage
+
+WHERE u.workspace_id = <workspace_id>
+
+ AND u.billing_origin_product = "MODEL_SERVING"
+
+ AND u.product_features.model_serving.offering_type = "BATCH_INFERENCE";
+
+See View costs for batch inference workloads for additional examples.
+
+Cost observability dashboard​
+
+To help you get started monitoring your model serving costs, download the example cost attribution dashboard from GitHub. See Model Serving cost attribution dashboard.
+
+After you download the JSON file, import the dashboard into your workspace. For instructions on importing dashboards, see Import a dashboard file.
+
+How to use this dashboard​
+
+This dashboard is powered by AI/BI and you need to have access to the system tables. It provides insights of your serving endpoint costs and usage at the workspace-level.
+
+The following steps get you started:
+
+Enter the workspace ID.
+
+Select the start date and end date.
+
+Filter the dashboard by selecting the specific endpoint name in the dropdown list (if you are interested in a particular endpoint).
+
+Separately, enter the tag key if you use any custom tags for your endpoint.
+
+You can also use budgets to manage alerts.
+
+note
+
+Model Serving enforces default limits on the workspace to ensure that there is no runaway spend. See Model Serving limits and regions.
+
+Charts you can use​
+
+The following charts are included in this dashboard. These are meant to be starting point for you to build your own customized version of the model serving cost attribution dashboard.
+
+Last 7 Days Top Endpoint Consumption
+
+Daily Total $DBU Usage
+
+Model Serving Costs by Endpoint Type
+
+Pay-Per-Token
+
+CPU/GPU
+
+Foundation Model
+
+Daily Consumption Per Model Serving Type
+
+Top 10 Most Costly Serving Endpoints
+
+Top 10 Most Costly Pay-Per-Token Endpoints
+
+LLM Fine tuning Last 7 days Spend
+
+LLM Fine tuning Spend Per Email
+
+Use tags to monitor costs​
+
+Initially, aggregated costs might be sufficient for observing overall model serving costs. However, as the number of endpoints increases you might want to break out costs based on use case, business unit, or other custom identifiers. Model serving supports creating custom tags that can be applied to your model serving endpoints.
+
+All custom tags applied to model serving endpoints propagate to the system.billing.usage table under the custom_tags column and can be used to aggregate and visualize costs. Databricks recommends adding descriptive tags to each endpoint for precise cost tracking.
+
+Example queries​
+
+Top endpoints by cost:
+
+SQL
+
+SELECT
+
+ usage_metadata.endpoint_name AS endpoint_name,
+
+ SUM(usage_quantity) AS model_serving_dbus
+
+FROM
+
+ system.billing.usage
+
+WHERE
+
+ sku_name LIKE '%SERVERLESS_REAL_TIME_INFERENCE%'
+
+ AND usage_metadata.endpoint_name IS NOT NULL
+
+GROUP BY endpoint_name
+
+ORDER BY model_serving_dbus DESC
+
+LIMIT 30;
+
+Cost with tags (“business_unit”: “data science”) over time:
+
+SQL
+
+SELECT
+
+ SUM(usage_quantity) AS model_serving_dbus,
+
+ usage_date
+
+FROM
+
+ system.billing.usage
+
+WHERE sku_name LIKE '%SERVERLESS_REAL_TIME_INFERENCE%'
+
+ AND custom_tags['business_unit'] = 'data science'
+
+GROUP BY usage_date
+
+ORDER BY usage_date DESC
+
+LIMIT 30
+
+Additional resources​
+
+For examples on how to monitor the cost of jobs in your account, see Monitor job costs & performance with system tables.
+
+On this page
+
+Requirements
+Billing usage system table SKU
+Query and visualize usage
+Batch inference workloads usage
+Cost observability dashboard
+How to use this dashboard
+Charts you can use
+Use tags to monitor costs
+Example queries
+Additional resources

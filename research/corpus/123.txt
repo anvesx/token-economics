@@ -1,0 +1,1846 @@
+TITLE: Economic Evaluation of LLMs
+URL: https://arxiv.org/abs/2507.03834
+ORG: arXiv  TYPE: paper  DATE: 2025-07
+
+Preprint. Under review.
+
+Economic Evaluation of LLMs
+Michael J. Zellinger
+Matt Thomson
+California Institute of Technology
+{zellinger, mthomson}@caltech.edu
+
+arXiv:2507.03834v1 [cs.AI] 4 Jul 2025
+
+Abstract
+Practitioners often navigate LLM performance trade-offs by plotting Pareto
+frontiers of optimal accuracy-cost trade-offs. However, this approach offers
+no way to compare between LLMs with distinct strengths and weaknesses:
+for example, a cheap, error-prone model vs a pricey but accurate one.
+To address this gap, we propose economic evaluation of LLMs. Our framework quantifies an LLM’s performance trade-off as a single number based
+on the economic constraints of a concrete use case, all expressed in dollars:
+the cost of making a mistake, the cost of incremental latency, and the cost
+of abstaining from a query.
+We apply our economic evaluation framework to compare the performance
+of reasoning and non-reasoning models on difficult questions from the
+MATH benchmark, discovering that reasoning models offer better accuracycost tradeoffs as soon as the economic cost of a mistake exceeds $0.01. In
+addition, we find that single large LLMs often outperform cascades when
+the cost of making a mistake is as low as $0.1.
+Overall, our findings suggest that when automating meaningful human
+tasks with AI models, practitioners should typically use the most powerful
+available model, rather than attempt to minimize AI deployment costs,
+since deployment costs are likely dwarfed by the economic impact of AI
+errors.
+
+1
+
+Introduction
+
+Large language models (LLM) are commonly evaluated based on their accuracy, cost, latency,
+and other metrics (Liang et al., 2023). Practitioners commonly display available models on
+an accuracy-cost scatter plot to identify models offering the best accuracy-cost trade-offs
+(Hu et al., 2024). These optimal trade-offs are referred to as a “Pareto frontier” (Jin, 2006;
+Branke et al., 2008). Unfortunately, Pareto frontiers do not provide a way to rank models
+with distinct strengths and weaknesses. For example, it is not possible to compare a cheap,
+error-prone model against a pricey but accurate one. However, practitioners often face such
+dilemmas (Hammond, 2024).
+To address this problem, we propose an economic framework for evaluating AI models,
+which enables practitioners to identify the single best model for their use case, even when
+balancing competing objectives such as accuracy, cost, and latency. Drawing on the wellunderstood interpretation of Lagrange multipliers as shadow prices (Bertsekas, 1999), we
+model a concrete use cases in terms of economic constraints expressed in dollars: the cost of
+making a mistake (the price of error), the cost of incremental latency (the price of latency), and
+the cost of abstaining from a query (the price of abstention).
+Given these economic parameters, our framework determines the optimal LLM. As an
+example, suppose a hospital deploys LLMs for medical note-taking. For this use case, the
+price of error likely exceeds $100, but the price of latency may be low, perhaps $1 per minute
+of incremental latency (equivalent to human wages of $60/hour). By contrast, a natural
+language search engine for an e-commerce platform faces strikingly different constraints.
+In this domain, the price of error is much lower (perhaps $1 per error) but each additional
+1
+
+Preprint. Under review.
+
+25%
+
+If each LLM error costs me $50,
+…and saving 1 minute of time is
+worth $1…,
+what model should I use?
+
+Llama3.1
+405B
+
+30%
+
+Llama3.3 70B
+
+Error Rate (%)
+
+GPT-4.1
+
+20%
+15%
+10%
+DeepSeek R1
+
+5%
+0%
+
+o3
+Qwen3
+235B-A22B
+
+$0.000
+
+$0.020
+
+$0.040
+
+$0.060
+
+Cost per Query ($)
+
+$0.080
+
+Figure 1: Pareto frontiers of LLM performance do not reveal which model is best-suited for
+a given use case—a problem often faced by practitioners.
+
+100 milliseconds of latency are costly, since unresponsive websites drive away consumers
+(Kohavi and Longbotham, 2007).
+We demonstrate the practical utility of economic evaluation by addressing two important
+questions for practical LLM deployments. First, we ask whether reasoning or non-reasoning
+LLMs are optimal on complex problem-solving tasks when taking into account the reasoning
+models’ higher dollar cost and latency. To this end, we evaluate six state-of-the-art reasoning
+and non-reasoning LLMs on difficult questions from the MATH benchmark (Hendrycks
+et al., 2021). Our analysis shows that when latency is of no concern, reasoning models
+already outperform non-reasoning models when the cost of making a mistake is as low
+λcritical
+= $0.01. When setting the price of latency at $10/minute (equivalent to human
+E
+wages of $600/hour), the critical price of error rises to λcritical
+= $10.
+E
+Second, we ask whether LLM cascades (Chen et al., 2023) offer practical benefits, by comparing the performance of a cascade Msmall → Mbig against the performance of Mbig by
+itself—taking into account accuracy, dollar cost, and latency. Surprisingly, we find that Mbig
+typically outperforms Msmall → Mbig for prices of error as low as $0.1. However, cascade
+performance notably depends on how well we can quantify the uncertainty of Msmall . Interestingly, using Llama3.1 405B as Msmall yields a superior cascade that outperforms Mbig
+for prices of error up to $10, 000, despite the fact that Llama3.1 405B performs comparatively
+poorly as a standalone model.
+To supplement our experiments, we furnish theoretical results on 1) explaining the performance of a cascade Msmall → Mbig in terms of a novel covariance-based metric measuring
+the quality of Msmall ’s uncertainty signal, and 2) connecting our economic evaluation
+framework to standard multi-objective optimization based on Pareto optimality.
+In summary, our key contributions are the following:
+• We propose an economic framework for evaluating LLMs (and LLM systems),
+which determines a single optimal model based on a use case’s economic constraints,
+all expressed in dollars: the cost of making a mistake (price of error), the cost of
+incremental latency (price of latency), and the cost of abstaining from a query (price
+of abstention).
+• We state empirical dollar figures for the critical cost of error at which reasoning
+LLMs offer superior accuracy-cost-latency trade-offs compared to non-reasoning
+models; and at which a single large LLM Mbig outperforms a cascade Msmall →
+Mbig .
+2
+
+Preprint. Under review.
+
+Overall, our findings suggest that when automating meaningful human tasks using AI
+models, accuracy is likely the most important economic factor, outweighing inference costs.
+Hence, practitioners should typically deploy the most powerful available LLMs.
+
+2
+
+Background
+
+Large language models. Large language models (LLM) are transformer-based deep neural
+networks that auto-regressively generate “tokens” of text, one token at a time (Vaswani
+et al., 2017). A model M parametrizes a probability distribution pθ ( xt+1 | x1 , ..., xt ) over
+the next token given all previous tokens. To generate new text, the user provides a prompt
+( x1 , ..., xt ) and then auto-regressively samples new tokens xt+1 , xt+2 , ... according to the
+conditional distribution pθ . After post-training a model’s parameters θ using supervised
+fine-tuning (Wei et al., 2022; Chung et al., 2022) and reinforcement learning (Ouyang et al.,
+2022), sampling from pθ returns an appropriate response to the prompt. For example, if the
+prompt ( x1 , ..., xt ) encodes the English sentence “I want to finish all the research articles I
+start reading. What can I do to improve my self-discipline?”, auto-regressive sampling from
+the post-trained pθ should yield a list of actionable suggestions.1
+Systems of large language models. The development of large language models has proven
+out theoretical scaling laws (Kaplan et al., 2020) predicting that better performance reliably
+follows from simply implementing bigger models (Brown et al., 2020; Chowdhery et al., 2022;
+OpenAI, 2024). As a result, parameter counts for state-of-the-art LLMs have surged to more
+than one trillion, requiring significant computing resources for both training and inference.
+Noting that smaller LLMs often perform well on easier tasks, researchers have proposed
+system of LLMs in which small and large models collaborate to enhance computational
+efficiency and reduce inference costs (Chen et al., 2023). For example, cascades (Ding et al.,
+2024; Wang et al., 2024; Narasimhan et al., 2024) delegate queries from small to large LLMs
+only if the small LLMs are uncertain about the answer, and routers (Hari and Thomson, 2023;
+Hu et al., 2024; Ong et al., 2025) directly send each query to the smallest available model
+that can still return a satisfactory answer.
+Pareto Optimality. Multi-objective optimization (Coello et al., 2005; Jin, 2006) is concerned
+with minimizing a vector-valued function
+θ ∗ = arg min F (θ ),
+
+(1)
+
+where F (θ ) = ( f 1 (θ ), ..., f k (θ )) ∈ Rk . Since the distinct objectives f i (θ ) generally conflict,
+we define solutions to (1) with respect to Pareto optimality (Branke et al., 2008). We say that
+( f 1 (θ1 ), ..., f k (θ1 ) Pareto-dominates ( f 1 (θ2 ), ..., f k (θ2 ), or
+
+( f 1 (θ1 ), ..., f k (θ1 ) <P ( f 1 (θ2 ), ..., f k (θ2 ),
+
+(2)
+
+if f i (θ1 ) ≤ f i (θ2 ) for all i = 1, 2, ..., k and at least one of the inequalities is strict. We consider
+θ ∗ to be a solution of (1) if there exists no θ ′ such that ( f 1 (θ ′ ), ..., f k (θ ′ ) <P ( f 1 (θ ∗ ), ..., f k (θ ∗ ).
+The set of such solutions to (1) makes up the Pareto frontier
+
+P = {θ ∈ Θ | ∀θ ′ ∈ Θ, F (θ ′ ) ̸< P F (θ )}.
+
+(3)
+
+We interchangeably refer to the image F (P ) = {( f 1 (θ ), ..., f k (θ )) | θ ∈ P } as the Pareto
+frontier. The multi-objective performance of LLMs and LLM systems is typically evaluated
+by computing the Pareto frontier of the performance metrics f 1 (θ ) := error rate and f 2 (θ ) :=
+cost.
+When comparing the performance of individual LLMs, θ represents the model’s identity (for
+example, GPT 4.1 or DeepSeek R1) and other hyperparameters (user and system prompts,
+sampling configuration, etc.). By contrast, for systems of LLMs, θ typically denotes the
+system’s operating point, e.g., the deferral rate or confidence threshold for an LLM cascade
+Msmall → Mbig .
+1You can start today, with this one!
+
+3
+
+Preprint. Under review.
+
+3
+
+Economic Evaluation of LLMs
+
+In this section, we describe our economic framework for evaluating the multi-objective
+performance trade-offs of LLMs (and systems of LLMs).
+3.1
+
+LLMs as Agents
+
+Using the language of reinforcement learning, we cast LLMs and systems of LLMs as agents
+that reap per-query rewards from their chosen actions. As we will show, this methodology
+provides a natural basis for multi-objective optimization of LLM performance from an
+economic perspective. Rather than present our framework in the abstract, we illustrate our
+formalism for three concrete LLM systems: standalone LLMs, cascades (Chen et al., 2023),
+and routers (Shnitzer et al., 2023).
+Standalone LLM. An LLM’s action space consists of its possible text generations:
+
+A = { y | y ∈ Σ ∗ },
+
+(4)
+
+where Σ is the alphabet of tokens (Kudo and Richardson, 2018). Following other authors,
+to evaluate the quality of the output y we assume the existence of a binary error-calling
+mechanism s(y) : Σ∗ → {0, 1} that maps each string output to a judgment of whether the
+output is “satisfactory.”2 We refer to each y with s(y) = 1 as an error and use the notation
+1E (y) as a shorthand for the indicator 1[s(y) = 1].
+For each action y ∈ A, the LLM reaps a reward
+r = − (C + λ L L + λ E 1E ) ,
+
+(5)
+
+where C is the dollar cost of generating the output y, and L is the latency.
+LLM Cascade. A cascade C = M1 → M2 → ... → Mk is a system of LLMs M1 , M2 , ..., Mk that
+passes each incoming query from Mi to Mi+1 until it encounters a model Mτ (1 ≤ τ ≤ k)
+with sufficient confidence to answer the query.
+We think of the entire cascade as an agent with action space
+
+A = {(τ, y) | 1 ≤ τ ≤ k, y ∈ Σ∗ },
+
+(6)
+
+where y denotes the cascade’s output, and τ represents the index of the model Mτ responsible for the cascade’s output y. Specifically, τ is the index of the first model that does not
+defer the query.
+As for a standalone LLM, the cascade reaps a reward r = − (C + λ L L + λ E 1E ) for each
+action (τ, y). However, the cost and latency depend on τ:
+τ
+
+τ
+
+C = ∑ Cj ,
+
+L = ∑ Lj,
+
+j =1
+
+(7)
+
+j =1
+
+where Cj and L j are the cost and latency of model M j on the query. These equations result
+from the “cascading” nature of a cascade: we pay for each successive model—both in dollar
+cost and in latency—until we reach the earliest model with sufficient confidence, Mτ .
+LLM Router with Abstention. A router with abstention is a function g( x ) : Σ∗ → {1, 2, ..., k} ∪
+{∅} that routes each incoming query x to one of k LLMs M1 , ..., Mk in a single step, or
+abstains from answering the query (∅). Its action space is
+
+A = {(i, y) | i ∈ {1, 2, ..., k}, y ∈ Σ∗ } ∪ {∅},
+
+(8)
+
+where (i, y) denotes that model i generates output y, and ∅ indicates that the router abstained (for example, to defer the query to a human expert). Analogous to a cascade, the
+2 Optionally, the error-calling function s may take into account a reference answer y , leading to a
+ref
+bivariate function s(y, yref ) : Σ∗ × Σ∗ → {0, 1}.
+
+4
+
+Preprint. Under review.
+
+router with abstention reaps a reward r = − [C + λ L L + λ E 1E (y) + λ A 1 A (y)] for each action, the sole difference being the addition of a term 1 A indicating that the router abstained.
+However, the cost C and latency L are computed differently:
+C = c0 + Ci ,
+
+L = l0 + L i ,
+
+(9)
+
+where Ci and Li are the cost and latency of generating the output with model Mi . The constants c0 and l0 represent the computational overhead of determining the routing decision
+g( x ) ∈ {1, 2, ..., k}. These costs are typically negligible, as g is usually lightweight compared
+to the LLMs M1 , M2 , ..., Mk .3
+3.2
+
+Economic Modeling of LLM Use Cases
+
+To cast standalone LLMs, cascades, and routers as reward-maximizing agents, we defined
+the per-query reward
+r = − [C + λ L L + λ E 1E + λ A 1 A ] ,
+(10)
+where C is the dollar cost of processing a query, L is the latency, 1E indicates an error, and
+1 A indicates an abstention. In general, we formulate this reward as
+
+
+r = − C +
+
+∑
+
+λµ µ +
+
+µ∈Pnumeric
+
+∑
+
+λ χ 1χ  ,
+
+(11)
+
+χ∈Pbinary
+
+where Pnumeric ∪ Pbinary is the set of per-query performance metrics: Pnumeric represents
+the numeric performance metrics (for example, latency) and Pbinary denotes the binary
+performance events (for example, error and abstention). This definition includes other
+reasonable performance objectives, such as privacy (Zhang et al., 2024).
+The coefficients {λµ }µ∈Pnumeric , {λχ }χ∈Pbinary ∈ R+ are prices measuring the economic impact
+when the performance metrics worsen. Table 1 gives a few key examples:
+Table 1: Examples of key economic parameters in our framework.
+Parameter
+
+Symbol
+
+Price of Error
+
+λE
+
+Price of Latency
+
+λL
+
+Price of Abstention
+
+λA
+
+Definition
+
+Units
+
+Amount the user is willing to pay to avoid a single prediction error.
+Amount the user is willing to pay to reduce
+per-query latency by one second.
+Amount the user is willing to pay to avoid a
+model abstention (no answer).
+
+$
+$/sec
+$
+
+These parameters are based on the economic concept of indifference (Mankiw, 2020). For
+example, the price of error λ E is the lowest dollar figure d at which the user (i.e., the
+organization that deploys the LLM system) would be indifferent between suffering an LLM
+error or receiving d dollars in cash.
+3.3
+
+Multi-Objective Performance Evaluation in a Single Number
+
+Given the user’s economic constraints (see Table 1), the expected per-query reward of the
+LLM system is
+R(λ; θ ) = Eθ [r (λ)],
+(12)
+where r is the per-query reward (11). We use λ to denote the totality of economic parameters
+(e.g., λ E , λ L , ...), and denote the configuration of the LLM system by θ. Selecting the optimal
+LLM for a given use case, or optimizing the operating point of a system of LLMs, involves
+the reward maximization
+θ ∗ (λ) = arg max R(λ; θ ).
+(13)
+θ
+3 Typically, the routing model takes the form of a deep neural network—for example, a finetuned
+small language model—with less than 1B parameters (Shnitzer et al., 2023; Hari and Thomson, 2023).
+
+5
+
+Preprint. Under review.
+
+When choosing among individual LLMs, θ represents the identity of the model (e.g., GPT 4.1
+vs DeepSeek R1), as well as hyperparameter settings (user and system prompts, sampling
+temperature, top-p, top-k, etc.). On the other hand, for LLM systems, θ typically represents
+tunable parameters such as the confidence thresholds of LLM cascades (Zellinger and
+Thomson, 2025).
+Often the user’s economic constraints λ are not known with certainty. In this case, it is
+instructive to compute optimal models for a range of potential λ values. These sensitivity
+tables can be highly informative, as the optimal model is often stable over a wide range of
+different economic constraints. See sections 4.3 and 4.3 for examples.
+To compare the performance of different LLMs (or systems of LLMs) across different economic scenarios λ, we consider their expected per-query rewards for the optimal choices of
+θ:
+R(λ) = R(λ; θ ∗ (λ)).
+(14)
+Alternatively, if λ is uncertain—for example, suppose that new legislation may change the
+expected payout of medical malpractice lawsuits, potentially raising the price of error λ E
+for medical AI deployments—we model λ as a random variable λ ∼ p(λ), yielding the
+expected per-query reward
+R = Eλ∼ p(λ) [ R(λ)].
+(15)
+3.4
+
+Estimating the Price of Error
+
+Managing the potential cost of LLM mistakes is critical for businesses, especially those in
+risk-sensitive industries (e.g., finance, law, or medicine).
+In this section, we illustrate how to estimate the price of error by walking through an
+example calculation for medical diagnosis. Practitioners may then adapt these steps to their
+own industries.
+Estimate of λE for medical diagnosis. We estimate the price of error for medical diagnosis
+to be about $1,000. We arrive at this number by considering data on medical malpractice
+lawsuits and applying Bayes’ theorem.
+For a single diagnosis, denote the event of a medical malpractice lawsuit as M and the event
+of a diagnostic error as E. Our estimate for the price of error is then
+λ̂ E = E[Cost| M] × P( M| E)
+
+= E[Cost| M] ×
+
+P( E | M )P( M )
+.
+P( E )
+
+(16)
+(17)
+
+Studdert et al. (2006) report that the mean payout for medical malpractice lawsuits is
+$485,348, so we use E[Cost| M] = $500, 000. In addition, two thirds of malpractice suits are
+derived from a genuine medical error (rather than a fraudulent claim), so P( E| M ) = 2/3.
+Jena et al. (2011) estimate a doctor’s yearly risk of facing a malpractice claim as 7.4%, so
+we estimate that a doctor encounters a malpractice suit once every 1/0.074 = 13.5 years.
+Assuming the doctor makes 3 diagnoses per hour, we arrive at around 100,000 diagnoses
+within this time frame, so P( M ) ≈ 1/100, 000. By contrast, Singh et al. (2014) estimate that
+1 in 20 adults experiences a diagnostic error each year. Taking into account the fact that
+people may go to the hospital more than once per year, and that each visit may involve
+more than one diagnosis, we use P( E) ≈ 1/100.
+Plugging these numbers into the formula (17), we arrive at the estimate λ̂ E ≈ $333 for
+medical diagnosis.
+3.5
+
+Connections between Economic Evaluation and Pareto Optimality
+
+In this section, we establish theoretical connections between our economic evaluation
+framework and Pareto optimality. Our first result shows that sweeping over different
+6
+
+Preprint. Under review.
+
+economic scenarios λ recovers the full Pareto frontier for the performance metrics, assuming
+regularity conditions.
+Theorem 1. Let θ ∗ (λ) be the solution to the reward maximization problem
+θ ∗ = argmaxθ
+
+R(λ; θ ),
+
+(18)
+
+where θ ∈ R p denotes an LLM system’s tunable parameters, and λ is the vector of economic
+costs as defined in Section 3.2. Assume that regularity conditions hold, such that for each λ ∈
+|Pnumeric |+|Pbinary |
+
+R>0
+there exist bounds {γµ }µ∈Pnumeric and {γχ }µ∈Pbinary > 0 such that θ ∗ (λ) is
+equivalently the solution of the constrained optimization problem
+θ ∗ = argminθ
+
+Êθ [C ]
+
+subject to
+
+Êθ [µ] ≤ γµ , µ ∈ Pnumeric
+
+(19)
+
+Êθ [1χ ] ≤ γχ , χ ∈ Pbinary ,
+and vice versa for γ 7→ λ(γ). Then the vector of economic costs, λ, maps surjectively onto the Pareto
+surface via the mapping
+λ 7→ (Êθ ∗ (λ) [C ], Êθ ∗ (λ) [µ1 ], ..., Êθ ∗ (λ) [µ|Pnumeric | ], P̂θ ∗ (λ) [χ1 ], ..., P̂θ ∗ (λ) [χ|Pbinary | ]).
+
+(20)
+
+Proof. See Appendix B.
+The next result provides theoretical support for evaluating the overall performance of LLM
+systems by comparing the expected reward (14) across a grid of possible use cases λ.
+Theorem 2. Consider two LLM systems, S1 and S2 . Assume that the regularity assumptions of
+Theorem 1 hold. If the expected rewards (14) satisfy
+R1 ( λ ) ≥ R2 ( λ )
+|Pnumeric |+|Pbinary |
+
+for all λ ∈ R>0
+Pareto surface for S2 .
+
+, then no point on the Pareto surface for S1 dominates any point on the
+
+Proof. Suppose for the sake of contradiction that θ2 on the Pareto surface of S2 dominates θ1
+on the Pareto surface of S1 . By Theorem 1, there exist λ1 , λ2 ∈ R+ such that
+θ1 = θ ∗ ( λ1 ),
+
+(21)
+
+∗
+
+(22)
+
+θ2 = θ ( λ2 ),
+as defined by (13). Hence, we have
+R1 (λ1 ) = R1 (λ1 ; θ ∗ (λ1 )) = R(λ1 ; θ1 ) < R2 (λ1 ; θ2 ) ≤ max R2 (λ1 ; θ ) = R2 (λ1 ),
+
+(23)
+
+θ
+
+where the middle inequality follows from the assumed Pareto dominance of θ2 over θ1 .
+
+4
+
+Experiments
+
+We apply our economic evaluation framework to explore the practical relevance of less
+powerful LLMs. We address two concrete questions:
+• When do reasoning models outperform non-reasoning models? (Section 4.3)
+• When does a single large model Mbig outperform a cascade Msmall → Mbig ?
+(Section 4.4)
+7
+
+Preprint. Under review.
+
+4.1
+
+Methodology
+
+Since AI models are increasingly considered as a replacement for meaningful human labor,
+we focus our analysis on difficult mathematics questions from the MATH benchmark
+(Hendrycks et al., 2021). This benchmark offers the advantage of containing ground truth
+difficulty labels (1-5) as well as reference answers. To simplify evaluation of LLM answers,
+we filter out questions with non-numeric answers and use stratified sampling to obtain
+500 questions for each of the three difficulty levels 1, 3, and 5. We exclusively use the
+training split of the MATH benchmark; although this choice heightens the potential for
+data contamination (Ravaut et al., 2025), it makes available a greater number of difficult
+examples and therefore improves the statistical power of our experiments.
+Models. We evaluate six state-of-the-art LLMs (three reasoning, three non-reasoning):
+Meta’s Llama3.3 70B and Llama3.1 405B models (Meta AI, 2024), OpenAI’s GPT4.1 and o3
+models, DeepSeek’s R1 model (DeepSeek AI, 2025), and Alibaba’s Qwen3 235B-A22 model
+(Alibaba AI, 2025). We prompt each model using zero-shot chain-of-thought (Kojima et al.,
+2022).
+LLM cascades. To evaluate cascades Msmall → Mbig , we quantify the small model’s
+probability of correctness using self-verification, also known as P(True) (Kadavath et al.,
+2022; Zellinger and Thomson, 2025). When comparing the performance of Msmall → Mbig
+against that of Mbig in Section 4.4, we split the data into 50% training and test sets; we use
+the training set exclusively for estimating the optimal confidence threshold, and evaluate
+cascade performance on the test split (n = 250).
+Metrics. We measure the correctness, dollar cost, and latency for each query by invoking
+LLMs via the commercial Fireworks AI (Llama3.1, Llama3.3, Qwen3, DeepSeek R1) and
+OpenAI (GPT 4.1, o3) application programming interfaces.
+Correctness. To assess correctness of a model’s answer, we invoke Llama3.1 405B with an
+evaluation prompt containing the ground truth reference answer.
+Cost. We compute
+C = Nin × Cin + Nout × Cout ,
+
+(24)
+
+where Nin , Nout are the numbers of input and output tokens, and Cin , Cout are the API
+providers’ model-specific prices, expressed in dollars per token.
+Latency. We record the time before and after an API call to the LLM model provider. Hence,
+our reported latencies include internet roundtrip latency. However, this additional latency
+(<300ms) is negligible, being 10-200x smaller than the latencies we observe for answering
+queries.
+Cascade Error Reduction: To predict the performance of a cascade Msmall → Mbig based
+on the quality of the confidence signal of Msmall (self-verification in our case), we introduce
+the cascade error reduction
+Msmall
+CER = Cov(1D , 1error
+),
+(25)
+M
+
+small
+where 1D indicates the small model’s decision to defer the query to Mbig , and 1error
+indicates that the output of Msmall is incorrect. We theoretically justify this metric in
+Theorem 3.
+
+See appendices C-E for more details on methodology.
+4.2
+
+Baseline Performance: Error Rate, Cost, and Latency
+
+Figure 2 shows the performance of reasoning and non-reasoning models on n = 500 of the
+most difficult questions of the MATH benchmark. Clearly, reasoning models have much
+lower error rates. However, their costs per query are 10-100x greater, and latencies per query
+are up to 10x greater.
+Reasoning models are known to dynamically scale the number of output tokens based on
+the difficulty of the query. However, non-reasoning models prompted with chain-of-thought
+8
+
+Preprint. Under review.
+
+Non-Reasoning
+
+Non-Reasoning
+
+Reasoning
+
+Reasoning
+
+Non-Reasoning
+
+Reasoning
+
+103
+
+$0.100
+
+22.0%
+
+10.0%
+
+5.8%
+3.8%
+2.8%
+llama3.1-405b llama3.3-70b
+
+gpt-4.1
+
+deepseek-r1
+
+Model
+
+o3
+
+Latency per Query (sec)
+
+24.0%
+
+Cost per Query ($)
+
+Error Rate
+
+30.6%
+
+$0.010
+
+102
+
+101
+
+$0.001
+
+llama3.3-70b llama3.1-405b
+
+qwen3-235b
+
+(a) Error
+
+gpt-4.1
+
+qwen3-235b
+
+Model
+
+o3
+
+deepseek-r1
+
+(b) Cost per Query ($)
+
+100
+
+llama3.3-70b llama3.1-405b
+
+gpt-4.1
+
+Model
+
+o3
+
+deepseek-r1 qwen3-235b
+
+(c) Latency per Query (sec)
+
+Figure 2: On the most difficult questions of the MATH benchmark, reasoning models have
+much lower error rates but are 10-100x more expensive and take 10x longer to answer a
+query.
+also adapt the number of output tokens based on query difficulty. Figure 7 in Appendix A
+compares the number of output tokens across queries of varying difficulty, showing that
+the relative increase in output tokens is comparable between reasoning and non-reasoning
+models; however, reasoning models have higher baseline numbers of output tokens.
+4.3
+
+When Do Reasoning Models Outperform Non-Reasoning Models?
+
+We now leverage our economic evaluation framework to determine under what conditions
+reasoning models outperform non-reasoning models on difficult questions from MATH.
+First, we only trade-off accuracy and cost, disregarding latency. Second, we simultaneously
+consider accuracy, cost, and latency, and display the optimal LLM over a range of economic
+constraints.
+Figure 3 plots the expected reward (14) of reasoning and non-reasoning LLMs on MATH,
+for prices of error ranging from λ E = $0.0001 to λ E = $10, 000 per query. These curves
+only trade-off accuracy and cost, assuming that latency costs nothing (λ L = $0/sec). Each
+curve shows the average expected reward across all models of one category (reasoning or
+non-reasoning).
+Non-Reasoning
+
+Reasoning
+
+Non-Reasoning
+
+Reasoning
+
+6
+4
+4
+
+Expected Reward
+
+Expected Reward
+
+2
+2
+0
+2
+4
+
+E > $0.2
+10 3
+
+10 2
+
+10 1
+
+100
+
+101
+
+Price of Error ($)
+
+2
+4
+
+E > $0.14
+
+6
+
+6
+10 4
+
+0
+
+102
+
+103
+
+8
+
+104
+
+(a) Difficulty: Level 3
+
+10 4
+
+10 3
+
+10 2
+
+10 1
+
+100
+
+101
+
+Price of Error ($)
+
+102
+
+103
+
+104
+
+(b) Difficulty: Level 5
+
+Figure 3: Reasoning models offer superior accuracy-cost trade-offs as soon as the price of
+error, λ E , exceeds $0.20 per query. The y-axis shows -log(-R(λ E )) to make the trends more
+easily visible.
+The results show that reasoning models offer superior accuracy-cost trade-offs as soon as
+the cost of making a mistake exceeds $0.20. This figure is surprisingly low. Suppose a
+human worker is able to complete the same task in 5 minutes on average, and assume that
+the consequence of a mistake is having to re-do the task. Then the economic loss of a single
+9
+
+Preprint. Under review.
+
+mistake exceeds $0.20 as soon as the worker’s wages exceed $2/hour—a number below the
+U.S. federal minimum wage.
+Figure 4 introduces a non-zero price of latency and displays the optimal models across
+economic constraints, with prices of error λ E ranging from $0.0001 to $10,000, and prices of
+latency λ L ranging from $0/minute to $10/minute. These prices of latency correspond to
+human wages from $0/hour to $600/hour. Hence, we believe this range captures a wide
+variety of use cases for automating meaningful human tasks, ranging from customer support
+(below $100/hour) to medical diagnosis (above $100/hour). We note that this regime does
+not include the more stringent latency constraints of using LLMs for non-human tasks such
+as serving popular web applications (Kohavi and Longbotham, 2007) or iterating through
+a large number of database records. We leave exploration of such tasks—and their higher
+prices of latency—to future work, as we are most concerned with the emerging practice of
+automating human tasks using LLMs.
+o3 wins
+
+qwen3-235b wins
+
+llama3.3-70b wins
+
+gpt-4.1 wins
+
+10
+
+10
+
+5
+
+5
+
+Price of Latency ($/minute)
+
+Price of Latency ($/minute)
+
+llama3.3-70b wins
+
+2
+1
+0.5
+0.25
+0.1
+0.05
+
+o3 wins
+
+qwen3-235b wins
+
+2
+1
+0.5
+0.25
+0.1
+0.05
+0
+
+0
+0.00010.001 0.01 0.1
+
+1
+
+0.00010.001 0.01 0.1
+
+10 100 1000 10000
+
+1
+
+10 100 1000 10000
+
+Price of Error ($)
+
+Price of Error ($)
+
+(a) Difficulty: Level 3
+
+(b) Difficulty: Level 5
+
+Figure 4: Optimal models for different combinations of price of error and price of latency.
+Reasoning models show superior performance for prices of error above $10.
+Figure 4 shows that reasoning models generally outperform non-reasoning models for
+prices of error above $10 when the price of latency is at most $5/minute (equivalent to
+human wages of $300/hour). For a price of latency of $10/minute (or $600/hour), the
+critical price of error rises to $100. Among LLMs, Qwen3-235B-A22B, o3, and Llama3.3 70B
+emerge as the preferred models for the vast majority of economic scenarios.
+4.4
+
+When Does a Single Big Model Outperform a Cascade?
+
+A large language model cascade Msmall → Mbig sends all queries first to a relatively
+small model Msmall . If Msmall is uncertain about the answer, it defers the query to Mbig ;
+otherwise, it directly returns the output. Cascading generally assumes that Mbig performs
+better than Msmall on all queries; hence, we expect that as the price of error λ E increases,
+there exists a cross-over point λcritical
+when directly sending queries to the big model Mbig
+E
+outperforms cascading.
+Figure 5 compares the performance of three different cascades Msmall → Mbig . For each
+cascade, Mbig = Qwen3 235B-A22B, but Msmall ranges over all the non-reasoning models
+(Llama3.3 70B, Llama3.1 405B, and GPT-4.1). We evaluate only on the most difficult (level 5)
+questions of the MATH benchmark. We tune the cascade’s deferral threshold on n = 250
+training examples and use the remaining n = 250 questions for evaluation.
+10
+
+Preprint. Under review.
+
+Big model wins
+
+Cascade wins
+
+Big model wins
+
+Cascade wins
+10.0
+
+5.0
+
+5.0
+
+5.0
+
+2.0
+1.0
+0.5
+0.25
+0.1
+0.05
+0
+
+Price of Latency ($/minute)
+
+10.0
+
+Price of Latency ($/minute)
+
+Price of Latency ($/minute)
+
+Cascade wins
+10.0
+
+2.0
+1.0
+0.5
+0.25
+0.1
+0.05
+0
+
+0.0001 0.001 0.01
+
+0.1
+
+1
+
+10
+
+Price of Error ($)
+
+100 1000 10000
+
+2.0
+1.0
+0.5
+0.25
+0.1
+0.05
+0
+
+0.0001 0.001 0.01
+
+0.1
+
+1
+
+10
+
+Price of Error ($)
+
+(a) GPT 4.1 → Mbig
+
+Big model wins
+
+100 1000 10000
+
+(b) Llama3.3 70B → Mbig
+
+0.0001 0.001 0.01
+
+0.1
+
+1
+
+10
+
+Price of Error ($)
+
+100 1000 10000
+
+(c) Llama3.3 405B → Mbig
+
+Figure 5: Directly sending queries to Qwen3 235B-A22B (Mbig ) outperforms cascades when
+the cost of making a mistake exceeds $0.10 and the price of latency is sufficiently low.
+Disregarding the impact of latency, using Mbig = Qwen3 235B-A22 as a standalone LLM
+generally outperforms the cascade Msmall → Mbig —as soon as the price of error exceeds
+λ E > $0.10. As the price of latency increases to λ L = $0.5/minute (equiv. to $30/hour), the
+critical price of error λcritical
+ratchets up to $10. At λ L = $10/minute (equiv. to $600/hour),
+E
+critical
+λE
+increases to $1, 000. This finding suggests that when automating medical diagnosis
+(with an estimated price of error between $100 and $1,000, as discussed in Section 3.4), it
+may be preferable to avoid cascading.
+However, this analysis carries an important caveat. For the cascade with Msmall = Llama3.3
+405B, we observed a marked and surprising outperformance over the other cascades—even
+though as a standalone LLM, Llama3.3 405B performs strictly worse than Llama3.3 70B, as
+shown in Figure 2. The cascade Llama3.1 405B → Qwen3 235B-A22B yields better accuracycost-latency trade-offs than Qwen3 235B-A22B for the vast majority of economic scenarios,
+including prices of error up to $10, 000 and prices of latency up to $10/minute (equiv. to
+$600/hour).
+Why does using Llama3.1 405B as the small model result in superior cascade performance?
+To explain this phenomenon, we point to the model’s remarkable self-verification performance. To lay out our argument, we first restate the formula for the error rate of a two-model
+cascade given without proof by Zellinger and Thomson (2024):
+Theorem 3 (Cascade Error). Consider a cascade Msmall → Mbig , where the deferral decision of
+Msmall is determined by the indicator 1D . Then the error rate, ecascade of the cascade is
+Mbig
+
+M
+
+small
+eMsmall →Mbig = (1 − pd ) eMsmall + pd eMbig + Cov(1D , 1error ) − Cov(1D , 1error
+),
+
+(26)
+
+M
+
+small
+where pd := E[1D ] is the deferral rate, eMsmall := E[1error
+] is the error rate of Msmall , and
+
+Mbig
+
+eMbig := E[1error ] is the error rate of Mbig .
+Proof. This result follows from writing out the formula for cascade error,
+M
+
+Mbig
+
+small
+eMsmall →Mbig = E[(1 − 1D )1error
++ 1D 1error ].
+
+(27)
+
+Using the linearity of expectation, followed by adding and subtracting terms to recover the
+covariances, gives the result.
+Theorem 3 shows that the error rate of a cascade Msmall → Mbig , relative to randomly sending queries to Msmall and Mbig , depends on the difference in covariances
+Mbig
+
+M
+
+small
+Cov(1D , 1error ) − Cov(1D , 1error
+). Intuitively, these covariances measure the increase in
+
+11
+
+Preprint. Under review.
+
+M
+
+small
+the models’ error rates conditional on deferral. Specifically, Cov(1D , 1error
+) expresses
+the agreement between the deferral decision and the true uncertainty of Msmall .4 In prac-
+
+Mbig
+
+M
+
+M
+
+small
+small
+tice, Cov(1D , 1error ) ≪ Cov(1D , 1error
+), so Cov(1D , 1error
+) alone is a strong indicator of
+cascade effectiveness. We refer to this metric as the cascade error reduction (CER).
+0.08
+
+0.014
+
+0.07
+
+0.9
+
+e
+
+GPT 4.1 cascad
+
+0.012
+
+0.8
+
+Lla
+ma
+
+0.04
+
+Lla
+
+0.03
+0.02
+0.01
+
+Latency per Query (min)
+
+70B
+3.3
+ma
+4.1
+GPT
+
+3.1
+
+small )
+Cov( D, error
+
+0.05
+
+Cost per Query ($)
+
+40
+5B
+
+0.06
+0.010
+0.008
+0.006
+
+cascade
+
+0.004
+
+Llama3.1 405B
+
+0.002
+
+Llama3.3 70B
+
+cascade
+
+0.0
+
+2.5
+
+5.0
+
+7.5
+
+10.0
+
+12.5
+
+Deferral Rate (%)
+
+15.0
+
+17.5
+
+20.0
+
+0.0
+
+2.5
+
+(a) CER
+
+5.0
+
+7.5
+
+10.0
+
+12.5
+
+Deferral Rate (%)
+
+(b) Cost
+
+GPT
+
+0.6
+0.5
+
+15.0
+
+17.5
+
+20.0
+
+0.3
+
+0.1
+
+de
+asca
+4.1 c
+
+ade
+casc
+05B
+4
+1
+.
+e
+a3
+scad
+Llam
+B ca
+.3 70
+3
+a
+Llam
+
+0.4
+
+0.2
+
+0.00
+0.000
+
+0.7
+
+0.0
+
+2.5
+
+5.0
+
+7.5
+
+10.0
+
+12.5
+
+Deferral Rate (%)
+
+15.0
+
+17.5
+
+20.0
+
+(c) Latency
+
+Figure 6: Using Llama3.1 405B as Msmall yields superior cascading performance, despite its subpar performance as a standalone model, because it performs better at selfverification—indicated by a higher cascade error reduction (CER) (a). In contrast to error
+rate, cost and latency are simple linear functions of the deferral rate (b and c).
+Msmall
+d (1D , 1error
+Figure 6 plots CER = Cov
+) against the cascades’ deferral thresholds. The figure
+Msmall
+d (1D , 1error
+shows that Cov
+) is highest for Llama3.1 405B, explaining its superior suitability
+for playing the role of Msmall in a cascade (Figure 5). Figures 6b and 6c plot the cascades’
+costs and latencies for the same range of deferral rates, verifying that Llama3.1 405B’s
+superior cascade performance is driven by error rate, not cost or latency.
+
+5
+
+Related Work
+
+In this section, we discuss related work.
+Economic Analysis of LLMs. Several papers have explored the economic and labor market
+impacts of large language models (Brynjolfsson et al., 2023; Eloundou et al., 2024). For
+example, Eloundou et al. (2024) assess the vulnerability of different jobs to AI automation,
+finding that highly paid professional work is particularly exposed. Different from our work,
+the authors define exposure with respect to achieving time savings while maintaining the
+same quality of work. By contrast, we wish to highlight the comparatively low cost of
+AI labor, as reflected in costs per query between $0.01 and $0.1, even for state-of-the-art
+reasoning LLMs. Our argument is that lowering the cost of labor—even without saving
+time—yields significant economic benefits.
+When it comes to ranking the performance of LLMs based on economic principles, the
+closest work to ours is the preprint by Erol et al. (2025). The authors propose quantifying
+accuracy-cost trade-offs by the ratio of cost to accuracy. Numerically, this approach is
+mathematically similar to our multi-objective reward (10) when considering only accuracy
+and cost, and using a constant, unchanging price of error for all use cases. We believe that
+our framework’s ability to handle a greater number of simultaneous performance objectives,
+and to differentiate between the economic realities of different industries (for example,
+customer support vs medical diagnosis), to be significant strengths.
+Moreover, we consider the theoretical motivation of Erol et al. (2025)’s cost-of-pass metric to
+be flawed. Their argument is that with an accuracy of a, an LLM can be viewed to generate
+the correct answer to a query in 1/a attempts (assuming a geometric distribution). Hence,
+their metric measures the total cost (“cost of pass”) required to produce the correct answer.
+However, the correctness of repeated samples from an LLM with accuracy a may only be
+4 Thus, Cov(1
+
+Msmall
+D , 1error ) is closely related to the area under the accuracy-rejection curve (AUARC)
+
+from selective prediction (El-Yaniv and Wiener, 2010).
+
+12
+
+Preprint. Under review.
+
+modeled as i.i.d. Bernoulli(a) trials if we also randomly sample new queries q. For a fixed
+query, repeated sampling does not reliably yield a correct answer, although it offers some
+benefits (Chen et al., 2024).
+LLM Evaluation and Benchmarking. The evaluation of large language models has received
+significant attention over the past few years (Laskar et al., 2024). Prior work has mostly
+focused on assessing specific capabilities of LLMs, such as summarization (Narayan et al.,
+2018), general knowledge (Hendrycks and Gimpel, 2018), truthfulness (Lin et al., 2022),
+mathematical reasoning (Hendrycks et al., 2021), and others. In general, individual benchmarks rapidly become obsolete as LLMs become more capable. Notably, Liang et al. (2023)
+provide a compelling synthesis of many of the different capabilities worth evaluating. In
+addition to benchmarking, the Chatbot Arena (Chiang et al., 2024) has popularized ranking
+LLMs through crowd-sourced pairwise comparisons, in a manner similar to reinforcement
+learning from human feedback (Ouyang et al., 2022).
+These evaluation efforts are not directly comparable to our work, as we focus on multiobjective evaluation of conflicting performance objectives, such as accuracy, cost, and latency.
+It is not sufficient to evaluate these metrics individually, since we wish to simultaneously
+optimize for these performance objectives.
+Multi-Objective LLM Systems. Our emphasis on multi-objective evaluation is reflected
+in research on multi-LLM systems such as cascades (Ding et al., 2024; Chen et al., 2023;
+Aggarwal et al., 2024) and routers (Shnitzer et al., 2023; Hari and Thomson, 2023; Jitkrittum
+et al., 2025). Researchers have mainly framed the accuracy-cost trade-off as a constrained
+minimization of the error rate subject to a cost budget (Chen et al., 2023; Jitkrittum et al., 2024;
+Hu et al., 2024). Evaluation of different LLM systems proceeds by plotting Pareto-optimal
+error rates against the corresponding cost budgets. Unfortunately, this approach does not
+easily generalize to more than two performance objectives, since it is difficult to compare
+the quality of higher-dimensional Pareto frontiers (Zellinger et al., 2025). Specifically, the
+volume under a Pareto surface is not a meaningful metric unless the lower-dimensional
+projections of different Pareto frontiers substantially intersect.5
+In addition, we suspect that prior work’s emphasis on setting budgets for cost or latency
+may be overly influenced by the peculiarities of the IT industry, as these budgets closely
+reflect that industry’s service-level objectives (SLO). However, artificial intelligence is a societywide phenomenon that extends far beyond IT. As AI starts to perform meaningful human
+work, it will likely emerge as a revenue generator rather than a cost center—diminishing
+the relevance of cost budgets as a mental framework.
+Computation of Pareto Frontiers. From an optimization perspective, our methodology
+corresponds to a well-known method for approximating Pareto frontiers called the weighted
+sum method for scalarization (Koski, 1988; Jahn et al., 1991; Banholzer and Volkwein, 2019).
+Prior work has identified certain disadvantages of scalarization: for example, it may not
+yield all Pareto-optimal trade-offs when the Pareto surface is non-convex, or coverage of
+the Pareto frontier might be unevenly distributed (Das and Dennis, 1997). Such issues are
+not a major concern for us, as we motivate our methodology on economic grounds, by
+casting LLM systems as reward-maximizing agents (see Section 3.1). We note, however,
+that Pareto frontiers arising in performance evaluation of LLM systems tend to be convex
+since randomly routing queries between two LLMs smoothly interpolates between their
+respective performance metrics.
+
+6
+
+Conclusion
+
+We have presented an economic framework for evaluating the performance of LLMs and
+LLM systems. Compared to plotting Pareto frontiers, our approach yields a single optimal
+model based on a use case’s economic constraints: the cost of making a mistake (price of
+error), the cost of incremental latency (price of latency), and the cost of abstaining from a
+5 The same problem may occur in two dimensions. Consider error-cost curves that are horizontally
+shifted, i.e., the attainable cost budgets are disjoint. Comparing the areas under these curves does not
+yield meaningful results.
+
+13
+
+Preprint. Under review.
+
+query (price of abstention), as well as possible additional objectives such as privacy (Zhang
+et al., 2024).
+We motivated our framework by casting LLMs and LLM systems as reward-maximizing
+agents, and revealed theoretical relationships between our proposed methodology and the
+established notion of Pareto optimality.
+Applying our framework to empirically exploring the practical relevance of non-reasoning
+LLMs and cascades, we found several interesting results. First, reasoning models offer
+superior accuracy-cost trade-offs on difficult mathematics questions as soon as the price
+of error exceeds $0.01. Second, a single large LLM Mbig typically outperforms a cascade
+Mbig → Mbig for prices of error as low as $0.1.
+Extrapolating these findings from mathematics to other domains, our results carry significant
+economic implications. We recommend that when automating meaningful human tasks
+with AI models, practitioners should typically use the most powerful available model, rather
+than attempt to minimize inference costs, since inference costs are likely dwarfed by the
+economic impact of AI errors. Fundamentally, this recommendation is based on the low
+costs per query of LLMs, which are increasingly negligible compared to human wages.
+
+7
+
+Limitations
+
+First, our results on the MATH benchmark may be affected by data contamination, since the
+LLMs we evaluate may have been trained on similar questions. In addition, using Llama3.1
+405B for correctness evaluation may artificially inflate this model’s self-verification accuracy—however, we believe that this latter effect is limited since the prompt for correctness
+evaluation relies on access to the ground truth reference answer, whereas self-verification
+only incorporates the model’s proposed (but possibly incorrect) answer.
+
+References
+Aggarwal, P., Madaan, A., Anand, A., Potharaju, S. P., Mishra, S., Zhou, P., Gupta, A.,
+Rajagopal, D., Kappaganthu, K., Yang, Y., Upadhyay, S., Faruqui, M., and Mausam (2024).
+Automix: Automatically mixing language models.
+Alibaba AI (2025). Qwen3 technical report.
+Banholzer, S. and Volkwein, S. (2019). Hierarchical convex multiobjective optimization by
+the euclidean reference point method. Preprint SPP1962-117.
+Bertsekas, D. P. (1999). Nonlinear Programming. Athena Scientific, Belmont, MA, 2 edition.
+Branke, J., Deb, K., Miettinen, K., and Słowiński, R., editors (2008). Multiobjective Optimization, volume 5252 of Lecture Notes in Computer Science. Springer Berlin Heidelberg, Berlin;
+Heidelberg. XX + 470 pages.
+Brown, T. B., Mann, B., Ryder, N., Subbiah, M., Kaplan, J., Dhariwal, P., Neelakantan, A.,
+Shyam, P., Sastry, G., Askell, A., Agarwal, S., Herbert-Voss, A., Krueger, G., Henighan, T.,
+Child, R., Ramesh, A., Ziegler, D. M., Wu, J., Winter, C., Hesse, C., Chen, M., Sigler, E.,
+Litwin, M., Gray, S., Chess, B., Clark, J., Berner, C., McCandlish, S., Radford, A., Sutskever,
+I., and Amodei, D. (2020). Language models are few-shot learners.
+Brynjolfsson, E., Li, D., and Raymond, L. R. (2023). Generative ai at work. Working Paper
+31161, National Bureau of Economic Research.
+Chen, L., Davis, J., Hanin, B., Bailis, P., Stoica, I., Zaharia, M., and Zou, J. (2024). Are
+more llm calls all you need? towards the scaling properties of compound ai systems. In
+Globerson, A., Mackey, L., Belgrave, D., Fan, A., Paquet, U., Tomczak, J., and Zhang, C.,
+editors, Advances in Neural Information Processing Systems, volume 37, pages 45767–45790.
+Curran Associates, Inc.
+14
+
+Preprint. Under review.
+
+Chen, L., Zaharia, M., and Zou, J. (2023). Frugalgpt: How to use large language models
+while reducing cost and improving performance.
+Chiang, W.-L., Zheng, L., Sheng, Y., Angelopoulos, A. N., Li, T., Li, D., Zhu, B., Zhang, H.,
+Jordan, M., Gonzalez, J. E., and Stoica, I. (2024). Chatbot arena: An open platform for
+evaluating LLMs by human preference. In Forty-first International Conference on Machine
+Learning.
+Chowdhery, A., Narang, S., Devlin, J., Bosma, M., Mishra, G., Roberts, A., Barham, P.,
+Chung, H. W., Sutton, C., Gehrmann, S., Schuh, P., Shi, K., Tsvyashchenko, S., Maynez,
+J., Rao, A., Barnes, P., Tay, Y., Shazeer, N., Prabhakaran, V., Reif, E., Du, N., Hutchinson,
+B., Pope, R., Bradbury, J., Austin, J., Isard, M., Gur-Ari, G., Yin, P., Duke, T., Levskaya,
+A., Ghemawat, S., Dev, S., Michalewski, H., Garcia, X., Misra, V., Robinson, K., Fedus, L.,
+Zhou, D., Ippolito, D., Luan, D., Lim, H., Zoph, B., Spiridonov, A., Sepassi, R., Dohan, D.,
+Agrawal, S., Omernick, M., Dai, A. M., Pillai, T. S., Pellat, M., Lewkowycz, A., Moreira, E.,
+Child, R., Polozov, O., Lee, K., Zhou, Z., Wang, X., Saeta, B., Diaz, M., Firat, O., Catasta,
+M., Wei, J., Meier-Hellstern, K., Eck, D., Dean, J., Petrov, S., and Fiedel, N. (2022). Palm:
+Scaling language modeling with pathways.
+Chung, H. W., Hou, L., Longpre, S., Zoph, B., Tay, Y., Fedus, W., Li, Y., Wang, X., Dehghani,
+M., Brahma, S., Webson, A., Gu, S. S., Dai, Z., Suzgun, M., Chen, X., Chowdhery, A.,
+Castro-Ros, A., Pellat, M., Robinson, K., Valter, D., Narang, S., Mishra, G., Yu, A., Zhao, V.,
+Huang, Y., Dai, A., Yu, H., Petrov, S., Chi, E. H., Dean, J., Devlin, J., Roberts, A., Zhou, D.,
+Le, Q. V., and Wei, J. (2022). Scaling instruction-finetuned language models.
+Coello, C. A. C., Aguirre, A. H., and Zitzler, E., editors (2005). Evolutionary Multi-Criterion
+Optimization Third International Conference, EMO 2005, Guanajuato, Mexico, March 9–11,
+2005, Proceedings, volume 3410 of Lecture Notes in Computer Science, Berlin/Heidelberg.
+Springer. eBook ISBN 978-3-540-31880-4.
+Das, I. and Dennis, J. E. (1997). A closer look at drawbacks of minimizing weighted sums
+of objectives for pareto set generation in multicriteria optimization problems. Structural
+Optimization, 14(1):63–69.
+DeepSeek AI (2025). DeepSeek-R1: Incentivizing reasoning capability in LLMs via reinforcement learning.
+Ding, D., Mallick, A., Wang, C., Sim, R., Mukherjee, S., Rühle, V., Lakshmanan, L. V. S., and
+Awadallah, A. H. (2024). Hybrid LLM: Cost-efficient and quality-aware query routing. In
+The Twelfth International Conference on Learning Representations.
+El-Yaniv, R. and Wiener, Y. (2010). On the foundations of noise-free selective classification.
+Journal of Machine Learning Research, 11:1605–1641.
+Eloundou, T., Manning, S., Mishkin, P., and Rock, D. (2024). Gpts are gpts: Labor market
+impact potential of llms. Science, 384(6702):1306–1308.
+Erol, M. H., El, B., Suzgun, M., Yuksekgonul, M., and Zou, J. (2025). Cost-of-pass: An
+economic framework for evaluating language models.
+Hammond, G. (2024). Speed of ai development stretches risk assessments to breaking point.
+Artificial intelligence’s complexity exposes flaws in traditional methods used to evaluate
+safety and accuracy.
+Hari, S. N. and Thomson, M. (2023). Tryage: Real-time, intelligent routing of user prompts
+to large language models. arXiv preprint arXiv:2308.11601.
+Hendrycks, D., Burns, C., Kadavath, S., Arora, A., Basart, S., Tang, E., Song, D., and
+Steinhardt, J. (2021). Measuring mathematical problem solving with the math dataset.
+Hendrycks, D. and Gimpel, K. (2018). A baseline for detecting misclassified and out-ofdistribution examples in neural networks.
+15
+
+Preprint. Under review.
+
+Hu, Q. J., Bieker, J., Li, X., Jiang, N., Keigwin, B., Ranganath, G., Keutzer, K., and Upadhyay,
+S. K. (2024). Routerbench: A benchmark for multi-LLM routing system. In Agentic Markets
+Workshop at ICML 2024.
+Jahn, J., Klose, J., and Merkel, A. (1991). On the application of a method of reference point
+approximation to bicriterial optimization problems in chemical engineering. In Oettli,
+W. and Pallaschke, D., editors, Advances in Optimization, pages 478–491. Springer, Berlin;
+Heidelberg; New York.
+Jena, A. B., Seabury, S., Lakdawalla, D., and Chandra, A. (2011). Malpractice risk according
+to physician specialty. New England Journal of Medicine, 365(7):629–636.
+Jin, Y., editor (2006). Multi-Objective Machine Learning, volume 16 of Studies in Computational
+Intelligence. Springer, Berlin & Heidelberg.
+Jitkrittum, W., Gupta, N., Menon, A. K., Narasimhan, H., Rawat, A. S., and Kumar, S. (2024).
+When does confidence-based cascade deferral suffice?
+Jitkrittum, W., Narasimhan, H., Rawat, A. S., Juneja, J., Wang, Z., Lee, C.-Y., Shenoy, P., Panigrahy, R., Menon, A. K., and Kumar, S. (2025). Universal LLM routing with correctnessbased representation. In First Workshop on Scalable Optimization for Efficient and Adaptive
+Foundation Models.
+Kadavath, S., Conerly, T., Askell, A., Henighan, T., Drain, D., Perez, E., Schiefer, N., HatfieldDodds, Z., DasSarma, N., Tran-Johnson, E., Johnston, S., El-Showk, S., Jones, A., Elhage,
+N., Hume, T., Chen, A., Bai, Y., Bowman, S., Fort, S., Ganguli, D., Hernandez, D., Jacobson,
+J., Kernion, J., Kravec, S., Lovitt, L., Ndousse, K., Olsson, C., Ringer, S., Amodei, D.,
+Brown, T., Clark, J., Joseph, N., Mann, B., McCandlish, S., Olah, C., and Kaplan, J. (2022).
+Language models (mostly) know what they know.
+Kaplan, J., McCandlish, S., Henighan, T., Brown, T. B., Chess, B., Child, R., Gray, S., Radford,
+A., Wu, J., and Amodei, D. (2020). Scaling laws for neural language models.
+Kohavi, R. and Longbotham, R. (2007). Online experiments: Lessons learned. Computer,
+40(9):103–105.
+Kojima, T., Gu, S. S., Reid, M., Matsuo, Y., and Iwasawa, Y. (2022). Large language models
+are zero-shot reasoners. In Oh, A. H., Agarwal, A., Belgrave, D., and Cho, K., editors,
+Advances in Neural Information Processing Systems.
+Koski, J. (1988). Multicriteria truss optimization. In Stadler, W., editor, Multicriteria Optimization in Engineering and in the Sciences, pages 263–307. Plenum Press, New York.
+Kudo, T. and Richardson, J. (2018). SentencePiece: A simple and language independent
+subword tokenizer and detokenizer for neural text processing. In Blanco, E. and Lu, W.,
+editors, Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing: System Demonstrations, pages 66–71, Brussels, Belgium. Association for Computational
+Linguistics.
+Laskar, M. T. R., Alqahtani, S., Bari, M. S., Rahman, M., Khan, M. A. M., Khan, H., Jahan,
+I., Bhuiyan, A., Tan, C. W., Parvez, M. R., Hoque, E., Joty, S., and Huang, J. (2024). A
+systematic survey and critical review on evaluating large language models: Challenges,
+limitations, and recommendations. In Al-Onaizan, Y., Bansal, M., and Chen, Y.-N., editors,
+Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing, pages
+13785–13816, Miami, Florida, USA. Association for Computational Linguistics.
+Liang, P., Bommasani, R., Lee, T., Tsipras, D., Soylu, D., Yasunaga, M., Zhang, Y., Narayanan,
+D., Wu, Y., Kumar, A., Newman, B., Yuan, B., Yan, B., Zhang, C., Cosgrove, C., Manning,
+C. D., Re, C., Acosta-Navas, D., Hudson, D. A., Zelikman, E., Durmus, E., Ladhak, F.,
+Rong, F., Ren, H., Yao, H., WANG, J., Santhanam, K., Orr, L., Zheng, L., Yuksekgonul,
+M., Suzgun, M., Kim, N., Guha, N., Chatterji, N. S., Khattab, O., Henderson, P., Huang,
+Q., Chi, R. A., Xie, S. M., Santurkar, S., Ganguli, S., Hashimoto, T., Icard, T., Zhang, T.,
+Chaudhary, V., Wang, W., Li, X., Mai, Y., Zhang, Y., and Koreeda, Y. (2023). Holistic
+16
+
+Preprint. Under review.
+
+evaluation of language models. Transactions on Machine Learning Research. Featured
+Certification, Expert Certification, Outstanding Certification.
+Lin, S., Hilton, J., and Evans, O. (2022). TruthfulQA: Measuring how models mimic human
+falsehoods. In Muresan, S., Nakov, P., and Villavicencio, A., editors, Proceedings of the
+60th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers),
+pages 3214–3252, Dublin, Ireland. Association for Computational Linguistics.
+Mankiw, N. G. (2020). Principles of Economics. Cengage Learning, 9th edition.
+Meta AI (2024). The Llama 3 herd of models.
+Narasimhan, H., Jitkrittum, W., Rawat, A. S., Kim, S., Gupta, N., Menon, A. K., and Kumar,
+S. (2024). Faster cascades via speculative decoding.
+Narayan, S., Cohen, S. B., and Lapata, M. (2018). Don’t give me the details, just the summary!
+topic-aware convolutional neural networks for extreme summarization. In Riloff, E.,
+Chiang, D., Hockenmaier, J., and Tsujii, J., editors, Proceedings of the 2018 Conference on
+Empirical Methods in Natural Language Processing, pages 1797–1807, Brussels, Belgium.
+Association for Computational Linguistics.
+Ong, I., Almahairi, A., Wu, V., Chiang, W.-L., Wu, T., Gonzalez, J. E., Kadous, M. W.,
+and Stoica, I. (2025). RouteLLM: Learning to route LLMs from preference data. In The
+Thirteenth International Conference on Learning Representations.
+OpenAI (2024). GPT-4 technical report.
+Ouyang, L., Wu, J., Jiang, X., Almeida, D., Wainwright, C. L., Mishkin, P., Zhang, C.,
+Agarwal, S., Slama, K., Ray, A., Schulman, J., Hilton, J., Kelton, F., Miller, L., Simens, M.,
+Askell, A., Welinder, P., Christiano, P., Leike, J., and Lowe, R. (2022). Training language
+models to follow instructions with human feedback.
+Ravaut, M., Ding, B., Jiao, F., Chen, H., Li, X., Zhao, R., Qin, C., Xiong, C., and Joty, S. (2025).
+A comprehensive survey of contamination detection methods in large language models.
+Shnitzer, T., Ou, A., Silva, M., Soule, K., Sun, Y., Solomon, J., Thompson, N., and Yurochkin,
+M. (2023). Large language model routing with benchmark datasets. arXiv preprint
+arXiv:2309.15789.
+Singh, H., Meyer, A. N. D., and Thomas, E. J. (2014). The frequency of diagnostic errors
+in outpatient care: estimations from three large observational studies involving us adult
+populations. BMJ Quality & Safety, 23(9):727–731.
+Srivastava, A. et al. (2023). Beyond the imitation game: Quantifying and extrapolating
+the capabilities of language models. Transactions on Machine Learning Research. Featured
+Certification.
+Studdert, D. M., Mello, M. M., Gawande, A. A., Gandhi, T. K., Kachalia, A., Yoon, C.,
+Puopolo, A. L., and Brennan, T. A. (2006). Claims, errors, and compensation payments in
+medical malpractice litigation. New England Journal of Medicine, 354(19):2024–2033.
+Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A. N., Kaiser, L. u.,
+and Polosukhin, I. (2017). Attention is all you need. In Guyon, I., Luxburg, U. V., Bengio,
+S., Wallach, H., Fergus, R., Vishwanathan, S., and Garnett, R., editors, Advances in Neural
+Information Processing Systems, volume 30. Curran Associates, Inc.
+Wang, C., Augenstein, S., Rush, K., Jitkrittum, W., Narasimhan, H., Rawat, A. S., Menon,
+A. K., and Go, A. (2024). Cascade-aware training of language models.
+Wei, J., Bosma, M., Zhao, V., Guu, K., Yu, A. W., Lester, B., Du, N., Dai, A. M., and Le, Q. V.
+(2022). Finetuned language models are zero-shot learners. In International Conference on
+Learning Representations.
+17
+
+Preprint. Under review.
+
+Zellinger, M. J., Liu, R., and Thomson, M. (2025). Cost-saving llm cascades with early
+abstention.
+Zellinger, M. J. and Thomson, M. (2024). Efficiently deploying llms with controlled risk.
+Zellinger, M. J. and Thomson, M. (2025). Rational tuning of llm cascades via probabilistic
+modeling.
+Zhang, K., Wang, C., Peng, L., Go, A., and Liu, X. (2024). Privacy-preserved llm cascade via
+cot-enhanced policy learning. arXiv preprint arXiv:2410.08014.
+
+18
+
+Preprint. Under review.
+
+Appendix A - Scaling of Output Tokens with Query Difficulty
+
+104
+
+103
+
+102
+
+101
+
+o3
+
+gpt-4.1
+
+Non-Reasoning
+
+105
+
+Output Tokens per Query (#)
+
+Output Tokens per Query (#)
+
+Reasoning
+
+Model
+
+103
+
+102
+
+(a) Difficulty: Easy
+
+gpt-4.1
+
+o3
+
+Non-Reasoning
+
+105
+
+104
+
+101 llama3.1-405b
+
+llama3.1-405b llama3.3-70b deepseek-r1 qwen3-235b
+
+Reasoning
+
+Output Tokens per Query (#)
+
+Non-Reasoning
+
+105
+
+llama3.3-70b deepseek-r1 qwen3-235b
+
+Model
+
+Reasoning
+
+104
+
+103
+
+102
+
+101 llama3.1-405b llama3.3-70b
+
+(b) Difficulty: Medium
+
+gpt-4.1
+
+Model
+
+o3
+
+deepseek-r1 qwen3-235b
+
+(c) Difficulty: Hard
+
+Figure 7: Non-reasoning models prompted with chain-of-thought exhibit similar scaling
+of output tokens compared to reasoning models, but reasoning models start from a higher
+baseline number of output tokens.
+
+Appendix B - Proof of Theorem 1
+Theorem. Let θ ∗ (λ) be the solution to the reward maximization problem
+θ ∗ = argmaxθ
+
+R(λ; θ ),
+
+(28)
+
+∈ R p denotes an LLM system’s tunable parameters, and λ is the vector of economic
+
+where θ
+costs as defined in Section 3.2. Assume that regularity conditions hold, such that for each λ ∈
+|Pnumeric |+|Pbinary |
+
+there exist bounds {γµ }µ∈Pnumeric and {γχ }µ∈Pbinary > 0 such that θ ∗ (λ) is
+R>0
+equivalently the solution of the constrained optimization problem
+θ ∗ = argminθ
+subject to
+
+Êθ [C ]
+Êθ [µ] ≤ γµ , µ ∈ Pnumeric
+
+(29)
+
+Êθ [1χ ] ≤ γχ , χ ∈ Pbinary ,
+and vice versa for γ 7→ λ(γ). Then the vector of economic costs, λ, maps surjectively onto the Pareto
+surface via the mapping
+λ 7→ (Êθ ∗ (λ) [C ], Êθ ∗ (λ) [µ1 ], ..., Êθ ∗ (λ) [µ|Pnumeric | ], P̂θ ∗ (λ) [χ1 ], ..., P̂θ ∗ (λ) [χ|Pbinary | ]).
+
+(30)
+
+Proof. First, we show that λ maps to the Pareto surface. Second, we show that this mapping
+is surjective.
+|Pnumeric |+|Pbinary |
+
+Consider any λ ∈ R>0
+, and let x = (Êθ ∗ (λ) [C ], ..., P̂θ ∗ (λ) [χ|Pbinary | ]). Suppose
+for the sake of contradiction that x is not Pareto optimal. Then there exist θ ′ and x ′ =
+(Êθ ′ (λ) [C ], ..., P̂θ ′ (λ) [χ|Pbinary | ]) such that x ′ dominates x. It follows that
+R(λ; θ ′ ) − R(λ; θ ∗ (λ)) = Eθ ∗ (λ) [C ] − Eθ ′ [C ]
+
+(31)
+
++ ∑ λµ (Eθ ∗ (λ) [µ] − Eθ ′ [µ]) + ∑ λχ (Pθ ∗ (λ) (χ) − Pθ ′ (χ))
+µ
+
+(32)
+
+χ
+
+> 0,
+
+(33)
+
+contradicting the optimality of θ ∗ (λ).
+Now consider any x ∈ R|Pnumeric |+|Pbinary |+1 on the Pareto surface. Let θc∗ be the solution of
+the constrained optimization problem (29) with {γµ }, {γχ } equal to the last |Pnumeric | +
+|Pbinary | components of x. Let x ∗ = (Êθc∗ [C ], ..., P̂θc∗ [χ|Pbinary | ]).
+19
+
+Preprint. Under review.
+
+We argue that x = x ∗ . Indeed, x is a feasible point of (29) since it lies on the Pareto surface
+and meets the inequality constraints. In addition, x0∗ = Êθc∗ [C ] cannot be less than x0 , since
+otherwise x ∗ would dominate x. Furthermore, x0∗ = Êθc∗ [C ] cannot be greater than x0 by the
+optimality of x ∗ , since x is feasible. So x0∗ = x0 . Hence, x ∗ ≤ x componentwise. Hence, the
+remaining components of x ∗ and x must be equal, since otherwise x ∗ would dominate x. So
+x ∗ = x.
+Now observe that x ∗ arises from solving (18) with λ = λ(γ). Hence, λ maps to x under the
+mapping (30).
+
+Appendix C - Models and Pricing
+Table 2 lists the large language models (LLM) we used in our experiments and the API prices
+at the time of our experiments (June 2025). We provide each model’s exact API identifier
+together with the cost for input and output tokens.
+We used the default hyperparameters (temperature, top-p, top-k, etc.) for sampling from
+the LLMs, except that we raised the maximum number of output tokens to 100,000. Only
+for Llama3.3 70B did we implement a lower output token limit of 5,000, since the model
+otherwise gets caught in endless repetitions on some queries.
+Table 2: Details on API providers, LLM identifiers, and costs.
+API Provider
+
+Model Identifier
+
+Input $ / M tok
+
+Output $ / M tok
+
+Models accessed through the OpenAI API
+OpenAI
+gpt-4.1-2025-04-14
+OpenAI
+o3-2025-04-16
+
+2.00
+2.00
+
+8.00
+8.00
+
+Models accessed through the Fireworks API
+Fireworks
+deepseek-r1-0528
+Fireworks
+qwen3-235b-a22b
+Fireworks
+llama-v3p3-70b-instruct
+Fireworks
+llama-v3p1-405b-instruct
+
+3.00
+0.22
+0.90
+3.00
+
+8.00
+0.88
+0.90
+3.00
+
+We note that we measured negligible roundtrip latency (less than 300ms) to both API
+endpoints.
+
+Appendix D - Cascading Setup
+Similar to Zellinger and Thomson, 2025, we use self-verification (also known as P(True),
+from Kadavath et al., 2022) to estimate an LLM’s confidence to correctly answer a query.
+Specifically, given a query, the LLM sends itself a follow-up verification prompt asking
+whether the proposed answer is correct. Since the response to this query is a single token
+(Yes/No), we extract the estimated probability of correctness p directly from the LLM’s
+auto-regressive next-token probability. This p is the self-verification correctness probability.
+To select the optimal confidence threshold for a use case λ, we maximize the cascade’s
+expected reward R(λ; θ ) for θ ranging over all 2.5% quantiles of empirically observed
+self-verification correctness probabilities on the training set. To evaluate the cascade’s
+performance, we fix the optimal confidence thresholds θ ∗ = θ ∗ (λ) (dependent on λ) and
+compute the expected rewards R(λ; θ ∗ (λ)) on the test set.
+
+Appendix E - Prompt Templates
+This appendix reproduces verbatim the prompt templates used in our experiments. Placeholders are printed in bold and are wrapped in curly braces.
+20
+
+Preprint. Under review.
+
+7.1
+
+MATH Benchmark — Problem-Solving Prompts
+
+System prompt:
+Your task is to solve a math problem . First think step -by - step ,
+then end by giving your final answer in the form
+' Final Answer : x ' , where x is the final answer .
+DO NOT say anything after that . Make sure to end on the numeric answer .
+
+User prompt:
+Your task is to solve the following math problem : {problem}
+Reason step -by - step , then give your final by saying
+' Final Answer : x ' , where x is the final numeric answer .
+DO NOT say anything after that . Make sure to end on the numeric answer .
+
+7.2
+
+MATH Benchmark — Evaluation Prompts
+
+System prompt:
+Your task is to determine if an AI model 's solution to a
+college - level math problem is correct .
+If the solution is correct , output "Y ".
+Otherwise , output "N ".
+Only output "Y" or "N", nothing else .
+
+User prompt:
+Consider a proposed solution to the following math problem :
+Problem :
+{problem}
+Proposed solution :
+{proposed sol}
+Decide if the proposed solution is correct .
+Only output "Y" or "N", nothing else .
+Correct ?
+
+21

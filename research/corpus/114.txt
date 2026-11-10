@@ -1,0 +1,1596 @@
+TITLE: Semantic Caching for Low-Cost LLM Serving: From Offline Learning to Online Adaptation
+URL: https://arxiv.org/abs/2508.07675
+ORG: arXiv  TYPE: paper  DATE: 2025-08
+
+Semantic Caching for Low-Cost LLM Serving:
+From Offline Learning to Online Adaptation
+Xutong Liu∗1 , Baran Atalar∗2 , Xiangxiang Dai†3 , Jinhang Zuo4 , Siwei Wang5 ,
+John C.S. Lui3 , Wei Chen5 , Carlee Joe-Wong2
+
+arXiv:2508.07675v3 [cs.LG] 13 Feb 2026
+
+1
+
+University of Washington, 2 Carnegie Mellon University, 3 The Chinese University of Hong Kong,
+4
+City University of Hong Kong, 5 Microsoft Research
+
+Abstract—Large Language Models (LLMs) are revolutionizing
+how users interact with information systems, yet their high
+inference cost poses serious scalability and sustainability challenges. Caching inference responses, allowing them to be retrieved
+without another forward pass through the LLM, has emerged as
+one possible solution. Traditional exact-match caching, however,
+overlooks the semantic similarity between queries, leading to
+unnecessary recomputation. Semantic caching addresses this by
+retrieving responses based on semantic similarity, but introduces
+a fundamentally different cache eviction problem: one must
+account for mismatch costs between incoming queries and cached
+responses. Moreover, key system parameters, such as query arrival
+probabilities and serving costs, are often unknown and must be
+learned over time. Existing semantic caching methods are largely
+ad-hoc, lacking theoretical foundations and unable to adapt to
+real-world uncertainty. In this paper, we present a principled,
+learning-based framework for semantic cache eviction under
+unknown query and cost distributions. We formulate both offline
+optimization and online learning variants of the problem based
+on the combinatorial multi-armed bandit framework, and develop
+provably efficient algorithms with state-of-the-art guarantees. We
+also evaluate our framework on a synthetic dataset, showing
+that our proposed algorithms perform matching or superior
+performance compared with baselines.
+
+I. I NTRODUCTION
+The emergence of large language models (LLMs) such as
+GPT-4 and Gemini has enabled remarkable advances in natural
+language understanding, reasoning, and multimodal capabilities,
+powering applications ranging from coding assistants to conversational search engines. Yet this power comes at a steep cost:
+each query can require billions of floating point operations,
+making LLM inference orders of magnitude more expensive
+than conventional web queries [1]. As usage continues to rise,
+service providers face growing concerns over latency, compute
+efficiency, and energy consumption.
+A natural way to mitigate these costs is through caching—
+reusing previously computed responses when similar queries
+reappear. However, most existing LLM caching frameworks
+are built on exact string or token matching [2], [3], which are
+ill-suited to LLM workloads. Semantically equivalent queries
+such as “What is LLM caching?” and “How does caching
+work in large language models?” are treated as completely
+∗ Xutong Liu and Baran Atalar are co-first authors. † Xiangxiang Dai is the
+corresponding author. The work of Carlee Joe-Wong is supported by NSF
+grant 2312761 and Department of Energy grant DESC0025652. The work of
+John C.S. Lui is supported in part by RGC GRF-14202923. Xiangxiang Dai is
+supported by the National Natural Science Foundation of China (625B2163).
+
+different entries, resulting in frequent cache misses even when
+a suitable response exists. Recent research shows that over 30%
+of LLM queries are semantically similar [4]. This exposes a
+major inefficiency: today’s cache systems are blind to semantic
+similarity and conversational context.
+To address this gap, recent work has explored the problem of
+semantic caching, i.e., designing caching systems that reason
+about the meaning and context of queries, rather than their exact
+text [4]–[7]. For example, GPTCache implements an industryscale semantic caching framework by embedding prompts into
+vector spaces and storing responses in a vector database for
+efficient similarity-based retrieval. Building on this foundation,
+follow-up work has incorporated student–teacher models [6],
+hierarchical clustering [7], and federated learning [4] to further
+improve hit rates and cost savings.
+Despite these advances, there still exist limitations that can
+be significantly improved. First, most existing systems assume
+that query arrival distributions and response costs are known a
+priori—an assumption that rarely holds in real and uncertain
+deployment environments. Second, many current approaches
+are ad hoc and data-driven, lacking theoretical foundations
+and rigorous performance guarantees that are essential for
+understanding and optimizing semantic caching at scale. These
+gaps lead to a fundamental open question: Can we build a
+principled semantic caching framework that optimizes the total
+cost under uncertainty, with provable performance guarantees?
+A. Our Contributions
+To answer this question, our contributions are as follows:
+(1) Semantic Caching Model: We introduce a novel semantic
+caching framework that generalizes traditional exact-match
+caching by incorporating a mismatch cost, which models
+potential utility loss when serving semantically similar, but
+not identical, responses. This introduces a new algorithmic
+challenge: balancing the mismatch cost against the serving
+cost incurred by querying the LLM for a fresh response. We
+formalize this trade-off via a unified loss function that supports
+arbitrary distance metrics over queries. Based on this model,
+we systematically study three settings of increasing uncertainty:
+(i) the oracle setting, where both query arrival probabilities
+and serving costs are known; (ii) the offline learning setting,
+where these parameters are unknown but learned from a static
+dataset; and (iii) the online adaptive setting, where the agent
+learns and adapts in real time from partial feedback.
+
+(2) Algorithm Design: For the oracle setting, we show
+that computing the optimal cache is NP-hard even with full
+knowledge of parameters. We then prove that the loss function
+is non-increasing and supermodular, and design the Reverse
+Greedy algorithm with provable approximation guarantees.
+For the offline learning setting, where serving costs and
+query arrival probabilities are unknown but historical data
+is available (e.g., logs or pre-deployment feedback [2], [3]),
+we develop a pessimistic learning algorithm, CUCB-SC. It
+estimates the parameters while penalizing uncertainty due to
+limited historical data, and integrates with Reverse Greedy
+to yield robust cache decisions with finite-sample guarantees.
+For the online adaptive setting, we face a unique challenge:
+balancing exploration and exploitation under a low-switching Fig. 1: Semantic Caching System for Low-Cost LLM Serving
+constraint, since each cache update incurs additional serving
+cost. We propose CLCB-SC-LS, which combines stage-based
+cache switching with the principle of optimism in the face of under uncertainty based on the combinatorial multi-armed
+uncertainty, and is provably efficient with minimal switching. bandits framework [3], [21]–[23], with provable theoretical
+(3) Theoretical Guarantees: We provide rigorous theoretical guarantees in both offline and online learning settings.
+results across all three settings grounding to combinatorial
+Offline Optimization and Online Learning for Caching.
+multi-armed bandits frameworks. In the oracle setting, we Classical cache eviction algorithms assume known query arrival
+show our algorithm achieves near-optimal approximation with probabilities and costs. For non-uniform arrivals, policies such
+low time complexity, and can be improved to exact optimality as Least Frequently Used (LFU) and Least Recently Used
+with increased computation. In the offline setting,
+p we prove the (LRU) are commonly employed [24]. When both arrival rates
+suboptimality gap of our algorithm scales as Õ( m/n), where and costs vary, the Least Expected Cost (LEC) policy was
+m is the number of queries, n is the number of samples, and Õ proposed [25]. More recent work has examined statistical
+ignores the log
+√ factors. In the online setting, we prove a regret learning for caching in both offline and online contexts [2],
+bound of Õ( mT ) over T rounds, with only O(m log log T ) [3], [26], but these efforts are largely limited to exact-match
+cache switches. Notably, our offline and online algorithms caching. We extend this line of work to semantic caching under
+improve upon prior methods [2] and match state-of-the-art unknown parameters, which enables us to use responses from
+performance in the special case of exact-match caching [3].
+semantically similar queries in the cache. Our algorithm design
+(4) Performance Evaluation: We conduct extensive experi- and theoretical results recover prior results [2] in the degenerate
+ments on synthetic datasets for offline and online settings. We (exact match) case. Finally, while there is a line of work that
+show that the reverse greedy algorithm closely approximates studies similarity caching [26]–[29], their formulation differs
+the optimal cache with minimal loss. In the online setting, in both the loss function and algorithmic design, and does not
+our algorithms consistently outperform baselines regarding explicitly control cache switching costs as we do.
+average regret, with at least 11.75% improvements observed
+II. S YSTEM M ODEL
+across varying cache sizes, query distributions, and time
+horizons. Moreover, CLCB-SC-LS achieves the lowest number
+In this section, we present the system model of the semantic
+of cache switches and running time (reducing up to 85%) while caching problem for LLM serving, as shown in Fig. 1.
+maintaining strong regret results.
+A. LLM Serving System
+B. Related Work
+We consider an LLM serving system with the following core
+Low-Cost LLM Serving. There have been tremendous
+efforts recently to reduce the inference cost and latency of large
+language model (LLM) serving, through approaches such as
+model quantization [8], [9], speculative decoding [10], [11], and
+cloud-edge offloading [12], [13]. A particularly promising line
+of work leverages caching to trade memory for cost or latency
+reduction. Existing studies explore caching at various levels:
+attention-level (KV-cache) [5], [14]–[16], query-level [2]–[4],
+[7], [17], and model/API-level [18]–[20]. Our work falls under
+the query-level LLM caching category. Unlike prior query-level
+semantic caching studies [4], [7], [17] that focus primarily on
+data-driven heuristics or assume known system parameters, our
+work provides the first unified treatment of semantic caching
+
+components.
+Queries and Embeddings. Let Q = {q1 , . . . , qm } denote a
+finite set of m ∈ Z+ distinct queries, where each query qi ∈ X
+is a natural language prompt (e.g., “What is LLM caching?”)
+drawn from a language space X . The system operator (i.e.,
+learning agent) has access to a large language model (LLM)
+(e.g., ChatGPT) and an associated embedding generator e :
+X → Rde (e.g., OpenAI Embedding API), which maps each
+query into a de -dimensional vector representation.
+Arrival Probabilities and Serving Costs. Each query q ∈ Q is
+associated with an unknown expected serving cost c(q) ∈ (0, 1]
+and an
+P unknown query arrival probability p(q) ∈ (0, 1], such
+that q∈Q p(q) = 1. For example, this cost could represent
+
+the latency or the computational resources expended from a
+forward pass through the LLM. At each round t, whenever
+the agent invokes the LLM to serve a query q, it incurs a
+random cost Ct (q) = c(q) + ϵt (q), where ϵt (q) is zero-mean
+sub-Gaussian noise capturing cost variability (which is due to
+fluctuating latency or random output token length) [2].
+Similarity Distance and Mismatch Costs. We define a
+similarity distance function d : Q × Q → R+ , where a smaller
+value indicates stronger semantic similarity (e.g., the distance
+between “What is LLM caching?” and “How does caching
+work in large language models?” is small). We adopt the
+Euclidean distance as the default similarity metric: d(q1 , q2 ) =
+∥e(q1 ) − e(q2 )∥2 , yet we can generalize to any metric, such as
+cosine distance d(q1 , q2 ) = e(q1 )⊤ e(q2 )/(∥e(q1 )∥2 ∥e(q2 )∥2 ),
+without changing the results of the current work.
+We further define the distance from a query q to a set
+M ⊆ Q as d(q, M) := minu∈M d(q, u), and let s(q, M) :=
+argminu∈M d(q, u) denote the closest cached query to q.
+When a query q is served, the agent may either invoke the
+LLM to generate a fresh response a(q), or reuse a cached
+response a(u) from a similar query u ∈ M, where M
+represents the set of cached queries and their responses. Reusing
+a cached response incurs an expected mismatch cost γ · d(q, u),
+where γ > 0 is a scaling parameter. Since our results hold for
+any distance function d, we normalize this cost such that (i)
+the fresh response of q incurs zero expected mismatch cost,
+and (ii) we set γ = 1 without loss of generality.
+B. Semantic Caching for Low-cost LLM Serving
+To reduce inference cost, the system maintains a semantic
+cache M containing at most k query-response pairs:
+M = {(q1 , a(q1 )), . . . , (qk , a(qk ))},
+stored in a vector database [30]. Let p = (p(q1 ), . . . , p(qm ))
+and c = (c(q1 ), . . . , c(qm )) denote the arrival probability and
+serving cost vectors, respectively.
+In each round t, a query qt ∼ p arrives. The agent can
+decide between two actions:
+• Cache Lookup: Return a cached response a(q) for some
+q ∈ M, incurring a mismatch cost d(qt , q);
+• LLM Query: Invoke the LLM to generate a fresh response
+a(qt ), incurring the expected cost c(qt ).
+Obviously, the optimal decision rule is to compare the cost
+of querying the LLM c(q) with the mismatch cost d(qt , M)
+incurred by using the most similar cached query s(qt , M) =
+argminu∈M d(qt , u):
+(
+LLM(qt )
+if c(qt ) ≤ d(qt , M),
+(1)
+at =
+a(s(qt , M)) otherwise.
+This rule then raises the question: how should we determine
+the query-response pairs stored in the cache? In the remainder
+of the paper, we seek to answer this question.
+Given the random query arrivals, the expected loss incurred
+by a cache M is defined as:
+P
+ℓ(M; p, c, d) = q∈Q p(q) · min{c(q), d(q, M)} (2)
+
+when using the optimal decision rule in (1). Our goal is to
+find optimal M∗ of size at most k that minimizes this loss:
+M∗ = argminM⊆Q,|M|≤k ℓ(M; p, c, d).
+
+(3)
+
+Remark 1 (Special Cases of the distance function d). Our
+framework captures a wide range of semantic and structural
+caching models by varying the distance function d:
+(i) Bipartite Graph Coverage. Consider a threshold-based
+distance function for some ϵ > 0:
+(
+0 if ∥e(q1 ) − e(q2 )∥2 ≤ ϵ,
+d(q1 , q2 ) =
+(4)
+1 otherwise.
+This induces a bipartite graph G = (U, V, E) where U =
+V = Q and (u, v) ∈ E if and only if d(u, v) = 0. Define
+N (M) = {v ∈ V : ∃ u ∈ M s.t. (u, v) ∈ E} as the set of
+covered nodes. Then the general loss as in Eq. (2) becomes:
+P
+ℓ(M; p, c, d) = v /∈N (M) p(v)c(v).
+(5)
+This special case is used in proving NP-hardness (Lemma 1).
+(ii) Exact-Match Cache. Setting ϵ = 0 in the threshold
+distance of Eq. (4) reduces the model to exact-match caching
+as in prior work [2], [3], where only identical
+queries match.
+P
+The loss simplifies to ℓ(M; p, c, d) = q /∈M p(q)c(q).
+In later sections, we conduct a systematic study on how to
+find M∗ under different settings of increasing uncertainty:
+1) Oracle setting (Section III): p and c are known a priori;
+2) Offline learning setting (Section IV): an offline dataset
+is used to estimate the unknown p and c;
+3) Online learning setting (Section V): the agent can adaptively change the cache in each round, and the unknown
+p, c are learned through sequential user interactions.
+III. A PPROXIMATE S OLUTION FOR S EMANTIC C ACHING
+WITH K NOWN PARAMETERS
+In this section, we study the semantic caching problem when
+the system parameters are known a priori. We first establish
+the computational hardness of the problem Eq. (3), even for a
+special case of the general loss:
+Lemma 1 (NP-hardness). It is NP-hard to compute the optimal
+cache M∗ defined in (5).
+Given this computational hardness, a natural question is
+whether a good approximate solution can be obtained efficiently.
+We answer this in the affirmative by leveraging the nonincreasing and supermodular property of the loss function,
+which enables the use of greedy algorithms with provable
+guarantees. Intuitively, non-increasing means that as we cache
+more query-answer pairs, the expected loss decreases; supermodularity further implies that the marginal benefit of caching
+an additional item diminishes as the cache grows.
+Lemma 2 (Loss Function Properties). The loss function
+ℓ(M; p, c, d) is non-increasing and supermodular regarding
+the set M. That is, for any A ⊆ B ⊆ Q and q ∈ Q\B, we have:
+(i) ℓ(B; p, c, d) ≤ ℓ(A; p, c, d), and (ii) ℓ(A ∪ {q}; p, c, d) −
+ℓ(A; p, c, d) ≤ ℓ(B ∪ {q}; p, c, d) − ℓ(B; p, c, d).
+
+Algorithm 1 Reverse_Greedy [31]: Removing Least Ben- of user interactions with an LLM service. where Mt is
+eficial Cache Items
+the selected cache at round t, qt is the user query, and
+1: Input: Queries Q, probabilities p, serving costs c, distance Ct = Ct (qt ) is the observed cost. If Ct = ∅, it indicates
+function d, cache size k
+that the cached response from the nearest neighbor in Mt
+2: Initialize: M0 ← Q
+was used and no cost was observed. If Ct > 0, the LLM
+3: for i = 1 to m − k do
+was invoked and the cost feedback was recorded. Define
+4:
+Compute ℓ(Mi−1 \ {q}; p, c, d) for all q ∈ Mi−1
+ν(q) = Pr[Ct (qt ) ̸= ∅ | qt = q] > 0 as the probability of
+5:
+Select qi = argminq∈Mi−1 ℓ(Mi−1 \ {q}; p, c, d)
+observing the cost feedback for query q.
+6:
+Update Mi ← Mi−1 \ {qi }
+Since computing the optimal cache is NP-hard even with
+7: end for
+known parameters (Lemma 1), our goal is to learn an approx8: Return: M = Mm−k
+imate solution that competes with the α-approximate oracle
+defined given by Algorithm 1. Specifically, we aim to minimize
+Algorithm 2 CUCB-SC: Combinatorial Upper Confidence the approximate suboptimality:
+Bound Algorithm for the Semantic Caching Problem
+SubOpt(M) = ℓ(M; p, c, d) − α · ℓ(M∗ ; p, c, d), (6)
+n
+
+1: Input: Dataset D = {(Mt , qt , Ct )}t=1 , queries Q, solver
+
+Reverse_Greedy, embedding generator e, distance
+function d, probability δ.
+2: for query q ∈ Q do
+Pn
+3:
+Calculate
+t=1 I{q = qt } and
+Pn counters N (q) =
+Nc (q) = t=1 I{q = qt and Ct ̸= ∅}.
+4:
+Calculate
+empirical means p̂(q) = N (q)/n and
+P
+ĉ(q)= t∈[n] I{q = qt and Ct ̸= ∅}Ct /Nc (q).
+q
+log( 6mn
+δ )
+5:
+Calculate UCB of the cost c̄(q) = ĉ(q) +
+2Nc (q) .
+6: end for
+7: Compute Â = Reverse_Greedy (Q, p̂, c̄, d, k) .
+8: Call LLM to obtain responses a(q) for q ∈ Â.
+9: Return: M̂ = {q, a(q)}q∈Â .
+
+Based on this supermodularity property, we design a reverse
+greedy algorithm in Algorithm 1. Unlike standard greedy
+algorithms that add items from scratch, Algorithm 1 starts by
+assuming all query-answer pairs are cached and then iteratively
+removes the least useful cached item until only k remain.
+We now provide a theoretical guarantee on the performance
+of Alg. 1 following [31]. Let us define the curvature c =
+1 − minq∈Q ℓ(Q\{q};p,c,d)−ℓ(Q;p,c,d)
+ℓ(∅;p,c,d)−ℓ({q};p,c,d) , measuring how much the
+function deviates from the additive function (whose c is 0).
+Theorem 1 (Approximation Guarantee [31]). Let M be the
+β
+solution returned by Algorithm 1. Then, ℓ(M; p, c, d) ≤ e β−1 ·
+c
+ℓ(M∗ ; p, c, d), where β = 1−c
+and c ∈ [0, 1] is the curvature.
+IV. O FFLINE L EARNING FOR THE S EMANTIC C ACHING
+P ROBLEM WITH U NKNOWN PARAMETERS
+In this section, we consider the setting where the cost and
+arrival probabilities are unknown and must be learned from
+offline data. We first introduce the formal offline learning setup,
+then present the CUCB-SC algorithm in Algorithm 2 for the
+semantic caching problem, and finally provide its theoretical
+analysis and implications.
+A. Offline Learning Setup
+We assume access to a historical dataset D =
+n
+(Mt , qt , Ct )t=1 collected by an experimenter, such as logs
+
+where α is the approximation ratio from Theorem 1.
+B. Algorithm Design of CUCB-SC
+The CUCB-SC algorithm (shown in Algorithm 2) proceeds
+in two key steps. First, it computes high probability estimates
+of the arrival probabilities p and the serving costs c. For the
+serving costs, we use the upper confidence bounds (UCB) as
+pessimistic estimations of the true query costs. Specifically, we
+penalize
+each cost estimation ĉ(q) by its confidence interval,
+q
+6mn
+log( δ )/2Nc (q) in Algorithm 2. This approach, rooted
+in the pessimism principle [32], mitigates the impact of
+high fluctuations in empirical estimates caused by limited
+observations, effectively addressing the uncertainty inherent
+in passively collected data. For the arrival probabilities, we
+leverage the full-feedback nature of the dataset and use
+empirical means p̂(q). Secondly, we invoke the reverse greedy
+algorithm, which iteratively removes the least beneficial queryresponse pair based on estimated p̂ and c̄, to select the cache
+M̂ in Algorithm 2.
+C. Theoretical Result and Its Discussion
+We now present the performance guarantee for CUCB-SC.
+Theorem 2 (Suboptimality Gap Bound for Algorithm 2). Let D
+log(1/δ)
+be an offline dataset of n samples. Suppose n ≥ min8q∈Q
+p(q)ν(q) .
+Then with probability of at least 1−δ, q
+the cache
+M̂
+returned
+by
+P
+CUCB-SC satisfies: SubOpt(M̂) ≤ 4
+
+2
+
+1
+6mn
+q∈Q ν(q) log( δ )
+
+n
+
+.
+
+Remark 2 (Discussion of Theorem 2). According
+p to Theorem 2, the suboptimality gap decreases at a rate of 1/n with
+respect to the number of offline data
+samples n. In addition, the
+qP
+gap scales proportionally with
+q∈Q 1/ν(q), where ν(q)
+can be interpreted as the data generation rate for query q. In
+the special case where ν(q) = 1 for all q meanwhile the cache
+operates in an exact-match setting (see Remark 1.(ii)), our
+formulation reduces to the setting in Zhu et al. [2]. Under
+this regime,
+our result improves upon theirs by a factor of
+√
+O(k/ C1 ), where C1 = minq∈Q c(q) is the minimal query
+cost. This improvement arises from our separate treatment of
+arrival and cost distributions, leveraging their distinct feedback
+structures, in contrast to the coupled treatment in Zhu et al. [2].
+
+More recently, Liu et al. [3] achieve a similar improvement
+while also operating in the degenerate exact-match cache setting.
+Our work not only matches their theoretical guarantees but also
+extends them to the more general semantic caching setting.
+
+D. Suboptimal Gap Analysis
+To establish the result in Theorem 2, we begin with the
+following concentration bounds.
+Lemma 3 (Concentration of Estimates [3]).
+For any δ >
+nP
+0, define the following events: Earvl :=
+q∈Q |p̂(q) −
+q
+o
+n
+2m log(2/δ)
+p(q)| ≤
+, Ecost :=
+|ĉ(q) − c(q)| ≤
+n
+q
+o
+n
+log(2mn/δ)
+:=
+,
+∀q
+∈
+Q
+,
+E
+Nc (q) ≥
+counter
+2Nc (q)
+o
+8 log(m/δ)
+n·p(q)ν(q)
+, ∀q ∈ Q . Then, assuming n ≥ minq p(q)ν(q) , all
+2
+three events occur with probability at least 1 − δ.
+Given arm-level estimation errors in Lemma 3, we next proceed to relate the arm-level error to the cache-level suboptimal
+gap. Specifically, we bound the sensitivity of the loss function
+to perturbations in its parameters.
+Lemma 4 (Loss Function Sensitivity). For any cost parameters c, c′ ∈ [0, 1]m , arrival probabilities p, p′ ∈
+[0, 1]m , and any distance function d : Q × Q → [0, 1],
+the loss function satisfies that for P
+any cache M ⊆ Q,
+′
+′
+′
+|ℓ(M;
+c,
+p,
+d)
+−
+ℓ(M;
+c
+,
+p
+,
+d)|
+≤
+q∈Q |p(q) − p (q)| +
+P
+′
+q∈Q p(q)|c(q) − c(q )|.
+Proof of Theorem 2. We ignore d in the loss function
+ℓ(M; p, c, d) = ℓ(M; p, c) when contexts are clear. Under
+the events of Earvl , Ecost , Ecounter , ℓ(M̂; c, p) − αℓ(M∗ ; c, p) =
+αℓ(M∗ ; c̄, p̂) − αℓ(M∗ ; c, p) + ℓ(M̂; c̄, p̂) − αℓ(M∗ ; c̄, p̂)
+|
+{z
+} |
+{z
+}
+estimation gap
+
+greedy gap
+
+V. O NLINE A DAPTIVE L EARNING FOR THE S EMANTIC
+C ACHING P ROBLEM WITH U NKNOWN PARAMETERS
+Now that we have developed a caching policy for the offline
+setting, we move to the online setting, in which we collect
+user data while learning the optimal cache eviction policy,
+and which does not require an offline dataset. For example, a
+deployed chatbot must decide whether to serve each incoming
+query from the cache or invoke the LLM at a cost for a stream
+of users, while continuously estimating query distributions and
+serving costs. We first introduce the online learning setup, then
+present the proposed algorithm CLCB-SC-LS in Algorithm 3,
+and finally provide theoretical guarantees and analysis.
+A. Online Learning Setup
+We consider a T -round sequential decision-making problem.
+At the beginning of each round t ∈ [T ], the system maintains
+a semantic cache Mt of size k.
+A user with query qt ∼ p arrives. As described in
+Section II-B, the agent chooses between two actions:
+• Serve qt using the cached response of its nearest neighbor
+s(qt , Mt ), incurring a mismatch cost d(qt , Mt ) but
+receiving no feedback on the true serving cost c(qt );
+• Query the LLM to obtain a(qt ), incurring a realized cost
+Ct (qt ) and observing this cost.
+At the end of round t, the agent decides whether to update
+the cache. If Mt ̸= Mt−1 , the agent must query the LLM to
+fill the responses for the updated queries in Mt \ Mt−1 . This
+models a switching cost incurred for updating the cache.
+Learning Objective. The objective is to minimize the
+cumulative regret relative to the best fixed α-approximate cache
+in hindsight, while accounting for both serving and switching
+costs. Formally, letting M0 = ∅, the regret with switching cost
+is defined as:
+
+
+X
+X
+Reg(T ) = E 
+ℓ(Mt ; p, c, d) +
+c(q)
+
+t∈[T ]
+q∈Mt \Mt−1
++ ℓ(M̂; c, p) − ℓ(M̂; c̄, p̂) ≤ αℓ(M∗ ; c̄, p̂) − αℓ(M∗ ; c, p) +
+X
+|
+{z
+}
+∗
+−
+αℓ(M ; p, c, d)
+(7)
+pessimism gap
+P
+ℓ(M̂; c̄, p) − ℓ(M̂; c̄, p̂) ≤
+p(q)|c̄(q)
+−
+c(q)|
++
+t∈[T
+]
+q∈Q
+q
+P
+2m log( δ2 )
+, where where the expectation is taken on the randomness of the query
+2 ∥p̂ − p∥1 ≤ q∈Q p(q)|c̄(q) − c(q)| + 2
+n
+the equality is due to adding and subtracting αℓ(M∗ ; c̄, p̂) and arrival, the serving cost, and the cache selection.
+As in standard online learning, minimizing regret requires
+ℓ(M̂; c̄, p̂), the first inequality is due to the greedy gap ≤ 0 by
+the approximation ratio guarantee of the Reverse Greedy, balancing exploration—to acquire feedback and refine estimates
+c̄ ≥ c by Lemma 3, and ℓ(M; p, c) is monotone regarding c, of the unknown serving costs—and exploitation—to utilize the
+the second inequality is due to Lemma 4, and the last inequality best-known cache to minimize loss [33]. This explorationexploitation tradeoff is especially challenging in our setting
+is due to Lemma 3.
+P
+Then we have for the first term: q∈Q p(q) |c̄(q) − c(q)| ≤ because the agent only observes the serving cost when querying
+q
+q
+the LLM for a fresh response. Such queries can be costly,
+P
+P
+log(2mn/δ)
+2 q∈Q p(q) log(2mn/δ)
+≤
+2
+p(q)
+≤ making effective exploration both essential and expensive.
+q∈Q
+2Nc (q)
+n·p(q)ν(q)
+q
+qP
+P
+p(q) log(2mn/δ)
+2
+=
+q∈Q p(q)
+q∈Q
+n·p(q)ν(q)
+B. Algorithm Design of CLCB-SC-LS
+qP
+1
+q∈Q ν(q) log(2mn/δ)
+2
+, where the first two inequalities are
+In this section, we present CLCB-SC-LS, a low-switching
+n
+due to the definition of high-probability events in Lemma 3, online learning algorithm for semantic caching The pseudocode
+the third inequality is due to the Cauchy-Schwarz inequality. is provided in Algorithm 3, with subroutines Switch Cache
+Finally, we can set δ ′ = 1/(3δ) to conclude the theorem. □ in Algorithm 4 and Serve and Update in Algorithm 5.
+
+Algorithm 3 CLCB-SC-LS: Combinatorial Lower Confidence
+Bound Algorithm for Semantic Caching with Low Switching
+1: Input: Queries Q, solver Reverse_Greedy, embedding
+
+generator e, distance function d, rounds T , probability δ.
+2: Initialize: For each query q ∈ Q, set counter Np,0 (q) =
+0, Nc,0 (q) = 0, cumulative serving cost Lc,0 (q) = 0, stage
+index τq = 1, and round index sets T (q, τq ) = ∅. And
+initialize τp = 1, T (p, τp ) = ∅.
+3: for round t = 1, ..., T do
+4:
+User t arrives with query qt ∼ p. q
+Pτ −1
+T · τq=1 |T (q,τ )|
+5:
+if ∃ q ∈ [m] s.t. |T (q, τq )| ≥ 1 +
+m
+then
+6:
+Set τq = τq + 1, T (q, τq ) = ∅.
+7:
+Set Switch = True.q
+Pτ −1
+8:
+else if |T (p, τp )| ≥ 1 + T · τp=1 |T (p, τp )| then
+9:
+Set τp = τp + 1, T (p, τp ) = 0.
+10:
+Set Switch = True.
+11:
+end if
+12:
+if Switch == True then
+13:
+Call Switch Cache and get Mt .
+14:
+Set Switch = False
+15:
+else
+16:
+Remain Mt = Mt−1 .
+17:
+end if
+18:
+Call Serve and Update
+19: end for
+
+The algorithm proceeds in three key phases: (i) determining
+when to switch the cache based on the number of observations,
+(ii) actively interacting with the environment to explore the
+unknown serving costs and arrival probabilities, and (iii) serving
+user queries while collecting feedback to refine parameter
+estimates over time.
+Key Differences from Offline Learning. Compared to the
+offline algorithm (CUCB-SC), which optimizes a single cache
+using a static dataset, the online setting requires the agent
+to explore different caches over time to learn the unknown
+serving costs. However, changing the cache too frequently
+incurs switching overhead. Thus, CLCB-SC-LS must both: (i)
+ensure sufficient exploration to estimate serving costs accurately,
+and (ii) limit the number of switches to control switching costs.
+Stage-Based Cache Switching (Lines 5-10 of Algorithm 3).
+To control switching frequency while ensuring sufficient
+exploration, we introduce a stage-based switch mechanism
+for both the serving cost estimates and the arrival probabilities.
+For each query q ∈ Q, we partition the time slots into stages,
+where a new stage begins once sufficient serving cost feedback
+has been collected. Let T (q, τ ) denote the set of rounds in
+which query q was submitted to the LLM to get a fresh response
+during stage τ . Let τq (t) denote the current stage index of q at
+round t. As shown
+qin Algorithm 3, stage τq is incremented if:
+Pτq −1
+T·
+|T (q,τ )|
+
+τ =1
+|T (q, τq )| ≥ 1 +
+, i.e., when the number of
+m
+observations in the current stage exceeds a threshold (whose
+value is tuned to bound the number of switches as in Lemma 7)
+
+Algorithm 4 Switch Cache
+1: for query q ∈ Q do
+Calculate empirical means p̂t (q)
+2:
+
+= Np,t (q)/t and
+
+ĉt (q)=Lc,t (q)/Nc,t (q).
+q
+3)
+Calculate LCB of the cost ct (q) = ĉt (q)− log(4mT
+.
+2N
+(q)
+c,t
+¯
+4: end for
+5: Compute Mt = Reverse_Greedy (Q, p̂t , ct , d, k) .
+¯
+6: Call LLM to obtain responses a(q) for all q ∈ Mt \ Mt−1 .
+7: Return: Mt .
+3:
+
+based on the cumulative prior observations.
+Similarly, we maintain a global stage index τp for arrival
+probability estimation. This stage is incremented once the number of user arrivals in the current stage exceeds a corresponding
+threshold. As shown
+q in Algorithm 3, stage τp is updated when:
+Pτ −1
+|T (p, τp )| ≥ 1 + T · τp=1 |T (p, τp )|.
+Whenever a new stage is triggered for query q or the arrival
+probability, the flag Switch is changed to True and signals a
+new cache update in Algorithm 4.
+Active Exploration via Optimism Principle (Algorithm 4).
+To efficiently explore unknown serving costs, we follow the
+principle of optimism in the face of uncertainty [34], [35].
+Specifically, we compute lower confidence bounds (LCBs) as
+optimistic
+in Algorithm 4 of Algorithm 4: ct (q) =
+qestimates
+¯
+2 log( 4mn
+δ )
+ĉt (q) −
+Nc,t (q) . The intuition is that for queries with
+limited feedback, subtracting the confidence radius from the
+empirical mean creates an optimistic estimate that encourages
+the learner to favor these uncertain queries, thus collecting
+more feedback on their unknown costs.
+Once the Switch flag is true, we invoke Switch Cache,
+which uses the Reverse_Greedy oracle with the estimated
+probabilities p̂t and optimistic costs ct to construct a new
+¯
+cache Mt . The agent then calls the LLM to populate all new
+queries in Mt \ Mt−1 . After updating the cache, the agent
+proceeds to serve queries and refine estimates using Serve
+and Update in the following.
+Serving and Updating (Algorithm 5). After determining
+the cache Mt for the current round, the agent compares
+the lower confidence bound (LCB) estimate ct (qt ) with the
+¯
+mismatch cost incurred by using the nearest cached query
+s(qt , Mt ) (see Algorithm 5). The LLM is queried only when
+ct (qt ) < d(qt , Mt ), as shown in Algorithm 5 of Algorithm 5.
+¯
+The use of optimistic LCBs—where ct (qt ) ≤ c(qt ) with high
+¯
+probability—promotes exploration by increasing the likelihood
+of collecting real cost feedback. This mechanism is crucial for
+enabling the agent to gather informative data in the early rounds
+and for accelerating the learning of the unknown parameters.
+If ct (qt ) is smaller than d(qt , Mt ), the agent queries the LLM,
+¯
+incurs the realized serving cost Ct (qt ), and uses the feedback
+to update its estimate of the expected cost c(qt ). Otherwise,
+it returns the cached response a(s(qt , Mt )) without receiving
+any feedback. Finally, the agent updates the arrival probability
+statistics based on the observed query qt (see Algorithm 5).
+
+Algorithm 5 Serve and Update
+1: Np,t+1 (q) = Np,t (q), Nc,t+1 (q) = Nc,t (q), Lc,t+1 (q) =
+
+Lc,t (q) for all q ∈ Q.
+2: if ct (qt ) < d(qt , Mt ) then
+¯
+Call at = LLM(qt ) with cost Ct (qt ) ∼ c(qt ), and serve
+3:
+
+the user with response at .
+Update Nc,t+1 (qt ) = Nc,t (qt ) + 1 and Lt+1 (qt ) =
+Lt (qt ) + Ct (qt ).
+5:
+Update T (i, τq ) = T (i, τq ) ∪ {t}.
+6: else
+7:
+Serve the user with at = s(qt , Mt ).
+8: end if
+9: Set Np,t+1 (qt ) = Np,t (qt ) + 1, T (p, τp ) = T (p, τp ) ∪ {t}.
+
+4:
+
+C. Theoretical Result and Its Discussion
+In this section, we present the main theoretical result
+characterizing the performance of CLCB-SC-LS.
+Theorem 3 (Regret of CLCB-SC-LS). For the online semantic
+caching problem, the
+p regret of CLCB-SC-LS is upper bounded
+as: Reg(T ) ≤ O
+mT log(mT ) log log T .
+
+Lemma 6 (Sensitivity of Loss under Optimistic Cost Estimates.). For any cost parameters c, c ∈ [0, 1]m such that
+¯
+c(q) ≤ c(q) for all q ∈ Q, the loss function satisfies that
+¯
+for
+P any cache M ⊆ Q, ℓ(M; c, p, d) − ℓ(M; ¯c, p, d) ≤
+q∈Q: c(q)≤d(q,M) p(q)(c(q) − c(q)).
+¯
+¯
+We also upper bound the number of cache switches for each
+query q ∈ Q and the arrival probability.
+Lemma 7 (Number of cache switches). We hcan upper bound
+i
+P
+the number of stages τq (T ) and τp (T ) by: E
+q∈Q τq (T ) ≤
+O(m log log T ), E[τp (T )] ≤ O(log log T ).
+Proof of Theorem 3. For the ease of exposition, we define
+′
+′
+auxiliary variables Nc,t
+(q), ĉ′t , c′t and Nt,p
+, p̂′t as follows: If
+¯
+the selected cache at time t is just switched in Algorithm 3 (i.e.,
+′
+Switch == True), then Nc,t
+(q) = Nc,t (q), ĉ′t = ĉt , c′t = ct
+¯
+¯
+′
+′
+and Nt,p = t, p̂t = p̂t ; Otherwise, if the previous cache
+′
+is maintained (i.e., Switch == False), then Nc,t
+(q) =
+′
+′
+′
+′
+′
+′
+′
+Nc,t−1 (q), ĉt = ĉt−1 and Nt,p = Nt−1,p , p̂t = p̂t−1 .
+Under the high-probability events Earvl and Ecost ,
+we decompose the regret (without switching cost)
+into three terms: ℓ(Mt ; c, p) − αℓ(M∗ ; c, p)
+=
+ℓ(Mt ; c, p) − ℓ(Mt ; c′t , p̂′t ) + ℓ(Mt ; c′t , p̂′t ) − αℓ(M∗ ; c′t , p̂′t )
+{z
+} |
+{z
+}
+|
+¯
+¯
+¯
+
+Remark 3 (Discussion of Theorem 3). Theorem 3 shows
+estimation gap
+greedy gap
+that the regret of CLCB-SC-LS grows sublinearly with the + αℓ(M∗ ; c′ , p̂′ ) − αℓ(M∗ ; c, p)
+≤
+ℓ(Mt ; c, p) −
+t
+t
+|
+{z
+}
+¯
+number of rounds T . Notably, the number of cache switches is
+optimistic gap
+bounded by O(log log T ), as established in Lemma 7. In the
+′
+′
+ℓ(M
+;
+c
+,
+p̂
+)
++ αℓ(M∗ ; c, p̂′t ) − αℓ(M∗ ; c, p)
+≤
+t
+t
+t
+special case of exact matching (i.e., where semantic distance P
+¯
+′
+′
+≤
+′ (q)≤d(q,M) p(q)(c(q) − ct (q)) + 2 ∥p̂t − p∥1
+q∈Q:
+c
+r
+reduces to exact query identity), our result improves√upon the
+r
+¯2
+¯t
+log( 2mT
+)
+2m log( 2T
+δ
+δ )
+regret bound in Zhu et al. [2] by a factor of O(k m/C1 ), P
++
+2
+.
+′ (q)
+′
+q∈Q: c′t (q)≤d(q,M) 2p(q)
+2Nc,t
+Nt,p
+¯
+where C1 = minq∈Q c(q) denotes the minimum query cost.
+where the first equality is due to adding and subtracting
+Furthermore, our bound matches the state-of-the-art result in
+ℓ (Mt ; c′t , p̂′t , d) and αℓ (M∗ ; c′t , p̂′t , d), the first inequality
+Liu et al. [3] up to an O(log log T ) multiplicative factor, thanks
+¯
+¯
+is due to the greedy gap ≤ 0 by the approximation ratio
+to our stage-based cache update design. In contrast, both of
+guarantee of the Reverse Greedy, c′t ≤ c by Lemma 3,
+these prior algorithms incur linear O(T ) switching costs.
+¯
+and ℓ(M; p, c) is monotone regarding c, the second inequality
+D. Regret Analysis
+is due to applying Lemma 6 and Lemma 4, the last inequality
+To prove Theorem 3, we establish a sequence of lemmas. We is due to Lemma 5.
+Now let us denote γ := log(2mT 2 /δ)qfor the first term, we
+first show that the empirical estimates of the arrival probabilities
+PT P
+′ (q)]
+and serving costs concentrate around their true values uniformly have: E[ t=1 q∈Q: c′t (q)≤d(q,Mt ) p(q) 2γ/Nc,t
+q
+¯
+PT P
+over time. Compared to the offline setting, this requires an
+′ (q)]
+= E[ t=1 q=q̃t 2γ/Nc,t
+any-time guarantee, introducing an additional T term within
+q
+P
+P
+P
+′ (q)]
+the logarithmic terms due to union bounding over t ∈ [T ].
+= E[ i∈Q τ ∈τq (T ) t∈T (q,τ ) 2γ/Nc,t
+q
+Pτ −1
+P
+P
+Lemma 5 (Any-time concentration of cost and probabil- ≤ E[P
+2γ/ τ ′ =1 |T (q, τ ′ )|]
+i∈Q
+τ ∈τq (T )
+t∈T (q,τq
+)
+ity estimates). For any δ > 0, nwe define the concentraP
+P
+Pτ −1
+P
+≤ E[ i∈Q τ ∈τq (T ) |T (q, τ )| 2γ/ τ ′ =1 |T (q, τ ′ )|]
+tion events as follows: Earvl :=
+|p̂
+(q)
+−
+p(q)|
+≤
+q
+q∈Q t
+P
+P
+Pτ −1
+q
+o
+n
+≤ E[ i∈Q τ ∈τq (T ) 2 T · τq′ =1 |T (q, τ ′ )|/m
+2m log(2T /δ)
+:=
+for
+t
+∈
+[T
+]
+,
+E
+|ĉ
+(q)
+−
+c
+(q)|
+≤
+q
+cost
+t
+t
+t
+p
+Pτ −1
+P
+q
+o
+· 2γ/ τ ′ =1 |T (q, τ ′ )|] = E[ q∈Q τq (T )] · 2 2T γ/m
+log(2mT 2 /δ)
+√
+for q ∈ Q, t ∈ [T ] . Then both events hold
+2Nc,t (q)
+≤ O( mT γ · log log T ), where the first equality is due to the
+with high probability: Pr[Earvl ] ≥ 1 − δ and Pr[Ecost ] ≥ 1 − δ.
+fact that any query q is observed if and only if c′t (q) ≤ d(q, Mt )
+¯
+probability equivalence trick P
+of [35] in
+To handle the partial feedback inherent in the caching and by the triggering
+P
+system—where no serving cost is observed when the cache is expectation c′t (q)≤d(q,Mt ) p(q) · xq equals to E[ q=q̃t xq ]
+used—we require a stronger loss function sensitivity result than where q̃t = qt ¯if qt is the observed or q̃t = ∅ otherwise, the
+Lemma 4, specifically tailored for optimistic cost estimates second equality is due by exchanging thePorder of summation,
+τ −1
+′
+based on lower confidence bounds.
+the first inequlaity is due to Nc,t
+(q) ≥ τ ′ =1 |T (q, τ ′ )|, the
+
+last inequality is due to Algorithm 3 of Algorithm 3.
+For
+the
+second
+term,
+we
+can i similarly
+hP
+q
+T
+′
+derive
+that
+E
+≤
+t=1 2 2m log(2T /δ)/Nt,p
+p
+
+O
+mT log(2T /δ) · log log T . Finally, we set δ = 1/T
+and note that the number of cache switches is bounded by
+O((m + 1) log hlog T ) by Lemma i7, yielding a lower-order
+P
+regret term E
+≤ O(m2 log log T ) in
+q∈Mt \Mt−1 c(q)
+Eq. (7), completing the proof.
+□
+
+perform comparably in terms of the final suboptimality gap
+while Epsilon Greedy does slightly worse. This aligns with
+expectations: CUCB is theoretically optimal, while CLCB,
+though it may optimistically estimate costs, performs well in
+typical (non-worst-case) scenarios.
+Online Setting. Next, we conduct an experiment for the
+online caching setting where we test the performance of CLCBSC-LS (Algorithm 3) and the online variant of CUCB-SC
+(Algorithm 2) and its LCB variant (CLCB-SC, without adding
+the switching cost in regret) by recording the variation of the
+VI. E XPERIMENTS
+average regret with the number of rounds t as shown in Figure
+In this section, we present the experimental results for all 2(c). Finally, we consider LFU as a static baseline in this setting
+three of our settings, i.e., Algorithms 1, 2, and 3.
+as we let it consider the full query stream before deciding on
+Experimental Setup. We test these algorithms’ performance the cache. It can be seen that CLCB-SC-LS and CLCB-SC
+in a synthetic caching setting where we generate the queries have sublinear regret with the average regret approaching zero
+(m = 20 is used for all experiments except for the ablation as round t increases and achieves at least 11.75% improvement
+study on m, and ChatGPT was used to generate the queries), compared with the most competitive Epsilon-Greedy baseline.
+and there is a differing variety of similarity between queries in
+We now present ablation studies regarding the variation
+terms of their content. Some queries are quite similar to each of the final average regret with k and m. Figure 2(d) shows
+other, while others are more distantly related. For example that CLCB-SC and CLCB-SC-LS get lower final regret as
+"Rome attractions", "top 10 tourist attractions and hidden the cache size increases while CUCB-SC and LFU get higher
+gems in Rome", "AI papers", "recent breakthroughs in AI final regret, showing our enlarged improvement compared with
+and machine learning research" are some of the queries in our the strongest baseline (from 11.75% to 54.04%). Figure 2(e)
+dataset. Queries are sampled using the uniform distribution. To shows the variation of the final average regret with m, notably
+construct the expected serving cost c(q) associated with each CLCB-SC-LS and CLCB-SC achieve lower final average regret
+query q, we tokenize these queries and define the cost as the than the other baselines for as m values, validating our tight
+number of tokens associated with each query that is min-max regret bound in Theorem 3.
+normalized after adding ϵt (q) zero-mean Gaussian noise with
+Finally, Figure 2(f) presents the total number of cache
+a standard deviation of 0.05. To form the embeddings e(q) switches and running time in the online setting. As expected,
+associated with each query, we use a sentence transformer the low-switching algorithm CLCB-SC-LS achieves the fewest
+model [36] that maps queries to a 384-dimensional vector switches and fastest runtime, reducing switches by up to
+representation. The similarity metric d is the Euclidean distance 90.91% and running time by up to 85.40% compared to the
+between query embeddings. Similarly, the similarity metric is baselines. Despite this constraint, its performance remains
+min-max normalized to ensure that it is in the range of 0-1. strong—Figure 2(c) shows that its regret closely tracks that of
+The shaded regions in Figure 2 indicate the standard deviations CLCB-SC, which incurs nearly twice as many switches.
+as 10 runs were made with each run having a different random
+VII. C ONCLUSION AND F UTURE D IRECTIONS
+seed, which affects the query sampling for the incoming query
+We present a principled, learning-based semantic caching
+stream and the noise associated with the cost of the queries.
+Optimality of Reverse-Greedy with Known Parameters. framework for low-cost LLM serving. Our study spans three
+First we explore how Algorithm 1 (Reverse Greedy) approxi- settings—oracle, offline, and online—offering a systematic
+mates the optimal loss ℓ(M∗ ; p, c, d) which we refer to here study under different information regimes. The proposed
+as the Brute Force optimal loss. We also plot the loss for the algorithms achieve state-of-the-art performance guarantees and
+Least Frequently Used (LFU) caching strategy, which prioritizes show superior empirical results. A promising future direction
+caching the most frequent queries [2]. We show the variation is to explore hybrid approaches that integrate offline training
+of the optimal loss with the cache size k in Figure 2(a). It can with online adaptation for more robust and efficient caching.
+be seen that Reverse Greedy perfectly approximates the Brute
+VIII. A PPENDIX
+Force optimal loss in this setting.
+Here we provide the missing proofs in the main body.
+Offline Setting. Now we test how Algorithm 2 performs in
+the offline setting as seen in Figure 2(b). For these experiments
+Proof of Lemma 1. For Eq. (5), the optimization
+problem is
+P
+we keep m = 20 and k = 5 and vary the length of the incoming
+equivalent to M∗ = argmaxM⊆U ,|M|≤k v∈N (M) p(v)c(v),
+query stream. We also consider the LCB variant of Algorithm
+which is essentially the maximum vertex cover problem on
+2 and Epsilon Greedy and LFU baselines. Epsilon Greedy,
+bipartite graphs and is NP-hard as proved in [37].
+□
+a standard benchmark for bandit algorithms, uses Reverse
+Greedy to construct the cache but uses the empirical cost ĉ Proof of Lemma 2. For each query q ∈ Q, define the
+and randomly removes a query with probability ϵg (which we per-query loss as ℓq (M) = min{d(q, M), c(q)} =
+set to be 0.2 for all experiments). CUCB-SC and CLCB-SC minu∈M∪{q0 } d(q, u), where q0 is a virtual element with
+
+Final Avg Regret
+
+0.12
+0.10
+0.08
+
+0.08
+CLCB-SC
+CUCB-SC
+Epsilon-Greedy
+LFU
+
+0.04
+
+7
+
+Cache Size (k)
+
+10
+
+0.00
+
+300
+
+350
+
+(d) Final Avg Regret vs k
+
+400
+
+450
+
+500
+
+Stream Length
+
+550
+
+600
+
+(e) Final Avg Regret vs m
+
+CLCB-SC
+CUCB-SC
+CLCB-SC-LS
+Epsilon-Greedy
+LFU
+
+CLCB-SC
+CUCB-SC
+CLCB-SC-LS
+Epsilon Greedy
+LFU
+
+0.06
+0.04
+0.02
+
+0.02
+
+5
+
+(c) Avg Regret vs t
+
+0.10
+0.08
+
+0.06
+
+CLCB-SC
+CUCB-SC
+CLCB-SC-LS
+Epsilon-Greedy
+LFU
+
+0.08
+0.06
+
+0.00
+
+0
+
+25
+
+50
+
+75
+
+100 125 150 175 200
+
+Rounds (t)
+
+(f) Cache-Switch and Runtime Stats
+
+0.04
+
+0.06
+0.04
+
+0.02
+
+0.02
+0.00
+
+(b) Final Suboptimality Gap vs Stream Length
+
+Final Avg Regret
+
+0.14
+
+0.10
+
+Average Regret
+
+Optimal Loss
+
+Brute Force
+Reverse Greedy
+LFU
+
+Final Suboptimality Gap
+
+(a) Optimal Loss vs k
+0.35
+0.30
+0.25
+0.20
+0.15
+0.10
+0.05
+0.00
+
+5
+
+7
+
+Cache Size (k)
+
+10
+
+0.00
+
+20
+
+25
+
+Number of Unique Queries (m)
+
+30
+
+Fig. 2: (a) Variation of the loss with the cache size k for a fixed set of queries with m = 20 (b) Variation of the final
+suboptimality gap with the stream length in the offline setting, we test the performance of Algorithm 2 and its offline variant
+CLCB-SC (c) Variation of the average regret with the number of rounds t for the online setting. CUCB-SC and CLCB-SC are
+the online variants of Algorithm 2 and its LCB variant (d) Ablation study on the final average regret’s change with the cache
+size k in the online setting (e) Ablation study on the final average regret’s change with the number of distinct queries m in the
+online setting (f) Table showing the mean number of switches and runtime of the algorithms in the online setting
+P
+P
+d(q, q0 ) = c(q). As submodularity and monotonicity are c(q)) = c(q)≤d(q,M) p(q)(c̄(q) − c(q)) ≤ q∈Q p(q)(c̄(q) −
+P
+¯
+¯
+preserved under non-negative linear combinations. It suffices c(q)) = ¯ q∈Q p(q)|c(q) − c′ (q)|, where A = {q ∈ Q :
+¯
+to show that ℓq (M) is a monotone decreasing submodular d(q, M) ≥ c̄(q) > c(q)}, B = {q ∈ Q : c̄(q) ≥ d(q, M) >
+¯
+function. Let A ⊆ B ⊆ Q and u ∈
+/ B. For Monotonicity, c(q)}, and C = {q
+∈ Q : c̄(q) ≥ c(q) > d(q, M)}.
+¯
+since ℓq (M) takes the minimum over a larger set when Finally, using the fact that |ℓ(M; p′ , c′ )¯ − ℓ(M; p, c)| ≤
+moving from A to B, it holds that ℓq (B) ≤ ℓq (A). For |ℓ(M; p′ , c′ ) − ℓ(M; p, c′ )| + |ℓ(M; p, c′ ) − ℓ(M; p, c)| conSubmodularity, we need to show the diminishing returns cludes the Lemma 4.
+□
+property: ℓq (A ∪ {u}) − ℓq (A) ≤ ℓq (B ∪ {u}) − ℓq (B). We
+Proof of Lemma 5. We follow the same proof of Lemma 3,
+exhaustively consider three cases based on the relative values
+but use the union bound over all t ∈ [T ] and Nc,t (q) ∈ [T ]. □
+of ℓq (A), ℓq (B), and d(q, u); in all, the inequality holds. □
+Proof of Lemma 6. We follow the proof of Lemma 4 with
+Proof of Theorem 1. The approximation guarantee follows
+c̄ = c, c = c′ .
+□
+from invoking Corollary 4 of [31], which provides bounds
+¯
+for minimizing a non-increasing supermodular function under Proof of Lemma 7. Let us denote s0 = log log(T /m). By the
+a cardinality constraint using the reverse greedy algorithm. □ switch condition in Algorithm 3 of Algorithm 4 and Lemma 2
+−τq +1
+in Dong et al. [39], we have: |T (q, τq )| ≥ (T /m)1−2
+≥
+log log(T /m)
+Proof of Lemma 3. For Earvl , Pr[Earvl ] ≥ 1−δ holds because
+T
+1−2
+(T /m)
+= e·m for any τq ≥ s0 + 1 and τq is
+of Weissman et al. [38]. For Ecost and Earvl , we follow Lemma
+not the last stage. Since the total number of observations is
+5 and Lemma 6 of Liu et al. [3], respectively.
+□
+at most T (one query each round), there are at most m(e +
+Proof of Lemma 4. For any cache M, any p, p′ , c, c′ ∈ 1) (including their last stages for q ∈ Q) query-stage pairs
+≥ s0 + 1 (which
+[0, 1]m , we can rearrange p̄ = (max{p(q), p′ (q)})q∈Q , (q, τ ) s.t. for q ∈ Q, τq ∈ [τq (T )] s.t. τq P
+p = (min{p(q), p′ (q)})q∈Q , c̄ = (max{c(q), c′ (q)})q∈Q , implies τq (T ) ≥Ps0 + 1). Thus,Pwe have q∈Q I{τq (T ) ≥
+¯c = (min{c(q), c′ (q)})q∈Q . Let us fix any d and rewrite s0 + 1}τq (T ) =
+q:τq (T )≥s0 +1
+τq ∈[τq (T )] I{τq < s0 + 1} +
+¯
+ℓ(M; p, c) := ℓ(M; p, c, d) for simplicity, then we have: I{τq ≥ P
+s0 + 1} < m(s0 +
+1)
++
+m(e + 1). Therefore, we
+P
+′ ′
+′
+′
+′
+|ℓ(M;
+p
+,
+c
+)
+−
+ℓ(M;
+p,
+c
+)|
+≤
+ℓ(M;
+p̄,
+c
+)
+−
+ℓ(M;
+p,
+c
+)
+=
+have
+E[
+τ
+(T
+)]
+=
+E[
+I{τ
+q
+q (T ) < s0 + 1}τq (T ) +
+q∈Q
+q∈Q
+P
+P ¯
+′
+p(q))
+min{c
+(q),
+d(q,
+M)}
+≤
+(p̄(q)
+−
+I{τ
+(T
+)
+≥
+s
++
+1}τ
+(T
+)]
+≤
+m(s
++
+1)
++ [m(s0 + 1) + m(e +
+q
+0
+q
+0
+q∈Q (p̄(q) −
+q∈Q
+P¯
+′
+p(q)) =
+q∈Q |p(q) − p (q)|. We can also prove: 1)] = m(2s0 + e + 3) = O(m log log(T )). Similarly, we can
+¯|ℓ(M; p, c′ ) − ℓ(M; p, c)| ≤ ℓ(M; p, c̄) − ℓ(M; p, c) = follow the same proof to show that E[τp ] ≤ O(log log(T )) by
+P
+P
+¯
+M) − c(q)) + treating the arrival probability as a single arm with m = 1 that
+Pq∈A p(q)(c̄(q) − ¯c(q)) + q∈B p(q)(d(q,
+P
+¯
+has total T observations.
+□
+q∈C p(q)(d(q, M) − d(q, M)) ≤
+q∈A∪B p(q)(c̄(q) −
+
+R EFERENCES
+[1] S. Samsi, D. Zhao, J. McDonald, B. Li, A. Michaleas, M. Jones,
+W. Bergeron, J. Kepner, D. Tiwari, and V. Gadepally, “From words to
+watts: Benchmarking the energy costs of large language model inference,”
+in 2023 IEEE High Performance Extreme Computing Conference (HPEC).
+IEEE, 2023, pp. 1–9.
+[2] B. Zhu, Y. Sheng, L. Zheng, C. Barrett, M. Jordan, and J. Jiao, “Towards
+optimal caching and model selection for large model inference,” vol. 36,
+pp. 59 062–59 094, 2023.
+[3] X. Liu, X. Dai, J. Zuo, S. Wang, C. Joe-Wong, J. Lui, and W. Chen,
+“Offline learning for combinatorial multi-armed bandits,” arXiv preprint
+arXiv:2501.19300, 2025.
+[4] W. Gill, M. Elidrisi, P. Kalapatapu, A. Ahmed, A. Anwar, and M. A.
+Gulzar, “Meancache: User-centric semantic cache for large language
+model based web services,” arXiv preprint arXiv:2403.02694, 2024.
+[5] F. Bang, “Gptcache: An open-source semantic cache for llm
+applications enabling faster answers and cost savings,” Proceedings
+of the 3rd Workshop for Natural Language Processing Open
+Source Software (NLP-OSS 2023), 2023. [Online]. Available: https:
+//api.semanticscholar.org/CorpusID:265607979
+[6] I. Stogiannidis, S. Vassos, P. Malakasiotis, and I. Androutsopoulos,
+“Cache me if you can: An online cost-aware teacher-student framework to reduce the calls to large language models,” arXiv preprint
+arXiv:2310.13395, 2023.
+[7] J. Li, C. Xu, F. Wang, I. M. von Riedemann, C. Zhang, and J. Liu,
+“Scalm: Towards semantic caching for automated chat services with large
+language models,” in 2024 IEEE/ACM 32nd International Symposium
+on Quality of Service (IWQoS). IEEE, 2024, pp. 1–10.
+[8] T. Dettmers, M. Lewis, Y. Belkada, and L. Zettlemoyer, “Gpt3. int8 ():
+8-bit matrix multiplication for transformers at scale,” Advances in neural
+information processing systems, vol. 35, pp. 30 318–30 332, 2022.
+[9] G. Xiao, J. Lin, M. Seznec, H. Wu, J. Demouth, and S. Han,
+“Smoothquant: Accurate and efficient post-training quantization for large
+language models,” in International conference on machine learning.
+PMLR, 2023, pp. 38 087–38 099.
+[10] Y. Leviathan, M. Kalman, and Y. Matias, “Fast inference from transformers via speculative decoding,” in International Conference on Machine
+Learning. PMLR, 2023, pp. 19 274–19 286.
+[11] B. Spector and C. Re, “Accelerating llm inference with staged speculative
+decoding,” arXiv preprint arXiv:2308.04623, 2023.
+[12] X. Miao, C. Shi, J. Duan, X. Xi, D. Lin, B. Cui, and Z. Jia, “Spotserve:
+Serving generative large language models on preemptible instances,” in
+Proceedings of the 29th ACM International Conference on Architectural
+Support for Programming Languages and Operating Systems, Volume 2,
+2024, pp. 1112–1127.
+[13] Y. Fu, L. Xue, Y. Huang, A.-O. Brabete, D. Ustiugov, Y. Patel, and
+L. Mai, “{ServerlessLLM}:{Low-Latency} serverless inference for large
+language models,” in 18th USENIX Symposium on Operating Systems
+Design and Implementation (OSDI 24), 2024, pp. 135–153.
+[14] R. Pope, S. Douglas, A. Chowdhery, J. Devlin, J. Bradbury, A. Levskaya,
+J. Heek, K. Xiao, S. Agrawal, and J. Dean, “Efficiently scaling
+transformer inference,” ArXiv, vol. abs/2211.05102, 2022. [Online].
+Available: https://api.semanticscholar.org/CorpusID:253420623
+[15] W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu, J. E.
+Gonzalez, H. Zhang, and I. Stoica, “Efficient memory management
+for large language model serving with pagedattention,” Proceedings of
+the 29th Symposium on Operating Systems Principles, 2023. [Online].
+Available: https://api.semanticscholar.org/CorpusID:261697361
+[16] Y. Sheng, L. Zheng, B. Yuan, Z. Li, M. Ryabinin, D. Y.
+Fu, Z. Xie, B. Chen, C. W. Barrett, J. Gonzalez, P. Liang,
+C. Ré, I. Stoica, and C. Zhang, “High-throughput generative
+inference of large language models with a single gpu,” in
+International Conference on Machine Learning, 2023. [Online].
+Available: https://api.semanticscholar.org/CorpusID:257495837
+[17] I. Gim, G. Chen, S. seob Lee, N. Sarda, A. Khandelwal, and
+L. Zhong, “Prompt cache: Modular attention reuse for low-latency
+inference,” ArXiv, vol. abs/2311.04934, 2023. [Online]. Available:
+https://api.semanticscholar.org/CorpusID:265067391
+[18] G. Qu, Q. Chen, W. Wei, Z. Lin, X. Chen, and K. Huang,
+“Mobile edge intelligence for large language models: A contemporary
+survey,” ArXiv, vol. abs/2407.18921, 2024. [Online]. Available:
+https://api.semanticscholar.org/CorpusID:271534421
+
+[19] X. Dai, J. Li, X. Liu, A. Yu, and J. C. S. Lui, “Cost-effective online multillm selection with versatile reward models,” ArXiv, vol. abs/2405.16587,
+2024. [Online]. Available: https://api.semanticscholar.org/CorpusID:
+270063595
+[20] T. Feng, Y. Shen, and J. You, “Graphrouter: A graph-based router for
+llm selections,” ArXiv, vol. abs/2410.03834, 2024. [Online]. Available:
+https://api.semanticscholar.org/CorpusID:273185502
+[21] W. Chen, Y. Wang, and Y. Yuan, “Combinatorial multi-armed bandit:
+General framework and applications,” in International Conference on
+Machine Learning. PMLR, 2013, pp. 151–159.
+[22] Q. Wang and W. Chen, “Improving regret bounds for combinatorial
+semi-bandits with probabilistically triggered arms and its applications,”
+in Advances in Neural Information Processing Systems, 2017, pp. 1161–
+1171.
+[23] X. Liu, J. Zuo, S. Wang, C. Joe-Wong, J. Lui, and W. Chen, “Batchsize independent regret bounds for combinatorial semi-bandits with
+probabilistically triggered arms or independent arms,” in Advances in
+Neural Information Processing Systems, 2022.
+[24] D. Lee, J. Choi, J.-H. Kim, S. H. Noh, S. L. Min, Y. Cho, and C. S.
+Kim, “Lrfu: A spectrum of policies that subsumes the least recently used
+and least frequently used policies,” IEEE transactions on Computers,
+vol. 50, no. 12, pp. 1352–1361, 2001.
+[25] H. Bahn, “Web cache management based on the expected cost of web
+objects,” Information and Software Technology, vol. 47, no. 9, pp. 609–
+621, 2005.
+[26] T. S. Salem, G. Özcan, I. Nikolaou, E. Terzi, and S. Ioannidis,
+“Online submodular maximization via online convex optimization,” in
+Proceedings of the AAAI Conference on Artificial Intelligence, vol. 38,
+no. 13, 2024, pp. 15 038–15 046.
+[27] S. Pandey, A. Broder, F. Chierichetti, V. Josifovski, R. Kumar, and S. Vassilvitskii, “Nearest-neighbor caching for content-match applications,” in
+Proceedings of the 18th international conference on World wide web,
+2009, pp. 441–450.
+[28] F. Chierichetti, R. Kumar, and S. Vassilvitskii, “Similarity caching,”
+in Proceedings of the twenty-eighth ACM SIGMOD-SIGACT-SIGART
+symposium on Principles of database systems, 2009, pp. 127–136.
+[29] M. Garetto, E. Leonardi, and G. Neglia, “Similarity caching: Theory and
+algorithms,” in IEEE INFOCOM 2020-IEEE Conference on Computer
+Communications. IEEE, 2020, pp. 526–535.
+[30] J. J. Pan, J. Wang, and G. Li, “Survey of vector database management
+systems,” The VLDB Journal, vol. 33, no. 5, pp. 1591–1615, 2024.
+[31] V. P. Il’ev, “An approximation guarantee of the greedy descent algorithm for minimizing a supermodular set function,” Discrete Applied
+Mathematics, vol. 114, no. 1-3, pp. 131–146, 2001.
+[32] C. Jin, Z. Yang, Z. Wang, and M. I. Jordan, “Provably efficient
+reinforcement learning with linear function approximation,” in Conference
+on Learning Theory. PMLR, 2020, pp. 2137–2143.
+[33] X. Dai, X. Liu, J. Zuo, H. Xie, C. Joe-Wong, and J. C. S. Lui, “Varianceaware bandit framework for dynamic probabilistic maximum coverage
+problem with triggered or self-reliant arms,” IEEE Transactions on
+Networking, vol. 33, no. 3, pp. 982–993, 2025.
+[34] X. Dai, X. Sun, J. Zuo, X. Liu, and J. C. Lui, “A unified online-offline
+framework for co-branding campaign recommendations,” in Proceedings
+of the 31st ACM SIGKDD Conference on Knowledge Discovery and
+Data Mining, ser. KDD ’25, 2025, p. 427–438.
+[35] X. Liu, J. Zuo, S. Wang, J. C. Lui, M. Hajiesmaili, A. Wierman,
+and W. Chen, “Contextual combinatorial bandits with probabilistically
+triggered arms,” in International Conference on Machine Learning.
+PMLR, 2023, pp. 22 559–22 593.
+[36] N. Reimers and I. Gurevych, “Sentence-bert: Sentence embeddings
+using siamese bert-networks,” in Proceedings of the 2019 Conference
+on Empirical Methods in Natural Language Processing. Association
+for Computational Linguistics, 11 2019. [Online]. Available: http:
+//arxiv.org/abs/1908.10084
+[37] N. Apollonio and B. Simeone, “The maximum vertex coverage problem
+on bipartite graphs,” Discrete Appl. Math., vol. 165, p. 37–48, Mar.
+2014. [Online]. Available: https://doi.org/10.1016/j.dam.2013.05.015
+[38] T. Weissman, E. Ordentlich, G. Seroussi, S. Verdu, and M. J. Weinberger,
+“Inequalities for the l1 deviation of the empirical distribution,” HewlettPackard Labs, Tech. Rep, 2003.
+[39] K. Dong, Y. Li, Q. Zhang, and Y. Zhou, “Multinomial logit bandit with
+low switching cost,” in International Conference on Machine Learning.
+PMLR, 2020, pp. 2607–2615.

@@ -1,0 +1,144 @@
+TITLE: How to Reduce Aider Token Usage
+URL: https://tokenade.net/en/articles/reduce-aider-token-usage
+ORG: Tokenade  TYPE: blog  DATE: 
+
+How to Reduce Aider Token Usage | Tokenade
+
+How to Reduce Aider Token Usage
+Aider sends a repo map with every request and, on some models, asks for whole files back. Those two defaults decide your bill, and both are one flag away.
+
+By Paul Irolla
+Founder · AI & developer tools · Tokenade
+Ph.D. in AI · builds token-optimization tooling for AI agentsView author page
+September 7, 2026·6 min read
+
+Summarize with AI
+
+Share on
+
+Add to Preferred Sources
+Cite this pageCopy URLCopy AttributionCopy APA
+
+Part of the reduce AI coding agent token usage pillar. This page is Aider-specific.
+
+How do you reduce Aider token usage?
+
+Check your edit format first, then your repo map budget. On a model configured for the whole format, Aider asks the LLM to return the entire file for a two-line change, and that single default can cost more than everything else on this page combined.
+
+Aider is bring-your-own-key. There is no plan absorbing inefficiency, so every avoidable token lands on a provider invoice with your name on it. The upside is that Aider is unusually transparent about where they go: /tokens reports the breakdown of the current context on demand, which is more than most agents offer.
+
+Why does Aider burn tokens?
+
+Because two things are re-sent constantly and one of them is your entire repository, in outline.
+
+Aider sends a repo map to the model along with each change request. The map lists the files in the repo with the key symbols defined in each, including the critical lines of each definition. It is genuinely clever — a graph-ranking algorithm over a dependency graph picks the most relevant portions rather than dumping everything — and it is also a standing charge on every single turn.
+
+The second is the edit format, which decides how much the model has to write back. That is output, billed at a higher rate per token than input, and on the whole format it is the size of the file rather than the size of the change.
+
+What does --map-tokens actually control?
+
+The map's token budget, with a documented tendency to exceed it.
+
+--map-tokens defaults to 1k tokens. Aider's own documentation is candid about what happens next: it "adjusts the size of the repo map dynamically based on the state of the chat", will "usually stay within that setting's value", but "does expand the repo map significantly at times, especially when no files have been added to the chat".
+
+That last clause is the operative one. An empty chat is exactly when the map balloons, because Aider is trying to understand the whole repo with nothing else to go on. So the expensive moment is the one before you have given it anything to work with.
+
+Two open issues on the repository document how wide the gap can be. Issue #752 reports launching with --map-tokens 1024 while /tokens shows the repo map using over 16,000. Issue #3796 asks why the banner announces 4,096 tokens while the actual map is more than double that.
+
+Read those as what they are: the budget is a target the optimiser aims at, not a hard ceiling the runtime enforces. Do not set --map-tokens and assume the matter is closed. Run /tokens and look.
+
+Which edit format should you use?
+
+diff or udiff on any model that handles them. whole only when the model cannot do better.
+
+Aider's edit formats differ enormously in what they cost:
+
+FormatWhat the model returns
+wholeA full, updated copy of every file it changes
+diffSearch/replace blocks — only the changed parts
+diff-fencedSame as diff, path inside the fence (Gemini models)
+udiffSimplified unified diff — only the changed parts
+
+Aider's own description of whole is blunt: "it can be slow and costly because the LLM has to return the entire file even if just a few lines are edited". On a 1,200-line file and a three-line fix, that is the whole file, in output tokens, every time.
+
+Aider picks the optimal format for most popular models already, so check before you change anything — --edit-format forces it, and forcing diff onto a model that cannot produce it reliably trades tokens for failed edits and retries, which is a worse deal.
+
+What does architect mode cost?
+
+Two models instead of one, and it is not automatically more expensive.
+
+Architect mode splits the work: an architect model resolves the coding task and emits plain-text instructions, and an editor model turns those into the actual edits, using the streamlined editor-diff or editor-whole formats via --editor-edit-format.
+
+The arithmetic is not obvious. You pay two calls, but the expensive reasoning model no longer has to produce syntactically perfect diffs, and the cheap editor model does the mechanical part. Whether it saves depends on your price gap between the two models and how often the single-model setup was retrying failed edits. It is worth measuring rather than assuming in either direction.
+
+Is prompt caching worth turning on?
+
+Yes, and it is off by default.
+
+Run with --cache-prompts and Aider organises the chat history to cache the parts that repeat: the system prompt, read-only files added with --read or /read-only, the repository map, and the editable files added to the chat.
+
+The repo map being cacheable is the important part, because the repo map is the thing being re-sent on every request. Caching turns the largest recurring line item into a much cheaper one.
+
+One catch worth knowing before you evaluate the result: caching statistics and costs are not available when streaming responses, because of provider API limitations. To see what caching is actually doing for you, add --no-stream. Measure with streaming off, then decide whether to leave it off.
+
+How do you see where the tokens went?
+
+/tokens, and then /drop and /clear.
+
+/tokens reports the number of tokens used by the current chat context, broken down. This is the command that ends arguments about whether the repo map is the problem.
+
+/drop removes files from the chat session to free context space. Files added three tasks ago are still being sent.
+
+/clear clears the chat history when the transcript itself has become the cost.
+
+/ask lets you ask questions about the codebase without editing files, which avoids pulling files into the editable set just to look at them.
+
+How to apply this today
+
+Run /tokens before anything else. You need to know whether the map, the files or the history dominates. The answer differs by repository.
+
+Check your edit format. If a model is on whole, find out whether it handles diff reliably. This is the largest single lever on output cost.
+
+Set --map-tokens deliberately, then verify with /tokens that reality matches. The documented behaviour is that it sometimes will not.
+
+Add files to the chat before asking big questions. An empty chat is when the map expands most.
+
+Turn on --cache-prompts, and measure once with --no-stream so you can actually see the effect.
+
+/drop aggressively. Context you are no longer editing is pure recurring cost.
+
+What goes wrong (anti-patterns)
+
+Trusting --map-tokens without checking. Two open issues say the budget is not always respected, and the overshoot is reported in multiples, not percentages. One /tokens call settles it.
+
+Leaving whole in place because it works. It does work. It also returns a full file for a one-line change, in the token class you pay most for.
+
+Evaluating caching with streaming on. The statistics are unavailable in that mode, so you will conclude nothing and probably conclude it wrongly.
+
+Treating the repo map as free because it is clever. The graph ranking is genuinely good engineering, and the output of it is still sent on every request.
+
+Assuming this fixes command output. Aider does not filter what your test runner prints before it enters the context. That is a separate and usually larger problem — see filtering command output.
+
+See also:
+
+Reduce AI coding agent token usage — the pillar
+
+How to reduce opencode token usage — the same exercise on another BYO-key agent
+
+How to measure agent token usage — establishing a baseline before changing flags
+
+Cut your AI agent's token bill.
+Ranked #1 on the Token-Harness Optimizer Leaderboard. Zero config.
+Tokenade cuts the token bill of AI agents: one install, zero config, and it trims what your agent sends to the model.
+Try it
+
+Related reads
+How to Reduce OpenClaw Token Usage
+How to Reduce Google Antigravity Token Usage
+How to Reduce Cline Token Usage
+How to Reduce Windsurf Token Usage
+How to Reduce opencode Token Usage
+
+Cut your AI agent's token bill.
+Ranked #1 on the Token-Harness Optimizer Leaderboard. Zero config.
+Tokenade cuts the token bill of AI agents: one install, zero config, and it trims what your agent sends to the model.Try it

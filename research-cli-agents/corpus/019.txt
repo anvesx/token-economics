@@ -1,0 +1,215 @@
+TITLE: How MCP Tool Definitions Inflate Your AI Agent Token Costs
+URL: https://docs.bswen.com/blog/2026-04-24-mcp-token-overhead
+ORG: bswen  TYPE: blog  DATE: 2026-04
+
+How MCP Tool Definitions Inflate Your AI Agent Token Costs | BSWEN 
+ Skip to content 
+
+How MCP Tool Definitions Inflate Your AI Agent Token Costs 
+
+ Apr 24, 2026 
+
+Cowrie 
+Dev @ Bswen 
+I connected four MCP servers to my Claude Code agent and watched my token costs explode. Before I typed a single prompt, 7,000 tokens were already consumed. A colleague with a heavy configuration burned through 66,000 tokens—nearly a third of Claude Sonnet’s 200k context window—before the conversation even started.
+
+The culprit? MCP’s automatic tool schema injection on every conversation turn, whether you use those tools or not.
+
+The Hidden Cost of Tool Discovery
+
+When you connect an MCP server to Claude Code or any MCP-compatible agent, the protocol automatically loads all tool schemas into context. This includes:
+
+Tool name and description
+
+Input parameter definitions (JSON schema)
+
+Output format specifications
+
+Usage examples and constraints
+
+Critical insight: These definitions reload on every conversation turn, not just when you invoke the tool.
+
+Let me show you the real token costs I measured:
+
+MCP ServerToolsToken OverheadPer-Tool Avg
+Playwright22~3,442156
+Gmail7~2,640377
+Jiravaries~17,000-
+mcp-omnisearch20~14,100705
+GitHub MCPvaries~8,000-12,000-
+Codex2610305
+SQLite638564
+
+Notice the pattern? A single Gmail tool (gmail_create_draft) costs 820 tokens alone—more than the entire Codex server with 2 tools. Complex tools with nested parameters cost 5-10x more than simple ones.
+
+Within the same server, I found a 6x difference: Playwright’s screenshot tool costs 370 tokens, while close browser costs just 59 tokens.
+
+The Cumulative Impact Over Time
+
+The real cost compounds over conversation turns:
+
+ScenarioToolsTurnsTotal Schema Tokens
+Light usage301554,450
+Moderate8020193,240
+Heavy12025362,350
+Enterprise API200 endpoints25358,425
+
+One developer reported 66,000 tokens consumed at conversation start—a third of Claude Sonnet’s 200k context window gone before typing the first prompt.
+
+Why This Matters: Three Hidden Costs
+
+1. Direct Token Billing
+
+At Claude Sonnet 4.6 pricing ($3/MTok input):
+
+100 tools × 20 turns × 1,000 daily conversations = 242M tokens/day
+
+Monthly cost: ~$21,000 just for schema overhead
+
+2. Context Window Contamination
+
+Excessive tool definitions crowd out actual task context:
+
+Less room for code snippets, documents, conversation history
+
+Model reasoning quality degrades with “noisy” context
+
+3. Latency Impact
+
+Larger prompts take longer to process:
+
+Each turn processes thousands of unused tool definitions
+
+Round-trip latency increases proportionally
+
+Three Strategies to Reduce Overhead
+
+Strategy 1: Tool Search/Deferral (Built-in Optimization)
+
+Claude Code implements automatic tool deferral when schemas exceed a threshold (default: 10% of context window). Deferred tools load on-demand only when invoked.
+
+Measured savings: 13.2k tokens saved in a typical session.
+
+This is the easiest approach—just ensure you’re running the latest Claude Code version.
+
+Strategy 2: Code Execution Mode (Anthropic’s Official Approach)
+
+Instead of direct tool calls, write code that calls tools programmatically. Anthropic reports up to 98.7% reduction in context overhead.
+
+Here’s how it works:
+
+# Instead of Claude knowing all tools upfront
+
+# Write code that discovers tools on demand
+
+import subprocess
+
+# List available tools (~16 tokens per tool)
+
+tools = subprocess.run(['mcp-tool', '--list'], capture_output=True, text=True)
+
+# Get help for specific tool when needed (~120 tokens)
+
+help = subprocess.run(['mcp-tool', '--help', 'gmail_create_draft'], capture_output=True, text=True)
+
+The agent only loads tool schemas when code explicitly requests them.
+
+Strategy 3: CLI-Based On-Demand Discovery (mcp2cli)
+
+A newer approach called mcp2cli replaces preloaded schemas with CLI-based discovery:
+
+--list shows tool names (~16 tokens per tool)
+
+--help fetches full schema only when needed (~120 tokens)
+
+Token savings measured:
+
+ToolsTurnsNative MCPmcp2cliSavings
+301554,5252,30996%
+8020193,2403,87198%
+12025362,3505,18199%
+
+Strategy 4: Workflow Layer Orchestration
+
+Move tool routing outside the prompt entirely:
+
+Agent emits structured output (intent, action type)
+
+LangGraph/workflow layer routes to appropriate tool
+
+Agent never sees 40+ tool definitions
+
+This pattern from the Reddit discussion:
+
+“Running through Latenode, the agent stays lean. The reliability lives outside the prompt.”
+
+The agent doesn’t need to “know” about 40 tools—it emits structured output, and the graph routes execution.
+
+When MCP Overhead Is Worth It
+
+Despite the costs, MCP provides value when:
+
+Tool count is low (<20 tools, simple schemas)
+
+Tools are frequently used (most tools invoked on most turns)
+
+Standardization matters (ecosystem compatibility, shared servers)
+
+Discovery is needed (agent must choose from available tools dynamically)
+
+Decision Matrix: Which Approach to Use
+
+Tool CountTurns/SessionRecommended Approach
+<20AnyNative MCP (costs acceptable)
+20-50<10Native MCP with deferral
+20-50>10Code execution or mcp2cli
+50-100>15Code execution (official approach)
+>100>20Workflow routing + mcp2cli hybrid
+AnyAny (rarely used)Disconnect, use native CLI
+
+Common Mistakes to Avoid
+
+Connecting every available MCP server: I did this initially. Disconnect unused servers immediately.
+
+Ignoring tool schema complexity: Complex nested parameters cost 5-10x more. Audit your tool schemas.
+
+Not measuring: Use /context to see actual token breakdown. I was shocked by my first measurement.
+
+Over-optimizing for small setups: mcp2cli adds overhead for <20 tools. Don’t over-engineer.
+
+How to Measure Your Current Overhead
+
+In Claude Code, use the /context command to see your actual token breakdown:
+
+/context
+
+This shows:
+
+Total tokens consumed
+
+Breakdown by category (tools, conversation, documents)
+
+Current context window usage percentage
+
+I recommend measuring before and after disconnecting servers to see the real impact.
+
+Final Words + More Resources 
+
+My intention with this article was to help others share my knowledge and experience.
+ If you want to contact me, you can contact by
+ email: Email me 
+Here are also the most important links from this article along with some further resources that will help you in this scope: 
+
+Oh, and if you found these resources useful, don’t forget to support me by
+ starring the repo on GitHub!
+
+Comments 
+
+Tags:
+ai
+ai-agents
+llm
+performance 
+
+ How GPT-5.5 Helps with Scientific Research and Professional Knowledge Work 
+ MCP vs Direct API: Which Approach Wins for AI Agents?

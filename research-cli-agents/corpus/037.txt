@@ -1,0 +1,380 @@
+TITLE: How I Cut Aider's Token Bill 80%: Prompt Caching, MCP Code Mode, and Tier Routing
+URL: https://dev.to/lynkr/run-aider-on-ollama-bedrock-or-any-llm-provider-one-gateway-every-model-3jm4
+ORG: dev.to  TYPE: blog  DATE: 2026-05
+
+How I Cut Aider's Token Bill 80%: Prompt Caching, MCP Code Mode, and Tier Routing - DEV Community
+
+ Add reaction
+
+ Like
+
+ Unicorn
+
+ Exploding Head
+
+ Raised Hands
+
+ Fire
+
+ Jump to Comments
+
+ Save
+
+ Boost
+
+Pick as gem
+
+ Copy link
+
+Copied to Clipboard
+
+ Share to X
+
+ Share to LinkedIn
+
+ Share to Facebook
+
+ Share to Mastodon
+
+ Share Post via...
+
+ Report Abuse
+
+Aider is the best terminal AI coding tool I've used. But by default it sends every diff through your OpenAI or Anthropic key, which gets expensive fast on real refactors — a single 100-file repo map can torch a few dollars before Aider even reads your prompt.
+
+This post shows how to run Aider against any LLM provider — Ollama for free local runs, OpenRouter for mixed-provider routing, AWS Bedrock for the enterprise plate — through a single OpenAI-compatible endpoint, with prompt caching and MCP Code Mode layered on top to slash the bill further. I'll use Lynkr, the self-hosted gateway I maintain.
+
+Full disclosure: I build Lynkr. I'm going to make the case for why the combination — gateway + caching + code-mode tools — is the real cost lever, not just "swap your provider."
+
+ The setup in three commands
+
+# 1. Start the gateway
+npx lynkr@latest
+
+# 2. Point Aider at it
+export OPENAI_API_BASE=http://localhost:8081/v1
+export OPENAI_API_KEY=any-value
+
+# 3. Run Aider with any model name Lynkr knows about
+aider --model claude-sonnet-4-5
+
+That's it. Aider speaks the OpenAI Chat Completions protocol; Lynkr speaks it back and quietly translates the call to whichever upstream provider you've configured (Ollama, Bedrock, Anthropic, Azure, OpenRouter, Databricks, llama.cpp, LM Studio, ...). Aider has no idea it's talking to a router.
+
+ Where the money actually leaks in Aider
+
+Most "save money on AI coding" posts focus on swapping GPT-4o for a cheaper model. That's table stakes. The real spend in an Aider session breaks down roughly like this:
+
+Call type
+Share of total tokens
+Where it goes
+
+Repo map (system context, sent every turn)
+~50–60%
+Same prefix, every single request
+
+File contents you've /add'd
+~20–30%
+Same prefix until you change the files
+
+The actual diff / instruction
+~5–10%
+Genuinely new each turn
+
+Commit messages, summarization
+~5%
+Cheap model anyway
+
+Look at that table. Most of your Aider bill is the same bytes being re-sent over and over. Swapping models helps a little. Caching that repetitive prefix helps a lot.
+
+ Lever 1: Prompt caching — cuts the repeated-prefix tax
+
+Anthropic, Bedrock, Gemini, and OpenRouter all support prompt caching now, but Aider doesn't speak any of their cache-control protocols natively (it speaks one — OpenAI's — and only partially). Lynkr sits in the middle and injects cache_control: ephemeral breakpoints on the right blocks before forwarding upstream.
+
+What that means in practice: the second Aider request in a session — same repo map, same /added files — only pays for the few hundred tokens of new instruction. Cached input tokens are 10% the price of fresh input on Anthropic, 25% on Bedrock, free for 5 minutes on Gemini.
+
+On a 4-hour Aider session against Claude Opus 4 or GPT-5, this single lever has cut my own input bill by ~70% before I even start tier-routing.
+
+Lynkr enables it automatically when the upstream provider supports it. No Aider config change.
+
+# .env
+MODEL_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+PROMPT_CACHE=true # default on, but explicit is good
+
+ Lever 2: MCP Code Mode — collapse N tool calls into 1
+
+Aider doesn't use tool calls itself (it parses code blocks from plain Markdown). But the moment you start composing Aider with other MCP tools — file search, web fetch, sandboxed execution — the round-trip cost explodes. Every tool call is a full request/response cycle through the LLM.
+
+Lynkr's MCP Code Mode (borrowed from Cloudflare's pattern) flips this. Instead of advertising each MCP tool as a separate function the model can call, Lynkr exposes them as a small TypeScript API that the model writes a single program against. The program runs in a sandbox, hits all the tools it needs, and returns the result in one LLM round trip.
+
+Example: "find every file that imports redis, check if any still use the v3 API, and print a migration TODO list."
+
+Tool-call mode (default everywhere else): 5 file_search calls + 12 file_read calls + 1 grep call = 18 round trips. Each round trip re-sends the conversation history.
+
+MCP Code Mode (Lynkr): model writes ~20 lines of TS using mcp.fileSearch() and mcp.fileRead(), executes once, returns the result.
+
+For coding-heavy sessions where Aider is composed with other MCP tools, this is a 5–15x reduction in tokens spent on tool plumbing.
+
+ Lever 3: Tier routing — match model to task
+
+Aider's own polyglot leaderboard in May 2026:
+
+Model
+% correct
+Copilot cost ratio
+
+Claude Opus 4.5
+89.4%
+3×
+
+GPT-5 (high reasoning)
+88.0%
+1×
+
+o3-pro (high)
+84.9%
+—
+
+Gemini 2.5 Pro (32k think)
+83.1%
+1×
+
+Claude Sonnet 4.5
+82.4%
+1×
+
+Claude Opus 4.1
+82.1%
+10×
+
+Grok 4 (high)
+79.6%
+—
+
+DeepSeek V3.2 Reasoner
+74.2%
+—
+
+Claude Haiku 4.5
+73.5%
+0.33×
+
+GPT-4o
+72.9%
+0×
+
+Claude Opus 4.5 (no-think)
+70.7%
+3×
+
+DeepSeek V3.2 Chat
+70.2%
+—
+
+Two things actually worth knowing:
+
+Claude Sonnet 4.5 at 82.4% is the practical pick. It's within 7 points of the absolute top at 1× Copilot pricing — i.e. one-third the cost of Opus 4.5 for ~92% of the capability.
+
+DeepSeek V3.2 Reasoner at 74% is the budget workhorse. Costs a fraction of any Claude tier, still beats GPT-4o on Aider's own bench.
+
+You don't need Opus 4.5 to rename a variable. You need Sonnet 4.5 for almost everything, Opus 4.5 for the hardest 10% (multi-file architecture, refactor planning), and Haiku 4.5 or local Ollama for the trivial 30% (commit messages, repo map summarization).
+
+Lynkr's tier routing splits the work by prompt complexity:
+
+Aider call type
+Routes to
+Why
+
+Repo map summarization, commit messages
+
+qwen2.5-coder:7b (Ollama, local)
+Free, runs on your laptop
+
+Single-file edits, small diffs
+claude-haiku-4.5
+73.5% on Aider, 0.33× Copilot cost
+
+Default coding workhorse
+claude-sonnet-4.5
+82.4% on Aider, 1× Copilot cost
+
+Hardest 10% — architecture, multi-file refactor
+
+claude-opus-4.5 or gpt-5
+
+Used sparingly
+
+# .env additions
+TIER_SIMPLE=ollama:qwen2.5-coder:7b
+TIER_MEDIUM=anthropic:claude-haiku-4-5
+TIER_COMPLEX=anthropic:claude-sonnet-4-5
+TIER_REASONING=anthropic:claude-opus-4-5
+
+Then point Aider at --model lynkr-auto and Lynkr scores each prompt before picking the tier.
+
+ Stacking the three levers
+
+Each lever on its own is meaningful. Stacked, they compound:
+
+Caching alone: ~70% input-token cut on a stable session
+
++ Tier routing: another ~40% by pushing routine calls to Flash/Ollama
+
++ MCP Code Mode (if you compose with other MCP tools): another 5–15x on tool-plumbing tokens
+
+In my own Aider workflow — heavy refactors against a 200k-LOC monorepo — this combination has dropped a session that used to cost ~$8 in Claude calls down to under $1.50. Not because Claude got cheaper. Because most of the work is now happening on cached prefixes, free local models, or in-sandbox code execution.
+
+ Configuration walkthrough
+
+ Step 1 — Install and start Lynkr
+
+npx lynkr@latest
+
+First run creates a .env file. Minimal config:
+
+MODEL_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+PROMPT_CACHE=true
+PORT=8081
+
+For full local + free:
+
+MODEL_PROVIDER=ollama
+OLLAMA_ENDPOINT=http://localhost:11434
+OLLAMA_MODEL=qwen2.5-coder:latest
+PORT=8081
+
+Then ollama pull qwen2.5-coder:latest.
+
+ Step 2 — Point Aider at the gateway
+
+export OPENAI_API_BASE=http://localhost:8081/v1
+export OPENAI_API_KEY=dummy
+
+Drop those in your shell rc file.
+
+ Step 3 — Pick a model (or let Lynkr pick)
+
+# Direct pass-through
+aider --model claude-sonnet-4-5
+
+# Or let Lynkr tier-route
+aider --model lynkr-auto
+
+ Step 4 — Verify
+
+curl -s http://localhost:8081/v1/models | python3 -m json.tool | head
+
+Start Lynkr with LOG_LEVEL=info and watch the cache-hit lines on your second Aider request — that's where the savings show up.
+
+ Aider-specific gotchas
+
+Weak model for commits / summarization. Aider uses a cheaper model for non-code calls; default is gpt-4o-mini. Override to a free local one:
+
+aider --model openai/gpt-4o --weak-model ollama/qwen2.5-coder:7b
+
+Long context. Local Ollama models will OOM on 200k+ token repo maps. Either set --map-tokens 0, or route long-context calls to Gemini Flash 1M-token contexts via the TIER_REASONING line above.
+
+Streaming. Aider expects streaming responses. Lynkr streams by default. If you're on a non-streaming Databricks endpoint, set STREAM_PASSTHROUGH=false and Lynkr buffers + simulates.
+
+Cache hit rate. Prompt caching only fires when the prefix is byte-identical across requests. If your repo map changes (you edit a /added file), the cache for that block invalidates and rebuilds. Lynkr logs cache-hit ratios per session — watch them; if hit rate is below 60% something in your workflow is busting the prefix.
+
+ Quickref
+
+Aider env var
+Lynkr role
+
+OPENAI_API_BASE=http://localhost:8081/v1
+Where Lynkr listens
+
+OPENAI_API_KEY=dummy
+Required by Aider, ignored by Lynkr
+
+--model claude-sonnet-4-5
+Forwarded as-is to the configured upstream
+
+--model lynkr-auto
+Triggers Lynkr's complexity-based tier routing
+
+--weak-model ollama/qwen2.5-coder:7b
+Free local model for commit messages
+
+ TL;DR
+
+The default Aider setup pays full price for the same repo-map bytes on every turn. The fix isn't "use a cheaper model" — it's:
+
+Cache the repetitive prefix (prompt caching).
+
+Collapse tool plumbing into one call (MCP Code Mode).
+
+Match model size to task complexity (tier routing).
+
+Stacked, those three levers have taken my Aider sessions from ~$8 to ~$1.50 without changing how I work. Lynkr is one gateway that does all three; it's Apache 2.0, single Node binary, drop-in OpenAI base URL.
+
+Aider's GitHub: https://github.com/Aider-AI/aider
+
+Lynkr's GitHub: https://github.com/Fast-Editor/Lynkr — star to follow next integration writeups (OpenHands, Vercel AI SDK, Open Interpreter queued).
+
+ Harjot Rana
+
+ Harjot Rana
+
+ Harjot Rana
+
+ Follow
+
+ 22, engineer, always building something cool
+
+ Email
+
+ harjjotsinghh@gmail.com
+
+ Location
+
+ New Delhi, India
+
+ Joined
+
+ Oct 25, 2023
+
+ •
+
+ May 31
+
+Copy link
+
+ Hide
+
+Cutting aider's token bill 80% with caching plus tier routing is the exact playbook. Prompt caching kills the repeated-context tax, and tier routing (cheap model for routine, expensive only when needed) is where the real savings live. MCP code mode is a nice addition for keeping the model's actions cheap too. The combo matters because each lever alone plateaus, caching plus routing plus a tight tool surface compound on each other. That tiered-routing-plus-caching approach is basically the backbone of how I keep Moonshift runs down to a few dollars. Which lever gave the biggest single drop for you, the caching or the tier routing?
+
+ Some comments may only be visible to logged-in visitors. Sign in to view all comments.
+
+ Lynkr
+
+ Follow
+
+ A LLM Gateway
+
+ Joined
+
+ Dec 4, 2025
+
+ How I Built a Free OpenAI-Compatible API on Top of OpenCode
+
+ #ai
+ #api
+ #llm
+ #openai
+
+ How to run Claude Desktop and ChatGPT desktop app for free with llama.cpp and other local LLMs.
+
+ #ai
+ #opensource
+ #claude
+ #chatgpt
+
+ We're a place where coders share, stay up-to-date and grow their careers.
+
+ Log in
+
+ Create account

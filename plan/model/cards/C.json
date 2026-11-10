@@ -1,0 +1,2355 @@
+{
+ "bst": {
+  "inn": "Virtual key records from the tenant manager and spend increments from the ledger.",
+  "out": "Remaining budget per key and window, plus threshold state for the alert component.",
+  "store": "reads: key records (tenant), ledger spend | writes: max_budget, budget_duration, window_start, spent_usd, reserved_usd",
+  "fail": "Fail closed for budget paths: if the store cannot be read, reject spend-bearing calls with 503, because an unmetered call is an uncapped call. Observe-only routes fail open.",
+  "src": [
+   "C:060",
+   "C:061",
+   "C:136",
+   "A:234",
+   "A:191",
+   "C:054",
+   "C:074"
+  ],
+  "prop": "The default overshoot margin and the per-user sizing rule at P95 (95th percentile) are DevX proposals built on cited facts.",
+  "hard": "Overshoot size is not quantified in the corpus. LiteLLM stacked windows are sourced; their 402 (payment required) behaviour is not measured. Cloudflare limits are eventually consistent, so bursts overshoot (A:191).",
+  "line": "key k_41: $100/month, $10/day\nspent 7.20 reserved 0.90 -> remaining 1.90 (day)",
+  "dumb": "This is the account book for each key. It says how much money a key may spend per day or month and how much is left.",
+  "deep": {
+   "purpose": "Hold the hard spend limit for every virtual key and answer one question fast: how much may this key still spend in each window.",
+   "expected": [
+    "Stores max_budget and budget_duration per key, with stackable windows such as $10 per day and $100 per month (C:060, C:061).",
+    "Returns remaining = max_budget - spent - reserved for each window and the minimum across windows.",
+    "Rolls a window when window_start + budget_duration passes and resets spent_usd to 0.",
+    "Applies ledger spend after the true-up, so reserved and spent never double count.",
+    "Exposes threshold state at 75, 90 and 100 percent to the alert component."
+   ],
+   "not_expected": [
+    "Does not trust agent self-limits. The agent never reads the budget (C:136).",
+    "Does not count an unpriced model as zero cost (A:242).",
+    "Does not hold prompt or response content. It holds numbers and ids only.",
+    "Does not decide routing or model choice."
+   ],
+   "algorithm": {
+    "name": "Stacked window counters",
+    "formula": "remaining(key) = min over windows w of (max_budget_w - spent_w - reserved_w)",
+    "steps": [
+     "Load the key record and all its windows.",
+     "Roll any window whose end time has passed, in one transaction.",
+     "Compute remaining per window and take the minimum.",
+     "On reserve, add to reserved_usd under a row lock. On true-up, move the amount to spent_usd.",
+     "Publish the new percent used to the alert component."
+    ],
+    "params": {
+     "windows": "stackable, e.g. $10/day and $100/month (C:060)",
+     "alert_thresholds": "75, 90, 100 percent (A:213)",
+     "overshoot_margin": "DevX proposal: reserved amount of in-flight calls"
+    }
+   },
+   "security": [
+    "Keys are virtual. The provider key never reaches the client and lives in the secrets vault.",
+    "Writes to max_budget need an admin role and produce an audit row with before and after values.",
+    "A key that cannot be found is rejected. There is no default unlimited key."
+   ],
+   "performance": {
+    "slo": "DevX proposal: p99 read under 5 ms, write under 10 ms, on the request path.",
+    "complexity": "O(w) per request for w windows, usually 1 to 3.",
+    "scaling": "Shard by key id. Use one row lock per key so concurrent reserves serialise without a global lock."
+   },
+   "edge_cases": [
+    "Two requests reserve at the same instant and only one fits: the second is rejected, not queued.",
+    "A window rolls over while a reservation is in flight: the true-up lands in the new window by response time.",
+    "Budget lowered below current spend: remaining goes negative and every call is rejected until the window resets.",
+    "Clock skew between gateway nodes: use the store clock for window boundaries.",
+    "Provider cost arrives late: the key shows reserved until the true-up writes."
+   ],
+   "tests": [
+    {
+     "name": "daily cap rejects",
+     "given": "key $10/day, spent 9.95, reserve 0.10",
+     "expect": "402 returned, spent stays 9.95"
+    },
+    {
+     "name": "stack takes minimum",
+     "given": "day left $2, month left $50",
+     "expect": "remaining = $2"
+    },
+    {
+     "name": "window rollover",
+     "given": "day window ended 1 s ago, spent 9.95",
+     "expect": "spent resets to 0 and reserve succeeds"
+    },
+    {
+     "name": "store down",
+     "given": "store timeout on a spend route",
+     "expect": "503 returned and no call reaches the provider"
+    },
+    {
+     "name": "concurrent reserve",
+     "given": "two reserves of $1.00, remaining $1.50",
+     "expect": "one succeeds, one is rejected"
+    }
+   ],
+   "cost_levers": [
+    "Hard cap per key stops runaway spend, where 17 percent of tasks were failed runs and 32 percent of spend (C:028).",
+    "Windows sized near P95 spend rather than the mean keep honest users unblocked (C:054)."
+   ],
+   "feedback_events": [
+    "Threshold crossing sent to alert.",
+    "Cap hit sent to dashboards as a blocked-spend metric.",
+    "Admin budget change written to the audit log."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.bst.window_rolled",
+     "fields": [
+      "key_id",
+      "window",
+      "spent_usd"
+     ],
+     "when": "A window ends and resets."
+    },
+    {
+     "name": "token_economics.bst.cap_hit",
+     "fields": [
+      "key_id",
+      "window",
+      "remaining_usd"
+     ],
+     "when": "A reserve is rejected for budget."
+    }
+   ],
+   "papers": [
+    {
+     "ref": "C:136",
+     "key_idea": "Agents ignored budgets across 14,000+ messages.",
+     "how": "Limits are enforced in the store, never in the prompt."
+    }
+   ],
+   "repos": [
+    {
+     "ref": "C:060",
+     "name": "LiteLLM",
+     "take": "Virtual keys with max_budget, budget_duration and stackable windows."
+    },
+    {
+     "ref": "C:001",
+     "name": "Bifrost",
+     "take": "HTTP 402 once developer, team or customer budget is spent (vendor-reported)."
+    }
+   ],
+   "industry": "LiteLLM, Bifrost and Portkey keep per-key budgets at the proxy. Cloudflare and Vercel limits are soft caps, so Token Economics treats them as such and adds a margin."
+  },
+  "req": "RQ-C-001, RQ-C-002, RQ-C-004, RQ-C-005, RQ-C-006, RQ-C-007, RQ-C-008, RQ-C-011, RQ-C-050"
+ },
+ "bres": {
+  "inn": "Tenant id, request size, model and max_tokens, plus the route chosen by rules, router, tier selector and turn cap.",
+  "out": "A reservation or a rejection, the dispatch to the provider connector, and a true-up row to the ledger.",
+  "store": "reads: bst remaining, price book row, tcap cap, loop signal | writes: reserved_usd in bst, true-up row in the ledger",
+  "fail": "Fail closed: if the reservation cannot be made, the call is rejected with 402 or 503. A budget path that fails open is an uncapped path.",
+  "src": [
+   "A:197",
+   "C:136",
+   "A:191",
+   "A:242",
+   "A:245",
+   "C:027",
+   "C:110",
+   "C:074"
+  ],
+  "prop": "The overshoot margin and the choice to count max_tokens plus the reasoning reserve as the worst-case output are DevX proposals on the cited pattern.",
+  "hard": "The 25,000 token reasoning reserve is an OpenAI figure (A:197). Reasoning reserves for other providers are not in the corpus. Overshoot size is not quantified.",
+  "line": "hold $0.91 (Opus 5.5, 50k in, 8k max + 25k reserve)\nactual $0.069 -> release $0.841",
+  "dumb": "Before a call goes out, this holds back the most it could possibly cost. After the answer returns, it swaps the hold for the real cost.",
+  "deep": {
+   "purpose": "Make sure no call starts unless its worst-case cost fits in the remaining budget, then correct the books with the real cost.",
+   "expected": [
+    "Computes worst-case cost = worst input cost + (max_tokens + reasoning reserve) x output price (A:197).",
+    "Rejects the call when worst-case cost exceeds remaining budget, before any provider traffic.",
+    "Dispatches to the connector chosen by the routing components and forwards cache_control and anthropic-beta unchanged.",
+    "Writes a true-up row so the actual cost replaces the hold (edge bres to led).",
+    "Prices every model and path. An unpriced model is rejected (A:242)."
+   ],
+   "not_expected": [
+    "Does not estimate cost from the agent's own claim.",
+    "Does not pick the model. It receives the route from rules, srt, casc and tsel.",
+    "Does not store content.",
+    "Does not count a failed batch or flex call as spend (A:219, A:195)."
+   ],
+   "algorithm": {
+    "name": "Worst-case hold then true-up",
+    "formula": "hold = P_in_max x n_in + P_out x (max_tokens + R); actual = priced from the response; release = hold - actual",
+    "steps": [
+     "Read the price row for provider, model, tier and band.",
+     "Compute the hold from the largest input price among write, fresh and read rates.",
+     "Atomically add the hold to reserved_usd if remaining allows. Otherwise reject.",
+     "Dispatch. On response, the calculator prices actual usage.",
+     "Subtract the hold from reserved_usd and add actual to spent_usd in one transaction.",
+     "On error or timeout, release the hold unless the provider bills the failure (429 billing flag)."
+    ],
+    "params": {
+     "reasoning_reserve": "at least 25,000 tokens (A:197)",
+     "price_row": "chosen by provider, model, tier, band, region, effective_from",
+     "overshoot_margin": "DevX proposal"
+    }
+   },
+   "math": {
+    "definitions": [
+     "n_in: input tokens estimated at the gateway (count or provider token-count call).",
+     "P_in_max: highest per-token input rate in the row, usually the cache write rate.",
+     "P_out: output price per token, with reasoning billed at the output rate (A:197).",
+     "max_tokens: the cap set by the max-tokens enforcer.",
+     "R: reasoning reserve in tokens, at least 25,000 (A:197).",
+     "remaining: bst remaining for the tightest window."
+    ],
+    "formula_full": "hold = (n_in x P_in_max + (max_tokens + R) x P_out) / 1e6 with prices per million tokens; admit iff hold <= remaining - margin; after response release = hold - actual",
+    "derivation": "Output cost has no upper bound beyond max_tokens plus reasoning, and input cost is bounded by n_in at the dearest rate. The sum is therefore the largest bill the call can produce. Holding it guarantees spent plus reserved never exceeds the cap.",
+    "worked_example": "Opus 5.5: input $4, output $20, 5m write $5.00, read $0.20 per MTok (R1). n_in 50,000, max_tokens 8,000, R 25,000. Hold = 50,000 x 5.00/1e6 + 33,000 x 20/1e6 = 0.25 + 0.66 = $0.91. Actual: 5,000 fresh x 4/1e6 = 0.02, 45,000 read x 0.20/1e6 = 0.009, 2,000 output x 20/1e6 = 0.04, total $0.069. Release $0.841.",
+    "complexity": "O(1) per request: one price row read and one row-locked update.",
+    "failure_modes": [
+     "Underestimated n_in lets the real cost exceed the hold. The true-up then drives remaining negative and later calls are rejected.",
+     "A reserve that is too loose blocks calls that would have fit. Many in-flight calls multiply this effect.",
+     "Hold never released after a crash: a sweeper releases holds older than the provider timeout.",
+     "Reserve cost for a model with no reasoning field is over-counted by R."
+    ],
+    "calibration": "Compare hold to actual per provider and model. Track the ratio hold/actual at p50 and p99. Tighten R only where p99 actual reasoning stays well below 25,000."
+   },
+   "security": [
+    "Hold and true-up writes are atomic so a client cannot race two calls past the cap.",
+    "The provider key is fetched from the vault at call time and never logged.",
+    "Rejections return a fixed error body with no price or budget detail beyond the remaining amount for that key."
+   ],
+   "performance": {
+    "slo": "DevX proposal: under 3 ms added at p99 for reserve plus true-up, excluding provider time.",
+    "complexity": "O(1) per call.",
+    "scaling": "Stateless workers. All contention sits on the per-key row in bst."
+   },
+   "edge_cases": [
+    "Streaming call is cut halfway: the true-up uses the usage seen by the tee, and the hold is released for the rest.",
+    "Provider returns no usage object: the ledger row is labelled estimate and the hold is kept until the reconciler corrects it.",
+    "Request for an unpriced model: rejected with a clear error and an alert, not counted as zero.",
+    "max_tokens absent: the max-tokens enforcer sets it first. Without it no hold can be computed.",
+    "Batch or flex call: hold uses the discounted rate. A failed batch row bills 0 (A:219)."
+   ],
+   "tests": [
+    {
+     "name": "hold fits",
+     "given": "Opus 5.5, remaining $5.00, hold $0.91",
+     "expect": "call admitted, reserved_usd +0.91"
+    },
+    {
+     "name": "hold rejects",
+     "given": "remaining $0.50, hold $0.91",
+     "expect": "402, no provider call"
+    },
+    {
+     "name": "true-up",
+     "given": "hold 0.91, actual 0.069",
+     "expect": "reserved -0.91, spent +0.069"
+    },
+    {
+     "name": "unpriced model",
+     "given": "model id absent from price book",
+     "expect": "rejected, alert raised, spend unchanged"
+    },
+    {
+     "name": "crash release",
+     "given": "hold older than provider timeout",
+     "expect": "sweeper releases the hold"
+    }
+   ],
+   "cost_levers": [
+    "Stops runaway loops before they bill.",
+    "Lets the router and tier selector see an exact price per call."
+   ],
+   "feedback_events": [
+    "Actual cost and hold ratio sent to calibration.",
+    "Rejections sent to alerts and dashboards."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.bres.reserved",
+     "fields": [
+      "key_id",
+      "hold_usd",
+      "model"
+     ],
+     "when": "A hold is taken."
+    },
+    {
+     "name": "token_economics.bres.trued_up",
+     "fields": [
+      "key_id",
+      "hold_usd",
+      "actual_usd"
+     ],
+     "when": "The response is priced."
+    },
+    {
+     "name": "token_economics.bres.rejected",
+     "fields": [
+      "key_id",
+      "hold_usd",
+      "remaining_usd",
+      "reason"
+     ],
+     "when": "A call is refused."
+    }
+   ],
+   "papers": [
+    {
+     "ref": "A:197",
+     "key_idea": "Reasoning tokens are billed as output and sit inside output_tokens.",
+     "how": "Sets the reasoning reserve in the hold formula."
+    },
+    {
+     "ref": "A:191",
+     "key_idea": "Spend limits are eventually consistent so bursts overshoot.",
+     "how": "Token Economics holds before dispatch instead of counting after."
+    }
+   ],
+   "repos": [
+    {
+     "ref": "A:197",
+     "name": "thealirazadev/llm-gateway",
+     "take": "Worst-case cost reservation before dispatch, then reconcile (named in R1)."
+    }
+   ],
+   "industry": "Cloudflare and Vercel count spend after the fact and overshoot. Reservation gateways hold a worst case first. Token Economics follows the second pattern."
+  },
+  "req": "RQ-C-001, RQ-C-003, RQ-C-004, RQ-C-005, RQ-C-006, RQ-C-032, RQ-C-050"
+ },
+ "alert": {
+  "inn": "Threshold state from the budget store and spend events from the ledger.",
+  "out": "Alert events at 75, 90 and 100 percent to the admin channel and the dashboards.",
+  "store": "reads: bst percent used, ledger spend | writes: alert state per key, window and threshold",
+  "fail": "Fail open: a lost alert never blocks a call, because the hard cap in the budget store still applies. A missed alert is retried on the next spend event.",
+  "src": [
+   "A:213",
+   "C:116",
+   "C:054",
+   "C:101"
+  ],
+  "prop": "Alert fan-out channels and the repeat suppression window are DevX proposals.",
+  "hard": "Budget alerts at 75, 90 and 100 percent are sourced. Anomaly alerts have no corpus method and belong to the anomaly detector.",
+  "line": "key k_41 day window 90% ($9.00 of $10.00)\nalert level=90 sent once per window",
+  "dumb": "This sends a warning when a key has used 75, 90 or 100 percent of its budget. Each warning is sent once per window.",
+  "deep": {
+   "purpose": "Warn owners before a key reaches its hard cap, so they can raise the cap or stop the work.",
+   "expected": [
+    "Raises one alert per key, window and threshold at 75, 90 and 100 percent (A:213, C:116).",
+    "Triggers on each ledger spend event, within seconds of the true-up.",
+    "Includes key id, window, percent used, remaining dollars and the top three spenders by caller.",
+    "Suppresses repeats of the same threshold inside the same window.",
+    "Re-arms all thresholds when the window rolls."
+   ],
+   "not_expected": [
+    "Does not block or throttle calls. The budget store does that.",
+    "Does not detect odd spend patterns. The anomaly detector owns that.",
+    "Does not carry prompt content."
+   ],
+   "algorithm": {
+    "name": "Edge-triggered threshold check",
+    "formula": "fire(level) iff pct_used >= level and last_fired(window, level) is empty",
+    "steps": [
+     "On each spend event, read pct_used from the budget store.",
+     "For each level in 75, 90, 100 find the highest crossed and not yet fired.",
+     "Write fired state, then emit the alert.",
+     "On window roll, clear fired state."
+    ],
+    "params": {
+     "levels": "75, 90, 100 percent (A:213, C:116)",
+     "suppression": "once per window per level (DevX proposal)"
+    }
+   },
+   "security": [
+    "Alert bodies hold ids and dollar amounts only.",
+    "Webhook targets are set by an admin role and stored in the secrets vault.",
+    "Alert state is written before the send so a crash cannot cause a second send."
+   ],
+   "performance": {
+    "slo": "DevX proposal: alert emitted within 30 seconds of the crossing event.",
+    "complexity": "O(1) per spend event.",
+    "scaling": "Consume the spend stream partitioned by key id."
+   },
+   "edge_cases": [
+    "Spend jumps from 70 to 100 percent in one call: fire the 75, 90 and 100 alerts together.",
+    "Budget is raised after the 90 alert: levels are recomputed against the new cap and re-armed if below.",
+    "Webhook down: retry with backoff and keep the alert in the dashboard.",
+    "Two windows cross at once: send one alert per window.",
+    "Key deleted: pending alerts are dropped."
+   ],
+   "tests": [
+    {
+     "name": "fires at 75",
+     "given": "cap $10, spend 7.50",
+     "expect": "one alert level=75"
+    },
+    {
+     "name": "no repeat",
+     "given": "spend moves 7.50 to 7.80",
+     "expect": "no new alert"
+    },
+    {
+     "name": "jump",
+     "given": "spend moves 6.00 to 10.00",
+     "expect": "alerts 75, 90, 100 together"
+    },
+    {
+     "name": "window roll",
+     "given": "new day window starts",
+     "expect": "fired state cleared, 75 can fire again"
+    },
+    {
+     "name": "raise cap",
+     "given": "cap raised $10 to $20 at 9.00 spend",
+     "expect": "pct_used 45, 90 and 100 re-armed"
+    }
+   ],
+   "cost_levers": [
+    "Early warning lets owners act before the hard cap stops work.",
+    "Budgets sized near P95 per user raise few false alerts (C:054)."
+   ],
+   "feedback_events": [
+    "Alert acknowledgements reduce repeat nagging in the dashboard.",
+    "Cap raises after alerts feed budget sizing reviews."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.alert.fired",
+     "fields": [
+      "key_id",
+      "window",
+      "level",
+      "pct_used"
+     ],
+     "when": "A threshold is crossed."
+    }
+   ],
+   "papers": [],
+   "repos": [],
+   "industry": "Copilot and Vercel offer budget alerts at fixed percent steps. Token Economics uses 75, 90 and 100 percent as in the corpus."
+  },
+  "req": "RQ-C-007, RQ-C-008, RQ-C-050"
+ },
+ "tcap": {
+  "inn": "Turn counts per finished task from the ledger, the model id, and the current turn index of a live task.",
+  "out": "A per-model turn cap, a remaining-turns reminder, and a cap-hit signal to the reserve component.",
+  "store": "reads: ledger turns per task and model | writes: per-model turn baseline and percentile table",
+  "fail": "Fail open: if the baseline is missing the cap is skipped and the budget cap still applies. A wrong turn cap can cut valid work, so a failure must not guess a low value.",
+  "src": [
+   "C:025",
+   "C:028",
+   "C:131",
+   "C:132",
+   "C:080",
+   "C:094",
+   "C:136"
+  ],
+  "prop": "The minimum sample size per model before a cap activates, and the refresh interval, are DevX proposals.",
+  "hard": "C:025 ran with caching disabled, one run, 100 SWE-bench Verified tasks. The effect with caching on is not in the corpus (experiment E6). C:132 shows a larger cap does not help a capability-limited agent.",
+  "line": "sonnet-5.5 P75=24 turns -> cap 24, reminder at 20\nturn 24 hit -> escalate or stop, log reason",
+  "dumb": "This stops a task from running too many turns. The limit comes from how long past tasks on the same model took, and the agent gets a warning before it hits it.",
+  "deep": {
+   "purpose": "Bound per-task turns at a percentile of the model's own history, so runaway tasks stop while normal tasks finish.",
+   "expected": [
+    "Starts the cap at the 75th percentile (P75) of the model's own baseline turns, never at P25 (C:025).",
+    "Keeps one baseline per model, because baselines differ across models (C:025).",
+    "Sends a remaining-turns reminder to the agent. C:025 reports solve rate fell to 24 percent on Sonnet at P25 without it.",
+    "On cap hit, runs the fallback: escalate to the strong tier or stop with a reason.",
+    "Passes --max-turns on headless Claude runs (C:080, C:094)."
+   ],
+   "not_expected": [
+    "Does not use P25 or any cap below P50 as a default.",
+    "Does not rely on the agent to honour the cap. The gateway counts turns (C:136).",
+    "Does not apply one global cap across models.",
+    "Does not read prompt content."
+   ],
+   "algorithm": {
+    "name": "Per-model percentile cap with reminder",
+    "formula": "cap(model) = P75(turns of completed tasks for model); reminder when turn >= cap - k",
+    "steps": [
+     "Collect turns per completed task per model from the ledger.",
+     "Compute P75 once at least n tasks exist for the model.",
+     "At turn index i inject a remaining-turns reminder when i >= cap - k.",
+     "At i = cap run the fallback and log the cap, model and reason.",
+     "Recompute the baseline on a schedule and compare to the last value."
+    ],
+    "params": {
+     "percentile": "75th, never 25th (C:025)",
+     "reminder": "required (C:025)",
+     "k": "DevX proposal: 4 turns before the cap",
+     "min_sample": "DevX proposal: 30 tasks per model"
+    }
+   },
+   "math": {
+    "definitions": [
+     "T_m: set of turns-per-task for completed tasks on model m.",
+     "P75_m: 75th percentile of T_m.",
+     "k: reminder lead in turns.",
+     "cost_base: mean task cost with no cap.",
+     "solve_base: solve rate with no cap."
+    ],
+    "formula_full": "cap_m = P75(T_m); cost_saving = (cost_base - cost_capped)/cost_base; accept iff solve_capped >= solve_base - margin",
+    "derivation": "A percentile cap cuts the right tail of the turn distribution, where failed runs sit (17 percent of tasks, 32 percent of spend, C:028). At P75 about one task in four hits the cap. Lower caps cut more valid work, so solve rate falls.",
+    "worked_example": "C:025 at P75 with reminder: Sonnet cost -23.62 percent, solve 75 to 71 percent; Gemini cost -68.28 percent, solve 63 to 65 percent; GPT-4.1 cost -38.43 percent, solve 62 to 57 percent. On a $100 baseline Sonnet falls to $76.38. At P25 Gemini solve fell to 26 percent with 63 empty patches. A dynamic cap of 25 to 50 turns saved 5.95 to 24.30 percent versus a fixed 50.",
+    "complexity": "O(n log n) to compute the percentile over n tasks, once per refresh. O(1) per turn.",
+    "failure_modes": [
+     "Small sample gives a noisy P75, so the cap is too tight. The minimum sample gate prevents activation.",
+     "Model change in the baseline period shifts turns. Key the baseline on the exact model id.",
+     "A harder task mix than the baseline hits the cap often. Watch the cap-hit rate.",
+     "Agent ignores the reminder. The hard stop still applies."
+    ],
+    "calibration": "Compare cap-hit rate to 25 percent expected at P75. Run the E6 A/B with caching on: no cap, P75 with reminder, prompt-only cap. Track solve rate, cost and empty-patch rate."
+   },
+   "security": [
+    "Turn counts are metadata. No content is stored.",
+    "Reminder text is a fixed template from the policy store, so a tenant cannot inject text into the agent.",
+    "Cap changes go through the policy-as-code store with review and an audit row."
+   ],
+   "performance": {
+    "slo": "DevX proposal: under 1 ms per turn check.",
+    "complexity": "O(1) per turn after the baseline is cached.",
+    "scaling": "Baseline table is small, one row per model, cached in memory per worker."
+   },
+   "edge_cases": [
+    "Task resumed from a previous session: count turns from the original task id, not the resume.",
+    "Subagent turns: count under the parent task unless the policy sets a separate cap.",
+    "Model changes mid-task: the cap of the model that started the task applies.",
+    "No baseline yet for a new model: skip the cap and rely on budget.",
+    "Tasks with a legitimate long run: tenant override through policy with an audit row."
+   ],
+   "tests": [
+    {
+     "name": "P75 compute",
+     "given": "turns [8,10,12,14,16,20,24,30] for a model",
+     "expect": "cap equals the 75th percentile of that list"
+    },
+    {
+     "name": "reminder",
+     "given": "cap 24, k 4, turn 20",
+     "expect": "reminder injected"
+    },
+    {
+     "name": "cap hit",
+     "given": "turn 24 reached",
+     "expect": "fallback runs and the reason is logged"
+    },
+    {
+     "name": "no baseline",
+     "given": "new model, 5 tasks, min_sample 30",
+     "expect": "no cap applied"
+    },
+    {
+     "name": "reject P25",
+     "given": "policy sets percentile 25",
+     "expect": "policy validation rejects it"
+    }
+   ],
+   "cost_levers": [
+    "Cuts the failed-run tail: Sonnet -23.62 percent cost at 75 to 71 percent solve (C:025).",
+    "Dynamic caps from 25 to 50 turns saved 5.95 to 24.30 percent versus fixed 50 (C:025)."
+   ],
+   "feedback_events": [
+    "Cap-hit rate and solve rate after cap feed the rollback triggers.",
+    "Empty-patch rate after cap is a guard metric."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.tcap.cap_set",
+     "fields": [
+      "model",
+      "percentile",
+      "cap",
+      "sample_n"
+     ],
+     "when": "A baseline is refreshed."
+    },
+    {
+     "name": "token_economics.tcap.hit",
+     "fields": [
+      "task_id",
+      "model",
+      "cap",
+      "outcome"
+     ],
+     "when": "A task reaches its cap."
+    }
+   ],
+   "papers": [
+    {
+     "ref": "C:025",
+     "key_idea": "Turn cap at the 75th percentile with a reminder cuts cost with a small solve loss.",
+     "how": "Sets percentile, reminder and per-model baseline."
+    },
+    {
+     "ref": "C:132",
+     "key_idea": "More budget does not help a capability-limited agent.",
+     "how": "Supports a cap and an escalate fallback."
+    }
+   ],
+   "repos": [],
+   "industry": "Claude Code offers --max-turns for headless runs. Token Economics adds a data-driven cap per model and enforces it at the gateway for harnesses with no flag."
+  },
+  "req": "RQ-C-009, RQ-C-010, RQ-C-011, RQ-C-051"
+ },
+ "loop": {
+  "inn": "Request and tool-result signatures from the gateway, and tool events from the hook receiver when present.",
+  "out": "A stop or redirect signal to the reserve component, and a spend-after-first-failure metric.",
+  "store": "reads: recent signatures per session, hook events | writes: loop counters per session, flagged-run log",
+  "fail": "Fail open: a missed detection leaves the budget cap and turn cap in place. A false stop of good work is the greater harm, so the guard redirects before it terminates.",
+  "src": [
+   "C:028",
+   "A:059",
+   "C:062",
+   "A:246",
+   "C:074",
+   "C:059"
+  ],
+  "prop": "Signature definitions, repeat counts and window sizes are DevX proposals. The corpus names the three signals but not the thresholds.",
+  "hard": "R6 cites the 79 to 98 percent waste study as C059 and R3 cites it as R:059. The corpus file A:059 is that paper, so A:059 is used. Thresholds are not in the corpus.",
+  "line": "session s9: Read(a.py) x4, tests unchanged x3\nsignal=loop -> inject redirect, count spend",
+  "dumb": "This spots an agent that keeps doing the same thing, like reading one file again and again. It tells the agent to change course or stops the run.",
+  "deep": {
+   "purpose": "Cut spend on runs stuck in repeated reads, unchanged test reruns and repeated failures.",
+   "expected": [
+    "Detects repeated reads of the same target, unchanged test reruns and repeated failure signatures (A:059, C:028, C:062).",
+    "Redirects first with an injected hint, then stops if the pattern continues (C:028).",
+    "Logs spend after the first repeated failure. Baseline: 51 percent of spend (C:028).",
+    "Works from gateway-level request signatures, so it holds when hooks are disabled (A:234).",
+    "Takes extra signal from hook events when they exist (C:074)."
+   ],
+   "not_expected": [
+    "Does not depend on hooks alone, because developers can disable them.",
+    "Does not stop a task that is making progress. Progress resets the counters.",
+    "Does not read or store file content, only hashes."
+   ],
+   "algorithm": {
+    "name": "Signature counters with redirect then stop",
+    "formula": "count(sig) over a window; redirect when count >= r1; stop when count >= r2 after a redirect",
+    "steps": [
+     "Hash each tool call and result into a signature: (tool, target, result_hash).",
+     "Keep a sliding window of signatures per session.",
+     "Mark a repeated failure when the same failure signature recurs.",
+     "Mark an unchanged rerun when the test result hash is equal to the previous one.",
+     "At r1 repeats inject a redirect hint. At r2 repeats after that, return a stop signal.",
+     "Record the spend since the first repeated failure."
+    ],
+    "params": {
+     "r1": "DevX proposal: 3 repeats",
+     "r2": "DevX proposal: 5 repeats",
+     "window": "DevX proposal: last 20 calls",
+     "signals": "repeated read, unchanged test rerun, repeated failure (A:059, C:028)"
+    }
+   },
+   "security": [
+    "Only hashes of content are kept, never the content.",
+    "The redirect hint is a fixed template. Tool output is never copied into it.",
+    "Loop state is keyed by tenant and session so one tenant cannot read another's counters."
+   ],
+   "performance": {
+    "slo": "DevX proposal: under 1 ms per request, in-memory counters.",
+    "complexity": "O(1) per request with a bounded window.",
+    "scaling": "Counters live per session in a small cache with expiry."
+   },
+   "edge_cases": [
+    "A legitimate retry after a transient error: a changed result hash or a time gap resets the counter.",
+    "The same file is read after an edit: the edit changes the file hash, so it is not a repeat.",
+    "Harness has no tool metadata at the gateway: use request-body hash only and a higher threshold.",
+    "Hooks disabled: gateway signatures carry the load.",
+    "Parallel tool calls with one message id: count once."
+   ],
+   "tests": [
+    {
+     "name": "repeat read",
+     "given": "same Read target 4 times, no edits",
+     "expect": "redirect at r1=3"
+    },
+    {
+     "name": "unchanged rerun",
+     "given": "test result hash equal 3 times",
+     "expect": "loop flagged"
+    },
+    {
+     "name": "progress resets",
+     "given": "read x2 then edit then read",
+     "expect": "counter reset to 1"
+    },
+    {
+     "name": "stop after redirect",
+     "given": "5 repeats after a redirect",
+     "expect": "stop signal sent to bres"
+    },
+    {
+     "name": "hooks off",
+     "given": "no hook events",
+     "expect": "gateway signatures still detect"
+    }
+   ],
+   "cost_levers": [
+    "Targets failed runs: 17 percent of tasks and 32 percent of spend, with 51 percent of spend after the first repeated failure (C:028).",
+    "TokenEconomizer reports -18.4 to -30.9 percent cost including controller overhead (C:028, self-reported)."
+   ],
+   "feedback_events": [
+    "Redirect outcomes (run recovered or stopped) feed threshold review.",
+    "False stops raised by users feed the rollback triggers."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.loop.redirected",
+     "fields": [
+      "session_id",
+      "signal",
+      "count"
+     ],
+     "when": "A redirect is injected."
+    },
+    {
+     "name": "token_economics.loop.stopped",
+     "fields": [
+      "session_id",
+      "signal",
+      "spend_after_first_failure_usd"
+     ],
+     "when": "A run is stopped."
+    }
+   ],
+   "papers": [
+    {
+     "ref": "A:059",
+     "key_idea": "Repeated retrieval and unchanged reruns occur in 79 to 98 percent of tasks and cost 6.86 to 22.75 percent.",
+     "how": "Defines the three signals."
+    },
+    {
+     "ref": "C:028",
+     "key_idea": "51 percent of spend comes after the first repeated failure; redirect before terminating.",
+     "how": "Sets redirect-then-stop."
+    }
+   ],
+   "repos": [],
+   "industry": "Gateways such as the one in C:062 describe a rate-based loop breaker. Token Economics adds a redirect step before the stop."
+  },
+  "req": "RQ-C-012, RQ-C-013, RQ-C-014, RQ-C-051"
+ },
+ "stick": {
+  "inn": "Session id and provider from the gateway, plus the request rate per prefix.",
+  "out": "A per-session affinity key (prompt_cache_key, x-grok-conv-id or session_id) and a rate-cap decision.",
+  "store": "reads: session table, rate counters | writes: session to key and endpoint map, rate counters",
+  "fail": "Fail open: with no key the request still goes through, only the cache hit rate may fall. Blocking a call over a missing affinity key would cost more than a miss.",
+  "src": [
+   "A:202",
+   "A:148",
+   "A:221",
+   "A:231",
+   "A:247",
+   "A:149",
+   "C:055",
+   "A:204"
+  ],
+  "prop": "The key format, the session timeout and the overflow action are DevX proposals.",
+  "hard": "The 15 requests per minute figure is self-reported by OpenAI (A:202, A:148). Azure session affinity does not guarantee hits (A:149). Whether our callers reach the overflow is not known (R1 section 5).",
+  "line": "s9 -> prompt_cache_key=token-economics:t4:s9, rate 11/min\nOpenRouter x-session-id=token-economics:t4:s9",
+  "dumb": "This gives every session one fixed label so the provider sends its requests to the same cache. It also slows a session that sends too many requests per minute.",
+  "deep": {
+   "purpose": "Keep each session on one provider endpoint and one cache key so repeated prefixes hit the cache.",
+   "expected": [
+    "Sets prompt_cache_key on OpenAI Responses, x-grok-conv-id on xAI and session_id or x-session-id on OpenRouter (A:202, A:221, A:231).",
+    "Keeps one provider endpoint per session. Switching provider loses the cache (A:231, A:247).",
+    "Caps each key near 15 requests per minute per prefix on OpenAI, then spreads over a second key suffix (A:202, A:148).",
+    "Truncates session_id to at most 256 characters on OpenRouter (A:231).",
+    "Expires the session map after 60 minutes of silence, matching OpenRouter sticky expiry (A:231)."
+   ],
+   "not_expected": [
+    "Does not change the model, effort or tool set. The switch pricer guards those.",
+    "Does not guarantee a hit. Azure affinity may still miss (A:149).",
+    "Does not put user content into the key."
+   ],
+   "algorithm": {
+    "name": "Session-scoped affinity key with rate cap",
+    "formula": "key = hash(tenant, session_id, prefix_id); route to endpoint(key); if rate(key) > 15/min then key' = key + shard",
+    "steps": [
+     "Look up the session in the map. Create it with a stable key if absent.",
+     "Pin the endpoint chosen for the first call.",
+     "Attach the provider-specific header or field.",
+     "Count requests per key per minute.",
+     "Over the cap, add a shard suffix so overflow does not land on the same machine.",
+     "Expire the entry after the idle timeout."
+    ],
+    "params": {
+     "rate_cap": "about 15 requests per minute per prefix and key on OpenAI (A:202, A:148)",
+     "session_id_max": "256 characters (A:231)",
+     "idle_expiry": "60 minutes (A:231)"
+    }
+   },
+   "security": [
+    "The key is a hash of tenant and session, so one tenant cannot guess or reuse another's cache key.",
+    "Caches are isolated per org and workspace at the provider (A:199). The key never crosses tenants.",
+    "No user text goes into any header value."
+   ],
+   "performance": {
+    "slo": "DevX proposal: under 1 ms added per request.",
+    "complexity": "O(1) map lookup and counter update.",
+    "scaling": "Session map in a shared store with time to live (TTL) equal to the idle expiry."
+   },
+   "edge_cases": [
+    "Two harness windows share one session id: they share one key and may hit the rate cap.",
+    "Provider endpoint is down: fail over through the priced fallback chain and accept the cache loss.",
+    "Session id longer than 256 characters: hash it down.",
+    "Provider ignores the key (Azure): metrics show a low hit rate and the cache hit monitor flags it.",
+    "Rate over 15 per minute: sharding lowers per-machine overflow but splits the cache."
+   ],
+   "tests": [
+    {
+     "name": "openai key",
+     "given": "session s9, tenant t4, OpenAI route",
+     "expect": "prompt_cache_key set and stable across calls"
+    },
+    {
+     "name": "xai header",
+     "given": "xAI route",
+     "expect": "x-grok-conv-id equals the session key"
+    },
+    {
+     "name": "rate cap",
+     "given": "20 requests in one minute on one key",
+     "expect": "requests above 15 get a shard suffix"
+    },
+    {
+     "name": "long id",
+     "given": "session id of 400 characters",
+     "expect": "key hashed to 256 characters or fewer"
+    },
+    {
+     "name": "idle expiry",
+     "given": "no call for 61 minutes",
+     "expect": "map entry removed, new key on next call"
+    }
+   ],
+   "cost_levers": [
+    "Hit rates reported with a key: 60 to 87 percent on OpenAI (A:202).",
+    "Time at the top of a prompt gave 87 versus 3 percent hits and 2.2 to 2.9x cost (A:224)."
+   ],
+   "feedback_events": [
+    "Per-session hit rate from the hit monitor.",
+    "Overflow count per key."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.stick.key_set",
+     "fields": [
+      "session_id",
+      "provider",
+      "key_hash"
+     ],
+     "when": "A key is attached."
+    },
+    {
+     "name": "token_economics.stick.rate_capped",
+     "fields": [
+      "key_hash",
+      "rate_per_min"
+     ],
+     "when": "A key exceeds the rate cap."
+    }
+   ],
+   "papers": [],
+   "repos": [
+    {
+     "ref": "A:231",
+     "name": "OpenRouter",
+     "take": "session_id sticky routing with a 60-minute expiry."
+    }
+   ],
+   "industry": "OpenRouter and Vercel route by session. OpenAI hashes the first 256 tokens plus prompt_cache_key. Token Economics sets a stable key per session."
+  },
+  "req": "RQ-C-015, RQ-C-016, RQ-C-017"
+ },
+ "swp": {
+  "inn": "Current model, candidate model, cached prefix size, time since last cache write, remaining turns estimate, and prices.",
+  "out": "A switch price in dollars and a go or stay verdict with a logged reason.",
+  "store": "reads: price book rows, session prefix size and write time | writes: switch decision log",
+  "fail": "Fail closed to stay: if the price cannot be computed, the session stays on its current model. A blind switch risks a cold-cache bill for the whole context.",
+  "src": [
+   "A:192",
+   "C:030",
+   "A:204",
+   "C:055",
+   "C:086",
+   "A:282",
+   "A:008",
+   "A:228",
+   "C:052"
+  ],
+  "prop": "The remaining-turns estimate is a DevX proposal. The corpus gives no measured cost of a real switch (experiment E2).",
+  "hard": "The measured cost of a model switch on a real agent loop is not in the corpus. Whether effort change keeps the cache differs by model: kept on Opus 5.5, Sonnet 5.5, Haiku 5.5 and Fable 5.1, lost on most others (R1).",
+  "line": "opus->sonnet, prefix 5,300, write $0.0133\nsaving $0.0105/turn -> switch if turns >= 2",
+  "dumb": "Changing models throws away the saved prompt cache, which costs money. This component adds up that cost and allows a switch only when the saving is larger.",
+  "deep": {
+   "purpose": "Price the cache loss of any mid-session change of model, effort, speed or tool set, and block changes that do not pay back.",
+   "expected": [
+    "Treats model, effort, fast mode and tool set as cache keys (C:055, C:086, A:204, A:282).",
+    "Computes the incoming model's cache write cost on the current prefix (C:030).",
+    "Allows a switch only when expected saving over remaining turns exceeds that cost, and logs the reason (A:192).",
+    "Prefers an effort change to a model switch where the cache survives it (A:228, A:282).",
+    "Stays on the current model after an error by default (A:008)."
+   ],
+   "not_expected": [
+    "Does not switch on a hunch or on a single failed turn.",
+    "Does not treat fast mode as free: turning it on mid-conversation bills the whole context uncached (C:086).",
+    "Does not price subagents as if they read the parent cache. They do not unless forked (C:052)."
+   ],
+   "algorithm": {
+    "name": "Cache-loss break-even",
+    "formula": "switch iff T x (dRead + dOut) > P x W_in",
+    "steps": [
+     "Read P, the cached prefix tokens, and the time since the last write.",
+     "If the cache is already cold (past TTL), the loss is zero. Compare fresh costs.",
+     "Else cost_switch = P x W_in, the incoming write rate on the prefix.",
+     "Per-turn saving = P x (R_out - R_in) + O x (price_out_cur - price_out_new), with O expected output tokens per turn.",
+     "Estimate remaining turns T. Switch iff T x saving > cost_switch.",
+     "Log reason code and inputs."
+    ],
+    "params": {
+     "prefix_median": "about 5,300 tokens (C:030 median)",
+     "write_rate": "1.25x input for 5m, 2x for 1h (C:052)",
+     "effort_cache": "kept on Opus 5.5, Sonnet 5.5, Haiku 5.5, Fable 5.1 (R1)"
+    }
+   },
+   "math": {
+    "definitions": [
+     "P: cached prefix size in tokens.",
+     "W_in: incoming model write rate per MTok for the chosen TTL.",
+     "R_cur, R_in: cache read rates of current and incoming model.",
+     "O: expected output tokens per turn.",
+     "T: expected remaining turns (DevX proposal estimate).",
+     "price_out_cur, price_out_in: output rates per MTok."
+    ],
+    "formula_full": "cost_switch = P x W_in / 1e6; saving_per_turn = (P x (R_cur - R_in) + O x (price_out_cur - price_out_in)) / 1e6; switch iff T x saving_per_turn > cost_switch and cache is warm; if cache is cold cost_switch = 0",
+    "derivation": "A switch pays one write of the whole prefix at the incoming rate. After that each turn reads at the incoming rate. Staying pays the current read rate each turn. The difference per turn, times turns left, must beat the one-time write.",
+    "worked_example": "Opus 5.5 to Sonnet 5.5 (prices from R1): Opus read $0.20, output $20; Sonnet read $0.10, 5m write $2.50, output $10 per MTok. P 5,300 (C:030 median). O 1,000 (illustrative). cost_switch = 5,300 x 2.50/1e6 = $0.01325. Per-turn saving = 5,300 x 0.10/1e6 + 1,000 x 10/1e6 = 0.00053 + 0.01 = $0.01053. Break-even T = 0.01325 / 0.01053 = 1.26, so a switch pays from turn 2.",
+    "complexity": "O(1) per decision.",
+    "failure_modes": [
+     "Wrong T: a short task makes the switch a loss. Use a conservative T.",
+     "Prefix size drifts as the session grows, so the loss grows. Recompute at each decision.",
+     "Provider silently changes cache behaviour on effort. Verify per provider with a probe.",
+     "Output tokens per turn are underestimated and the saving is understated."
+    ],
+    "calibration": "Run E2: force a mid-session switch at several prefix sizes and time gaps and compare billed cost to this estimate. Fit T from per-model turn baselines."
+   },
+   "security": [
+    "Decision log holds model ids, token counts and dollars only.",
+    "Switch overrides by a user need an admin role and are audited.",
+    "Fast mode and effort headers are validated against an allow list before forwarding."
+   ],
+   "performance": {
+    "slo": "DevX proposal: under 1 ms per decision.",
+    "complexity": "O(1).",
+    "scaling": "Stateless. Reads price rows from a cached copy of the price book."
+   },
+   "edge_cases": [
+    "Cache already expired: switch cost is zero, so the switch is allowed on price alone.",
+    "Switch at a session start: no cache to lose.",
+    "Tool set changes because an MCP server was added: priced like a model switch.",
+    "Fork or subagent: new cache anyway, so cost is a fresh write on either model.",
+    "Incoming model has a higher minimum prefix than P: no caching, so compare fresh input costs."
+   ],
+   "tests": [
+    {
+     "name": "pays back",
+     "given": "P 5,300, Opus 5.5 to Sonnet 5.5, O 1,000, T 3",
+     "expect": "switch allowed, reason logged"
+    },
+    {
+     "name": "too short",
+     "given": "same inputs, T 1",
+     "expect": "stay, saving 0.01053 under cost 0.01325"
+    },
+    {
+     "name": "cold cache",
+     "given": "last write older than TTL",
+     "expect": "cost_switch 0, switch decided on price"
+    },
+    {
+     "name": "fast mode",
+     "given": "fast on mid-conversation, P 100,000",
+     "expect": "priced as a full uncached input, likely stay"
+    },
+    {
+     "name": "error retry",
+     "given": "tool error on turn 4",
+     "expect": "stay on the same model by default"
+    }
+   ],
+   "cost_levers": [
+    "Avoids full-context uncached bills after a switch (C:086).",
+    "Effort change over model switch where the cache survives (A:228, A:282)."
+   ],
+   "feedback_events": [
+    "Realised cost after each switch for comparison with the estimate.",
+    "Switch count per session."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.swp.priced",
+     "fields": [
+      "session_id",
+      "from_model",
+      "to_model",
+      "cost_switch_usd",
+      "saving_per_turn_usd",
+      "verdict"
+     ],
+     "when": "A switch is evaluated."
+    }
+   ],
+   "papers": [
+    {
+     "ref": "C:030",
+     "key_idea": "Mid-trajectory switches must be priced at the incoming tier's cache-write rate.",
+     "how": "Defines cost_switch."
+    },
+    {
+     "ref": "A:008",
+     "key_idea": "Agents retained the same model after an error 90.2 and 80.9 percent of the time.",
+     "how": "Default is to stay after an error."
+    }
+   ],
+   "repos": [],
+   "industry": "Cloudflare Auto Router switches only when the benefit exceeds the cache-loss cost and keys by session id (A:192). OpenRouter prefers effort change to model switch (A:228)."
+  },
+  "req": "RQ-C-016, RQ-C-017, RQ-C-018, RQ-C-019, RQ-C-020, RQ-C-028, RQ-C-045"
+ },
+ "rules": {
+  "inn": "Request features, session id, turn index, current model, tool flags, remaining budget, previous outcome signals, and the model catalogue.",
+  "out": "A model and effort choice for the request, atomic yes or no signals for the router, and a logged reason.",
+  "store": "reads: catalogue (cat), switch price (swp), budget remaining | writes: routing reason log",
+  "fail": "Fail open to the configured default model: if the rules fail, the request goes to the Best Single model. A router fault must not stop work, and the budget cap still applies.",
+  "src": [
+   "A:052",
+   "A:018",
+   "A:245",
+   "C:031",
+   "A:228",
+   "A:282",
+   "A:006",
+   "A:002",
+   "A:001",
+   "C:026",
+   "C:030",
+   "A:019",
+   "A:008",
+   "C:055"
+  ],
+  "prop": "The rule order and the atomic question list are DevX proposals shaped by A:018 and A:052.",
+  "hard": "Atomic classifier agreement fell from 0.742 on its own test set to 0.60 on blind Opus labels (A:018, n=100). A:052 used 50 tasks and one run. The feature set on interactive CLI sessions is not in the corpus. Ladder from R2: ship first = this component; ship second = srt, casc, probe; third = online budgeted routing and bandits; never = prompt-only budget limits, frontier model as router, one-model logs, preference-only labels, sum log-probability score, switching without cache-loss pricing, large pools, unpriced spend.",
+  "line": "turn 1, needs_tools=yes -> strong tier, effort high\nturn 9, tests green, no tools -> stay, reason=sticky",
+  "dumb": "This picks the model with simple rules and a few yes or no questions, such as whether the task needs tools. It starts with one good default model and only moves on clear signs.",
+  "deep": {
+   "purpose": "Choose the model and effort for each request with plain rules and atomic questions. This is the ship-first step of the R2 ladder and needs no training data.",
+   "expected": [
+    "Ship first (R2): a best-single-model baseline, then rules plus atomic yes or no questions at session start or tier boundaries (A:052, A:018, A:245, C:031).",
+    "Routes tool-bearing requests and failed verifiable checks to the strong tier (C:031, A:245).",
+    "Prefers a change of effort to a change of model, after checking the provider's cache rule (A:228, A:282, C:055).",
+    "Asks the switch pricer before any mid-session model change and stays after an error by default (A:008).",
+    "Logs reason, features, router latency and router cost on every request (C:026)."
+   ],
+   "not_expected": [
+    "Never uses a broad single-question classifier or a regex-only rule: regex lost 23.2 points held out (A:052).",
+    "Never prompts a frontier model as the router. A prompted Opus 4.6 router failed all 40 trajectories (C:030).",
+    "Never reports a saving against a random router (A:001). It reports against Best Single and an oracle (A:006, A:002).",
+    "Never relies on prompt-only budget limits (C:136)."
+   ],
+   "algorithm": {
+    "name": "Rule list with atomic questions",
+    "formula": "model = first rule in ordered list whose conditions hold; default = Best Single",
+    "steps": [
+     "Read the catalogue for allowed models and tiers.",
+     "Rule 1: session already has a model and no trigger, so stay (stickiness).",
+     "Rule 2: tool-bearing or failed verifiable check, so strong tier.",
+     "Rule 3: atomic questions at a boundary (needs_tools, needs_vision, needs_long_context, stakes, difficulty, follow_up from A:018) each yield yes or no.",
+     "Rule 4: pick the cheapest model that satisfies all yes answers.",
+     "Rule 5: ask the switch pricer. If it says stay, keep the current model.",
+     "Log the reason code. Pass features to srt when a router is active."
+    ],
+    "params": {
+     "atomic_questions": "needs_tools, needs_vision, needs_long_context, stakes, difficulty, follow_up (A:018)",
+     "default": "Best Single model per tenant (A:006)",
+     "blind_label_check": "re-measure against blind labels (A:018 fell 0.742 to 0.60)"
+    }
+   },
+   "security": [
+    "Rules read request features, never raw prompt text, unless the tenant policy allows a content-based question.",
+    "A user prompt cannot set a model name in the rule input. Model names come only from the catalogue.",
+    "Rule changes go through the policy-as-code store with review and audit."
+   ],
+   "performance": {
+    "slo": "DevX proposal: under 2 ms for rules, under 20 ms with atomic classifier calls. A:018 reports a 14 ms CPU classifier head.",
+    "complexity": "O(r) for r rules.",
+    "scaling": "Stateless. Rule sets cached per tenant."
+   },
+   "edge_cases": [
+    "Catalogue lists a model with no price row: excluded.",
+    "Two rules disagree: first match wins and the order is versioned.",
+    "Classifier unavailable: fall back to the rule-only path and then to Best Single.",
+    "Session already mid-task on a model with a warm cache: stay unless rule 2 fires.",
+    "Harness cannot rewrite the model field (no modelRewrite flag): rules log a recommendation only."
+   ],
+   "tests": [
+    {
+     "name": "tools to strong",
+     "given": "needs_tools=yes at turn 1",
+     "expect": "strong tier chosen, reason=tool_bearing"
+    },
+    {
+     "name": "sticky",
+     "given": "turn 9, no trigger",
+     "expect": "current model kept, reason=sticky"
+    },
+    {
+     "name": "effort first",
+     "given": "provider keeps cache on effort change",
+     "expect": "effort raised, model unchanged"
+    },
+    {
+     "name": "regex only",
+     "given": "config uses a regex-only classifier",
+     "expect": "policy validation rejects it"
+    },
+    {
+     "name": "no price row",
+     "given": "candidate model lacks a price row",
+     "expect": "candidate excluded"
+    }
+   ],
+   "cost_levers": [
+    "Task routing on 21 tasks gave -44.7 percent cost and -4.8 percent mean quality, with a quality floor of 65 (A:051, self-reported).",
+    "70 to 80 percent of Claude Code turns are tool selection, so only 20 to 30 percent are eligible for a cheaper tier (C:031)."
+   ],
+   "feedback_events": [
+    "Verified outcome per request (tests pass, schema valid) for label building.",
+    "Blind-label agreement checks."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.rules.routed",
+     "fields": [
+      "request_id",
+      "model",
+      "effort",
+      "reason",
+      "router_latency_ms"
+     ],
+     "when": "A route is chosen."
+    }
+   ],
+   "papers": [
+    {
+     "ref": "A:052",
+     "key_idea": "Atomic yes or no questions work; one broad question collapses. Regex lost 23.2 points held out.",
+     "how": "Defines the classifier shape."
+    },
+    {
+     "ref": "A:018",
+     "key_idea": "A 7-head classifier agreed 0.742 on its own set and 0.60 on blind labels.",
+     "how": "Sets the question list and the blind check."
+    },
+    {
+     "ref": "A:006",
+     "key_idea": "Most routers tie; use a Best Single baseline.",
+     "how": "Sets the default."
+    }
+   ],
+   "repos": [],
+   "industry": "Vercel and OpenRouter ship rule-like auto routing with session stickiness. Their accept threshold of 0.85 is a placeholder (A:245)."
+  },
+  "req": "RQ-C-018, RQ-C-019, RQ-C-020, RQ-C-021, RQ-C-022, RQ-C-023, RQ-C-024, RQ-C-026, RQ-C-027, RQ-C-028, RQ-C-047, RQ-C-049, RQ-C-051"
+ },
+ "srt": {
+  "inn": "Features from the rules component, the cost threshold, the strong-share ceiling and the probe estimate.",
+  "out": "Scores per candidate model and a ranked candidate list for the cascade.",
+  "store": "reads: trained router model, balanced label set, share ceiling | writes: router decision log, label records",
+  "fail": "Fail open to the rules route: if the router errors or times out, the rules choice or Best Single is used. The router is an optimisation, so its fault must not block work.",
+  "src": [
+   "C:030",
+   "A:019",
+   "A:013",
+   "A:001",
+   "A:006",
+   "A:002",
+   "A:046",
+   "C:032",
+   "C:029",
+   "A:010",
+   "A:018",
+   "A:052",
+   "A:008",
+   "C:031",
+   "A:007"
+  ],
+  "prop": "Router latency budget, the label refresh cadence and the out-of-distribution (OOD) gate level are DevX proposals.",
+  "hard": "C:030 (-53.1 percent, 75 vs 74 resolved) is self-reported on 100 locked SWE-bench instances with no confidence intervals. A:006 and A:046 show most routers tie or lose on public benchmarks. Savings in C:030 and C:031 use different baselines. Ladder from R2: this is ship second; third is online budgeted routing (A:007) and bandits (C:032).",
+  "line": "step=edit, prefix 5.3k -> p_strong 0.31\ncost thr 0.40 -> weak model, reason=static_router",
+  "dumb": "This is a small trained model that guesses, for each step, whether a cheap model is good enough. It learns from past runs where we checked the result by running the tests.",
+  "deep": {
+   "purpose": "Pick the cheapest model per agent step with a static router trained on execution-verified labels. This is the ship-second step of the R2 ladder.",
+   "expected": [
+    "Ship second (R2): a step-level static router trained on execution-verified counterfactual labels (C:030, A:019).",
+    "Needs class-balanced labels. One-model logs give a majority-class router (A:019).",
+    "Is checked on blind labels and out-of-distribution tasks before rollout (A:018, C:032, A:052).",
+    "Respects the per-tenant strong-share ceiling (A:010).",
+    "Reports against Best Single and an oracle in dollars per solved task (A:006, A:002)."
+   ],
+   "not_expected": [
+    "Never uses a frontier model prompted as the router (C:030, A:228).",
+    "Never trains on logs from one dominant model (A:019).",
+    "Never trains on preference labels without 100 to 1,000 gold samples (A:013, A:001).",
+    "Third rung, not here: online budgeted routing (A:007) and bandits (C:032) wait for ground truth and a drift case.",
+    "Never uses a large model pool. Keep a small complementary set (A:006)."
+   ],
+   "algorithm": {
+    "name": "Static step router with cost threshold",
+    "formula": "choose weak if p_weak_ok(x) >= tau else strong; tau from the cost threshold and the error price",
+    "steps": [
+     "Build x: step type, prefix size, previous outcome, turn index, tool flag, remaining budget (R2 section 3).",
+     "Score p_weak_ok with the trained classifier or k-means router (A:006 favours a cheap router).",
+     "Apply tau from the cost threshold and the ceiling from share.",
+     "Return ranked candidates to the cascade.",
+     "Log the decision with features and router cost."
+    ],
+    "params": {
+     "training_labels": "execution-verified, balanced; C:030 used 970 step labels",
+     "gold_samples": "100 to 1,000 for preference labels (A:013)",
+     "router_cost": "MF router $3.32 per M requests (A:001)",
+     "mid_switch": "priced at the incoming write rate (C:030)"
+    }
+   },
+   "math": {
+    "definitions": [
+     "x: feature vector for the step.",
+     "p: predicted chance the weak model is good enough.",
+     "tau: decision threshold.",
+     "c_w, c_s: expected cost of weak and strong model on the step.",
+     "c_r: router cost per request."
+    ],
+    "formula_full": "E[cost] = c_r + p_strong x c_s + (1 - p_strong) x c_w; choose weak iff p >= tau; report CPS = total spend / solved tasks",
+    "derivation": "The router pays its own cost plus the cost of the model it picks. It saves money only where weak is picked and still solves the step. Tau trades saving against failed steps, which cost an escalation.",
+    "worked_example": "C:030: routed $25.66 versus unrouted Opus $54.73, a cut of (54.73 - 25.66)/54.73 = 53.1 percent, with 75 of 100 resolved versus 74 of 100. Per resolved task: 25.66/75 = $0.342 versus 54.73/74 = $0.740. RouteLLM MF router cost $3.32 per M requests, at most 0.4 percent of GPT-4 generation cost (A:001).",
+    "complexity": "O(1) per step for a linear or small tree model. Router latency spans 11.1 to 546.8 ms across routers (A:046).",
+    "failure_modes": [
+     "Out-of-distribution tasks: static classifiers fell to 8.93 to 21.43 percent (C:032).",
+     "Queries few models solve: accuracy 23 to 25 percent when at most 3 experts are right (A:006).",
+     "Confounder gadget raises strong routing 73 to 100 percent (A:010). The share ceiling limits this.",
+     "Label drift after a model update."
+    ],
+    "calibration": "E1 replay harness: same tasks through Best Single, each router and an oracle, with 95 percent confidence intervals over at least 5 seeds. E7 label audit and E8 OOD and adversarial tests."
+   },
+   "security": [
+    "Router input is features and hashes, not raw prompts, unless the tenant opts in.",
+    "Router weights are signed and loaded from the policy store.",
+    "Share ceiling blocks router-attack cost inflation (A:010)."
+   ],
+   "performance": {
+    "slo": "DevX proposal: router p99 under 20 ms. TTFT (time to first token) impact is measured in E4 (C:031 saw 2.1x worse).",
+    "complexity": "O(1) per step.",
+    "scaling": "Stateless inference, model cached per worker."
+   },
+   "edge_cases": [
+    "Router times out: use the rules route.",
+    "Label set has one dominant class: training is blocked by the balance check.",
+    "New model joins the pool: router retrains or the model is excluded until labelled.",
+    "Mid-trajectory switch: priced by the switch pricer first.",
+    "Router disagrees with a verifiable failed check: the failed check wins and goes to strong."
+   ],
+   "tests": [
+    {
+     "name": "balance gate",
+     "given": "labels 95 percent one class",
+     "expect": "training refused"
+    },
+    {
+     "name": "threshold",
+     "given": "p 0.31, tau 0.40",
+     "expect": "strong model chosen"
+    },
+    {
+     "name": "timeout",
+     "given": "router exceeds its latency budget",
+     "expect": "rules route used, event logged"
+    },
+    {
+     "name": "ceiling",
+     "given": "tenant at share ceiling, p says strong",
+     "expect": "weak model plus alert"
+    },
+    {
+     "name": "blind label",
+     "given": "agreement on blind set falls under the gate",
+     "expect": "rollout blocked"
+    }
+   ],
+   "cost_levers": [
+    "-53.1 percent on locked instances at 75 vs 74 resolved (C:030, self-reported, no confidence intervals).",
+    "LLMRouterBench: best router up to +4 percent accuracy and 31.7 percent cost cut versus best single model (A:006)."
+   ],
+   "feedback_events": [
+    "Verified outcome per step becomes a new label.",
+    "Escalation events from the cascade."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.srt.scored",
+     "fields": [
+      "request_id",
+      "p_weak_ok",
+      "tau",
+      "choice",
+      "router_ms"
+     ],
+     "when": "A step is scored."
+    },
+    {
+     "name": "token_economics.srt.label_added",
+     "fields": [
+      "step_id",
+      "verified_outcome"
+     ],
+     "when": "A verified label is stored."
+    }
+   ],
+   "papers": [
+    {
+     "ref": "C:030",
+     "key_idea": "Static router on 970 execution-verified labels cut cost 53.1 percent at equal solve.",
+     "how": "Defines the training recipe."
+    },
+    {
+     "ref": "A:019",
+     "key_idea": "One-model logs yield a majority-class router.",
+     "how": "Class balance gate."
+    },
+    {
+     "ref": "A:010",
+     "key_idea": "A short gadget upgrades routing to the strong model.",
+     "how": "Share ceiling."
+    },
+    {
+     "ref": "A:006",
+     "key_idea": "Most routers tie; use Best Single and a cheap k-means router.",
+     "how": "Baseline and router choice."
+    }
+   ],
+   "repos": [
+    {
+     "ref": "A:001",
+     "name": "RouteLLM",
+     "take": "Matrix factorisation router and gold-sample debiasing."
+    }
+   ],
+   "industry": "Vendor routers (Copilot Auto about 10 percent, Kiro Auto about 23 percent) are vendor claims with no baseline (A:155, A:162)."
+  },
+  "req": "RQ-C-021, RQ-C-023, RQ-C-025, RQ-C-026, RQ-C-027, RQ-C-028, RQ-C-051"
+ },
+ "casc": {
+  "inn": "Ranked candidates and cost threshold from the router, a cheap post-hoc verifier result, and fallback hops from the fallback chain.",
+  "out": "A chosen model and an escalation path to the reserve component.",
+  "store": "reads: measured acceptance per pair, price rows | writes: cascade decision log, acceptance counters",
+  "fail": "Fail open to Always-Strong: if acceptance or the verifier is unavailable, the pair is disabled and the strong model runs. This costs more but never lowers quality.",
+  "src": [
+   "A:028",
+   "C:031",
+   "A:123",
+   "A:002",
+   "A:021",
+   "C:029",
+   "A:022",
+   "A:010",
+   "A:046"
+  ],
+  "prop": "The acceptance window, the minimum sample before a pair is enabled, and the verifier choice per task type are DevX proposals.",
+  "hard": "A:123 gives the error-price break-even as $0.01 in the abstract and $0.20 in the body; take neither and measure (E5). A:028 used multiple choice with 16 samples per tier and did not price sampling. C:029: threshold cascades fail with binary feedback; test pass or fail is post-hoc. Ladder from R2: ship second.",
+  "line": "pair haiku->sonnet, c1/c2=0.37, accept 0.52\naccept > 0.37 -> cascade on, else always-strong",
+  "dumb": "The cheap model tries first and the strong model steps in only if a check fails. We turn this on for a model pair only when the cheap model passes often enough to pay for itself.",
+  "deep": {
+   "purpose": "Run the cheap model first and escalate on a failed post-hoc check, for pairs where measured acceptance beats the cost ratio. This is ship second in the R2 ladder.",
+   "expected": [
+    "Ship second (R2): a cascade where a cheap post-hoc verifier exists (tests, schema) and measured acceptance exceeds c1/c2 (C:029, C:031, A:028, A:123).",
+    "Keeps an Always-Strong fallback for every pair (A:028).",
+    "Prices every hop and judge call. Fallbacks are priced, never silent (A:021).",
+    "Uses a length-normalised or post-hoc score, never a raw sum log-probability (A:022).",
+    "Disables a pair when judge error exceeds 0.2, where quality collapses (A:002)."
+   ],
+   "not_expected": [
+    "Never uses a sum log-probability deferral score (A:022).",
+    "Does not cascade above a $0.10 error price without a measured crossover (A:123).",
+    "Does not cascade tool-bearing requests to the weak tier (C:031).",
+    "Third rung, not here: online budgeted routing (A:007)."
+   ],
+   "algorithm": {
+    "name": "Acceptance-gated two-tier cascade",
+    "formula": "enable(pair) iff acceptance_measured > c1/c2; expected cost = c1 + (1 - a) x c2 + c_v",
+    "steps": [
+     "Read the pair's measured acceptance a over a rolling window and sample size n.",
+     "Compute the ratio c1/c2 from the price book on the real prefix and cache state.",
+     "Enable only if a > c1/c2 and n >= n_min and judge error <= 0.2.",
+     "Send to tier 1. Run the post-hoc check (tests, schema).",
+     "On a failed check, escalate to tier 2 and price both hops.",
+     "Update the acceptance counter."
+    ],
+    "params": {
+     "break_even": "a > c1/c2; ratio 1:2.7 gives 0.37 (A:028)",
+     "judge_error_limit": "0.2 (A:002)",
+     "n_min": "DevX proposal; A:028 used n >= 200 for calibration",
+     "skip_break_even": "13.3 percent in C:031"
+    }
+   },
+   "math": {
+    "definitions": [
+     "c1, c2: expected cost of tier 1 and tier 2 on this task type.",
+     "a: measured tier-1 acceptance, the share of tier-1 outputs that pass the check.",
+     "c_v: verifier cost per attempt.",
+     "e: error price in dollars per wrong answer (A:123)."
+    ],
+    "formula_full": "cost_cascade = c1 + c_v + (1 - a) x c2; cost_strong = c2; cascade wins on cost iff a > (c1 + c_v)/c2; include error: add e x P(error) to both sides",
+    "derivation": "Every request pays tier 1. A share (1 - a) also pays tier 2. Setting cost_cascade below c2 gives a > c1/c2 when c_v is 0.",
+    "worked_example": "A:028 cost ratio 1:2.7 gives break-even acceptance 1/2.7 = 0.37. Take c1 = 1, c2 = 2.7, a = 0.52: cost = 1 + 0.48 x 2.7 = 2.30 versus 2.70, a saving of 14.8 percent. At a = 0.30: cost = 1 + 0.70 x 2.7 = 2.89, 7.0 percent worse than Always-Strong. C:031 reports a break-even skip rate of 13.3 percent and a draft accepted 88.8 percent.",
+    "complexity": "O(1) per request. O(n) to refresh the rolling acceptance.",
+    "failure_modes": [
+     "Judge error above 0.2 collapses cascade quality (A:002).",
+     "Acceptance ranges 0 to 95.6 percent across tiers (A:028), so a pair can fall below break-even after a task mix change.",
+     "Above a $0.10 error price one big model beats cascades (A:123).",
+     "Sampling overhead is unpriced in A:028 and must be added."
+    ],
+    "calibration": "E5 error-price sweep from $0.01 to $1.00 per pair to find the crossover with a single strong model. Track measured acceptance weekly."
+   },
+   "security": [
+    "Verifier runs inside the tenant sandbox. Test output is hashed, not stored.",
+    "A user cannot force Always-Strong or cascade through the prompt. Pair state comes from policy.",
+    "Escalation hops pass through the budget reserve like any call."
+   ],
+   "performance": {
+    "slo": "DevX proposal: cascade overhead under 5 ms excluding provider time. Latency of two hops is reported (TTFT 2.1x worse in C:031).",
+    "complexity": "O(1) per request.",
+    "scaling": "Acceptance counters are small and sharded by pair."
+   },
+   "edge_cases": [
+    "No cheap verifier for a task type: cascade stays off.",
+    "Tier 1 passes the check but is wrong: the error price is paid. Track escape rate.",
+    "Pair acceptance falls under c1/c2: auto-disable and alert.",
+    "Fallback hop after a 429: priced as a hop with the provider's billing flag.",
+    "Tier 1 output is empty: treat as a failed check."
+   ],
+   "tests": [
+    {
+     "name": "enable",
+     "given": "c1/c2 0.37, measured a 0.52, n 300",
+     "expect": "cascade enabled"
+    },
+    {
+     "name": "disable",
+     "given": "a 0.30, c1/c2 0.37",
+     "expect": "pair disabled, Always-Strong used"
+    },
+    {
+     "name": "judge error",
+     "given": "judge error 0.25",
+     "expect": "cascade disabled for the pair"
+    },
+    {
+     "name": "hop priced",
+     "given": "tier 1 fails, tier 2 runs",
+     "expect": "two cost rows linked by one task id"
+    },
+    {
+     "name": "log-prob",
+     "given": "config uses sum log-probability score",
+     "expect": "policy validation rejects it"
+    }
+   ],
+   "cost_levers": [
+    "FrugalGPT reports 59.2 to 98.3 percent cheaper at matched accuracy (A:021, March 2023 prices, self-reported).",
+    "RLM-Cascade proxy -45.8 percent on 125 requests (C:031, self-reported)."
+   ],
+   "feedback_events": [
+    "Acceptance and escape rate per pair.",
+    "Escalation cost per task."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.casc.escalated",
+     "fields": [
+      "task_id",
+      "pair",
+      "reason",
+      "extra_cost_usd"
+     ],
+     "when": "Tier 2 runs after a failed check."
+    },
+    {
+     "name": "token_economics.casc.pair_state",
+     "fields": [
+      "pair",
+      "acceptance",
+      "break_even",
+      "enabled"
+     ],
+     "when": "A pair is enabled or disabled."
+    }
+   ],
+   "papers": [
+    {
+     "ref": "A:028",
+     "key_idea": "Cost ratio 1:2.7 gives break-even acceptance 0.37; guard rail is Always-Strong below 1/r.",
+     "how": "Enable rule."
+    },
+    {
+     "ref": "A:123",
+     "key_idea": "A single big model wins above a $0.10 error price.",
+     "how": "E5 sweep."
+    },
+    {
+     "ref": "A:002",
+     "key_idea": "Cascade quality collapses when judge error exceeds 0.2.",
+     "how": "Disable limit."
+    },
+    {
+     "ref": "A:022",
+     "key_idea": "Sum log-probability is length-biased.",
+     "how": "Banned score."
+    }
+   ],
+   "repos": [
+    {
+     "ref": "C:060",
+     "name": "LiteLLM",
+     "take": "budget_fallbacks as a model for priced fallbacks."
+    }
+   ],
+   "industry": "Cloudflare and OpenRouter use fallback chains. Token Economics treats each hop as a priced step with an acceptance gate."
+  },
+  "req": "RQ-C-021, RQ-C-029, RQ-C-030, RQ-C-031, RQ-C-051"
+ },
+ "probe": {
+  "inn": "A new task description, the model and a one-call probe result with its cost.",
+  "out": "A predicted task cost and a budget size equal to 1.9 times the prediction, sent to the reserve component.",
+  "store": "reads: probe cost, per-model run history | writes: prediction and actual pairs for error tracking",
+  "fail": "Fail open to the key budget: if no probe is available the task uses the default per-task budget and the hard cap. A missing probe must not block the task.",
+  "src": [
+   "C:027",
+   "C:110",
+   "C:023",
+   "C:136",
+   "C:131",
+   "C:132"
+  ],
+  "prop": "The mapping from probe cost to predicted full-task cost is a DevX proposal, since C:027 gives errors and the multiplier but not a fitted formula.",
+  "hard": "C:027 covers Kimi K3 only, on 5 tasks and 2,700 runs. The 1.9x multiplier is not verified for other models. Identical runs differ by up to 30x in tokens (C:023). Ladder from R2: ship second.",
+  "line": "probe $0.11 -> predicted $2.00, budget 1.9x = $3.80\nactual $2.60 -> within budget",
+  "dumb": "Before a big task, we run one small trial call and use its cost to guess the whole task's cost. Then we set the budget at 1.9 times the guess, because guesses are often low.",
+  "deep": {
+   "purpose": "Size a per-task budget from one measured probe call, instead of letting the agent guess. This is ship second in the R2 ladder.",
+   "expected": [
+    "Runs one probe call and predicts the task cost from it (C:027).",
+    "Sets the task budget at 1.9 times the prediction, which covered 90 percent of runs (C:027).",
+    "Never asks the agent to estimate its own cost (C:136, C:110).",
+    "Compares prediction to actual after each task and tracks the error.",
+    "Passes the budget to the reserve component as the task cap."
+   ],
+   "not_expected": [
+    "Does not use agent self-estimates or human labels.",
+    "Does not use the budget as a prompt hint. Agents ignore it (C:136).",
+    "Does not replace the hard per-key cap.",
+    "Does not guarantee cost. Identical runs differ up to 30x (C:023)."
+   ],
+   "algorithm": {
+    "name": "One-probe prediction with 1.9x headroom",
+    "formula": "budget = 1.9 x predicted_cost; predicted_cost = f(probe_cost, model)",
+    "steps": [
+     "Choose a probe: one short run of the task with a small step limit.",
+     "Record the probe cost from the ledger.",
+     "Predict full-task cost with the per-model fit.",
+     "Set budget = 1.9 x prediction and pass it to bres.",
+     "After the task, store prediction, actual and error."
+    ],
+    "params": {
+     "probes": "1 probe (more probes: 3 gives 29 percent, 10 gives 25 percent median error)",
+     "multiplier": "1.9 covers 90 percent of runs (C:027)",
+     "probe_cost": "$0.11 in C:027"
+    }
+   },
+   "math": {
+    "definitions": [
+     "p: probe cost in dollars.",
+     "c_hat: predicted task cost.",
+     "A: actual task cost.",
+     "m: headroom multiplier, 1.9.",
+     "err = |c_hat - A| / A.",
+     "sigma_g: geometric standard deviation of run cost, 1.34 in C:027."
+    ],
+    "formula_full": "budget = m x c_hat; err = |c_hat - A|/A; coverage = share of runs with A <= budget; target coverage 0.90 at m = 1.9",
+    "derivation": "Run-to-run cost is skewed, so a multiplier above 1 covers the right tail. C:027 found m = 1.9 gave 90 percent coverage after one probe. A lognormal check with sigma_g 1.34 gives exp(1.2816 x ln 1.34) = 1.46, so 1.9 also absorbs prediction error. The lognormal step is a DevX check, not a source claim.",
+    "worked_example": "C:027 median error: 161 percent with no probe, 36 percent with one probe ($0.11), 29 percent with three, 25 percent with ten. Per-run correlation r 0.08 without a probe and 0.72 with one (R6). If the prediction is $2.00, budget = 1.9 x 2.00 = $3.80. An actual of $2.60 fits. An actual of $4.50 hits the cap and the cap-hit path runs.",
+    "complexity": "O(1) per task plus the probe call.",
+    "failure_modes": [
+     "Probe cost does not predict heavy tasks that run many turns.",
+     "The multiplier is fitted on one model and may not hold on others.",
+     "Output dominates cost at high cache hit (2.7 percent of tokens, 51.1 percent of dollars, C:027), so probes with short outputs underpredict.",
+     "Probe cost can exceed the saving on small tasks."
+    ],
+    "calibration": "Per model, track coverage at 1.9x and overrun rate. Refit the multiplier when coverage leaves 0.85 to 0.95 (DevX proposal band)."
+   },
+   "security": [
+    "Probe uses the same key and budget as the task. It cannot bypass the cap.",
+    "Probe content is the real task, so it follows the tenant's content-logging policy.",
+    "Predictions are metadata and hold no task text."
+   ],
+   "performance": {
+    "slo": "DevX proposal: probe overhead under 5 percent of task cost.",
+    "complexity": "O(1).",
+    "scaling": "Prediction table is small, keyed by model."
+   },
+   "edge_cases": [
+    "Task too small to probe: skip and use the default budget.",
+    "Probe fails: use the default per-task budget.",
+    "Model changes after the probe: the prediction is void, re-probe.",
+    "Resumed session: do not count earlier spend in the new prediction (R1 rule 7).",
+    "Prediction above remaining key budget: reject early with a clear message."
+   ],
+   "tests": [
+    {
+     "name": "budget size",
+     "given": "predicted $2.00, m 1.9",
+     "expect": "task budget $3.80"
+    },
+    {
+     "name": "cap hit",
+     "given": "actual reaches $3.80",
+     "expect": "cap-hit path runs, spend logged"
+    },
+    {
+     "name": "probe fails",
+     "given": "probe call errors",
+     "expect": "default budget used, event logged"
+    },
+    {
+     "name": "over key budget",
+     "given": "budget $3.80, key remaining $2.00",
+     "expect": "rejected before the task starts"
+    },
+    {
+     "name": "coverage",
+     "given": "100 tasks, 88 within 1.9x",
+     "expect": "coverage 0.88, inside the DevX band"
+    }
+   ],
+   "cost_levers": [
+    "Cuts median prediction error from 161 percent to 36 percent for $0.11 (C:027).",
+    "Keeps the budget tied to a measured cost, so caps are neither too tight nor too loose."
+   ],
+   "feedback_events": [
+    "Prediction and actual pairs for refitting.",
+    "Overrun rate per model."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.probe.predicted",
+     "fields": [
+      "task_id",
+      "model",
+      "probe_usd",
+      "predicted_usd",
+      "budget_usd"
+     ],
+     "when": "A budget is set."
+    },
+    {
+     "name": "token_economics.probe.scored",
+     "fields": [
+      "task_id",
+      "predicted_usd",
+      "actual_usd",
+      "error"
+     ],
+     "when": "A task ends."
+    }
+   ],
+   "papers": [
+    {
+     "ref": "C:027",
+     "key_idea": "One probe cuts median error from 161 to 36 percent; 1.9x covers 90 percent.",
+     "how": "Sets the probe and multiplier."
+    },
+    {
+     "ref": "C:023",
+     "key_idea": "Identical runs differ up to 30x in tokens.",
+     "how": "Justifies headroom."
+    }
+   ],
+   "repos": [],
+   "industry": "Most gateways set one fixed per-key budget. A probe-based task budget is not described in the vendor sources in the corpus."
+  },
+  "req": "RQ-C-032"
+ },
+ "share": {
+  "inn": "Router decisions per tenant and the tenant's strong-model share over a rolling window.",
+  "out": "A strong-share ceiling signal to the router, and a drift alert.",
+  "store": "reads: per-tenant routing counts and spend | writes: rolling share, ceiling, alert state",
+  "fail": "Fail open to the rules route with the ceiling last known: if share data is missing the ceiling stays at its last value. A missing counter must not block calls, and budgets still apply.",
+  "src": [
+   "A:010",
+   "A:001",
+   "A:019",
+   "A:006",
+   "C:054"
+  ],
+  "prop": "The ceiling value (1.5 times the tenant's 30-day baseline share), the window length and the alert method are DevX proposals.",
+  "hard": "A:010 names per-tenant quotas on strong-model use as the defence, with no numeric ceiling. No source gives a safe share. RouteLLM needed 13.4 percent strong calls for 50 percent of the gap on MT Bench (A:001), which is workload specific.",
+  "line": "t4 strong share 21% (14d base 13.4%, ceiling 20.1%)\nover ceiling -> router capped to weak, alert",
+  "dumb": "This limits how often one customer's requests may go to the most expensive model. It stops someone from tricking the router into always choosing the strong model.",
+  "deep": {
+   "purpose": "Cap strong-model use per tenant so a router attack or drift cannot inflate cost.",
+   "expected": [
+    "Tracks strong-model share per tenant over a rolling window, by calls and by dollars.",
+    "Sets a ceiling per tenant and signals the router to stop choosing strong above it (A:010).",
+    "Raises a drift alert when share rises sharply from the tenant's own baseline.",
+    "Lets an admin raise the ceiling with an audit row.",
+    "Reports share next to cost per solved task so quality loss is visible."
+   ],
+   "not_expected": [
+    "Does not block tool-bearing or failed-check escalations that the rules mark mandatory, which go through a separate budget.",
+    "Does not judge prompt content.",
+    "Does not replace the budget cap."
+   ],
+   "algorithm": {
+    "name": "Rolling share ceiling",
+    "formula": "s = strong_calls / total_calls over window W; capped iff s >= theta",
+    "steps": [
+     "Count strong and total routed calls per tenant over W.",
+     "Compare s with theta, set from the tenant's own baseline.",
+     "If s >= theta, signal the router: prefer weak unless a mandatory escalation applies.",
+     "If s exceeds baseline by the drift margin, alert.",
+     "Log ceiling state changes."
+    ],
+    "params": {
+     "theta": "DevX proposal: 1.5 x tenant 30-day baseline share",
+     "window": "DevX proposal: 24 hours",
+     "attack_effect": "73 to 100 percent strong routing in white-box tests (A:010)"
+    }
+   },
+   "math": {
+    "definitions": [
+     "W: window length.",
+     "s: strong-model share of calls in W.",
+     "b: tenant's baseline share over 30 days.",
+     "theta = k x b: ceiling, k = 1.5 (DevX proposal).",
+     "c_s, c_w: cost per call on strong and weak model."
+    ],
+    "formula_full": "s = N_strong/N_total; theta = k x b; extra_cost_per_call = (s - b) x (c_s - c_w); alert iff s > theta",
+    "derivation": "Mean cost per call is s x c_s + (1 - s) x c_w. Raising s from the baseline b adds (s - b)(c_s - c_w) per call. Capping s at theta bounds this extra cost.",
+    "worked_example": "RouteLLM MF router used 13.4 percent strong calls on MT Bench (A:001). With k = 1.5 the ceiling is 20.1 percent. A router attack raised OpenRouter cost on 72 queries from $0.03 to $0.25, a factor of 8.3 (A:010). At a 20.1 percent ceiling the strong share cannot reach the 73 to 100 percent rates seen in attacks.",
+    "complexity": "O(1) per call with counters. O(W) to rebuild from the ledger.",
+    "failure_modes": [
+     "A ceiling set too low caps quality on a genuine hard-task week.",
+     "A baseline taken during an attack hides it. Use a trailing baseline with attack screening.",
+     "Perplexity filters are bypassable (A:010), so share limits must not depend on them."
+    ],
+    "calibration": "Replay 30 days of routing per tenant and check false alert rate. Run E8 with confounder gadgets and measure the share shift."
+   },
+   "security": [
+    "Main defence against a router attack by crafted prompts (A:010).",
+    "Ceiling and baseline are tenant-scoped. One tenant's share never leaks into another's data.",
+    "Overrides need an admin role and an audit row."
+   ],
+   "performance": {
+    "slo": "DevX proposal: counter update under 1 ms.",
+    "complexity": "O(1).",
+    "scaling": "Per-tenant counters sharded by tenant id."
+   },
+   "edge_cases": [
+    "New tenant with no baseline: use a fleet default until 30 days exist (DevX proposal).",
+    "Genuine hard-task surge: alert first, cap after the grace window.",
+    "Mandatory escalation (tool-bearing) while capped: allowed and counted.",
+    "Clock window boundary: use sliding buckets.",
+    "Baseline poisoned by an old attack: allow an admin to reset."
+   ],
+   "tests": [
+    {
+     "name": "ceiling",
+     "given": "b 13.4 percent, k 1.5, s 21 percent",
+     "expect": "capped, alert raised"
+    },
+    {
+     "name": "under ceiling",
+     "given": "s 15 percent",
+     "expect": "no cap"
+    },
+    {
+     "name": "mandatory",
+     "given": "capped, tool-bearing request",
+     "expect": "escalation allowed and counted"
+    },
+    {
+     "name": "new tenant",
+     "given": "no history",
+     "expect": "fleet default ceiling used"
+    },
+    {
+     "name": "override",
+     "given": "admin raises ceiling",
+     "expect": "audit row written, cap lifted"
+    }
+   ],
+   "cost_levers": [
+    "Bounds router-attack cost inflation (8.3x on 72 queries in A:010).",
+    "Keeps strong spend near the tenant's own baseline."
+   ],
+   "feedback_events": [
+    "Cap hits and quality metrics per tenant.",
+    "Alert outcomes (attack or real hard tasks)."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.share.capped",
+     "fields": [
+      "tenant_id",
+      "share",
+      "ceiling"
+     ],
+     "when": "The ceiling blocks strong routing."
+    },
+    {
+     "name": "token_economics.share.drift",
+     "fields": [
+      "tenant_id",
+      "share",
+      "baseline"
+     ],
+     "when": "Share rises over the drift margin."
+    }
+   ],
+   "papers": [
+    {
+     "ref": "A:010",
+     "key_idea": "A short gadget upgrades routing to the strong model 73 to 100 percent; defence is per-tenant quotas.",
+     "how": "Defines the ceiling."
+    }
+   ],
+   "repos": [],
+   "industry": "Router vendors do not publish per-tenant strong-share caps in the corpus. A:010 is the only source."
+  },
+  "req": "RQ-C-033, RQ-C-034, RQ-C-051"
+ },
+ "cplan": {
+  "inn": "Prefix size, model, caller id, observed reuse gap per caller, hit rate from the hit monitor, and price rows.",
+  "out": "cache_control breakpoints, TTL choice and injection point for the provider connector, or a skip decision.",
+  "store": "reads: price book, per-caller reuse gap, hit monitor | writes: per-caller cache plan",
+  "fail": "Fail open to no change: if planning fails the request goes out as sent and the client's own cache_control stays. A wrong plan can raise cost, but a missing plan only forgoes savings.",
+  "src": [
+   "A:199",
+   "A:201",
+   "C:052",
+   "A:224",
+   "C:054",
+   "A:157",
+   "A:160",
+   "A:281",
+   "A:219",
+   "A:252",
+   "A:255",
+   "A:202",
+   "A:231",
+   "C:055"
+  ],
+  "prop": "The reuse-gap percentile used to pick TTL and the keepalive rule are DevX proposals on the C:052 findings.",
+  "hard": "Anthropic minimum prefix conflicts: Sonnet 4.6 1,024 (A:199) vs 2,048 (C:051); Opus 4.7 2,048 vs 4,096. Take the larger until tested. Gemini implicit discount 75 vs 90 percent. Subagent TTL: docs say 5 minutes, observation differs (C:052). Break-even prefix at N=10 is 220.16 tokens by formula; R1 writes 221.",
+  "line": "cron c7: gap 28 s -> 5m TTL, 30k prefix, 2 breakpoints\nchat c2: gap 18 min -> 1h TTL; writes repay at N>=2",
+  "dumb": "This decides what to save in the provider's prompt cache and for how long. It picks the cheaper choice per caller from how soon each caller comes back, and skips caching when it cannot pay off.",
+  "deep": {
+   "purpose": "Choose cache breakpoints and TTL per caller, and skip caching when the write premium cannot be repaid.",
+   "expected": [
+    "Picks the TTL per caller from the observed reuse gap, never one global TTL (C:052).",
+    "Skips caching when the prefix is under the model minimum, or the expected reads cannot repay the write (A:199, A:201).",
+    "Keeps stable content first and volatile content such as timestamps last (A:224).",
+    "Forwards cache_control and anthropic-beta unchanged and uses at most 4 breakpoints, longer TTL first (A:199).",
+    "Decides batch and cache stacking per provider and model (A:252, A:255, A:281, A:219)."
+   ],
+   "not_expected": [
+    "Never sets a blanket 1-hour TTL. It made the bill 8.6 percent worse (C:052).",
+    "Does not rely on cache for Bedrock batch or Nova reads (A:160, A:157).",
+    "Does not send ttl to 5-minute-only Bedrock models (A:157).",
+    "Does not move content that changes semantics. It reorders only fields the policy marks volatile."
+   ],
+   "algorithm": {
+    "name": "Per-caller TTL and payback planner",
+    "formula": "TTL = 5m if gap_p98 <= 5m else 1h if N_reads x saving > premium_1h else none",
+    "steps": [
+     "Read the model's minimum prefix. If P is below it, skip.",
+     "Estimate reads N in the TTL window from the caller's observed gap distribution.",
+     "Compute the write premium (5m 1.25x, 1h 2x of input) and the saving per read.",
+     "Choose 5m if almost all reuse falls within 5 minutes, 1h if N reads repay the 1h premium, else none.",
+     "Place breakpoints at the end of tools, system and the stable message block, at most 4.",
+     "Check the provider-specific rule (OpenAI key, Gemini storage fee) and hand off to stick."
+    ],
+    "params": {
+     "anthropic_multipliers": "5m write 1.25x, 1h write 2x, read 0.1x; 0.05x on Opus 5.5 and Sonnet 5.5; 0.025x on Fable 5.1 and Mythos 5.1 (A:199)",
+     "min_prefix": "512 to 4,096 tokens by model (A:199); take the larger on conflict",
+     "reuse_window": "98 percent of reuse within about 34 s (C:052)",
+     "keepalive_crossover": "62.5 minutes (C:052)"
+    }
+   },
+   "math": {
+    "definitions": [
+     "P: prefix tokens.",
+     "I: input price per MTok. W5 = 1.25 I, W1 = 2 I, R = read price.",
+     "N: number of reads within the TTL.",
+     "g: observed gap between uses.",
+     "X: write premium over fresh input."
+    ],
+    "formula_full": "cost_none = (N + 1) x P x I; cost_5m = P x (W5 + N x R) when g <= 5m; cost_1h = P x (W1 + N x R) when g <= 60m; cache iff cost_cached < cost_none and P >= min_prefix; break-even N_5m = (W5 - I)/(I - R)",
+    "derivation": "Without cache every call pays I. With cache the first call pays the write rate and each read pays R. Reads repay the premium (W - I) at a saving (I - R) per read, so N must exceed (W - I)/(I - R). OpenAI GPT-5.6+ gives a break-even prefix of 102.4 + 1,177.6/N tokens (A:201).",
+    "worked_example": "Sonnet 5.5 (R1): I $2.00, W5 $2.50, W1 $4.00, R $0.10 per MTok. N_5m = (2.50 - 2.00)/(2.00 - 0.10) = 0.263, so one read repays a 5-minute write. N_1h = (4.00 - 2.00)/1.90 = 1.05, so 2 reads repay a 1-hour write. For a 30,000 token prefix and 10 reads inside 5 minutes: none 11 x 0.03 x 2.00 = $0.66; 5m 0.03 x (2.50 + 1.0) = $0.105. OpenAI GPT-5.6 at N=10: break-even prefix 102.4 + 117.76 = 220.16 tokens. C:052: blanket 1h gave +8.6 percent, targeted fixes -6.0, -1.0, -7.6 and -13.6 percent.",
+    "complexity": "O(1) per request after per-caller gap stats are cached.",
+    "failure_modes": [
+     "Reuse gap estimated from too few calls: choose 5m by default and refresh.",
+     "Subagent TTL differs from docs (C:052), so check realised hit rate.",
+     "Provider ignores cache_control behind a gateway: hit monitor flags it (C:052, C:054).",
+     "A volatile field left in the prefix drops hits from 87 to 3 percent (A:224)."
+    ],
+    "calibration": "Experiment 2 of R5: caching off, 5m and 1h per workload, confirm the N-read rule and the blanket-1h regression."
+   },
+   "security": [
+    "Cache is isolated per org and workspace at the provider (A:199). Plans never merge prefixes across tenants.",
+    "Injected cache_control touches structure only, never message text.",
+    "Plans are logged with ids and token counts, not content."
+   ],
+   "performance": {
+    "slo": "DevX proposal: under 3 ms planning time per request.",
+    "complexity": "O(1).",
+    "scaling": "Per-caller stats in a keyed store with expiry."
+   },
+   "edge_cases": [
+    "Prefix just under the minimum: skip. Take the larger minimum on conflicting sources.",
+    "Caller sends its own cache_control: respect it and only add missing breakpoints.",
+    "Compaction rewrites the prefix: expect a miss and do not alert on that turn.",
+    "Haiku 5.5 crosses 100K and reprices: re-plan with the band (R1).",
+    "Mistral or Groq cached-token field names are not in the corpus: skip planning and log."
+   ],
+   "tests": [
+    {
+     "name": "5m pays",
+     "given": "Sonnet 5.5, P 30,000, gap 28 s, N 10",
+     "expect": "5m TTL chosen, cost 0.105 per the formula"
+    },
+    {
+     "name": "below min",
+     "given": "P 400 tokens, Haiku 4.5 min 4,096",
+     "expect": "caching skipped"
+    },
+    {
+     "name": "1h choice",
+     "given": "gap 18 min, N 3",
+     "expect": "1h TTL chosen"
+    },
+    {
+     "name": "blanket 1h",
+     "given": "policy sets 1h for all callers",
+     "expect": "policy validation warns, per-caller required"
+    },
+    {
+     "name": "bedrock batch",
+     "given": "Bedrock batch inference",
+     "expect": "no cache plan, reason logged"
+    }
+   ],
+   "cost_levers": [
+    "Effective input about $0.30 per M at a 92 percent hit rate versus $3.00 list (C:054).",
+    "Targeted per-caller fixes gave -13.6 percent combined (C:052)."
+   ],
+   "feedback_events": [
+    "Hit rate per caller from the hit monitor.",
+    "Realised write and read cost per plan."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.cplan.planned",
+     "fields": [
+      "caller_id",
+      "model",
+      "prefix_tokens",
+      "ttl",
+      "breakpoints"
+     ],
+     "when": "A plan is set."
+    },
+    {
+     "name": "token_economics.cplan.skipped",
+     "fields": [
+      "caller_id",
+      "reason"
+     ],
+     "when": "Caching is skipped."
+    }
+   ],
+   "papers": [
+    {
+     "ref": "C:052",
+     "key_idea": "Blanket 1h TTL cost 8.6 percent more; 98 percent of reuse within about 34 seconds.",
+     "how": "Per-caller TTL."
+    },
+    {
+     "ref": "A:201",
+     "key_idea": "Break-even prefix is 102.4 + 1,177.6/N tokens.",
+     "how": "Payback check."
+    }
+   ],
+   "repos": [
+    {
+     "ref": "C:060",
+     "name": "LiteLLM",
+     "take": "cache_control_injection_points."
+    }
+   ],
+   "industry": "LiteLLM injects cache_control at set points. Anthropic offers a top-level automatic mode. Token Economics adds per-caller TTL and a payback check."
+  },
+  "req": "RQ-C-035, RQ-C-036, RQ-C-037, RQ-C-038, RQ-C-039, RQ-C-044, RQ-C-051"
+ },
+ "tsel": {
+  "inn": "Task latency tolerance, streaming need, SLA need, size, provider limits from the rate-limit tracker, price book tier rows, and the model catalogue.",
+  "out": "A tier choice (batch, flex, priority, reserved, standard) and, where the job allows it, a small-model option, sent to the reserve component.",
+  "store": "reads: price book tier rows and flags, rate limits | writes: tier decision log",
+  "fail": "Fail open to standard tier: if selection fails the request runs at the standard rate. Standard is correct but may cost more, and the budget still applies.",
+  "src": [
+   "A:111",
+   "A:152",
+   "A:219",
+   "A:174",
+   "A:252",
+   "A:255",
+   "A:159",
+   "A:281",
+   "A:195",
+   "A:150",
+   "A:176",
+   "A:225",
+   "A:209",
+   "A:129",
+   "A:272",
+   "C:050",
+   "A:041",
+   "A:186",
+   "A:157",
+   "A:069",
+   "C:086"
+  ],
+  "prop": "The mapping from workload class to tier and the 24-hour tolerance rule are DevX proposals on the cited tier facts.",
+  "hard": "OpenAI flex percentage is not stated (A:195). Together batch is 'up to 50 percent' on one model (A:275). Stacking differs by provider and model. Small-model failure rates have no default in the corpus. Gemini cache discount 75 vs 90 percent changes cache-adjusted tier cost.",
+  "line": "eval batch 1,000 jobs, 24h ok -> batch (-50%)\nIDE chat, streaming -> standard, priority off",
+  "dumb": "This picks how a job is bought: batch for slow bulk work, standard for normal work, priority only when speed matters. It also checks whether a small model can do a narrow job safely.",
+  "deep": {
+   "purpose": "Pick the cheapest tier that meets the job's latency, streaming and SLA needs, and gate small-model use on measured parity.",
+   "expected": [
+    "Sends latency-tolerant, non-streaming, non-SLA work to batch or flex (A:195, A:281, A:219).",
+    "Retries on standard after a flex 429. Flex has no automatic fallback at OpenAI or Azure (A:195, A:150).",
+    "Decides cache and batch stacking per provider and model (A:252, A:255, A:281, A:219).",
+    "Applies priority multipliers only when an SLA binds: Mistral 1.75x after the cache discount (A:176), OpenAI fast 2x (A:209), xAI priority 2x (A:225).",
+    "Recommends reserved capacity only above about 40 percent of on-demand cost (A:159)."
+   ],
+   "not_expected": [
+    "Does not change tier mid-conversation without costing a cold cache. Fast mode mid-conversation bills the whole context uncached (C:086).",
+    "Does not rely on cache in Bedrock batch (A:157).",
+    "Does not route to a small model without per-task eval parity (A:129, C:050).",
+    "Does not move streaming or SLA work to batch (A:219)."
+   ],
+   "algorithm": {
+    "name": "Constraint filter then cheapest tier",
+    "formula": "tier = argmin over allowed tiers of cost(tier); allowed = tiers meeting latency, streaming and SLA constraints",
+    "steps": [
+     "Read job flags: streaming, deadline, SLA, size, repeat prefix.",
+     "Drop tiers that fail a constraint (batch fails streaming, windows 24h at OpenAI and Anthropic, 72h queue at Gemini).",
+     "Cost each remaining tier with stacking flags and cache state.",
+     "Pick the lowest cost. For a narrow, verifiable, high-volume job also evaluate the small-model rule.",
+     "Set the fallback: retry on standard after a flex 429.",
+     "Log the choice and its alternatives."
+    ],
+    "params": {
+     "batch": "50 percent off at OpenAI, Azure, Anthropic, Mistral, Groq, Fireworks, Bedrock, Gemini (A:111, A:152, A:219, A:174, A:252, A:255, A:159, A:281); xAI 20 percent (A:225)",
+     "priority": "Mistral 1.75x (A:176); OpenAI fast 2x (A:209); xAI 2x (A:225)",
+     "reserved_trigger": "steady load above about 40 percent of on-demand (A:159)",
+     "small_model": "route iff cost_small + P(fail) x cost_escalation < cost_big"
+    }
+   },
+   "math": {
+    "definitions": [
+     "B: base cost at standard tier.",
+     "m_t: multiplier for tier t (batch 0.5, flex 0.5, priority 1.75 to 2).",
+     "S: batch and cache stacking flag.",
+     "c_small, c_big, c_esc: cost of small model, big model and escalation.",
+     "p_f: failure rate of the small model on the labelled slice."
+    ],
+    "formula_full": "cost(t) = B x m_t (cache component only if S is true; else cache reads bill at the batch input rate); small model wins iff c_small + p_f x c_esc < c_big",
+    "derivation": "Tier multipliers scale the base. Stacking decides whether the cache discount survives the tier. A small model pays its own cost plus the expected escalation, and it wins only below the big model's cost.",
+    "worked_example": "A $100 standard-rate eval job: batch $50 (A:219); Mistral priority $175 (1.75x, A:176); OpenAI fast $200 (2x, A:209). Small model, illustrative arithmetic: c_big $1.00, c_small $0.10 (10x cheaper, low end of the 10 to 30x in A:041), c_esc $1.00. Small wins iff 0.10 + p_f x 1.00 < 1.00, so p_f < 0.90 on cost alone. Quality parity must hold first (C:050: 3B model 55.62 percent on multi-turn tool use).",
+    "complexity": "O(t) over a handful of tiers per request.",
+    "failure_modes": [
+     "Wrong stacking flag overstates batch savings (Groq no, Fireworks yes, Gemini 3 yes, 2.5 no).",
+     "Batch hit rates are best effort, typically 30 to 98 percent (A:219), so use expected not ideal.",
+     "Price rows stale after 30 days: billing blocked by the price-row lifecycle.",
+     "Small-model failure rate taken from another workload."
+    ],
+    "calibration": "R5 experiment 3: batch, flex and standard on 1,000 fixed requests, measure price, latency, hit rate, error and 429 rates. Experiment 6: small-model parity on 1,000+ labelled samples."
+   },
+   "security": [
+    "Tier flags come from the price book and policy, never from the request body alone.",
+    "Batch payloads follow the same content-logging policy as live calls.",
+    "Small-model routing needs an admin-set allow list per tenant and task type."
+   ],
+   "performance": {
+    "slo": "DevX proposal: under 2 ms per decision.",
+    "complexity": "O(t).",
+    "scaling": "Stateless. Price rows cached."
+   },
+   "edge_cases": [
+    "Batch window of 24h does not suit the deadline: choose flex or standard.",
+    "Flex returns 429: retry on standard, not billed for the failed call (A:195, A:150).",
+    "Bedrock batch with caching: no cache component (A:157).",
+    "Gemini 2.5 batch: no stacking with cache.",
+    "Azure 12h cache write charges from Nov 1 2026 change cache-adjusted cost (A:148)."
+   ],
+   "tests": [
+    {
+     "name": "batch pick",
+     "given": "1,000 eval jobs, 24h ok, non-streaming",
+     "expect": "batch tier, cost x0.5"
+    },
+    {
+     "name": "streaming",
+     "given": "chat with streaming",
+     "expect": "standard tier"
+    },
+    {
+     "name": "flex 429",
+     "given": "flex returns 429",
+     "expect": "retry on standard, failed call billed 0"
+    },
+    {
+     "name": "no stacking",
+     "given": "Groq batch with warm cache",
+     "expect": "cache reads priced at the batch input rate"
+    },
+    {
+     "name": "small model",
+     "given": "p_f 0.95, c_small 0.10, c_big 1.00, c_esc 1.00",
+     "expect": "rejected, cost rule fails"
+    }
+   ],
+   "cost_levers": [
+    "Batch halves cost on eight providers (A:111, A:152, A:219, A:174, A:252, A:255, A:159, A:281).",
+    "Reserved capacity saves 30 to 50 percent above the load trigger (A:159)."
+   ],
+   "feedback_events": [
+    "Realised cost and error rate per tier.",
+    "429 and fallback counts."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.tsel.chosen",
+     "fields": [
+      "request_id",
+      "tier",
+      "base_usd",
+      "tier_usd",
+      "constraints"
+     ],
+     "when": "A tier is chosen."
+    },
+    {
+     "name": "token_economics.tsel.fallback",
+     "fields": [
+      "request_id",
+      "from_tier",
+      "reason"
+     ],
+     "when": "A flex or batch call falls back to standard."
+    }
+   ],
+   "papers": [
+    {
+     "ref": "A:129",
+     "key_idea": "900k labels for about $70; a small model about 80x cheaper per instance-hour on a 105-sample test.",
+     "how": "Supports the small-model rule, with a larger parity set."
+    }
+   ],
+   "repos": [],
+   "industry": "Providers publish batch, flex, priority and reserved tiers. Gateways rarely choose among them per job. Token Economics selects the tier from job flags and the versioned price book."
+  },
+  "req": "RQ-C-039, RQ-C-043, RQ-C-044, RQ-C-045, RQ-C-046, RQ-C-047, RQ-C-048, RQ-C-049, RQ-C-051"
+ },
+ "hit": {
+  "inn": "Cache rows from the ledger: fresh input, cache read and cache write tokens per call, with caller id, model and prefix hash.",
+  "out": "A hit rate per caller, model and prefix hash, a miss cause token-economics, and an alert when a caller is below its own baseline.",
+  "store": "reads: ledger cache rows, miss causes | writes: per-caller hit rate series and baselines",
+  "fail": "Fail open: a missing metric never blocks a call. The monitor only observes and alerts, so a lost sample delays an alert and costs no more.",
+  "src": [
+   "C:052",
+   "C:054",
+   "C:076",
+   "A:204",
+   "C:055",
+   "A:224"
+  ],
+  "prop": "The alert rule (3 standard deviations below the 14-day mean) and the minimum call count are DevX proposals. The corpus asks for per-caller baselines but gives no alert method.",
+  "hard": "Account-level and per-caller rates differ widely: account 77 percent hid a cron near 0 percent (C:052). Gateway rates by agent, from C:054, show selection bias. Whether OpenAI per-key overflow near 15 requests per minute affects our callers is unknown.",
+  "line": "caller cron-7: 672 runs/day, 30k prefix, hit 0%\naccount 77% -> alert: below own baseline 94%",
+  "dumb": "This measures how often each caller reuses the provider's saved prompt, one caller at a time. The total hides bad callers, so it warns when a caller is worse than its own normal.",
+  "deep": {
+   "purpose": "Measure cache hit rate per caller against its own baseline and name the miss cause, so a failing caller is found even when the account rate looks fine.",
+   "expected": [
+    "Computes hit = cache_read / (fresh + cache_read + cache_write) per caller, model and prefix hash (C:052).",
+    "Alerts when a caller is below its own baseline even if the account rate is high (C:052, C:054).",
+    "Flags a miss as more than 5 percent and 2,000 or more tokens re-processed, and records the cause (C:076).",
+    "Tags causes such as model_changed, tools_changed and reasoning_effort_changed where the provider reports them (A:204, C:055).",
+    "Feeds the hit rate back to the cache planner (edge hit to cplan)."
+   ],
+   "not_expected": [
+    "Does not alert on the account average alone.",
+    "Does not mix response-level cache rates such as Helicone or Portkey with provider prompt caching (R1 section 4).",
+    "Does not change requests. It only observes."
+   ],
+   "algorithm": {
+    "name": "Per-caller hit rate against baseline",
+    "formula": "hit = read / (fresh + read + write); alert iff hit < baseline - z x sd for n >= n_min calls",
+    "steps": [
+     "Read each ledger cache row. Join caller id, model and prefix hash.",
+     "Add tokens to the caller's rolling window.",
+     "Compute hit. Compare with the caller's 14-day baseline mean and standard deviation.",
+     "On breach, attach the top miss cause from the provider diagnostics or the status-line fields.",
+     "Send an alert and a signal to the cache planner."
+    ],
+    "params": {
+     "hit_formula": "read / (fresh + read + write) (R1 rule 18)",
+     "miss_definition": "more than 5 percent and 2,000+ tokens re-processed (C:076)",
+     "baseline_window": "DevX proposal: 14 days",
+     "z": "DevX proposal: 3",
+     "n_min": "DevX proposal: 50 calls"
+    }
+   },
+   "math": {
+    "definitions": [
+     "fresh, read, write: token counts in the window (write is 5m plus 1h).",
+     "hit: cache hit rate.",
+     "mu_c, sd_c: caller's baseline mean and standard deviation.",
+     "z: alert multiplier.",
+     "L: lost cost per day from misses."
+    ],
+    "formula_full": "hit = read/(fresh + read + write); alert iff hit < mu_c - z x sd_c; L = N x P x (W - R)/1e6 per day if every call misses and re-writes instead of reading",
+    "derivation": "A miss re-bills the prefix at the write rate instead of the read rate. The lost cost per call is P x (W - R). Multiplying by calls per day gives the daily loss from a caller at 0 percent hit.",
+    "worked_example": "C:052: account hit 77 percent hid a cron job at about 0 percent: 672 runs per day, prefix about 30,000 tokens. Using Sonnet 5.5 rates from R1 (W5 $2.50, R $0.10 per MTok): all misses = 672 x 30,000 x 2.50/1e6 = $50.40 per day; all hits = 672 x 30,000 x 0.10/1e6 = $2.02 per day; loss about $48.38 per day. C:054: at a 92 percent hit rate effective input is about $0.30 per M versus $3.00 list.",
+    "complexity": "O(1) per ledger row. O(c) memory for c active callers.",
+    "failure_modes": [
+     "Low call counts give noisy rates, so n_min gates alerts.",
+     "A deliberate compaction or tool change causes an expected miss. Cause tags suppress those alerts.",
+     "Selection bias in gateway data (C:054) can mislead baselines for new callers.",
+     "Provider does not report cache fields (Nova reads are not reported, A:157 via R1), so hit shows 0."
+    ],
+    "calibration": "Compare alerts to confirmed causes weekly. Start with a 30-day baseline (R5 experiment 7) and tune z against false alerts."
+   },
+   "security": [
+    "Stores counts and hashes only. Prefix hash is a one-way hash, so content cannot be recovered.",
+    "Per-caller views respect tenant scope.",
+    "Alerts show caller ids to authorised roles only."
+   ],
+   "performance": {
+    "slo": "DevX proposal: alert within 5 minutes of the window breach.",
+    "complexity": "O(1) per row.",
+    "scaling": "Stream the ledger and partition by caller id."
+   },
+   "edge_cases": [
+    "Caller with a rate-capped OpenAI key: low hit with the cause overflow.",
+    "Subagent callers do not read the parent cache (C:052), so their hit is low by design. Baseline them separately.",
+    "First call of a session: a write by design, so exclude from the miss count.",
+    "Model changed: miss is expected and labelled model_changed.",
+    "Provider reports no cache fields: mark unavailable, do not report 0."
+   ],
+   "tests": [
+    {
+     "name": "hit formula",
+     "given": "fresh 500, read 4,000, write 500",
+     "expect": "hit 0.80"
+    },
+    {
+     "name": "below baseline",
+     "given": "caller baseline 0.94, sd 0.02, hit 0.60, n 100",
+     "expect": "alert raised"
+    },
+    {
+     "name": "account hides",
+     "given": "account 0.77, cron 0.00 over 672 calls",
+     "expect": "alert for the cron caller"
+    },
+    {
+     "name": "model change",
+     "given": "model_changed miss after a planned switch",
+     "expect": "no alert, cause tagged"
+    },
+    {
+     "name": "low volume",
+     "given": "hit 0.0 over 5 calls",
+     "expect": "no alert, below n_min"
+    }
+   ],
+   "cost_levers": [
+    "Finds callers that pay write rates instead of read rates: about $48.38 per day in the C:052 cron example at Sonnet 5.5 rates.",
+    "Gateway-reported hit by agent runs from 92 percent (Claude Code) to 46 percent (Kilo) (C:054)."
+   ],
+   "feedback_events": [
+    "Hit rate and miss cause to the cache planner.",
+    "Alert outcomes to threshold tuning."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.hit.measured",
+     "fields": [
+      "caller_id",
+      "model",
+      "prefix_hash",
+      "hit",
+      "calls"
+     ],
+     "when": "A window closes."
+    },
+    {
+     "name": "token_economics.hit.alert",
+     "fields": [
+      "caller_id",
+      "hit",
+      "baseline",
+      "top_cause"
+     ],
+     "when": "A caller falls below its baseline."
+    }
+   ],
+   "papers": [
+    {
+     "ref": "C:052",
+     "key_idea": "Account hit 77 percent hid a cron job near 0 percent across 672 runs per day.",
+     "how": "Per-caller baseline and alert."
+    },
+    {
+     "ref": "C:076",
+     "key_idea": "A miss is more than 5 percent and 2,000+ tokens re-processed.",
+     "how": "Miss definition."
+    }
+   ],
+   "repos": [
+    {
+     "ref": "A:231",
+     "name": "OpenRouter",
+     "take": "Reports cached_tokens and cache_discount in usage."
+    }
+   ],
+   "industry": "Claude Code's status-line exposes warm, hit_ratio and last_miss_cause (C:076). OpenAI Responses returns cache diagnostics (A:204). Token Economics joins these by caller."
+  },
+  "req": "RQ-C-040, RQ-C-041, RQ-C-042"
+ }
+}

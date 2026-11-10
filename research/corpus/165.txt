@@ -1,0 +1,303 @@
+TITLE: Enhancing Distributed Inference Performance with the NVIDIA Inference Transfer Library
+URL: https://developer.nvidia.com/blog/enhancing-distributed-inference-performance-with-the-nvidia-inference-transfer-library/?trk=article-ssr-frontend-pulse_little-text-block
+ORG: NVIDIA  TYPE: blog  DATE: 2026-03
+
+Enhancing Distributed Inference Performance with the NVIDIA Inference Transfer Library | NVIDIA Technical Blog
+
+ Technical Blog
+
+ Subscribe
+
+ Related Resources 
+
+ Developer Tools & Techniques
+
+Enhancing Distributed Inference Performance with the NVIDIA Inference Transfer Library
+
+ Mar 09, 2026
+
+ By Seonghee Lee, Moein Khazraee, Timothy Stamler, Adit Ranadive and Chris Hoge 
+
+ Like
+
+ Discuss (0)
+
+L
+
+T
+
+F
+
+R
+
+E
+
+AI-Generated Summary
+
+NVIDIA Inference Transfer Library (NIXL) is an open source, vendor-agnostic data movement library that provides a unified API for transferring data across GPU memory, CPU memory, and storage tiers in distributed AI inference frameworks.
+NIXL supports high-performance backends including RDMA, GPU-initiated networking, GPU-Direct storage, NVMe, and cloud object stores such as S3 over RDMA and Azure Blob Storage.
+Core use cases include disaggregated serving for KV cache transfers between prefill and decode workers, long-context KV cache storage to avoid recomputation, weight transfer for fast startup or resharding, reinforcement learning weight streaming, and elastic expert parallelism with dynamic reconfiguration.
+The library uses a conductor process and transfer agents with memory registration, metadata exchange, and descriptor-based transfers to enable non-blocking, zero-copy data movement with dynamic scaling and failure resilience.
+Performance benchmarking tools include NIXLBench for model-agnostic bandwidth and latency measurements and KVBench for LLM-aware KV cache transfer profiling with automatic I/O size calculation.
+Next Steps
+Explore the NVIDIA Inference Transfer Library (NIXL) GitHub repository to access source code and bindings.
+Run the basic_two_peers Python example to learn registration, metadata exchange, and transfer operations.
+Review the NIXL core concepts and architecture overview for detailed design documentation. 
+
+Powered by NVIDIA Nemotron. AI-generated content may summarize information incompletely. Verify important information. Learn more
+
+Deploying large language models (LLMs) requires large-scale distributed inference, which spreads model computation and request handling across many GPUs and nodes to scale to more users while reducing latency. Distributed inference frameworks use techniques such as disaggregated serving, KV cache loading, and wide expert parallelism.
+
+In disaggregated serving environments, prefill and decode phases are run on separate GPUs, requiring efficient KV cache transfers between them. Low-latency and high-throughput communication to move these KV caches are critical to gain benefits from disaggregated serving. 
+
+In KV cache loading, storage is used to help with growing KV caches in multiturn and agentic AI workloads such as coding assistants and reasoning. For the case of long context KV, the previous results can be loaded from local SSDs and remote storage, instead of recomputing them as prefill. This is one example that explains why storage is becoming a core part of inference workloads. 
+
+In wide expert parallelism, experts are split across many GPUs, where the intermediate results (activations) have to be dispatched to and combined from these experts. Due to the requirement for ultra-low-latency communication for intermediate activations between stages, these transfers are typically initiated by the GPU through optimized kernels, referred to as device side APIs for networking, or device API in short.
+
+Another unique feature of inference workloads is their need for dynamicity and resiliency. Services can run 24 hours a day, seven days a week. While based on user demand, the number of GPUs used can change. There can also be more fine-grained dynamicity. The ratio of GPUs doing prefill and decode might change or, in the case of elastic expert parallelism, the number of replicated experts or even total experts can change. 
+
+In the event of failures, the system needs to be resilient, running at lower throughput for a brief period of time until the recovery mechanism handles the failure. This requirement extends the system’s dynamicity needs by detecting failures and managing the transitional state until recovery completes. 
+
+Finally, while there is a need for heterogeneous hardware support in terms of memory and storage, there can be heterogeneity in compute hardware as well. Handling each of these unique hardware components can become cumbersome. This requires a library that can unify different communication and storage technologies, which ensures that frameworks can efficiently move data across various memory and storage hierarchies: GPU memory, CPU memory, and many tiers of local and distributed storage from NVMe to cloud object stores.
+
+NVIDIA Inference Transfer Library (NIXL) is an open source, vendor-agnostic, data movement library designed to support these dynamic, complex AI inference frameworks by offering a unified and powerful abstraction to move data across many memory and storage technologies. 
+
+This post explains NIXL core concepts, including agents, memory registration, metadata exchange, descriptors, transfer creation and management, and backend plugins. It also explains the usage flow of this library, highlights available performance tools, and provides a few examples to help you get started. 
+
+What is NIXL?
+
+NIXL is an open source library for accelerating point-to-point data transfers in AI inference frameworks. NIXL provides a single, easy-to-use API that can be used to address a variety of data transfer challenges within these frameworks while maintaining maximum performance.
+
+This API supports multiple technologies such as RDMA, GPU-initiated networking, GPU-Direct storage, block and file storage, and advanced cloud storage options including S3 over RDMA and Azure Blob Storage. It is vendor-agnostic and can run across diverse environments. For example, it supports Amazon Web Services (AWS) with EFA networking and Trainium or Inferentia accelerators, as well as Azure with RDMA networking. The team is working with Google Cloud to add both RDMA and GPUDirect-TCPXO networking. NIXL is already a key component of many AI inference frameworks such as NVIDIA Dynamo, NVIDIA TensorRT LLM, vLLM, SGLang, Anyscale Ray, LMCache, and more.
+
+ Figure 1. NIXL addresses three core challenges in distributed AI inference: heterogeneous resources, dynamic workload, and massive scale
+
+Core use cases of NIXL include:  
+
+Disaggregation: Moves KV blocks between prefill and decode workers with high throughput and low latency 
+
+Long context KV cache storage: Stores KV cache data in some long term storage medium to avoid recomputation later
+
+Weight transfer: Ships model weights to GPU nodes for fast startup or resharding. The weights might come from GPU memory, host memory, or storage
+
+Reinforcement learning: Streams updated weights from learners to actors with minimal transfer overhead 
+
+Elastic expert parallelism: Dispatches and combine stages in expert parallelism can be done through NIXL, with support for dynamic reconfigurations
+
+The unified NIXL API is for different types of memory and storage, while its pluggable backend design allows this API to target many different high‑performance technologies (RDMA, GPU-initiated networking, GPU-Direct storage, NVMe, Object Stores, and so on). NIXL is designed to have a fully non-blocking API and incur minimal overhead. This enables efficient overlapping of communication and computation with high-performance zero-copy transfers.
+
+The NIXL dynamic metadata exchange enables it to dynamically scale up and down a network of NIXL agents. This feature makes it practical for dynamic, long‑running services where compute nodes are added based on user load, removed due to failures, or recycled for different purposes all the time.
+
+These features enable NIXL to abstract away various memory and storage types for the user of the NIXL library, while supporting a wide range of high-performance transfer backends. Additionally, dynamicity and resiliency is baked in throughout the NIXL design, targeted for inference applications 24 hours a day, seven days a week. 
+
+NIXL design
+
+NIXL functions as a standalone library, providing the necessary abstraction for various network and storage backends. These abstractions include a conductor process that determines when transfers are required, and a NIXL transfer agent that will handle transfers. All of this is done in an object-oriented manner. The transfer terminology is based on writing to or reading from a remote agent (or within the local agent). These write and read operations are also referred to as put and get. 
+
+This terminology enables a unified API that supports both efficient one-sided network communications and storage transfers. The user describes any memory or storage through a list of descriptors, which has an encompassing type to indicate if the data is stored in host memory, GPU memory, or some type of storage. Each descriptor within a descriptor list points to a location in memory or storage. For example, some base address and a size on a host memory, GPU, or SSD, or similarly a location within a file or storage object. Note that each set of transfer descriptors must be from the same memory type but can transverse memory types across the transfer. For example, sending from GPU memory to host memory. 
+
+The conductor gives the NIXL agent access to the desired allocated memories through a registration call. When using one-sided read or write operations, keys or identifiers are generated, so only other processes that have the proper key can access that memory. NIXL encapsulates such information for these registrations, as well as the required connection info, into a metadata object. Inside the NIXL agent, Memory Section and Metadata Handler components are in charge of managing the necessary local and remote information respectively. 
+
+The conductor process is also in charge of dynamically exchanging the relevant metadata objects to decide which agents can talk to each other at each point in time. The conductor process can directly obtain the metadata object from one agent, and load it into another agent. For the case of device API usage by GPU kernels, there is one more preparation step necessary to send the relevant local and remote metadata to the GPU.
+
+This metadata exchange is only necessary for remote agent transfers and not for local memory or storage transfers. For remote storage, NIXL talks to the local client of the distributed storage system, becoming a loopback transfer within the agent. NIXL also provides optional facilitating methods to exchange such metadata through direct sockets connection or a central metadata service such as etcd. 
+
+Now the conductor process can ask the NIXL agent to prepare a transfer request. NIXL first checks whether the required information is available for this transfer. If it is, the conductor process can ask the NIXL agent to start the transfer. It can also monitor the transfer status until it is complete, in a nonblocking manner. Device API mode operates in a similar manner, from the GPU kernel.
+
+The NIXL agent will internally find the optimal backend for carrying out this transfer request, and deliver the prepared request to that backend (unless the user specifies the desired backend). This enables NIXL to achieve high performance and remain hardware agnostic. Figure 2 shows the current list of supported backends, which is expanding with the rapid adoption of NIXL.
+
+ Figure 2. NIXL architecture consists of a core transfer agent with a Memory Section and Metadata Handler, and supports multiple transfer backend plugins through an API 
+
+Example NIXL use case
+
+The following NIXL use case explores how applications or conductor processes can use the NIXL API to perform an asynchronous point-to-point data transfer using a high-performance networking library.
+
+For the case of transferring between two agents, one agent plays the role of the initiator, which creates and starts the read or write operation. The other agent plays the role of the target, whose memory is being accessed. 
+
+These roles are defined per transfer during the application run based on who invokes the operation. The initiator agent checks the status of transfer locally, and typically sends a notification to the target agent to indicate when the transfer is complete. 
+
+Setting up the agents
+
+Setting up the initiator and target agents involves the following steps:
+
+Step 1: Agent creation 
+
+At startup, each application spawns a runtime agent configured with relevant initialization parameters. The agent initializes the transfer backends specified or uses UCX as default if none are provided. UCX is a community-driven networking library and is widely tested internally. The user also gives a name to the agent, which can be any string, such as an UUID.
+
+Step 2: Memory registration 
+
+Users allocate memory on their chosen devices—GPU, CPU, storage—and register these regions with the agent through NIXL descriptors. NIXL will internally pass that information to each relevant backend that supports that memory type.
+
+Optimization tip: Most backend registrations must go through a kernel call, which can be time consuming. It is advised to minimize the number of registrations by registering larger blocks of memory, as transfers can be created anywhere within the registered memory. 
+
+Step 3: Metadata exchange 
+
+Target agent metadata is shared with initiator agents for planned transfers. During runtime, new metadata can be loaded, or metadata of another agent can be removed. This is a key feature that enables dynamicity for the NIXL library.
+
+Optimization tip: When new registrations or deregistrations occur, the updated metadata needs to be exchanged. If one side has dynamic registrations and deregistrations, while the other side has fixed buffers to receive the data, it is advised to make the former side the initiator agent. This removes the need for extra metadata exchanges.
+
+Preparing and performing the data transfer
+
+After the metadata has been shared between the two peer agents, the initiator performs the following steps:
+
+Step 1: Create the transfer request 
+
+The transfer request indicates the operation type, READ or WRITE, as well as the initiator and the target descriptors to be used. A notification can be optionally specified. NIXL will verify these descriptors, decide on the transfer backend, and deliver the descriptors to that backend if preparations are required.
+
+Step 2: Start (or post) the transfer request 
+
+NIXL issues this request to the appropriate backend, making this low overhead. The backend performs the data transfer between the source and destination addresses. The backend library performing the transfer uses the system libraries and drivers underneath to perform the transfer efficiently.
+
+Step 3: Check transfer status  
+
+To enable overlap of compute and communication, the post call is nonblocking, which requires the user to check the status of a transfer separately. Note that the transfer might complete, or might result in an error (network failure, for example). Such failure does not impact the other agents in the system, nor the transfers within the same agent that don’t face that network failure.
+
+On the target side, the user can look for notifications that indicate a transfer was complete. The name of the agent shows up in the notification, with the notification message, while the target agent does not need to know the initiator’s name beforehand. 
+
+Tear down
+
+When a NIXL agent is deleted, NIXL will automatically deregister the local registered memories. If an active transfer is being directed towards this NIXL agent, it will simply result in an error status. If local transfers are not finished, NIXL will try to release them during agent destruction. However, it is advised to preemptively release those transfer requests.
+
+NIXL performance benchmarking tools 
+
+Performance benchmarking tools are valuable for inference systems. They can be used to verify that a system is operating as intended, or find the best backend for a specific enterprise system. They can also help verify performance improvements for a specific backend. 
+
+NIXL provides a two‑layer setup, through a low-level benchmark called NIXLBench and an LLM-aware profiler called KVBench. 
+
+NIXLBench is intentionally model‑agnostic and maintains a simple system view. It executes real data transfers, sweeps block and batch sizes, and reports bandwidth metrics with latency percentiles. NIXLBench relies on etcd to exchange transfer metadata for network backends, but not for storage backends as there is no need for metadata exchange.
+
+KVBench offers significant advantages for LLM engineers by accelerating benchmarking and iteration through the automatic calculation of exact KV cache I/O size and batch size for supported models, and generates a ready-to-run NIXLBench command. KVBench can also instantiate profiling of KVCache transfers using its CTPerfTest module.
+
+Get started with NVIDIA Inference Transfer Library
+
+NIXL software is fully open source and available on the ai-dynamo/nixl GitHub repo. It is written in C++ for high performance, efficiency, and composability. Several bindings are available, including C, Python, and Rust. 
+
+Currently, NIXL is only supported in Linux environments such as Ubuntu and RHEL and is available prebuilt as a Python wheel distributable. We encourage you to try NIXL in your own AI inference frameworks and workloads.
+
+To learn more, you can explore additional examples in the NIXL example guide. As a starting point, basic_two_peers is a simple two-peer Python example showing registration, metadata exchange, a single READ operation, notification, verification, and teardown. In addition, expanded_two_peers builds on top of the previous example, by adding parallel READs and WRITEs with various preparation methods, reposting the same transfer request, and usage of patterns in notifications.
+
+We welcome questions, contributions, pull requests, and feedback from the community on GitHub. Stay tuned for the upcoming NIXL v1.0.0 release. To learn more about NIXL, check out these additional resources: 
+
+NIXL core concepts and architecture overview 
+
+NIXL Python API use and examples
+
+NIXL telemetry system
+
+NIXL Benchmark
+
+KVBench workflows and tutorials
+
+Acknowledgments 
+
+The NVIDIA Inference Transfer Library product team acknowledges the valuable contributions of all open source developers, contributors, testers, and community members who have participated in its evolution.
+
+ Discuss (0)
+
+ Like
+
+Tags
+
+ Developer Tools & Techniques | MLOps | Networking / Communications | HPC / Scientific Computing | Dynamo | NVLink | TensorRT-LLM | Intermediate Technical | Deep dive | Tutorial | AI Agent | AI Inference | Inference Performance | Python 
+
+ About the Authors
+
+ About Seonghee Lee
+
+ Seonghee Lee is an engineer on the AI platform software team at NVIDIA, focusing on AI Inference-related products. Seonghee holds a master’s in computer science from Stanford University and a bachelor’s in science from Cornell University, specializing in AI. Before joining NVIDIA, she worked at Microsoft Research on developing real-time AI agent interactions.
+
+ View all posts by Seonghee Lee
+
+ About Moein Khazraee
+
+ Moein Khazraee serves as a senior networking and systems architect at NVIDIA, driven by a fascination with the intricacies of end-to-end systems. He completed his PhD at UC San Diego, followed by a postdoctoral position at MIT. His research centered on the software and hardware co-design of frameworks for networked systems. At NVIDIA, Moein’s work spans AI workload modeling, co-leading the architecture of the NVIDIA NIXL library, and network architecture for NVQLink.
+
+ View all posts by Moein Khazraee
+
+ About Timothy Stamler
+
+ Timothy Stamler is a senior systems architect for the Network Architecture team at NVIDIA and works on a variety of systems and performance optimization problems. Tim did his PhD at UT Austin, focusing on optimizing operating system IO stacks and making storage and network stacks work more cooperatively. Since coming to NVIDIA, he’s worked on extending the RDMA verbs API and making it easier for AI inference platforms to utilize high speed network technology through libraries like NIXL.
+
+ View all posts by Timothy Stamler
+
+ About Adit Ranadive
+
+ Adit Ranadive serves as senior software architect in the NVIDIA Networking Software Advanced Development Group, focusing on system technologies that enhance AI inference workloads. His work includes enabling high-performance computing software to utilize DPUs for IO stream processing and advancing distributed computing architectures. He holds advanced degrees in Computer Science from Georgia Tech and previously led initiatives in virtualization of high performance networks at VMware.
+
+ View all posts by Adit Ranadive
+
+ About Chris Hoge
+
+ Chris Hoge is the manager of the AI Platform Software Technical Marketing Engineering team at NVIDIA. He has worked in open-source software for more than 10 years, with a focus on AI, high-performance computing, and infrastructure. He holds a master’s degree in applied mathematics from the University of Colorado and a bachelor’s degree in systems science and mathematics from Washington University in St. Louis.
+
+ View all posts by Chris Hoge
+
+Comments
+
+Related posts
+
+ Removing the Guesswork from Disaggregated Serving
+
+ Removing the Guesswork from Disaggregated Serving
+
+ Smart Multi-Node Scheduling for Fast and Efficient LLM Inference with NVIDIA Run:ai and NVIDIA Dynamo
+
+ Smart Multi-Node Scheduling for Fast and Efficient LLM Inference with NVIDIA Run:ai and NVIDIA Dynamo
+
+ Reducing Cold Start Latency for LLM Inference with NVIDIA Run:ai Model Streamer
+
+ Reducing Cold Start Latency for LLM Inference with NVIDIA Run:ai Model Streamer
+
+ Cut Model Deployment Costs While Keeping Performance With GPU Memory Swap
+
+ Cut Model Deployment Costs While Keeping Performance With GPU Memory Swap
+
+ NVIDIA Dynamo Accelerates llm-d Community Initiatives for Advancing Large-Scale Distributed Inference
+
+ NVIDIA Dynamo Accelerates llm-d Community Initiatives for Advancing Large-Scale Distributed Inference
+
+Related posts
+
+ Manage Kubernetes Node Fleets with NodeWright
+
+ Manage Kubernetes Node Fleets with NodeWright
+
+ Enabling Private High-Performance Production AI Inference with NVIDIA Confidential Computing
+
+ Enabling Private High-Performance Production AI Inference with NVIDIA Confidential Computing
+
+ Giga-Scale AI and the Ethernet Evolution: How Spectrum-X Ethernet Rewrites the Rules
+
+ Giga-Scale AI and the Ethernet Evolution: How Spectrum-X Ethernet Rewrites the Rules
+
+ NVIDIA BlueField-4 Powers New Scale-In Network Infrastructure for Agentic AI Factories
+
+ NVIDIA BlueField-4 Powers New Scale-In Network Infrastructure for Agentic AI Factories
+
+ How to Choose Full-Stack Observability for NVIDIA AI Factories
+
+ How to Choose Full-Stack Observability for NVIDIA AI Factories
+
+ Theme
+
+ Light
+
+ System
+
+ Dark
+
+ Close
+
+ Previous
+
+ Next
+
+L
+
+T
+
+F
+
+R
+
+E

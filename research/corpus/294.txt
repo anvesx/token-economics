@@ -1,0 +1,897 @@
+TITLE: Ensemble Routing for Prompt-Adaptive Cost-Aware LLM Inference (PISA)
+URL: https://arxiv.org/abs/2611.10193
+ORG: arXiv  TYPE: paper  DATE: 2026-11
+
+                                                Ensemble Routing for Prompt-Adaptive Cost-Aware LLM
+                                                                      Inference
+                                                              Saul Urso1,3 , Emanuele Carlini1 , Patrizio Dazzi1,3 , Matteo Mordacchini2 ,
+                                                                            1 Institute of Information Science and Technologies, CNR, Italy
+                                                                                   2 Institute of Informatics and Telematics, CNR, Italy
+                                                                              3 University of Pisa, Department of Computer Science, Italy
+
+                                                  saul.urso@phd.unipi.it, emanuele.carlini@isti.cnr.it, patrizio.dazzi@unipi.it, matteo.mordacchini@iit.cnr.it
+
+                                        Abstract                                                                 cost preferences, making it desirable to adapt inference strategies
+                                        Large language models (LLMs) increasingly support Web-based ser-         to both prompt characteristics and inference-cost preferences [31].
+                                        vices that must balance response quality and inference cost across           LLM routing addresses this challenge by selecting models accord-
+
+
+
+
+arXiv:2611.10193v1 [cs.AI] 6 Nov 2026
+                                        heterogeneous requests. Conventional routing selects one model           ing to prompt characteristics, expected response quality, and infer-
+                                        per prompt, while fixed ensembles cannot adapt their composi-            ence cost [25]. Recent approaches extend routing to budget-adaptive
+                                        tion and cost to individual requests. We introduce PISA, a prompt-       selection [43], reasoning-strategy selection [26], and additional
+                                        adaptive, cost-aware single-model router, and PISA-E, its extension      deployment constraints [20]. However, selecting a single model
+                                        to ensemble routing. At the core of both methods, PISA combines          cannot exploit the complementary capabilities of multiple LLMs.
+                                        soft cluster memberships with model-specific predictors to esti-         Ensembling offers an alternative by combining multiple model re-
+                                        mate individual model capabilities. Building on these estimates,         sponses [5], but introduces additional inference costs. Existing en-
+                                        PISA-E jointly selects ensemble composition and cardinality under        semble approaches explore adaptive model composition, diversity-
+                                        an explicit cost–quality preference that can be adjusted at infer-       aware selection, and budget-constrained optimization [6, 15, 30].
+                                        ence time without retraining. A tractable ensemble-success surro-        Nevertheless, existing approaches typically address only parts of the
+                                        gate and efficient candidate selection enable this extension without     problem: some adapt ensemble composition without explicitly opti-
+                                        ensemble-specific training. Across four LLM routing benchmarks           mizing inference cost, while others rely on classification-specific
+                                        under in-distribution (ID) and out-of-distribution (OOD) condi-          aggregation or sequential execution. Moreover, ensemble cardi-
+                                        tions, PISA achieves the highest macro-average cost–performance          nality is generally fixed during training or configuration, limiting
+                                        hypervolume among the evaluated single-model routers in both             the ability to adjust the number of invoked models to individual
+                                        settings. Meanwhile, PISA-E achieves the highest macro-average           prompts and changing cost preferences at inference time. This
+                                        task performance among the evaluated ensemble approaches when            motivates ensemble routing, where both the composition and cardi-
+                                        prioritizing response quality, surpassing the strongest competitors      nality of the invoked model subset are determined dynamically at
+                                        by 2.09 and 2.87 percentage points under ID and OOD conditions,          inference time according to prompt characteristics and an explicit
+                                        respectively. At selected lower-cost operating points, it also exceeds   cost–quality preference.
+                                        the strongest ensemble competitors’ macro-average task perfor-               We introduce PISA, a prompt-adaptive, cost-aware single-model
+                                        mance while reducing average inference cost by approximately 36%         router that estimates the capabilities of individual LLMs, and PISA-E,
+                                        and 25%, respectively. These results demonstrate the effectiveness       its extension to prompt-adaptive ensemble routing. PISA-E reuses
+                                        of prompt-adaptive capability estimation for both single-model           the individual capability estimates to construct a tractable surrogate
+                                        routing and selective ensembling.                                        for ensemble success, eliminating the need to train separate quality
+                                                                                                                 estimators for different model combinations. By combining these
+                                                                                                                 estimates with inference cost, PISA-E selects prompt-specific model
+                                        Keywords
+                                                                                                                 subsets, jointly determining which models to invoke and how many.
+                                        Large Language Models, LLM Routing, Cost–Aware Inference, LLM            Crucially, the cost–quality preference can be adjusted at inference
+                                        Ensembling                                                               time without additional hyperparameter optimization or retraining,
+                                                                                                                 allowing the same framework to support different operating points.
+                                                                                                                 The selected responses are combined through capability-weighted
+                                        1   Introduction                                                         semantic similarity to produce the final ensemble response.
+                                        Large language models (LLMs) are increasingly deployed in Web-               We evaluate PISA and PISA-E on four LLM routing benchmarks
+                                        based services, supporting applications such as search and infor-        under in-distribution (ID) and out-of-distribution (OOD) conditions.
+                                        mation discovery, recommendation, and intelligent agents [3, 16].        PISA achieves the highest macro-average hypervolume among the
+                                        Their adoption also extends to publicly accessible LLM services, cre-    evaluated single-model routers in both settings, ranking first in
+                                        ating new challenges for efficient and scalable inference [22]. These    six of the eight benchmark–setting combinations. PISA-E achieves
+                                        services must handle heterogeneous user requests while balancing         the highest macro-average task performance among the evaluated
+                                        response quality and inference cost. When multiple LLMs with             ensemble approaches in both settings, improving over the strongest
+                                        different capabilities and pricing structures are available, invoking    competitors by 2.09 percentage points under ID and 2.87 under OOD
+                                        expensive models indiscriminately wastes resources, whereas con-         conditions when prioritizing response quality. At selected lower-
+                                        sistently selecting inexpensive models can compromise response           cost operating points, it also exceeds the strongest competitors’
+                                        quality. Moreover, different users and requests may have different
+                                                                                                                                          Urso et al.
+
+
+macro-average task performance while reducing average inference           Let
+cost by approximately 36% and 25%, respectively. Finally, compar-                           𝑋𝐸 (𝑞) = 1[𝑌𝐸 (𝑞) is correct] ,                      (5)
+isons with fixed-cardinality variants demonstrate the benefits of         and define the corresponding probability of correctness as
+adapting ensemble size to individual prompts.
+   Our main contributions are:                                                                 𝑝 𝐸 (𝑞) = Pr(𝑋𝐸 (𝑞) = 1 | 𝑞) .                    (6)
+      • We develop PISA, a prompt-adaptive, cost-aware single-               As in the single-model setting, 𝑝 𝐸 (𝑞) is unavailable at inference
+        model router that estimates individual model capabilities         time; we denote its router-provided estimate by 𝑝ˆ𝐸 (𝑞). Let 𝐶¯ (𝐸, 𝑞) ∈
+        through soft cluster memberships and model-specific pre-          [0, 1] denote the normalized inference cost associated with querying
+        dictors, providing the foundation for ensemble routing.           ensemble 𝐸. Cost-aware ensemble routing then solves
+      • We propose PISA-E, a framework for prompt-adaptive,                                     𝐸ˆ (𝑞) = arg max 𝐽𝐸 (𝑞; 𝛼),                      (7)
+        cost-aware ensemble routing that uses ensemble-level util-                                       ∅≠𝐸 ⊆ M
+        ity estimates derived from individual model capabilities to       with
+        jointly determine ensemble composition and cardinality                         𝐽𝐸 (𝑞; 𝛼) = 𝛼 𝑝ˆ𝐸 (𝑞) + (1 − 𝛼) 1 − 𝐶¯ (𝐸, 𝑞) .
+                                                                                                                                    
+                                                                                                                                            (8)
+        at inference time, according to prompt characteristics and
+                                                                             Single-model routing is recovered by restricting the feasible
+        inference-cost preferences.
+                                                                          ensembles to singletons, |𝐸| = 1. Thus, the two settings differ only
+      • We evaluate both methods across four benchmarks under
+                                                                          in their action spaces: standard routing selects an element of M,
+        ID and OOD conditions, demonstrating the highest macro-
+                                                                          whereas ensemble routing selects an element of 2 M \ {∅}.
+        average single-model routing HV and ensemble task per-
+                                                                             Solving this problem requires estimating the expected quality
+        formance among the evaluated approaches in both settings.
+                                                                          and inference cost of candidate model subsets. Section 3 describes
+        We also demonstrate operating points with higher task
+                                                                          how we instantiate these quantities and perform cost-aware model
+        performance at lower cost than the strongest ensemble
+                                                                          and ensemble selection.
+        competitors and quantify the benefits of prompt-dependent
+        ranking and adaptive ensemble cardinality.                        3      Methodology
+2     Problem Formulation                                                 Our approach builds on a shared capability-estimation framework
+                                                                          to support both single-model and ensemble routing. PISA estimates
+Let M = {1, . . . , 𝑀 } denote a fixed pool of candidate LLMs. Given a    the prompt-dependent capabilities of individual LLMs and uses
+prompt 𝑞, model routing selects one or more models from M while           them for cost-aware single-model selection. PISA-E extends this
+trading off response quality and inference cost.                          framework to ensemble routing by combining the same capabil-
+   For each model 𝑚 ∈ M, let 𝑋𝑚 (𝑞) ∈ {0, 1} indicate whether the         ity estimates into an ensemble-success surrogate, allowing model
+model produces a correct answer, with prompt-dependent proba-             subsets of different compositions and cardinalities to be evaluated
+bility                                                                    under the cost–quality objective introduced in Section 2. Figure 1
+                      𝑝𝑚 (𝑞) = Pr(𝑋𝑚 (𝑞) = 1 | 𝑞) .                (1)    illustrates the resulting inference pipeline.
+Since 𝑝𝑚 (𝑞) is unknown at inference time, a router operates on an
+estimate 𝑝ˆ𝑚 (𝑞). Let 𝑐¯𝑚 (𝑞) ∈ [0, 1] denote the normalized cost of      3.1     PISA: Model Routing via Soft Assignments
+querying model 𝑚 on prompt 𝑞.                                             The first stage estimates how likely each candidate model is to
+                                                                          produce a correct response to a given prompt. PISA learns prompt-
+2.1     Cost-Aware Single-Model Routing                                   dependent capability estimates from historical model outcomes and
+Standard model routing selects exactly one model for each prompt.         semantic representations of the input queries. Assume a training
+We formulate the cost-aware routing decision as                           set of 𝑁 prompts, where each prompt 𝑞𝑖 is represented by an em-
+                                                                          bedding 𝑥𝑖 = 𝑓 (𝑞𝑖 ) ∈ R𝑑 and is associated with a correctness score
+                       ˆ
+                       𝑚(𝑞) = arg max 𝐽𝑚 (𝑞; 𝛼),                    (2)
+                                 𝑚∈ M
+                                                                          𝑠𝑖𝑚 ∈ [0, 1] for each model 𝑚 ∈ M. At inference time, only the
+                                                                          embedding 𝑥 = 𝑓 (𝑞) of the incoming prompt is available.
+where
+                                                                              To capture similarities among prompts, we partition the fit-set
+    𝐽𝑚 (𝑞; 𝛼) = 𝛼 𝑝ˆ𝑚 (𝑞) + (1 − 𝛼) (1 − 𝑐¯𝑚 (𝑞)) ,   𝛼 ∈ [0, 1].   (3)   embeddings using X-means, which determines both the number of
+                                                                          clusters 𝐾 and their centroids. PISA represents each query through
+Here, 𝛼 controls the trade-off between predicted response quality
+                                                                          soft memberships over the learned centroids, allowing its repre-
+and inference cost.
+                                                                          sentation to incorporate information from multiple clusters. After
+                                                                          ℓ2 -normalizing embeddings and centroids, these memberships are
+2.2     Cost-Aware Ensemble Routing                                       computed from cosine distances as
+We generalize standard routing by allowing the router to select any
+                                                                                             exp(−𝛽𝑑𝑘 (𝑥))
+non-empty subset 𝐸 ⊆ M, 𝐸 ≠ ∅. All models in 𝐸 are queried, and                   𝑢𝑘 (𝑥) = Í𝐾                  ,       𝑑𝑘 (𝑥) = 1 − 𝑥 ⊤ 𝜇𝑘 ,     (9)
+their outputs are combined by a response resolver A, which may                              𝑗=1 exp(−𝛽𝑑 𝑗 (𝑥))
+implement any suitable aggregation strategy. If 𝑌𝑚 (𝑞) denotes the        where 𝜇𝑘 denotes the centroid of cluster 𝑘 and 𝛽 > 0 controls the
+output of model 𝑚, the resulting ensemble output is                       concentration of the assignments. This representation allows capa-
+                                                                          bility estimation to exploit information from multiple neighboring
+                    𝑌𝐸 (𝑞) = A ({𝑌𝑚 (𝑞) : 𝑚 ∈ 𝐸}) .                 (4)   regions instead of relying on a single hard assignment.
+Ensemble Routing for Prompt-Adaptive Cost-Aware LLM Inference
+
+
+   Shared front end (given 𝑘 max )
+            Embed                                    Soft query representation                                              Estimate capabilities                               Utilities 𝐽{𝑚}
+                                                                                                                                                                                  avg
+                                        X-means (fit)                                                                  Logistic heads          𝑝ˆ𝑚 (𝑥 )                         𝑐𝑚 , 𝛼, 𝑘 max
+
+                                                          Distances 𝑑                               𝑢 (𝑥 )                                             𝑝ˆ1                                            𝑚1
+                                                                                                                                                       𝑝ˆ2                                            𝑚2
+                               𝑥                                             Softmax
+                    𝑓                                                                                                                                  𝑝ˆ3                                            𝑚3
+                                         𝑥                                     −𝛽𝑑
+                                                                                                                                                       𝑝ˆ4                                            𝑚4
+                                                                                                                                                       𝑝ˆ5                                            𝑚5
+                                         Centroids
+                                                          𝑑 𝑘 = 1 − 𝑥 ⊤ 𝜇𝑘                                                               ⊤𝑢 + 𝑏 )
+                                                                                                                                                                        𝛼 𝑝ˆ𝑚 + (1 − 𝛼 ) (1 − 𝐶¯ ( {𝑚} ) )
+                                                                                                Í
+        𝑞     𝑥 = 𝑓 (𝑞)                     𝜇𝑘                                                    𝑘 𝑢𝑘 = 1                     𝑝ˆ𝑚 = 𝜎 (𝑤𝑚     𝑚
+
+                                                                                       { 𝑝ˆ𝑚 }, { 𝐽{𝑚} }
+
+     PISA           Select maximum (𝑘 max = 1)                                                                Query                                                             Response
+                                                                                   ˆ
+                                                                                   𝑚
+                                                                                                                 𝑚1                                                                     𝑌𝑚ˆ (𝑞)
+                          𝑚1       𝑚2     𝑚3   𝑚4    𝑚5
+
+     PISA-E         Greedy prefixes                               Score & select                             Query in parallel          Self-weighted BERTScore                         Response
+                                                              maj
+                          Rank by 𝐽{𝑚}                      𝑝ˆ𝐸 (majority), 𝐶¯ (𝐸 ) (cost)                                                     𝑤1 𝑤2 𝑤3 𝑤4 𝑤5
+                                                                                                              𝑚1              𝑦1
+            𝐸1   𝑚1                                       𝐽𝐸                                                                              𝑤1
+                                                                                                              𝑚2              𝑦2
+                                                                                                    𝐸ˆ                                    𝑤2
+            𝐸3   𝑚1      𝑚2        𝑚3                                                                         𝑚3              𝑦3          𝑤3                                                   𝑦∗
+                                                                                                              𝑚4              𝑦4          𝑤4
+            𝐸5   𝑚1      𝑚2        𝑚3    𝑚4    𝑚5                                                                                         𝑤5
+                                                                                                              𝑚5              𝑦5                   Í
+                         Odd 𝑘 ≤ 𝑘 max                               𝐸1       𝐸3        𝐸5                                               𝑆𝑖 = 𝑤𝑖       𝑗 𝑤 𝑗 𝐵𝑒𝑟𝑡𝑆𝑐𝑜𝑟𝑒𝑖 𝑗               arg max𝑖 𝑆𝑖
+                                                                                                      𝑤𝑖 ∝ 𝑝ˆ𝑖
+
+
+Figure 1: Inference-time overview of PISA and PISA-E. PISA maps a prompt embedding to soft memberships over X-means
+centroids, estimates each model’s success probability, and selects the model with highest cost-aware utility. PISA-E reuses the
+capability estimates to rank models by utility using its ensemble cost normalization, and evaluates odd-cardinality ranking
+prefixes using a strict-majority success surrogate and normalized ensemble cost. In the illustrated five-model example, the
+candidates are 𝐸 1 , 𝐸 3 , and 𝐸 5 . The selected ensemble is queried in parallel, and self-weighted BERTScore selects the final response
+using the estimated model capabilities.
+
+
+    Using the resulting membership vector 𝑢 (𝑥), PISA learns an inde-                                            The resulting capability estimates also provide the foundation for
+pendent logistic predictor for each candidate model. Each predictor                                              the ensemble-routing extension described next.
+is trained using the soft memberships of the training prompts and
+their corresponding binary correctness labels, obtained by thresh-
+olding evaluation scores at 0.5. For an incoming prompt, the esti-
+                                                                                                                 3.2     PISA-E: Prompt-Adaptive Cost-Aware LLM
+mated capability of model 𝑚 is                                                                                           Ensembling
+                                   ⊤                                                                            While PISA selects a single model, PISA-E extends the routing
+                      𝑝ˆ𝑚 (𝑥) = 𝜎 𝑤𝑚 𝑢 (𝑥) + 𝑏𝑚 ,                (10)                                            decision to model subsets, allowing both ensemble composition
+where 𝜎 (·) is the logistic sigmoid and (𝑤𝑚 , 𝑏𝑚 ) are the parame-                                               and cardinality to vary with the prompt and cost preference. Given
+ters fitted for model 𝑚 using L2-regularized logistic regression.                                                the capability estimates {𝑝ˆ𝑚 (𝑥)}𝑚=1
+                                                                                                                                                    𝑀 , PISA-E considers ensembles
+
+The regularization strength 𝜆𝑚 is selected independently for each                                                𝐸 ⊆ M with 1 ≤ |𝐸| ≤ 𝑘 max , where 𝑘 max denotes the maximum
+model through 5-fold cross-validation minimizing log loss over 10                                                ensemble size. Its central challenge is to evaluate the expected utility
+logarithmically spaced values between 10−4 and 104 . The selected                                                of candidate subsets before invoking their constituent models.
+predictor is then refitted on the full training set.                                                                Directly estimating the performance of every possible ensemble
+   To incorporate inference cost into the routing decision, we esti-                                             would require modeling the behavior of numerous model combi-
+mate each model’s cost from its average observed training-set cost.                                              nations. Instead, PISA-E constructs an ensemble-level utility es-
+Let 𝑐𝑖𝑚 denote the cost of invoking model 𝑚 on training prompt 𝑞𝑖 ,                                              timate from the individual capabilities already provided by PISA.
+and define                                                                                                       Specifically, we use the probability that a strict majority of the se-
+                                                                                                                 lected models produce correct responses as a tractable surrogate for
+                              𝑁                                   avg
+              avg       1 ∑︁                                    𝑐𝑚                                               comparing candidate ensembles. This criterion captures how the
+             𝑐𝑚 =             𝑐𝑖𝑚 ,            𝑐¯𝑚 =                      avg .                (11)              predicted capabilities of the constituent models combine, without
+                        𝑁 𝑖=1                           max𝑚 ′ ∈ M 𝑐𝑚 ′
+                                                                                                                 requiring ensemble-specific predictors or observing their generated
+The normalized cost 𝑐¯𝑚 ∈ [0, 1] provides the cost term in Eq. (3).                                              responses.
+For each incoming prompt and cost preference 𝛼, PISA selects the                                                    For an ensemble 𝐸 of size 𝑘, we model the correctness of each
+model maximizing the corresponding single-model utility in Eq. (2).                                              constituent model through a Bernoulli variable 𝑍𝑚 with success
+                                                                                                                                              Urso et al.
+
+
+probability 𝑝ˆ𝑚 (𝑥). Assuming conditional independence of these               Once an ensemble 𝐸 has been selected, PISA-E queries its con-
+variables given the prompt, the strict-majority success probability        stituent models in parallel and combines their responses through
+is                                                                         self-weighted BERTScore [36], a capability-aware extension of min-
+                                      !                                  imum Bayes risk (MBR) decoding. The resolver incorporates the
+     maj
+                     ∑︁           𝑘                                        estimated capabilities of both candidate and reference responses,
+   𝑝ˆ𝐸 (𝑥) = Pr            𝑍𝑚 ≥      + 1 , 𝑍𝑚 ∼ Bernoulli(𝑝ˆ𝑚 (𝑥)),
+                    𝑚∈𝐸
+                                  2                                        weighting their contributions according to their predicted reliabil-
+                                                                 (12)      ity. Let 𝑦𝑖 denote the response produced by model 𝑖 ∈ 𝐸. We first
+with the 𝑍𝑚 treated as independent. We compute this probability            normalize the capability estimates over the selected ensemble:
+using the standard Poisson-binomial dynamic program. The strict-                                                 𝑝ˆ𝑖 (𝑥)
+majority success probability serves as a surrogate for ensemble                                  𝑤𝑖 (𝑥, 𝐸) = Í               .            (15)
+                                                                                                               𝑗 ∈𝐸 𝑝ˆ 𝑗 (𝑥)
+selection, since the outcome of the final response resolver also
+depends on relationships among the generated responses. Accord-            The score assigned to each candidate response is then
+         maj                                                                                            ∑︁
+ingly, 𝑝ˆ𝐸 (𝑥) provides the quality term in the ensemble-routing                  𝑆𝑖 (𝑥, 𝐸) = 𝑤𝑖 (𝑥, 𝐸)    𝑤 𝑗 (𝑥, 𝐸) BERTScore(𝑦𝑖 , 𝑦 𝑗 ).         (16)
+objective independently of the response resolution procedure.                                             𝑗 ∈𝐸
+    To balance this surrogate with inference cost, PISA-E estimates        The final ensemble response is selected as
+the cost of an ensemble by summing the average costs of its con-
+stituent models. Let the model costs defined in Eq. (11) be ordered                                 𝑦 ∗ = arg max 𝑆𝑖 (𝑥, 𝐸).                        (17)
+                                                                                                                 𝑖 ∈𝐸
+     avg             avg
+as 𝑐 (1) ≥ · · · ≥ 𝑐 (𝑀 ) . We normalize the ensemble cost as              Alternative response resolution strategies are described in Appen-
+                                  Í      avg                               dix A. Algorithm 1 summarizes the complete inference procedure,
+                                        𝑐𝑚
+                         𝐶¯ (𝐸) = Í𝑚∈𝐸
+                                   𝑘 max avg
+                                               .                   (13)    from prompt-dependent capability estimation to cost-aware ensem-
+                                   𝑗=1 𝑐 ( 𝑗 )                             ble selection.
+The denominator corresponds to the maximum cost of any sub-                Algorithm 1 PISA-E: Prompt-Adaptive Cost-Aware Ensembling
+set containing at most 𝑘 max models and remains constant across            Require: query embedding 𝑥; trade-off parameter 𝛼; maximum
+candidate ensembles. Combining this normalized cost with the                   ensemble size 𝑘 max
+strict-majority surrogate yields the ensemble utility in Eq. (8), al-      Require: fitted PISA; average model costs {𝑐𝑚 }𝑚=1
+                                                                                                                               avg 𝑀
+lowing subsets of different cardinalities to be compared under the          1: for 𝑚 ∈ M do
+same cost–quality preference.                                               2:     compute 𝑝ˆ𝑚 (𝑥) using PISA
+   Since evaluating all feasible subsets would require a combinato-         3:     compute 𝐶¯ ({𝑚}) using Eq. (13)
+rial search, PISA-E uses a greedy candidate-construction procedure.         4:     compute 𝐽 {𝑚} (𝑥; 𝛼) using Eq. (14)
+For each prompt, the models are first ranked according to their             5: end for
+utilities, using the same cost normalization as for all candidate           6: sort models as 𝑚 (1) , . . . , 𝑚 (𝑀 ) such that
+ensembles:
+                                                                                            𝐽 {𝑚 (1) } (𝑥; 𝛼) ≥ · · · ≥ 𝐽 {𝑚 (𝑀 ) } (𝑥; 𝛼)
+            𝐽 {𝑚} (𝑥; 𝛼) = 𝛼 𝑝ˆ𝑚 (𝑥) + (1 − 𝛼) 1 − 𝐶¯ ({𝑚}) .
+                                                           
+                                                                (14)
+                                                                            7: best ← ∅
+Here, 𝐶¯ ({𝑚}) is obtained from Eq. (13) with 𝐸 = {𝑚}, so the cost          8: bestval ← −∞
+of each model is normalized by the sum of the 𝑘 max largest average         9: for 𝑘 = 1, . . . , 𝑘 max with 𝑘 mod 2 = 1 do
+model costs. Candidate ensembles are then constructed as progres-          10:    𝐸𝑘 ← {𝑚 (1) , . . . , 𝑚 (𝑘 ) }
+                                                                                              maj
+sively larger prefixes of this ranking, considering odd cardinalities      11:    compute 𝑝ˆ𝐸 (𝑥)
+                                                                                               𝑘
+up to 𝑘 max . Each candidate is evaluated using its strict-majority suc-   12:    compute 𝐶¯ (𝐸𝑘 )
+cess probability and normalized inference cost, and the ensemble           13:    compute 𝐽𝐸𝑘 (𝑥; 𝛼) using Eq. (8)
+maximizing the resulting utility is selected. For 𝑘 max = 1, both the      14:    if 𝐽𝐸𝑘 (𝑥; 𝛼) > bestval then
+cost normalization and the selection rule reduce to those of PISA.         15:        best ← 𝐸𝑘
+   Restricting the candidates to odd cardinalities follows directly        16:        bestval ← 𝐽𝐸𝑘 (𝑥; 𝛼)
+from the strict-majority surrogate. For any even-cardinality ensem-        17:    end if
+ble, removing one constituent model produces an odd-cardinality            18: end for
+subset whose strict-majority success probability is at least as high,      19: return best
+since the required number of correct models decreases by one. As
+the subset also incurs lower inference cost, the even-cardinality
+ensemble cannot achieve higher utility under the surrogate ob-             4 Experiments
+jective. Consequently, considering only odd cardinalities does not
+exclude an optimal solution to the surrogate-based subset optimiza-        4.1 Experimental Setup
+tion problem. The greedy prefix construction further restricts the            Benchmarks. We evaluate PISA and PISA-E on four LLM routing
+search space and does not guarantee the globally optimal subset,           benchmarks: LLMRouterBench Track-2 [19], RouterBench [13], Fu-
+but provides an efficient procedure for selecting among candidate          sionBench [10], and SPROUT [27]. These benchmarks cover hetero-
+ensembles. A comparison with exhaustive surrogate optimization             geneous candidate model pools and task groups, with performance
+is provided in Appendix E.                                                 measured using their respective evaluation scores.
+Ensemble Routing for Prompt-Adaptive Cost-Aware LLM Inference
+
+
+    Evaluation Protocol. We consider both ID and OOD evaluations.        Table 1: Normalized hypervolume (HV) of single-model
+For ID experiments, we use the released data partitions when avail-      routers across ID and OOD benchmarks. HV is multiplied by
+able; otherwise, we split the data into 70% development and 30%          100 and uses the p40 full-pool cost reference. Parentheses
+test, further dividing the development set into 80% training and 20%     report sample standard deviations across five seeds.
+validation. For OOD experiments, we train exclusively on ID task
+groups, select configurations using ID validation data, and evaluate     Approach        Track-2           RouterBench     FusionBench       SPROUT          Macro
+                                                                                                                                                            average
+on held-out task groups. ID and OOD experiments use separately                                         Normalized HV ( ×100; not percent)
+fitted routers. All experiments are evaluated over five seeds, with        ID
+fixed data partitions, and all approaches are evaluated using the        EmbedLLM-MF    22.87(0.62)         41.28(0.98)     41.92(1.32)     37.03(0.36)    35.78(0.51)
+                                                                         Avengers-Pro   19.61(1.23)         45.46(0.81)     40.46(1.57)     36.22(0.96)    35.44(0.60)
+model responses provided by the benchmarks.                              KNN            19.80(0.00)         43.03(0.00)     39.93(0.00)     34.74(0.00)    34.38(0.00)
+                                                                         MLP             1.79(1.24)         27.99(0.31)     33.95(0.89)     22.34(1.47)    21.52(0.69)
+   Baselines. We compare PISA against four single-model routing          PISA           22.58(0.42)         46.15 (0.25)    42.57 (0.98)    38.33 (0.49)   37.41 (0.35)
+baselines: EmbedLLM [41], Avengers-Pro [37, 38], K-NN, and a               OOD
+                                                                         EmbedLLM-MF    13.60(1.32)         27.90(0.36)     19.74(3.46)     24.08(0.25)    21.33(0.75)
+Multi-Layer Perceptron (MLP). For PISA-E, we consider five LLM en-       Avengers-Pro    3.48(3.85)         28.46(2.67)     17.36(2.06)     18.96(1.31)    17.06(1.52)
+sembling approaches: DFPE [6], LLM-TOPLA [30], SelectLLM [24],           KNN             9.21(0.00)         26.94(0.00)     19.42(0.00)     24.53 (0.00)   20.02(0.00)
+                                                                         MLP             2.66(0.88)         15.10(4.55)     18.19(2.79)     14.38(0.90)    12.58(1.01)
+PairRanker [17], and BERTScore-based MBR [36]. PairRanker em-            PISA           17.18 (1.85)        29.50 (0.59)    22.91 (1.21)    21.81(0.65)    22.85 (0.38)
+ploys PairRM, the pairwise reward model introduced by LLM-
+Blender, to rank candidate responses. We evaluate its pretrained
+checkpoint (PairRanker-PT) and a fine-tuned variant (PairRanker-         aggregate advantage extends across multiple benchmarks. These
+FT), trained following the original procedure.                           results establish PISA as an effective single-model router in its own
+   We additionally report an oracle single-model selector that uses      right, while its capability estimates also provide the foundation for
+ground-truth evaluation scores to select the best-performing model       ensemble selection in PISA-E.
+for each prompt, providing a reference for the performance attain-
+able through perfect model selection.                                    4.3        PISA-E Evaluation
+   Metrics. We report task performance and inference cost, com-          We evaluate PISA-E against existing LLM ensembling approaches
+puted from benchmark-specific scores and model invocation costs.         across the four benchmarks. Tables 2 and 3 report task performance
+Task performance is macro-averaged across task groups. To sum-           and inference cost under ID and OOD conditions, respectively.
+marize cost–performance trade-offs, we use normalized dominated             PISA-E attains higher macro-average task performance
+hypervolume (HV), multiplied by 100. The reference performance           than the strongest competing ensemble approaches while re-
+corresponds to a random router, while the reference cost is set to the   quiring less inference expenditure. On ID benchmarks, PISA-E
+40th percentile of the full-pool cost distribution for single-model      at 𝛼 = 0.75 achieves 73.78% task performance at a cost of 84 × 10−4
+routing and the 70th percentile for ensemble routing. These refer-       USD/query, compared with 73.18% at 132 × 10−4 USD/query of the
+ence points are chosen to accommodate all the operating points of        best competitor, SelectLLM. This represents a 0.60 percentage-
+the compared methods. Since existing ensemble approaches gener-          point improvement with approximately 36% lower cost. Under
+ally provide a single operating point rather than a cost–performance     OOD conditions, PISA-E at 𝛼 = 0.85 achieves 60.85% performance at
+frontier, we compare them directly in terms of task performance          a cost of 292 × 10−4 USD/query, compared with 60.37% at 387 × 10−4
+and inference cost.                                                      USD/query for DFPE, improving performance by 0.48 percent-
+                                                                         age points while reducing cost by approximately 25%.
+   Implementation. We employ Qwen3-Embedding-8B [39] for cre-               When response quality is prioritized (𝛼 = 1), PISA-E reaches
+ating the prompt embeddings required by the routers. PISA-E con-         the highest macro-average task performance among the eval-
+siders ensembles of up to eleven models. Hyperparameters and             uated deployable approaches in both settings, reaching 75.27%
+ensemble configurations are selected independently for each bench-       on ID benchmarks and 63.24% on OOD benchmarks. These scores
+mark using validation task performance at 𝛼 = 1. The same fitted         exceed those of the strongest competing ensemble approaches by
+capability estimators are reused across different cost–performance       2.09 and 2.87 percentage points, respectively. Although some
+operating points. Further implementation details, including the HV       competitors achieve higher performance on individual benchmarks,
+definition, are provided in Appendix A.                                  none matches PISA-E in macro-average task performance across
+                                                                         either evaluation setting.
+4.2    PISA Evaluation                                                      Thus, PISA-E supports different cost–performance preferences
+We first evaluate PISA as a single-model router, comparing its cost–     by varying the trade-off parameter 𝛼. On ID benchmarks, decreasing
+performance trade-offs against four established routing baselines.       𝛼 from 1.0 to 0.3 reduces average inference cost by a factor of 21.5,
+Table 1 reports the HV across four benchmarks under ID and OOD           while task performance decreases from 75.27% to 70.75%. On OOD
+conditions.                                                              benchmarks, the corresponding cost reduction is approximately
+   PISA achieves the highest macro-average HV among the evalu-           106-fold, with performance decreasing from 63.24% to 50.54%.
+ated routers in both ID and OOD settings, reaching 37.41 and 22.85,         Table 4 reports how ensemble cardinality varies with the cost
+respectively, compared with 35.78 and 21.33 for EmbedLLM-MF,             preference 𝛼, together with the proportion of queries assigned to a
+the strongest competing router by this measure. PISA ranks first in      single model. At 𝛼 = 0.3, PISA-E selects a single model for 84.33%
+six of the eight benchmark–setting combinations, showing that its        of ID queries and 82.41% of OOD queries. Increasing 𝛼 leads to
+                                                                                                                                                                                               Urso et al.
+
+
+Table 2: ID test task performance (%) and inference cost (USD/query ×104 ) across four benchmarks and their macro average.
+Parentheses report sample standard deviations across five seeds where available.
+
+ Approach                            Track-2                                 RouterBench                          FusionBench                         SPROUT                       Macro average
+                         Perf. (%)               Cost                 Perf. (%)            Cost           Perf. (%)             Cost      Perf. (%)             Cost        Perf. (%)          Cost
+ Oracle                   85.93                  213                   92.15               13.7            91.01                4.48       98.04                 62.2        91.78              73.3
+ Prior ensemble approaches
+ PairRanker-PT         60.87                     946                  67.71               87              51.03              8.05          68.54                 132         62.04             293
+ PairRanker-FT         62.18                    1200                  77.62               87              52.04              8.05          75.75                 162         66.90             365
+ MBR                   60.75                    1040                  70.22               87              62.40              45.6          71.31                 139         66.17             329
+ DFPE                  59.95                     965                  81.25              81.2             69.17              59.9          76.30                 167         71.67             318
+ LLM-TOPLA           57.93(0.43)               1050(99)              81.25(0.1)         119(33)          59.44(1.6)         15.5(8.5)    73.30(3.18)           18.4(8.9)   67.98(0.79)        301(26)
+ SelectLLM             61.55                     309                  78.93              63.5             74.62              14.7          77.63                 142         73.18             132
+ Our approach: PISA-E
+ PISA-E (𝛼 = 0.3)     59.86(0.24)              40(0.8)              74.53(0.35)       5.97(0.077)        71.61(0.56)       2.18(0.12)    77.01(0.24)       3.84(0.095)     70.75(0.18)        13(0.23)
+ PISA-E (𝛼 = 0.6)     64.64(0.88)              175(11)              75.01(0.42)        12.9(1.5)         72.71(0.27)       4.14(0.31)    75.92(0.49)       11.5(0.41)      72.07(0.42)        50.8(3.1)
+ PISA-E (𝛼 = 0.75)    66.18(0.33)              268(5.1)             78.64(0.35)        43.4(3.8)         73.47(0.27)       7.17(0.6)     76.86(0.29)       17.3(0.48)      73.78(0.16)         84(1.6)
+ PISA-E (𝛼 = 0.85)    66.91(0.57)              372(15)              80.43(0.29)        69.4(2.4)          74.95(0.4)       14.5(1.6)     77.34(0.33)         32(0.6)       74.91(0.19)        122(4.1)
+ PISA-E (𝛼 = 1)       68.08 (0.23)             774(31)              81.26(0.1)         152(3.5)          75.31(0.45)       34.1(1.2)     76.44(0.83)        159(1.6)       75.27(0.27)        280(8.4)
+
+
+Table 3: OOD test task performance (%) and inference cost (USD/query ×104 ) on held-out task groups across four benchmarks
+and their macro average. Parentheses report sample standard deviations across five seeds where available.
+
+ Approach                            Track-2                                 RouterBench                          FusionBench                         SPROUT                       Macro average
+                         Perf. (%)               Cost                 Perf. (%)            Cost           Perf. (%)             Cost      Perf. (%)             Cost        Perf. (%)          Cost
+ Oracle                   77.09                  303                   87.17               12.3            88.61                3.97       96.27                 50.1        87.29              92.3
+ Prior ensemble approaches
+ PairRanker-PT         56.94                     1920                 47.94              82.6              27.42             8.73          40.83                 122         43.28              534
+ PairRanker-FT         50.97                     1940                 66.57              82.6              26.81             11.7          65.27                 122         52.40              539
+ MBR                   52.96                     1840                 50.58              82.6              29.28             41.5          47.56                 135         45.10              524
+ DFPE                  52.98                     1230                 73.30              78.9              48.94             69.3          66.25                 169         60.37              387
+ LLM-TOPLA           53.55(4.49)               1240(620)            73.34(0.31)         110(27)          36.06(3.81)        30.3(1.5)    61.80(4.06)           42.4(29)    56.18(1.27)        357(150)
+ SelectLLM             58.42                      787                 73.46              78.9              39.85             2.91          64.02                56.7         58.94              231
+ Our approach: PISA-E
+ PISA-E (𝛼 = 0.3)     48.46(0.1)               21.4(0.98)             56.28              3.64            38.89(0.47)       2.63(0.073)   58.52(0.26)       4.37(0.054)     50.54(0.09)       8.01(0.25)
+ PISA-E (𝛼 = 0.6)     55.42(0.13)              91.4(1.5)              56.28              3.64            44.93(0.45)        6.14(0.2)    64.69(0.23)       19.4(0.26)      55.33(0.15)       30.1(0.42)
+ PISA-E (𝛼 = 0.75)    58.57(0.58)               375(74)             56.42(0.15)       3.69(0.038)        49.37(0.79)       11.8(0.23)    63.03(0.27)         49(2.5)       56.85(0.31)        110(19)
+ PISA-E (𝛼 = 0.85)    61.81(0.61)               996(65)             66.94(2.06)        69.8(8.2)          50.10(0.4)       16.4(0.34)    64.56(0.32)        87.2(1.7)      60.85(0.65)        292(18)
+ PISA-E (𝛼 = 1)      62.65 (0.25)              3100(20)             72.79(0.6)         115(15)           52.16 (0.21)       44.8(0.6)    65.34(0.26)        159(1.3)       63.24 (0.15)       854(6.8)
+
+
+
+Table 4: Ensemble size, performance, and cost of PISA-E ver-                                                       4.4    Adaptive vs. Fixed Ensembling
+sus 𝛼. Singleton (%) denotes queries using one model. “Both”
+                                                                                                                  We investigate whether prompt-adaptive ensemble cardinality im-
+averages all eight scenarios; parentheses give sample stan-
+                                                                                                                  proves cost–performance trade-offs over fixed-cardinality alterna-
+dard deviations over five seeds.
+                                                                                                                  tives. To isolate this effect, we compare PISA-E against variants
+                                                                                                                  of the same framework constrained to select exactly 𝑘 models per
+   Split     𝛼    Models/query        Singleton (%)           Perf. (%)     Cost (USD/query ×104 )                query, with 𝑘 ∈ {1, 3, 5, 7, 9, 11}. In particular, 𝑘 = 1 corresponds
+   ID       0.3        1.32(0.05)        84.33(2.46)        70.75(0.18)                      13 (0.23)            to PISA. All variants use the same capability estimates, ensemble-
+   ID       0.6        2.00(0.04)        55.70(2.02)        72.07(0.42)                     50.8(3.1)
+   ID       1.0        6.42(0.15)        21.56(1.39)        75.27 (0.27)                     280(8.4)             success surrogate, and resolver, while varying 𝛼 to obtain different
+   OOD      0.3        1.35(0.01)        82.41(0.62)        50.54(0.09)                    8.01 (0.25)            operating points.
+   OOD      0.6        2.41(0.02)        37.44(1.23)        55.33(0.15)                    30.1(0.42)                Table 5 reports the HV achieved by adaptive and fixed-cardinality
+   OOD      1.0        7.39(0.15)         9.31(0.09)        63.24 (0.15)                     854(6.8)
+                                                                                                                  selection under ID and OOD conditions. PISA-E achieves the
+   Both     0.3        1.34(0.03)        83.37(1.44)        60.64(0.12)                    10.5 (0.13)
+   Both     0.6        2.21(0.02)        46.57(0.82)        63.70(0.21)                     40.4(1.6)             highest macro-average HV in both settings, reaching 39.35 on
+   Both     1.0        6.91(0.14)        15.43(0.68)        69.25 (0.17)                     567(5.7)             ID benchmarks and 26.30 on OOD benchmarks. It also outperforms
+                                                                                                                  the strongest fixed-cardinality alternatives, with improvements
+                                                                                                                  of 0.28 HV points under ID conditions and 1.80 points under
+                                                                                                                  OOD conditions. These results are particularly noteworthy be-
+                                                                                                                  cause the competing configurations are optimized separately for
+larger ensembles on average, with cardinalities reaching 6.42 and
+                                                                                                                  each benchmark, whereas PISA-E determines ensemble cardinality
+7.39 at 𝛼 = 1.0 under ID and OOD conditions, respectively. Even
+                                                                                                                  dynamically for individual prompts at inference time. The larger
+when inference cost is not penalized, however, PISA-E selects a
+                                                                                                                  advantage under OOD conditions further highlights the benefits of
+single model for 21.56% of ID queries and 9.31% of OOD queries.
+                                                                                                                  adaptive cardinality when generalizing to previously unseen task
+Ensemble cardinality therefore remains prompt-dependent
+                                                                                                                  groups.
+even when the selection objective prioritizes response quality
+exclusively.
+Ensemble Routing for Prompt-Adaptive Cost-Aware LLM Inference
+
+
+Table 5: Normalized HV (×100) of adaptive and fixed-cardinality ensemble routing under ID and OOD conditions, using the p70
+cost reference. Parentheses report sample standard deviations across five seeds.
+
+ Scenario                     PISA-E               Fixed 𝑘 = 1               Fixed 𝑘 = 3     Fixed 𝑘 = 5       Fixed 𝑘 = 7       Fixed 𝑘 = 9      Fixed 𝑘 = 11
+ ID
+ Track-2                    28.57(0.59)            27.89(0.49)                27.80(0.53)    26.69(0.26)       24.06(0.38)       19.90(0.41)       14.55(0.40)
+ RouterBench                46.37(0.31)            46.99 (0.25)               44.71(0.30)    41.66(0.38)       38.75(0.37)       28.95(0.21)        2.67(0.02)
+ FusionBench                44.89 (0.87)           42.74(0.98)                44.72(0.75)    44.42(0.66)       43.74(0.64)       42.90(0.89)       41.60(0.60)
+ SPROUT                     37.57(0.67)            38.65 (0.49)               36.13(1.13)    35.86(0.89)       34.27(0.92)       31.83(0.45)       27.61(0.60)
+ ID macro average           39.35(0.44)            39.07(0.37)                38.34(0.52)    37.16(0.40)       35.21(0.42)       30.89(0.36)       21.61(0.29)
+ OOD
+ Track-2                    22.39(0.34)            20.54(1.67)                21.69(0.76)    23.25 (0.32)      20.35(0.08)       17.51(0.20)       13.56(0.39)
+ RouterBench                26.86(1.29)            31.09 (0.62)               24.13(0.42)    19.28(1.40)       18.27(0.87)       16.32(1.18)        5.72(0.15)
+ FusionBench                30.96 (0.22)           23.03(1.23)                26.42(0.37)    27.61(0.28)       29.16(0.23)       29.95(0.24)       30.11(0.20)
+ SPROUT                     24.98 (0.44)           23.32(0.64)                23.68(0.32)    23.70(0.53)       22.59(0.82)       22.09(0.50)       17.64(0.36)
+ OOD macro average          26.30 (0.27)           24.50(0.31)                23.98(0.29)    23.46(0.43)       22.59(0.14)       21.47(0.17)       16.76(0.15)
+ All scenarios
+ Full macro average         32.82 (0.25)            31.78(0.31)               31.16(0.35)    30.31(0.37)       28.90(0.27)       26.18(0.21)       19.18(0.17)
+
+
+
+Table 6: Task performance (%) at 𝛼 = 1 for different ensemble-                              with the highest aggregate semantic similarity to the other ensem-
+success estimators and response resolvers. The ensemble-                                    ble responses. Other-weighted BERTScore weights the reference
+success estimators are Poisson-binomial (PB) and Gaussian                                   responses according to their estimated model capabilities, while
+copula (GC). ID and OOD results are macro-averaged across                                   self-weighted BERTScore additionally weights each candidate re-
+the four benchmarks, while “Both” averages all eight scenar-                                sponse by its own estimated capability. PairRanker instead employs
+ios. Parentheses report sample standard deviations across                                   a learned pairwise response-ranking model. Further details on the
+five seeds.                                                                                 alternative estimator and resolvers are provided in the appendix.
+
+      Selector   Resolver                            ID           OOD           Both
+      PB         Self-weighted BERTScore    75.27 (0.27)   63.24 (0.15)   69.25 (0.17)
+      PB         Other-weighted BERTScore   73.04(0.26)    59.88(0.26)    66.46(0.21)
+      PB         BERTScore                  74.35(0.19)    62.03(0.15)    68.19(0.06)          Ensemble-Success Estimation. We investigate the impact of the
+      PB         PairRanker (pretrained)    68.00(0.48)    48.68(0.17)    58.34(0.23)       ensemble-success estimator by comparing PB and GC across differ-
+      PB         PairRanker (fine-tuned)    71.65(0.31)    52.07(0.24)    61.86(0.19)
+                                                                                            ent response resolvers. Table 6 reports task performance at 𝛼 = 1 un-
+      GC         Self-weighted BERTScore    75.23(0.13)     62.36(0.22)   68.80(0.13)
+      GC         Other-weighted BERTScore   74.99(0.30)     60.99(0.35)   67.99(0.28)       der ID and OOD conditions. GC improves performance for several
+      GC         BERTScore                  75.18(0.25)     61.91(0.22)   68.54(0.18)       resolver configurations, particularly other-weighted BERTScore
+      GC         PairRanker (pretrained)    74.43(0.34)     57.07(1.11)   65.75(0.61)
+      GC         PairRanker (fine-tuned)    74.95(0.15)     57.94(0.53)   66.44(0.30)       and PairRanker. However, these improvements do not consistently
+                                                                                            extend to self-weighted BERTScore, for which PB achieves higher
+                                                                                            macro-average performance in both ID (75.27% versus 75.23%) and
+                                                                                            OOD (63.24% versus 62.36%) settings. Overall, PB combined with
+   The results also reveal differences across benchmarks. While                             self-weighted BERTScore achieves the highest aggregate per-
+adaptive cardinality improves HV in several cases, fixed-cardinality                        formance, indicating that explicitly modeling correctness depen-
+strategies remain competitive and occasionally outperform PISA-E.                           dencies does not consistently improve ensemble performance and
+In particular, fixed 𝑘 = 1 achieves higher HV on RouterBench in                             supporting the simpler PB formulation as the default estimator.
+both settings, indicating that invoking additional models does not
+necessarily improve the trade-off for every task distribution. Nev-
+ertheless, the aggregate results suggest that ensemble cardinality
+is better treated as a prompt-dependent routing decision rather
+                                                                                               Ensemble Resolver Quality. We further investigate how the choice
+than a fixed configuration parameter, allowing additional model
+                                                                                            of response resolver affects ensemble performance. As shown in
+invocations to be allocated selectively according to predicted utility
+                                                                                            Table 6, self-weighted BERTScore achieves the highest aggregate
+and inference-cost preferences.
+                                                                                            performance among the evaluated resolvers when paired with PB,
+                                                                                            outperforming standard BERTScore by 0.92 percentage points in
+4.5     Component Analysis                                                                  ID and 1.21 percentage points in OOD settings. In contrast, Pair-
+We analyze two components of PISA-E: the ensemble-success es-                               Ranker exhibits greater sensitivity to the ensemble-success esti-
+timator used to select model subsets and the response resolver                              mator, with GC substantially improving performance over PB for
+used to combine their outputs. For ensemble-success estimation,                             both pretrained and fine-tuned variants. Fine-tuning consistently
+we compare the default Poisson-binomial (PB) formulation with a                             improves PairRanker performance over its pretrained counterpart
+Gaussian-copula (GC) alternative that explicitly models dependen-                           under both estimation methods, although neither variant surpasses
+cies among model correctness events. For response resolution, we                            self-weighted BERTScore in aggregate performance. These findings
+consider standard BERTScore-based minimum Bayes risk (MBR)                                  support capability-weighted semantic similarity as an effective re-
+decoding, capability-weighted BERTScore variants, and pretrained                            sponse resolution strategy and motivate self-weighted BERTScore
+or fine-tuned PairRanker. Standard BERTScore selects the response                           as the default resolver in PISA-E.
+                                                                                                                                           Urso et al.
+
+
+Table 7: Effect of prompt-dependent model ranking on nor-              and similarity-based minimum Bayes risk decoding, including vari-
+malized hypervolume (HV, ×100) under ID and OOD condi-                 ants that account for uncertainty [7]. Multi-agent debate [9] and
+tions, using the p70 cost reference. PISA-E is compared with           Mixture-of-Agents [32] also combine model outputs, but involve
+a variant that ranks models globally by their task perfor-             interaction across successive rounds or stages. PISA-E does not
+mance on the fit set while retaining Poisson-binomial (PB)             organize such collaboration: after selecting an ensemble, it queries
+ensemble-success estimation.                                           the models in parallel and resolves their responses using capability-
+                                                                       weighted semantic similarity.
+ Scenario                  PISA-E               Fixed global + PB
+                                                                          Adaptive and Cost-Aware Ensemble Selection. Ensemble selec-
+ ID
+ Track-2                 28.57 (0.59)                22.86             tion determines which models to invoke, and whether that choice
+ RouterBench             46.37 (0.31)                39.12             changes across queries. LLM-TOPLA [30] and DFPE [6] construct
+ FusionBench             44.89 (0.87)                41.26
+ SPROUT                  37.57 (0.67)                34.31             ensembles that are subsequently reused across queries, whereas Se-
+ ID macro average        39.35 (0.44)                34.39
+                                                                       lectLLM [24] adapts ensemble composition to the input while retain-
+ OOD
+ Track-2                 22.39 (0.34)                14.95
+                                                                       ing a fixed cardinality. ThriftLLM [14] jointly adapts composition
+ RouterBench             26.86 (1.29)                24.90             and cardinality under cost constraints, but addresses classification
+ FusionBench             30.96(0.22)                 34.91
+ SPROUT                  24.98(0.44)                 26.81             queries rather than open-ended response generation.
+ OOD macro average       26.30 (0.27)                25.39                Other adaptive multi-model approaches make different inference
+ All scenarios                                                         decisions. EMS [21] expands the set of invoked models sequentially;
+ Full macro average      32.82 (0.25)                29.89
+                                                                       LightRouter [40] combines model selection with staged collabora-
+                                                                       tion; and retrieval-based selection and response enhancement are
+4.6     Ablation of Prompt-Dependent Model                             investigated in [29]. Query-specific agentic systems instead config-
+                                                                       ure task plans, agents, or collaboration strategies [11, 28, 34]. PISA-E
+        Ranking                                                        targets pre-inference selection of a parallel ensemble for response
+To assess the contribution of prompt-dependent model ranking,          generation. It scores candidate subsets using a strict-majority sur-
+we compare PISA-E against a fixed-global baseline that retains         rogate constructed from prompt-dependent individual capability
+adaptive ensemble cardinality but ranks models using their global      estimates, jointly selecting composition and cardinality under an
+training-set capabilities instead of prompt-specific estimates. This   explicit cost–quality preference without training ensemble-specific
+isolates the effect of prompt-dependent ranking while preserving       predictors.
+the cost-aware ensemble selection framework. Table 7 shows that
+PISA-E improves macro-average HV by 4.96 points under ID               6    Conclusion
+conditions and 0.91 points under OOD conditions. It outper-            We introduced PISA, a prompt-adaptive, cost-aware single-model
+forms the fixed-global baseline on all four ID benchmarks and on       router, and PISA-E, its extension to ensemble routing. Both methods
+Track-2 and RouterBench under OOD conditions, while the base-          use prompt-dependent capability estimates, which PISA-E reuses
+line performs better on FusionBench and SPROUT. Across all eight       to jointly select ensemble composition and cardinality without
+scenarios, PISA-E achieves a macro-average HV of 32.82 compared        ensemble-specific training. Across four heterogeneous benchmarks,
+with 29.89 for the fixed-global baseline, indicating that prompt-      PISA achieves the highest macro-average hypervolume among
+dependent ranking contributes to cost–performance improvements         the evaluated single-model routers under both ID and OOD con-
+independently of adaptive cardinality.                                 ditions. PISA-E achieves the highest macro-average task perfor-
+                                                                       mance among the evaluated ensemble approaches, exceeding the
+5     Related Work                                                     strongest competitors by 2.09 and 2.87 percentage points, respec-
+   Cost-Aware Model Routing. LLM routing selects a model for each      tively, when prioritizing response quality. At selected lower-cost
+prompt by estimating response quality and accounting for infer-        operating points, PISA-E also improves macro-average task per-
+ence cost. EmbedLLM [41] learns latent representations from a          formance while reducing average inference cost by approximately
+model–question correctness matrix. Clustering-based methods in-        36% under ID and 25% under OOD conditions. Component anal-
+stead use similarities among prompts to estimate model perfor-         yses and ablations support the contributions of capability-aware
+mance: UniRoute [18] and Avengers-PRO [37, 38] rely on hard clus-      response resolution, prompt-dependent ranking, and adaptive en-
+ter assignments and cluster-level statistics, while ZeroRouter [35]    semble cardinality. Together, these results demonstrate that a shared
+combines clustering with item response theory. PISA differs in         capability-estimation framework supports effective single-model
+using soft cluster memberships and model-specific predictors to es-    routing and selective ensembling, with cost–quality preferences
+timate prompt-dependent capabilities. Related cost-aware inference     adjustable at inference time without retraining. For Web-based ser-
+strategies include LLM cascades [4, 8] and risk-aware routing [12].    vices such as search, recommendation, and intelligent agents, this
+Cascades may escalate requests sequentially; PISA-E instead selects    flexibility offers a way to adapt inference expenditure to heteroge-
+models for parallel execution before generating their responses.       neous user requests and changing quality–cost preferences.
+   LLM Ensembling and Response Aggregation. LLM ensembling
+combines responses from multiple models to exploit complementary
+                                                                       References
+                                                                        [1] Rui Ai, Yuqi Pan, David Simchi-Levi, Milind Tambe, and Haifeng Xu. 2026.
+capabilities. Aggregation methods include majority voting [1, 33],          Beyond Majority Voting: LLM Aggregation by Leveraging Higher-Order Infor-
+learned ranking and fusion, as in LLM-Blender [17] and URG [23],            mation. arXiv:2510.01499 [cs.LG] doi:10.48550/arXiv.2510.01499
+Ensemble Routing for Prompt-Adaptive Cost-Aware LLM Inference
+
+
+ [2] J. R. Ashford and R. R. Sowden. 1970. Multi-Variate Probit Analysis. Biometrics           14165–14178. doi:10.18653/v1/2023.acl-long.792
+     26, 3 (1970), 535–546. http://www.jstor.org/stable/2529107                           [18] Wittawat Jitkrittum, Harikrishna Narasimhan, Ankit Singh Rawat, Jeevesh
+ [3] Kayhan Behdin, Ata Fatahibaarzi, Qingquan Song, Yun Dai, Aman Gupta,                      Juneja, Congchao Wang, Zifeng Wang, Alec Go, Chen-Yu Lee, Pradeep Shenoy,
+     Zhipeng Wang, Hejian Sang, Shao Tang, Gregory Dexter, Sirou Zhu, Siyu Zhu,                Rina Panigrahy, Aditya Krishna Menon, and Sanjiv Kumar. 2026. Universal
+     Tejas Dharamsi, Vignesh Kothapalli, Zhoutong Fu, Yihan Cao, Pin-Lun Hsu,                  Model Routing for Efficient LLM Inference. International Conference on Learning
+     Fedor Borisyuk, Natesh S. Pillai, Luke Simon, and Rahul Mazumder. 2025. Scaling           Representations 2026 (April 2026), 10169–10218.
+     Down, Serving Fast: Compressing and Deploying Efficient LLMs for Recommen-           [19] Hao Li, Yiqun Zhang, Zhaoyan Guo, Chenxu Wang, Shengji Tang, Qiaosheng
+     dation Systems. In Proceedings of the 2025 Conference on Empirical Methods in             Zhang, Yang Chen, Biqing Qi, Peng Ye, Lei Bai, Zhen Wang, and Shuyue Hu.
+     Natural Language Processing: Industry Track, Saloni Potdar, Lina Rojas-Barahona,          2026. LLMRouterBench: A Massive Benchmark and Unified Framework for
+     and Sebastien Montella (Eds.). Association for Computational Linguistics, Suzhou          LLM Routing. In Findings of the Association for Computational Linguistics: ACL
+     (China), 1687–1702. doi:10.18653/v1/2025.emnlp-industry.119                               2026, Maria Liakata, Viviane P. Moreira, Jiajun Zhang, and David Jurgens (Eds.).
+ [4] Lingjiao Chen, Matei Zaharia, and James Zou. 2024. FrugalGPT: How to Use                  Association for Computational Linguistics, San Diego, California, United States,
+     Large Language Models While Reducing Cost and Improving Performance. Trans-               37733–37754. doi:10.18653/v1/2026.findings-acl.1881
+     actions on Machine Learning Research (2024). https://openreview.net/forum?id=        [20] Tingting Li, Ziming Zhao, Zhaoxuan Li, Xiaofei Yue, and Jiongchi Yu. 2026. Fair
+     cSimKw5p6R Featured Certification.                                                        and Carbon-Aware LLM Routing for Web Services. In Proceedings of the ACM
+ [5] Zhijun Chen, Xiaodong Lu, Jingzheng Li, Pengpeng Chen, Zhuoran Li, Kai Sun,               Web Conference 2026 (WWW ’26). Association for Computing Machinery, New
+     Yuankai Luo, Qianren Mao, Ming Li, Likang Xiao, Dingqi Yang, Yikun Ban, and               York, NY, USA, 9563–9571. doi:10.1145/3774904.3793001
+     Hailong Sun. 2026. Harnessing Multiple Large Language Models: A Survey on            [21] Yiqing Liu, Hantao Yao, Wu Liu, and Yongdong Zhang. 2026. EMS: Multi-Agent
+     LLM Ensemble. In Proceedings of the Thirty-Fifth International Joint Conference           Voting via Efficient Majority-Then-Stopping. arXiv:2604.02863 [cs.AI] doi:10.
+     on Artificial Intelligence, IJCAI-26, Diego Calvanese (Ed.). International Joint          48550/arXiv.2604.02863
+     Conferences on Artificial Intelligence Organization, 7807–7816. doi:10.24963/        [22] Zhihuang Liu, Ling Hu, Yonghao Tang, Tongqing Zhou, Fang Liu, and Zhiping
+     ijcai.2026/867 Survey Track.                                                              Cai. 2026. Exploring and Exploiting Security Vulnerabilities in Self-Hosted LLM
+ [6] Seffi Cohen, Nurit Cohen Inger, Niv Goldshlager, Bracha Shapira, and Lior Rokach.         Services. In Proceedings of the ACM Web Conference 2026 (Dubai, United Arab
+     2026. DFPE: A Diverse Fingerprint Ensemble for Enhancing LLM Performance.                 Emirates) (WWW ’26). Association for Computing Machinery, New York, NY,
+     In Findings of the Association for Computational Linguistics: EACL 2026, Vera             USA, 2535–2546. doi:10.1145/3774904.3792097
+     Demberg, Kentaro Inui, and Lluís Marquez (Eds.). Association for Computational       [23] Bo Lv, Chen Tang, Yanan Zhang, Xin Liu, Ping Luo, and Yue Yu. 2024. URG:
+     Linguistics, Rabat, Morocco, 5326–5336. doi:10.18653/v1/2026.findings-eacl.282            A Unified Ranking and Generation Method for Ensembling Language Models.
+ [7] Nico Daheim, Clara Meister, Thomas Möllenhoff, and Iryna Gurevych. 2025.                  In Findings of the Association for Computational Linguistics: ACL 2024, Lun-Wei
+     Uncertainty-Aware Decoding with Minimum Bayes Risk. International Confer-                 Ku, Andre Martins, and Vivek Srikumar (Eds.). Association for Computational
+     ence on Learning Representations 2025 (May 2025), 7212–7234.                              Linguistics, Bangkok, Thailand, 4421–4434. doi:10.18653/v1/2024.findings-acl.261
+ [8] Jasper Dekoninck, Maximilian Baader, and Martin Vechev. 2025. A Unified              [24] Kaushal Kumar Maurya, Kv Aditya Srivatsa, and Ekaterina Kochmar. 2025. Se-
+     Approach to Routing and Cascading for LLMs. In Proceedings of the 42nd In-                lectLLM: Query-Aware Efficient Selection Algorithm for Large Language Models.
+     ternational Conference on Machine Learning (Proceedings of Machine Learning               In Findings of the Association for Computational Linguistics: ACL 2025, Wanxi-
+     Research, Vol. 267), Aarti Singh, Maryam Fazel, Daniel Hsu, Simon Lacoste-Julien,         ang Che, Joyce Nabende, Ekaterina Shutova, and Mohammad Taher Pilehvar
+     Felix Berkenkamp, Tegan Maharaj, Kiri Wagstaff, and Jerry Zhu (Eds.). PMLR,               (Eds.). Association for Computational Linguistics, Vienna, Austria, 20847–20863.
+     12987–13010. https://proceedings.mlr.press/v267/dekoninck25a.html                         doi:10.18653/v1/2025.findings-acl.1072
+ [9] Yilun Du, Shuang Li, Antonio Torralba, Joshua B. Tenenbaum, and Igor Mordatch.       [25] Yasmin Moslem and John Kelleher. 2026. Dynamic Model Routing and Cascading
+     2024. Improving factuality and reasoning in language models through multiagent            for Efficient LLM Inference: A Survey. Transactions on Machine Learning Research
+     debate. In Proceedings of the 41st International Conference on Machine Learning           (2026). https://openreview.net/forum?id=ypRg1TvQaM Survey Certification.
+     (Vienna, Austria) (ICML’24). JMLR.org, Article 467, 31 pages.                        [26] Zhihong Pan, Kai Zhang, Yuze Zhao, and Yupeng Han. 2026. Adaptive Model
+[10] Tao Feng, Haozhen Zhang, Zijie Lei, Pengrui Han, Mostofa Patwary, Moham-                  and Strategy Routing for Cost-Efficient LLM Services. In Proceedings of the ACM
+     mad Shoeybi, Bryan Catanzaro, and Jiaxuan You. 2026. FusionFactory: Fusing                Web Conference 2026 (WWW ’26). Association for Computing Machinery, New
+     LLM Capabilities with Multi-LLM Log Data. Transactions on Machine Learning                York, NY, USA, 5568–5578. doi:10.1145/3774904.3792556
+     Research (2026). https://openreview.net/forum?id=N951scS3yE                          [27] Seamus Somerstep, Felipe Maia Polo, Allysson Flavio Melo de Oliveira, Prattyush
+[11] Aamir Hamid, Bharg Barot, Satvik Racharla, Tim Finin, Primal Pappachan, and               Mangal, Mírian Silva, Onkar Bhardwaj, Mikhail Yurochkin, and Subha Maity.
+     Roberto Yus. 2026. Opti-Q: A Constraint-Based Optimization Framework for                  2025. CARROT: A Cost Aware Rate Optimal Router. arXiv:2502.03261 [stat]
+     Multi-LLM Question Planning. arXiv:2607.22621 [cs.AI] https://arxiv.org/abs/              doi:10.48550/arXiv.2502.03261
+     2607.22621                                                                           [28] Jinwei Su, Qizhen Lan, Yinghui Xia, Lifan Sun, Weiyou Tian, Tianyu Shi, and
+[12] Sai Hao, Hao Zeng, Hongxin Wei, and Bingyi Jing. 2026. RACER: Risk-Aware                  Lewei He. 2026. Difficulty-Aware Agentic Orchestration for Query-Specific
+     Calibrated Efficient Routing for Large Language Models. In Proceedings of the 43rd        Multi-Agent Workflows. In Proceedings of the ACM Web Conference 2026 (Dubai,
+     International Conference on Machine Learning (Proceedings of Machine Learning             United Arab Emirates) (WWW ’26). Association for Computing Machinery, New
+     Research, Vol. 306), Tong Zhang, Miroslav Dudik, Martin Jaggi, Alekh Agarwal,             York, NY, USA, 2060–2070. doi:10.1145/3774904.3792240
+     Sharon Li, Dale Schuurmans, Jerry Zhu, Felix Berkenkamp, Hanze Dong, and             [29] Shengji Tang, Jianjian Cao, Weihao Lin, Jiale Hong, Bo Zhang, Shuyue Hu, Lei Bai,
+     Alberto Bietti (Eds.). PMLR, 40499–40524. https://proceedings.mlr.press/v306/             Tao Chen, Wanli Ouyang, and Peng Ye. 2026. A Scalable Multi-LLM Collaboration
+     hao26c.html                                                                               System with Retrieval-Based Selection and Exploration-Exploitation-Driven
+[13] Qitian Jason Hu, Jacob Bieker, Xiuyu Li, Nan Jiang, Benjamin Keigwin, Gaurav              Enhancement. In Proceedings of the 64th Annual Meeting of the Association for
+     Ranganath, Kurt Keutzer, and Shriyash Kaustubh Upadhyay. 2024. RouterBench:               Computational Linguistics (Volume 1: Long Papers), Maria Liakata, Viviane P.
+     A Benchmark for Multi-LLM Routing System. In Agentic Markets Workshop at                  Moreira, Jiajun Zhang, and David Jurgens (Eds.). Association for Computational
+     ICML 2024. https://openreview.net/forum?id=IVXmV8Uxwh                                     Linguistics, San Diego, California, United States, 12679–12697. doi:10.18653/v1/
+[14] Keke Huang, Yimin Shi, Dujian Ding, Yifei Li, Yang Fei, Laks Lakshmanan, and              2026.acl-long.578
+     Xiaokui Xiao. 2025. ThriftLLM: On Cost-Effective Selection of Large Language         [30] Selim Furkan Tekin, Fatih Ilhan, Tiansheng Huang, Sihao Hu, and Ling Liu. 2024.
+     Models for Classification Queries. Proceedings of the VLDB Endowment 18, 11               LLM-TOPLA: Efficient LLM Ensemble by Maximising Diversity. In Findings of the
+     (July 2025), 4410–4423. doi:10.14778/3749646.3749702                                      Association for Computational Linguistics: EMNLP 2024, Yaser Al-Onaizan, Mohit
+[15] Yichong Huang, Xiaocheng Feng, Baohang Li, Yang Xiang, Hui Wang, Ting Liu,                Bansal, and Yun-Nung Chen (Eds.). Association for Computational Linguistics,
+     and Bing Qin. 2024. Ensemble Learning for Heterogeneous Large Language                    Miami, Florida, USA, 11951–11966. doi:10.18653/v1/2024.findings-emnlp.698
+     Models with Deep Parallel Collaboration. In Advances in Neural Information           [31] Clovis Varangot-Reille, Christophe Bouvard, Mathieu Ciancone, Antoine Gourru,
+     Processing Systems, Vol. 37. Curran Associates, Inc., 119838–119860. doi:10.52202/        Marion Schaeffer, and François Jacquenet. 2026. Doing more with less: A survey
+     079017-3808                                                                               on routing strategies for resource optimisation in large language model-based
+[16] Zijing Hui, Wenhan Lyu, Shusen Wang, Li Chen, and Chu Wang. 2026. Real-Time               systems. Journal of Artificial Intelligence Research 86 (2026).
+     Trend Prediction via Continually-Aligned LLM Query Generation. In Proceedings        [32] Junlin Wang, Jue Wang, Ben Athiwaratkun, Ce Zhang, and James Y Zou. 2025.
+     of the ACM Web Conference 2026 (Dubai, United Arab Emirates) (WWW ’26).                   Mixture-of-Agents Enhances Large Language Model Capabilities. In International
+     Association for Computing Machinery, New York, NY, USA, 8725–8728. doi:10.                Conference on Learning Representations, Y. Yue, A. Garg, N. Peng, F. Sha, and R. Yu
+     1145/3774904.3792950                                                                      (Eds.), Vol. 2025. 33944–33963. https://proceedings.iclr.cc/paper_files/paper/
+[17] Dongfu Jiang, Xiang Ren, and Bill Yuchen Lin. 2023. LLM-Blender: Ensem-                   2025/file/5434be94e82c54327bb9dcaf7fca52b6-Paper-Conference.pdf
+     bling Large Language Models with Pairwise Ranking and Generative Fusion. In          [33] Xuezhi Wang, Jason Wei, Dale Schuurmans, Quoc V Le, Ed H. Chi, Sharan
+     Proceedings of the 61st Annual Meeting of the Association for Computational Lin-          Narang, Aakanksha Chowdhery, and Denny Zhou. 2023. Self-Consistency Im-
+     guistics (Volume 1: Long Papers), Anna Rogers, Jordan Boyd-Graber, and Naoaki             proves Chain of Thought Reasoning in Language Models. In The Eleventh Inter-
+     Okazaki (Eds.). Association for Computational Linguistics, Toronto, Canada,               national Conference on Learning Representations. https://openreview.net/forum?
+                                                                                                                                                                       Urso et al.
+
+
+Table 8: Number of prompts and candidate LLMs in each                                     Table 9: Task-group partitions used for OOD evaluation. The
+evaluation benchmark.                                                                     final column reports the number and percentage of held-out
+                                                                                          prompts.
+                Benchmark                  Prompts    Candidate models
+                LLMRouterBench Track-2       12,446                13                     Benchmark    ID groups                           OOD groups (rows; share)
+                RouterBench                  34,684                11
+                FusionBench                   6,398                40                     Track-2     aime, livecodebench, swe-bench,      livemathbench, gpqa, hle (2,477; 19.9%)
+                SPROUT                       44,241                13                                 mmlupro, simpleqa, arenahard, tau2
+                                                                                          RouterBench mmlu, hellaswag, arc                 winogrande, mbpp, grade (9,144; 26.4%)
+                                                                                          FusionBench arc_challenge, boolq,                gpqa, math, mbpp (1,278; 20.0%)
+                                                                                                      commonsense_qa, gsm8k, hellaswag,
+                                                                                                      human_eval, mmlu, natural_qa,
+                                                                                                      openbook_qa, squad, trivia_qa
+                                                                                          SPROUT      ragbench, openhermes, MMLU-Pro       MATH, MuSR, GPQA (11,173; 25.3%)
+     id=1PL1NIMMrw
+[34] Yitao Xiao, Shaoyong Guo, Guoming Yang, Qingnan Wang, Yinlin Ren, Xuesong
+     Qiu, and Qi Feng. 2026. RouterHGC: Optimized Router for LLM-Based Multi-
+     Agent Systems via Heterogeneous Graph Contrastive Learning. In Findings of
+     the Association for Computational Linguistics: ACL 2026, Maria Liakata, Viviane P.      Data partitions. For OOD evaluation, we construct group level
+     Moreira, Jiajun Zhang, and David Jurgens (Eds.). Association for Computational       partitions independently of the original benchmark splits. Entire
+     Linguistics, San Diego, California, United States, 31759–31789. doi:10.18653/v1/
+     2026.findings-acl.1589                                                               task groups are assigned either to ID, which supplies training and
+[35] Cheng Yan, Wuyang Zhang, Zhiyuan Ning, Fan Xu, Ziyang Tao, Lu Zhang, Bing            validation data, or to OOD, which is reserved exclusively for testing.
+     Yin, and Yanyong Zhang. 2026. Breaking Model Lock-in: Cost-Efficient Zero-Shot       All available rows of held-out groups are used for OOD evaluation,
+     LLM Routing via a Universal Latent Space. Proceedings of the AAAI Conference on
+     Artificial Intelligence 40, 43 (March 2026), 36483–36490. doi:10.1609/aaai.v40i43.   irrespective of their original partition. The group assignments are
+     40970                                                                                selected without considering model outcomes, targeting approxi-
+[36] Tianyi Zhang*, Varsha Kishore*, Felix Wu*, Kilian Q. Weinberger, and Yoav
+     Artzi. 2020. BERTScore: Evaluating Text Generation with BERT. In Interna-
+                                                                                          mately 20% of the available prompts for OOD evaluation, subject to
+     tional Conference on Learning Representations. https://openreview.net/forum?         a 30% upper bound. We require at least three OOD groups spanning
+     id=SkeHuCVFDr                                                                        three task categories and domains, and at least three retained ID
+[37] Yiqun Zhang, Hao Li, Jianhao Chen, Hangfan Zhang, Peng Ye, Lei Bai, and Shuyue
+     Hu. 2025. Beyond GPT-5: Making LLMs Cheaper and Better via Performance-              groups. Among valid partitions, we select those closest to the target
+     Efficiency Optimized Routing. In Proceedings of the 2025 7th International Confer-   proportion. Table 9 reports the resulting assignments.
+     ence on Distributed Artificial Intelligence (DAI ’25). Association for Computing
+     Machinery, New York, NY, USA, 122–129. doi:10.1145/3772429.3772445                      Experimental repetitions. The five random seeds are 11, 22, 33,
+[38] Yiqun Zhang, Hao Li, Chenxu Wang, Linyao Chen, Qiaosheng Zhang, Peng Ye,
+     Shi Feng, Xinrun Wang, Jia Xu, Lei Bai, and Shuyue Hu. 2026. The Avengers: A         44, and 55. Thus, reported standard deviations measure run-to-run
+     Routing Recipe for Collective Intelligence in Language Models. Proceedings of        variability under fixed data partitions.
+     the AAAI Conference on Artificial Intelligence 40, 41 (March 2026), 34870–34878.
+     doi:10.1609/aaai.v40i41.40790                                                           Baselines. DFPE follows its clustering and representative selec-
+[39] Yanzhao Zhang, Mingxin Li, Dingkun Long, Xin Zhang, Huan Lin, Baosong Yang,
+     Pengjun Xie, An Yang, Dayiheng Liu, Junyang Lin, Fei Huang, and Jingren Zhou.        tion procedure, using global statistics fitted on ID training data
+     2025. Qwen3 Embedding: Advancing Text Embedding and Reranking Through                when evaluating held-out OOD task groups. LLM-TOPLA con-
+     Foundation Models. arXiv:2506.05176 [cs.CL] https://arxiv.org/abs/2506.05176         structs and prunes model teams following its original procedure.
+[40] Yifan Zhang, Xinkui Zhao, Zuxin Wang, Guanjie Cheng, Yueshen Xu, Shuiguang
+     Deng, and Jianwei Yin. 2025. LightRouter: Towards Efficient LLM Collaboration        SelectLLM uses WeightedMaxConf, its best-performing configura-
+     with Minimal Overhead. arXiv:2505.16221 [cs.AI] doi:10.48550/arXiv.2505.16221        tion, with a RoBERTa-base multilabel classifier and inverse-square-
+[41] Richard Zhuang, Tianhao Wu, Zhaojin Wen, Andrew Li, Jiantao Jiao, and Kannan
+     Ramchandran. 2025. EmbedLLM: Learning Compact Representations of Large
+                                                                                          root confidence weighted voting, following the original article. For
+     Language Models. International Conference on Learning Representations 2025           PairRanker and MBR, fixed-size ensembles are formed from the
+     (May 2025), 76913–76926.                                                             top-𝑘 models ranked by macro-average training performance.
+[42] Eckart Zitzler and Lothar Thiele. 1998. Multiobjective optimization using evolu-
+     tionary algorithms — A comparative case study. In Parallel Problem Solving from
+     Nature — PPSN V, Agoston E. Eiben, Thomas Bäck, Marc Schoenauer, and Hans-              Implementation Details. For PISA, the maximum number of clus-
+     Paul Schwefel (Eds.). Springer Berlin Heidelberg, Berlin, Heidelberg, 292–301.       ters and the soft-assignment parameter 𝛽 are selected using vali-
+[43] Lingkai Zu, Xiyue Peng, and Xin Liu. 2026. BARouter: A Budget-Adaptive               dation data. Cost–performance operating points are obtained by
+     Online Large Language Model Router Framework. In Proceedings of the ACM
+     Web Conference 2026 (WWW ’26). Association for Computing Machinery, New              sweeping 𝛼 from 0.10 to 1.00 in increments of 0.05.
+     York, NY, USA, 7645–7656. doi:10.1145/3774904.3792725
+                                                                                             Ensemble resolution. We consider several alternatives to the self-
+                                                                                          weighted BERTScore resolver introduced in Section 3. Given an
+A     Additional Experimental Details                                                     ensemble 𝐸 and its generated responses {𝑦𝑖 }𝑖 ∈𝐸 , standard mini-
+   Benchmarks and evaluation scores. Table 8 summarizes the eval-                         mum Bayes risk (MBR) decoding with BERTScore [36] selects the
+uated benchmarks. We use the original evaluation scores provided                          response maximizing its aggregate similarity to the ensemble out-
+by each benchmark, which are all in the range [0, 1]. FusionBench                         puts:
+                                                                                                                    ∑︁
+uses binary correctness, SPROUT employs LLM-judge scores, while                                             𝑆𝑖MBR =    BERTScore(𝑦𝑖 , 𝑦 𝑗 ).              (18)
+RouterBench and Track-2 include task-dependent evaluation scores.                                                          𝑗 ∈𝐸
+Task performance is computed by averaging scores within each task
+                                                                                          The other-weighted variant incorporates the prompt-dependent
+group and then taking the macro-average across groups, consis-
+                                                                                          capability estimates produced by PISA:
+tently for all methods. For capability estimation, PISA derives binary                                              ∑︁
+success labels from the training scores using 𝑦𝑖𝑚 = 1[𝑠𝑖𝑚 ≥ 0.5]                                          𝑆𝑖other =    𝑤 𝑗 BERTScore(𝑦𝑖 , 𝑦 𝑗 ),   (19)
+and trains model-specific predictors on these labels.                                                                    𝑗 ∈𝐸
+Ensemble Routing for Prompt-Adaptive Cost-Aware LLM Inference
+
+
+where 𝑤 𝑗 denotes the normalized capability estimate of the model               Dependence estimation. We estimate a prompt-independent cor-
+generating response 𝑦 𝑗 . Unlike self-weighted BERTScore, other-             relation matrix 𝑅 from training data using pairwise maximum likeli-
+weighted BERTScore does not additionally weight each candidate               hood, following the composite-likelihood approach to multivariate
+by its own estimated capability.                                             probit estimation [2]. Let 𝑦𝑖𝑚 = 1[𝑠𝑖𝑚 ≥ 0.5] denote the observed
+                                                                             binary correctness of model 𝑚 on training prompt 𝑖, using the same
+   Inference costs. Routing decisions use training-set average model
+                                                                             threshold as PISA, and let 𝑝˜𝑖𝑚 denote its out-of-fold capability esti-
+costs, normalized as described in Section 3. Reported inference costs
+                                                                             mate. For each model pair (𝑚, 𝑛), the probability of joint correctness
+instead use the benchmark-recorded costs of individual responses,
+                                                                             under latent correlation 𝜌 is
+summed over all selected models and averaged across test queries.
+                                                                                              (𝑖 )
+                                                                                                   (𝜌) = Φ2 Φ−1 (𝑝˜𝑖𝑚 ), Φ−1 (𝑝˜𝑖𝑛 ); 𝜌 ,
+                                                                                                                                       
+Models with missing responses still contribute their recorded in-                           𝜋 11                                                (24)
+ference costs. Local routing and response-resolution overhead are
+                                                                             where Φ2 denotes the bivariate standard-normal CDF. The remain-
+excluded.                                                                                                                                  (𝑖 )
+                                                                             ing outcome probabilities follow from the marginals: 𝜋 10          = 𝑝˜𝑖𝑚 −
+                                                                               (𝑖 ) (𝑖 )          (𝑖 )     (𝑖 )                       (𝑖 )
+   Hypervolume metric. We assess routing cost–performance trade-             𝜋11 , 𝜋01 = 𝑝˜𝑖𝑛 − 𝜋11 , and 𝜋00 = 1 − 𝑝˜𝑖𝑚 − 𝑝˜𝑖𝑛 + 𝜋11 . We estimate
+offs using normalized dominated hypervolume (HV) [42]. Let F =               each correlation as
+{(𝑐𝑖 , 𝑝𝑖 )}𝑛𝑖=1 denote the non-dominated operating points ordered by                                           ∑︁
+                                                                                             𝜌ˆ𝑚𝑛 = arg max        log 𝜋 𝑦(𝑖𝑖𝑚
+                                                                                                                             )
+                                                                                                                               𝑦𝑖𝑛 (𝜌).              (25)
+increasing cost, with reference point 𝑟 = (𝑐 ref , 𝑝 ref ). The dominated                                𝜌 ∈ (−1,1)
+                                                                                                                      𝑖
+area is
+                       𝑛                                                     The pairwise estimates are assembled into 𝑅, with unit diagonal,
+                      ∑︁
+           HVraw =        (𝑐𝑖+1 − 𝑐𝑖 )(𝑝𝑖 − 𝑝 ref ), 𝑐𝑛+1 = 𝑐 ref ,   (20)   and projected onto the nearest valid correlation matrix to ensure
+                    𝑖=1                                                      positive semidefiniteness.
+where only points within the reference bounds contribute. We                     Inference. For each candidate ensemble, we extract the corre-
+normalize by                                                                 sponding submatrix 𝑅𝐸 and approximate Eq. (23) using 2,048 Monte
+                                      HVraw                                  Carlo samples from N (0, 𝑅𝐸 ). The estimated success probability
+                      HVnorm =                      .           (21)
+                                 𝑐 ref (1 − 𝑝 ref )                          is the fraction of samples satisfying the strict-majority condition.
+The performance reference is the macro-average expected score                This estimate replaces the Poisson-binomial surrogate in the PISA-
+of a uniformly random single-model router. The cost reference is             E utility, leaving candidate construction, cost normalization, and
+defined as a percentile of the per-prompt full-model-pool inference          ensemble selection unchanged.
+cost distribution, computed separately for each benchmark and
+evaluation partition. We use the 40th percentile for single-model            C PISA Additional Experiments
+routing comparisons and the 70th percentile for ensemble-routing             C.1 Hypervolume Reference-Point Sensitivity
+comparisons. The higher reference for ensemble routing accommo-
+dates the larger inference costs associated with querying multiple
+models. Within each comparison, the same reference point is used
+for all methods. Both reference coordinates remain fixed across
+methods, and HV values are multiplied by 100 when reported.
+
+B    Gaussian-Copula Model for Dependent
+     Ensemble Success
+The Poisson-binomial surrogate assumes conditional independence
+among model correctness events. To investigate whether modeling
+their dependencies improves ensemble selection, we consider a
+Gaussian-copula alternative.                                                 Figure 2: Sensitivity of PISA’s macro-average HV advantage
+   For an ensemble 𝐸 of size 𝑘, let 𝑝ˆ𝑚 (𝑥) denote the capability esti-      over competing routers to the performance reference (left)
+mate provided by PISA for model 𝑚. We introduce latent variables             and full-pool cost reference (right). Positive values favor
+G𝐸 ∼ N (0, 𝑅𝐸 ), where 𝑅𝐸 is a correlation matrix, and define                PISA.
+                 𝐵𝑚 (𝑥) = 1 𝐺𝑚 ≤ Φ−1 (𝑝ˆ𝑚 (𝑥)) ,
+                                                 
+                                                                  (22)
+                                                                                To assess the sensitivity of our results to the hypervolume ref-
+where Φ denotes the standard normal CDF. This construction pre-              erence point, we vary both its cost and performance coordinates.
+serves the marginal probabilities Pr(𝐵𝑚 (𝑥) = 1) = 𝑝ˆ𝑚 (𝑥) while             As described in Appendix A, the main experiments use fixed ref-
+introducing dependencies through 𝑅𝐸 . The ensemble-success sur-              erence costs corresponding to the 40th and 70th percentiles of the
+rogate becomes                                                               full-pool cost distribution for single-model and ensemble routing,
+                                                !
+                           ∑︁             
+                                          𝑘                                  respectively. These reference points accommodate the operating
+               GC
+             𝑝ˆ𝐸 (𝑥) = Pr      𝐵𝑚 (𝑥) ≥      +1 .           (23)             points of the compared methods, while the reference performance
+                                          2
+                          𝑚∈𝐸                                                corresponds to a uniformly random router. Although these choices
+When 𝑅𝐸 = 𝐼 , the formulation reduces to the Poisson-binomial                provide a principled basis for comparison, HV values depend on
+surrogate.                                                                   the selected reference point. We therefore examine whether the
+                                                                                                                                                                    Urso et al.
+
+
+                                                                         Table 10: Normalized HV (×100) of PISA-E for different maxi-
+                                                                         mum ensemble cardinalities under ID and OOD conditions,
+                                                                         using the p70 cost reference. Parentheses report sample stan-
+                                                                         dard deviations across five seeds.
+
+                                                                         Scenario         𝑘 max = 1      𝑘 max = 3     𝑘 max = 5      𝑘 max = 7      𝑘 max = 9        𝑘 max =
+                                                                                                                                                                         11
+                                                                           ID
+                                                                         Track-2          27.89(0.49)    28.26(0.64)   28.60 (0.60)   28.58(0.54)    28.51(0.58)     28.57(0.59)
+                                                                         RouterBench      46.99 (0.25)   46.38(0.26)   46.25(0.33)    46.31(0.29)    46.38(0.28)     46.37(0.31)
+                                                                         FusionBench      42.74(0.98)    44.40(0.69)   44.68(0.69)    44.83(0.72)    44.90 (1.04)    44.89(0.87)
+                                                                         SPROUT           38.65(0.49)    37.67(0.82)   38.03(1.21)    37.91(1.05)    37.60(0.76)     37.57(0.67)
+Figure 3: Sensitivity of PISA-E’s macro-average HV advantage             ID average       39.07(0.37)    39.18(0.48)   39.39(0.50)    39.41 (0.48)   39.35(0.46)     39.35(0.44)
+over fixed-cardinality variants to the performance reference               OOD
+(left) and full-pool cost reference (right). Positive values favor       Track-2         20.54(1.67)     21.67(0.80)   23.37 (0.38)   22.51(0.33)    22.42(0.37)     22.39(0.34)
+                                                                         RouterBench     31.09 (0.62)    26.85(0.84)   24.77(0.93)    27.04(1.23)    26.83(1.17)     26.86(1.29)
+PISA-E.                                                                  FusionBench     23.03(1.23)     26.49(0.38)   27.81(0.26)    29.62(0.33)    30.59(0.09)     30.96 (0.22)
+                                                                         SPROUT          23.32(0.64)     24.18(0.31)   25.29 (0.40)   25.11(0.26)    25.04(0.40)     24.98(0.44)
+                                                                         OOD average     24.50(0.31)     24.80(0.38)   25.31(0.25)    26.07(0.34)    26.22(0.28)     26.30 (0.27)
+                                                                           All scenarios
+                                                                         Full average    31.78(0.31)     31.99(0.32)   32.35(0.31)    32.74(0.32)    32.78(0.25)     32.82 (0.25)
+
+
+aggregate advantage of PISA persists under alternative reference
+points. Figure 2 shows that PISA maintains a positive macro-average
+HV advantage over all competing single-model routers across the
+evaluated configurations. While the magnitude of this advantage
+varies with the reference coordinates, the relative ranking remains
+unchanged. These results indicate that the superior aggregate cost–
+performance trade-offs of PISA are not contingent on the specific
+reference point adopted in the main evaluation.
+
+                                                                         Figure 4: Cost–performance trade-offs of greedy candidate
+D PISA-E Additional Experiments
+                                                                         selection and exhaustive surrogate optimization on Track-2
+D.1 Hypervolume Reference-Point Sensitivity                              and RouterBench, with 𝑘 max = 7.
+We further examine whether the advantage of adaptive ensemble
+cardinality depends on the HV reference point selected for the main
+                                                                         E      Greedy Selection vs. Exhaustive Surrogate
+evaluation. Figure 3 reports the macro-average HV differences be-
+tween PISA-E and each fixed-cardinality variant when varying the                Optimization
+performance and cost references independently. Across all eval-          We evaluate the greedy candidate-selection procedure by compar-
+uated configurations, PISA-E maintains a positive HV advantage           ing it with exhaustive optimization of the ensemble-success surro-
+over every fixed-cardinality alternative. Although the magnitude         gate. Both approaches use the same capability estimates, Poisson-
+of these differences varies with the reference coordinates, the ag-      binomial surrogate, and self-weighted BERTScore resolver, with
+gregate ranking remains unchanged. The consistent advantage              𝑘 max = 7. Exhaustive optimization evaluates all feasible model sub-
+                                                                                                           Í max 𝑀 
+across reference configurations shows that the aggregate benefits        sets, requiring the assessment of 𝑘𝑘=1    𝑘 candidates for a pool
+of adaptive ensemble cardinality persist under different HV refer-       of 𝑀 models. In contrast, greedy selection considers only ⌈𝑘 max /2⌉
+ence points.                                                             odd-cardinality prefixes of the single-model utility ranking, sub-
+                                                                         stantially reducing the search space.
+                                                                            Figure 4 compares the cost–performance curves on Track-2 and
+D.2    Sensitivity to Maximum Ensemble                                   RouterBench. Greedy selection achieves trade-offs comparable to
+       Cardinality                                                       exhaustive optimization, with closely aligned curves on Track-2
+Table 10 examines the effect of restricting the maximum ensemble         and favorable performance across several intermediate-cost regions
+cardinality 𝑘 max . Under ID conditions, PISA-E achieves a macro-        on RouterBench. These results indicate that greedy ranking prefixes
+average HV of 39.35 with 𝑘 max = 11, remaining competitive when          provide a computationally efficient alternative while maintaining
+the maximum cardinality is reduced, with HV reaching 39.41 at            competitive cost–performance trade-offs in the evaluated settings.
+𝑘 max = 7. Under OOD conditions, allowing larger ensembles pro-
+vides more substantial benefits, although restricting 𝑘 max to seven
+still yields an HV of 26.07, compared with 26.30 when allowing
+up to eleven models. Thus, PISA-E retains strong aggregate cost–
+performance trade-offs under moderate restrictions on ensemble
+cardinality, while the larger gains observed under OOD conditions
+highlight the benefits of access to a broader range of ensemble sizes.
+

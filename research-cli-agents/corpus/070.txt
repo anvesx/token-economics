@@ -1,0 +1,721 @@
+TITLE: Amp Code Free: What Happened & Alternatives (2026)
+URL: https://www.bitdoze.com/amp-code-free-ai-coding-agent
+ORG: Bitdoze  TYPE: blog  DATE: 2026-02
+
+Amp Code Free Paused: What Happened & Alternatives (2026)Skip to main content
+
+Amp Code is a coding agent from Sourcegraph that runs in your editor and in your terminal. It reads your repo, edits files, runs commands, and iterates until a task is done. For about eight months it also had the most interesting free tier in AI coding — and that’s now paused, which is the part of this story most older guides get wrong.
+
+The short history: Amp Free launched in October 2025, funded by ads and a training-data requirement. A week in, Sourcegraph dropped the training clause because ads alone covered the cost. In March 2026 it dropped the ads too and switched to a daily free-credit grant. By mid-2026 the free tier was paused outright, with Sourcegraph saying it doesn’t intend to bring it back. Frontier tokens got expensive faster than ad revenue could follow.
+
+What’s left is still a very good agent. Amp Smart is usage-priced, no subscription, with frontier models and full context windows, and the CLI (amp -x for scripts and pipes) is one of the better automation surfaces in this category. This guide covers what the free tier was, what replaced it, and how to run the agent without it biting you.
+
+The short version
+
+Amp Free is paused as of mid-2026. Some existing accounts kept a daily credit grant; new users shouldn’t plan around it
+
+Amp Smart is usage-priced, no subscription, with frontier models and full context windows, and no training on your code
+
+The CLI is the part worth automating: amp -x for scripts, pipes, and CI review jobs
+
+For a $0 agent today, look at FreeBuff — text-ad funded, no subscription
+
+Treat permissions as if you handed a new contractor shell access, because that’s effectively what you did
+
+What Amp actually is
+
+Amp is not autocomplete with a chat sidebar. It’s an agent loop: it plans, reads files, runs your build and test commands, edits code, reads the output, and tries again. That difference matters for how you use it. You don’t ask Amp to “write a function”, you give it an outcome and a way to verify that outcome.
+
+Four design choices define it:
+
+Large token usage by default: no artificial cap on context or output. If a task needs to read 40 files, Amp reads 40 files.
+
+You don’t pick the model: Amp routes to capable models and updates the routing as new ones ship. There’s no model dropdown.
+
+Direct model access: full-strength models, not a trimmed-down variant sold as “agentic”.
+
+Continuous updates: new frontier models land in the product without you changing anything.
+
+What changed since the first version of this guide
+
+Amp Free went through three funding models in a year (ads + training, then ads only, then a daily grant) before being paused in mid-2026. I’ve rewritten the pricing sections to match the current state and kept the parts that still apply: install, permissions, sandboxing, rollback, and cost control — those work the same on Smart mode.
+
+What Amp costs you now
+
+Amp has three tiers. The differences that matter are the model mix, your context window, and what happens to your code.
+
+Amp Free (paused)
+
+Paused as of mid-2026: Sourcegraph says it doesn’t intend to bring it back
+
+What it was: unlimited interactive use, first paid for with ads and training data, then a daily free-credit grant with neither
+
+What remains: a daily credit grant for some existing accounts, kept generous for people on current clients and current workflows
+
+Interactive only: scripted -x runs have always needed paid credits
+
+Not available in enterprise workspaces, and never was
+
+Don't build a workflow on a free tier
+
+Amp Free changed its funding model three times in eight months before being paused. That’s not an Amp-specific lesson, it’s the shape of every subsidized tier: the terms move when the economics move. If a free agent tier is load-bearing in your setup, keep a paid fallback one command away.
+
+Amp Smart (paid)
+
+Smart mode is usage-priced. You pay for tokens at model list prices, passed through with no markup for individuals or teams.
+
+Frontier models with their full context windows (Claude-class and GPT-class, updated as new models ship)
+
+Subagents for parallel work on independent tasks
+
+Oracle: a deeper reasoning tool for hard problems the main model shouldn’t guess at
+
+Custom tools through Model Context Protocol (MCP) servers
+
+No training on your code; zero-retention options for Enterprise
+
+Workspace credits pooled across team members
+
+Plan comparison
+
+Plan
+Cost
+Models
+Your code
+Where it’s available
+
+Free
+Paused (was $0, ads)
+Rotating mix of open-weight, frontier (reduced context), pre-release
+Not trained on since Oct 2025
+Personal accounts; paused for new users
+
+Smart
+Pay-as-you-go at model list prices
+Frontier models, full context
+Not used for training
+Individuals and teams
+
+Enterprise
+Usage plus enterprise markup
+Best available
+Never trained on; zero retention
+Orgs, SSO, pooled credits
+
+My default now: Smart with a spend cap for anything real. For $0 work, FreeBuff is where the actually-free agent tier went. If your employer has a policy about AI tools and source code (most 2026 policies do), check which mode and which retention terms apply before you point any agent at a work repo.
+
+Cost control on Smart mode
+
+Token spend is the failure mode people don’t plan for. The rules I follow: one task per thread, /compact when a thread gets long, subagents only when the work is genuinely parallel (each one burns its own context), and Oracle only when you actually need a second opinion. A small fix costs cents. A multi-hour refactor with subagents and a few Oracle calls can run into dollars. Check the usage page before you leave a loop running unattended.
+
+Prerequisites
+
+You need less than you’d think, but you do need these:
+
+macOS, Linux, or WSL on Windows: the CLI is a Node app, so plain Windows without WSL is a rough experience
+
+Node.js 20+ if you install through npm. Skip this if you use the install script
+
+curl for the install script
+
+A git repository with a clean working tree. This is not optional: the agent’s edits become your changes, and git is your undo button
+
+A disposable scratch repo for your first session, so the first prompt can’t hurt anything
+
+An editor: VS Code, Cursor, Devin Desktop (formerly Windsurf), or a VS Code-compatible fork
+
+A payment method for Smart mode credits. If your account still has the daily free grant, you’ll see it without one
+
+RAM and disk are a non-issue on a normal laptop. On a small VPS, remember that the agent is a Node process and it will run your build, so a 1 GB box is not the place for that.
+
+Install the CLI first, then the editor
+
+Install the CLI first even if you plan to live in the editor. It’s the fastest way to confirm auth works, and it’s the same account.
+
+1. Install
+bash
+# install script: macOS, Linux, WSL
+curl -fsSL https://ampcode.com/install.sh | bash
+
+# Or via npm (needs Node 20+)
+npm install -g @sourcegraph/amp
+
+# Or pnpm
+pnpm add -g @sourcegraph/amp
+
+# Or yarn
+yarn global add @sourcegraph/amp
+
+2. Verify the install
+bash
+amp --version
+amp --help
+
+You should get a version string and a list of flags. Verify the flags you’re about to script against. Amp ships fast, and this is the one place where the docs and your binary can disagree. amp --help on your machine is the source of truth.
+
+If you get command not found: amp:
+bash
+# npm global installs land in the npm prefix
+npm config get prefix
+
+# make sure the bin directory is on your PATH, then reload your shell
+echo $PATH | tr ':' '\n' | grep -i npm
+exec $SHELL -l
+
+For the install-script path, the binary usually lands in ~/.local/bin. Same fix: add it to your PATH.
+
+3. First run and authenticate
+bash
+cd ~/src/scratch-repo
+git status # expect a clean tree
+amp
+
+On first run Amp prompts you to log in and prints a URL (or opens your browser) to connect the account. After that you land in an interactive thread.
+
+4. Verify the agent actually works
+
+Don’t trust “it installed”. Prove it can read and act:
+text
+what files are in this folder?
+
+Then ask for something that touches disk, and check git:
+text
+add a README.md with the project name and one line describing it
+bash
+git diff --stat # you should see README.md appear
+git status
+
+If git status shows the new file, the agent’s file tools work. If it shows nothing, the extension is probably running against a different working directory than you think, so check the folder you launched Amp from.
+
+You can also feed context through a pipe:
+bash
+echo "summarize what this project does based on the file list" | amp
+
+5. Install the editor extension
+
+Sign in at ampcode.com
+
+Install the Amp extension from the VS Code Marketplace
+
+Open the Amp panel and confirm it’s authenticated (same account as the CLI)
+
+Open a repo and start a thread
+
+The same extension works in Cursor and in Devin Desktop (formerly Windsurf), if you’d rather use a purpose-built AI editor than VS Code with an extension bolted on.
+
+JetBrains and Neovim support works through the CLI bridge rather than a native plugin:
+bash
+# VS Code, Cursor, or Neovim with the Amp extension installed
+amp --ide
+
+# JetBrains IDEs
+amp --jetbrains
+
+That bridge is what gives the CLI eyes: currently open files, your selection, editor diagnostics, and direct edits with undo support.
+
+Verify the bridge: open the editor’s integrated terminal in the same window and run amp --ide. If the CLI can’t see your open file, you’re in a terminal that isn’t attached to the editor (a separate SSH session, for example).
+
+Put an AGENTS.md in the repo
+
+Amp reads AGENTS.md files to learn how your project is built, tested, and reviewed. It looks in the repo root, in subdirectories you’re working in, and in $HOME/.config/amp/AGENTS.md for personal preferences.
+AGENTS.md files
+
+Amp automatically picks up AGENTS.md files in your project to learn:
+
+Build and test commands
+
+Architecture and conventions
+
+Common pitfalls to avoid
+
+How to run and review code
+
+Place AGENTS.md in your project root, or in subdirectories if a subsystem has its own rules. Amp includes the relevant ones automatically when working in those areas. /generate-agent-file drafts one for you; /agent-files shows which files are currently in use.markdown
+# Project notes for agents
+
+## Commands
+- dev: `npm run dev`
+- build: `npm run build`
+- test: `npm test`
+- lint: `npm run lint -- --max-warnings 0`
+
+## Architecture
+- Astro frontend, static output in `dist/`
+- Content collections in `src/content/`
+- No server runtime; anything dynamic is a Cloudflare Worker
+
+## Conventions
+- TypeScript strict mode, no `any`
+- Run `npm test` before proposing a change as done
+- Never edit files in `dist/`: they are generated
+Keep secrets out of AGENTS.md. It’s a file the agent reads and sometimes echoes into a thread, and on Free mode threads can be shared.
+
+Blast radius: permissions, sandboxing, rollback
+
+This is the section most Amp guides skip, and it’s the one that decides whether you had a good week.
+
+Amp asks for approval before it runs commands that change things. Approve each one deliberately. The CLI also lets you skip those prompts entirely, with a flag that is literally named as a warning:
+bash
+# Do NOT run this in a repo that can deploy, migrate, or reach prod credentials
+amp --dangerously-allow-all
+
+The flag exists for sandboxed containers and throwaway VMs. If you use it on your laptop in a repo that has a terraform apply, a migration script, or a deploy target, you’ve given an LLM unattended shell access to your infrastructure.
+
+Rules that keep the agent boring
+
+Branch first, always. git switch -c amp/experiment before the first prompt. Aborting is then one git reset --hard away.
+
+Commit before you start. A dirty tree means you can’t tell the agent’s changes apart from yours.
+
+Read the command before you approve it. rm -rf, git push --force, DROP TABLE, and anything with prod in the path deserve a hard stop.
+
+Sandbox the credentials. Run it in a devcontainer or Docker with only the repo mounted. Don’t mount ~/.aws, ~/.ssh, or your personal .env files. If you’ve ever had to think about Docker Compose secrets, you already know why.
+
+Never aim it at production. Not “just this once”, not “only to check a config”.
+
+Review the diff, not the summary. The agent’s description of what it did is not evidence. git diff is.
+
+Rollback when it goes wrong
+
+Agent edits are just file changes, so your recovery path is git:
+bash
+git diff # see everything it touched
+git restore src/ # throw away changes in one path
+git checkout -- . # throw away all unstaged changes
+git stash # park its work and get back to a known state
+git reflog # find a commit it walked over
+
+If you need a refresher on the plumbing, I keep a git commands reference for exactly these moments.
+
+Inside Amp, the thread’s File Changes view lets you revert individual files or the whole thread, and a new thread is a clean slate. If you’re stuck in a loop where the agent keeps “fixing” the same file, stop it, revert, and start a fresh thread with a tighter prompt. Thrashing threads are a known failure mode, and continuing one only burns more tokens.
+
+The one command that ruins the day
+
+Anything that can’t be undone by git needs your eyes: docker compose down -v (drops volumes), database migrations, terraform apply, force pushes, and cloud CLI calls. If you can’t describe how you’d undo a command, don’t approve it.
+
+Working in the editor
+
+The extension turns conversations into threads, which behave like git branches for agent sessions. Each thread keeps its own context, file changes, and history.
+Thread management
+
+New thread per task, not per mood. One task per thread keeps context sharp.
+
+Switch between threads when you’re juggling two things
+
+Share threads with workspace members or keep them private
+
+File changes view shows what the agent modified
+
+Revert individual files or the whole thread
+
+Context management
+
+Hover the context indicator to see which files are loaded
+
+/compact summarizes the thread and frees context. Do this when a thread gets long instead of starting over
+
+New thread with summary carries context forward into a clean window
+
+/agent-files lists the AGENTS.md files currently in play, which is the fastest way to find out why the agent is following (or ignoring) your conventions
+
+A typical session
+text
+You: "Fix the TypeScript errors in this file"
+
+Amp:
+- reads the file and the diagnostics
+- fixes each error
+- runs tsc to verify
+- shows the diff
+
+Or something that needs a browser:
+text
+You: "Look at localhost:3000 and make the header more minimal"
+
+Amp:
+- screenshots the running page
+- reads the current header markup and styles
+- edits the component
+- screenshots again to confirm
+- iterates until it looks right
+
+Pro tip
+
+In the editor, Cmd/Ctrl+Enter submits a message. The extra keystroke is deliberate: it nudges you to write a real prompt instead of a half-sentence you’ll have to correct.
+
+The CLI: slash commands and shell mode
+
+Beyond -x, the CLI has its own command set.
+
+Basics
+
+/help: help and hotkeys
+
+/new: start a new thread
+
+/continue: resume a thread
+
+/quit: exit
+
+Project
+
+/generate-agent-file: draft an AGENTS.md for the repo
+
+/agent-files: list the AGENTS.md files in use
+
+/permissions: edit the permission rules
+
+/compact: reduce context usage
+
+Advanced
+
+/queue [message]: queue a message for later
+
+/dequeue: restore queued messages
+
+/editor: write your prompt in $EDITOR
+
+/mode free and /mode smart: switch tiers without losing threads
+
+Custom commands are files. A markdown file becomes a prompt template, an executable runs and pipes its output to Amp:
+bash
+# .agents/commands/pr-review.md becomes /pr-review
+
+# ~/.config/amp/commands/outline becomes /outline
+#!/usr/bin/env bash
+tree -L 2 "$@"
+
+Shell mode inside the CLI:
+bash
+.ls -la # runs the command and adds the output to context
+$pwd # incognito: runs, but the output stays out of context
+
+The . versus $ distinction is worth remembering the first time you cat a .env file by accident.
+
+Running it non-interactively
+
+-x / --execute runs a one-shot task without an interactive session. It needs paid credits, so this is a Smart-mode feature:
+bash
+amp -x "which files in this folder are markdown?"
+# README.md
+# AGENTS.md
+# docs/getting-started.md
+
+cat package.json | amp -x "which package manager is this?"
+# npm
+
+git diff | amp -x "write a one-line commit message for these changes"
+# fix: resolve type errors in the auth module
+
+A safer automation pattern is to wrap it in guards rather than calling it from your shell history:
+bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Never start from a dirty tree: you lose the ability to separate agent edits
+git diff --quiet || { echo "Commit or stash first."; exit 1; }
+
+git switch -c "amp/$(date +%Y%m%d-%H%M)"
+
+amp -x "Run the test suite. Fix only failures caused by type errors. Do not change test expectations."
+
+For CI, keep the scope tiny and cap the cost. A review job on a PR diff is the sweet spot:
+yaml
+name: amp-review
+on: [pull_request]
+
+jobs:
+ review:
+ runs-on: ubuntu-latest
+ steps:
+ - uses: actions/checkout@v5
+ with:
+ fetch-depth: 0
+ - name: Install Amp
+ run: curl -fsSL https://ampcode.com/install.sh | bash
+ - name: Review the diff
+ env:
+ AMP_API_KEY: ${{ secrets.AMP_API_KEY }}
+ run: |
+ git diff origin/${{ github.base_ref }}...HEAD > /tmp/pr.diff
+ amp -x "Review /tmp/pr.diff for bugs, injection risks, and missing error handling. Under 200 words." | tee review.md
+
+Verify the CI auth path on your version
+
+Headless runs need an API key from the Amp dashboard instead of the interactive login you used on your laptop. Confirm the exact environment variable name with amp --help on your installed version before you wire it into a pipeline. This is the kind of detail that changes between releases. Also: never give a CI job --dangerously-allow-all alongside a token that can push, and remember every push event burns credits.
+
+If you’re running agents on a remote box, do it inside tmux so a dropped SSH session doesn’t kill the thread mid-edit. That’s the same discipline as any other long-running process, which is what tmux basics is for. On macOS, terminal multiplexers built for agents like cmux and Herdr are worth a look once you’re running more than one session.
+
+Advanced features worth knowing
+
+Oracle: a second opinion on hard problems
+
+Oracle routes to a deeper reasoning model when the main loop shouldn’t guess. The agent decides when to call it, but asking explicitly gets better results on gnarly work:
+text
+"Use the oracle to review the last commit. I want to confirm the logic is
+unchanged and only the implementation moved."
+text
+"Analyze how these two functions overlap, then ask the oracle how to remove
+the duplication while staying backwards compatible."
+
+Oracle doesn’t exist on Free. It’s a Smart-mode tool, and it’s token-expensive, so reach for it on design decisions, not formatting.
+
+Subagents for parallel work
+
+Amp can spawn subagents with their own context windows. Each one can edit files and run commands, and reports back to the main thread.
+
+Converting many files to a new pattern (CSS to utility classes, one subagent per file)
+
+Fixing test failures across unrelated modules
+
+Independent feature work in separate packages
+
+Anything with output volume you don’t want polluting your main context
+
+text
+"Use 3 subagents to convert these CSS files to Tailwind. One subagent per file."
+
+Also Smart-only. Cap the count: three parallel subagents is usually a good ceiling, and each one multiplies your token spend.
+
+Custom tools with MCP
+
+Amp speaks Model Context Protocol, so you can wire in external tools. Config goes in your settings:
+json
+"amp.mcpServers": {
+ "playwright": {
+ "command": "npx",
+ "args": ["-y", "@playwright/mcp@latest", "--headless"]
+ },
+ "linear": {
+ "url": "https://mcp.linear.app/sse"
+ }
+}
+
+Two things to keep in mind. First, an MCP server is a tool call the agent can make without asking you in detail. A scraper or a browser server holding your cookies is a real capability, not a toy. Second, the agent will happily read whatever the server returns into context, so a web-fetch MCP that pulls a 200 KB page costs you tokens. I’ve written about the practical side of this in the Bright Data MCP guide and the MCP intro.
+
+Amp Tab: experimental completions
+
+Amp Tab anticipates multi-line edits and related changes in other files, using language server diagnostics as signal. It’s off by default:
+json
+"amp.tab.enabled": true
+
+Press Tab to accept and jump to the follow-on edits. Treat it as experimental: it’s the part of Amp most likely to change shape between releases.
+
+Prompts that actually work
+Fixes and cleanups
+text
+"Fix the TypeScript errors in this file"
+
+"Run the tests and fix the failures you caused"
+
+"Review this API design and suggest improvements" (uses Oracle)
+Feature work
+text
+"Add a dark mode toggle to this React component"
+
+"Plan how to add real-time chat to this app. Don't write code yet."
+
+"Find where authentication is handled and describe the flow"
+Git and review
+text
+"git blame this file and tell me who added that function"
+
+"Check git diff --staged and remove the debug statements"
+
+"Look at the last commit and help me move this feature to a shared package"
+CLI and automation
+bash
+amp -x 'which files in this folder are markdown?'
+
+git log --oneline -10 | amp -x "summarize the recent changes"
+
+amp -x "Look at localhost:3000 and make the header more minimal"
+
+The pattern behind all of these: give the agent a task and a way to check itself. “Run the tests and fix the failures” beats “make the tests pass” because the first one requires evidence.
+
+Limits and what breaks
+
+Smart mode is a meter, not a wall, so most failures are environmental rather than billing. Know these before you plan your week around either mode.
+
+Symptom
+What’s actually happening
+What to do
+
+command not found: amp
+npm/~/.local/bin not on PATH
+npm config get prefix, fix PATH, exec $SHELL -l
+
+Thread is slow and repetitive
+Context is bloated; quality drops before you notice
+/compact, or start a new thread with a summary
+
+Answers feel dumber than yesterday
+Amp routes across models and the mix rotates
+Expected. Pin down hard tasks in a fresh thread, don’t benchmark a moving target
+
+Oracle or subagents unavailable
+Those are Smart-only features
+Confirm you’re in Smart mode with /mode
+
+CLI says execute mode needs credits
+-x runs on paid credits
+Top up Smart credits, or keep the session interactive
+
+Browser login never opens
+Headless machine or no default browser
+Copy the URL Amp printed and open it elsewhere
+
+Agent behind a corporate proxy can’t reach the API
+No proxy env vars set
+Export HTTPS_PROXY (and HTTP_PROXY) before starting Amp
+
+Spend climbing faster than expected
+Subagents and Oracle multiply token burn
+One task per thread, cap subagents, watch the usage page
+
+Work accounts and data classification
+
+Amp Free was never available inside enterprise workspaces, and the grant remnants aren’t either. If you’re on a company account, assume paid Smart mode is the only option and check what its retention terms are before pointing it at a work repo. That’s a conversation for whoever owns your data classification, not something to discover in a code review.
+
+Amp vs the alternatives
+
+Amp’s selling point used to be that the free tier was genuinely free. With that paused, the pitch is simpler: a good agent, honest metered pricing, and a strong CLI. Its trade-off is unchanged — you can’t choose the model, and you can’t bring your own key.
+
+Tool
+Model routing
+Free option
+Best for
+
+Amp Smart
+Amp decides, frontier models
+Daily grant for some existing accounts
+Where you need Oracle, subagents, and full context
+
+FreeBuff
+Managed, no keys
+Free agent funded by text ads
+The $0 agentic option while Amp Free is paused
+
+OpenCode
+You choose, BYOK or a cheap plan
+Self-hosted, free software
+Running on your own VPS with cheap models, no data sharing
+
+Claude Code / Codex CLI
+Vendor-locked
+Limited trials
+Teams already paying for one vendor’s plan
+
+GitHub Copilot
+Vendor-locked
+Free tier with limits
+The lowest-friction paid coding plan, IDE + CLI
+
+If Amp’s model routing is a dealbreaker, the practical escape hatches are:
+
+OpenCode Go: open-source agent with a flat-rate bundle of coding models (see my OpenCode Go plan breakdown for what’s actually included)
+
+Agent Router: one key in front of Claude Code, Codex, and Gemini CLI, when you want to switch models without switching tools
+
+Factory Droid CLI: agents that go further up the lifecycle than file edits, closer to planning and CI work
+
+For a wider field, my AI coding tools comparison covers the whole 2026 market, and if you’re still deciding whether agents fit your workflow at all, start with getting started programming with AI.
+
+Where Amp still wins: zero config. No API key to wire up, no model dropdown to get wrong, and the CLI automates well. The free tier was the on-ramp; what’s left is the agent itself, and it’s good enough to justify a metered bill for real work.
+
+Frequently asked questions
+Is Amp Free still available?
+
+No, for practical purposes. Sourcegraph paused Amp Free in mid-2026 and says it doesn’t intend to bring it back. Some existing accounts kept a daily free-credit grant, but it’s shrinking for inactive users and older clients, so treat it as a bonus rather than a plan. Smart mode and its paid credits are the supported path now.
+Does Amp train on my code?
+
+Not anymore on any tier. The original Amp Free required opting into training; Sourcegraph removed that requirement a week after launch in October 2025, and Amp’s current policy is that neither Amp nor its providers train on your data unless you explicitly opt in. Smart mode never trained on it, and Enterprise adds zero-retention guarantees.
+How much does Amp Smart cost?
+
+Pay-as-you-go, priced at model list rates with no markup for individuals and teams, and you get starter credits so you can measure your own usage before paying. There’s no subscription. Small tasks cost cents; long refactors with subagents and Oracle calls can reach dollars. Watch the usage page the first week and you’ll have a realistic number for your workload.
+Can I switch between Free and Smart mode?
+
+If your account still has the free grant, yes: /mode free and /mode smart in the CLI, or the mode selector in the editor’s prompt field. Threads and history carry over. On newer accounts /mode free simply won’t have anything behind it.
+Can I use my own API key or a local model?
+
+No. Amp doesn’t support bringing your own keys or pointing it at a local model such as Ollama, because the model routing is the product. If that’s a hard requirement (cost control, data residency, offline work), use an open-source agent you can configure freely, like OpenCode, or run local models through the tools that support them.
+How do I stop Amp from running commands on its own?
+
+Don’t use the allow-all flag, review each command before you approve it, and tighten the rules with /permissions. For anything that can deploy or migrate, run the agent in a container or devcontainer with only the repo mounted and no cloud credentials.
+Does Amp work offline?
+
+No. The models are remote, so it needs network access to the API. File editing happens locally, and your code stays on disk, so your working tree is still yours. Behind a corporate proxy you’ll need to export the proxy environment variables before starting Amp.
+What editors does Amp support?
+
+VS Code and VS Code-compatible editors (Cursor, Devin Desktop/formerly Windsurf, and forks), plus JetBrains IDEs and Neovim through the CLI bridge (amp --ide or amp --jetbrains). If your editor isn’t in that list, the CLI alone still gives you the full agent.
+
+Conclusion
+
+Amp Code is a good agent that briefly had the most interesting business model in AI coding. The free tier is paused — ads couldn’t keep up with frontier token prices — and what’s left is a straightforward usage-priced agent with frontier models, Oracle, and subagents, plus a CLI that automates better than most.
+
+Key takeaways:
+
+Don’t plan around Amp Free: it’s paused, and the daily grant that remains for some accounts can shrink again
+
+For $0 agentic work today, use FreeBuff or a free-credit promo; pay for Amp when you want Smart mode
+
+Branch and commit before you prompt; git is your rollback and git reflog is your safety net
+
+Approve commands one at a time, and never combine allow-all with credentials that can deploy
+
+Use /compact and one task per thread: context hygiene is cheaper than retries
+
+Automate with amp -x, scoped to small diffs, with a spend cap you’ve actually measured
+
+Know your exit: if you need BYOK, local models, or flat-rate pricing, OpenCode and similar agents are one install away
+
+Try Amp Code
+
+Continue learning
+
+More on AI coding, agents, and running this stuff on your own hardware:
+
+Best AI Coding Tools and Agents in 2026: where Amp sits in the market
+
+OpenCode setup guide: the self-hosted, BYOK alternative
+
+GitHub Copilot alternatives: when usage-based billing bites
+
+Introduction to MCP: wiring real tools into any agent
+
+Let an AI assistant deploy your Docker apps: the next step past file edits
+
+Best open-source LLMs as Claude alternatives: the models behind the cheap tiers
+
+Install it on a scratch repo tonight, run one real task, and check the diff. That tells you more about whether an agent belongs in your workflow than any comparison table, mine included.
+#AI Tools#AI Coding#AI Agents
+
+Written by Dragos
+Dragos is the author of Bitdoze — practical DevOps, programming, and self-hosting guides.More guides from Dragos
+
+Share this article
+
+Need help with Astro, VPS, Dokploy, or a self-hosted app?
+If you would rather skip the messy implementation phase, there is now a clear services page built around the same topics already covered on the site.
+View Services
+Technical work, not filler consulting.
+Related Posts
+
+AI
+How to Start Programming with AI: 2026 Beginner's GuideNovember 12, 2025
+AI
+GitHub Copilot Pro: Best $10 AI Coding Plan with Zed IDE & CLIOctober 20, 2025
+AI
+Herdr App Layouts & Mods: Inside the Gallery Where No Two Look AlikeNovember 8, 2026
+
+On This Page
+
+Related
+
+Best AI Coding Tools and Agents in 2026 (Compared)
+
+VibeProxy Guide: Use Claude, Codex & Gemini in Any AI Tool
+
+How to Use Claude Sonnet 5.5, GPT-6, Gemini 3.1 for FREE
+
+Table of Contents

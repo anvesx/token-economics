@@ -1,0 +1,887 @@
+[
+ {
+  "id": "RQ-A-001",
+  "text": "The system MUST route every harness that allows a base URL through the gateway and treat the gateway log as the source of truth, with hooks and OpenTelemetry (OTel) as supplements.",
+  "src": [
+   "A:193",
+   "C:074",
+   "A:234"
+  ],
+  "comps": [
+   "gw",
+   "a_cc",
+   "a_cx",
+   "a_ai",
+   "a_sdk"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-002",
+  "text": "The system MUST NOT rely on a client hook for enforcement; budgets are enforced at the gateway or in managed settings.",
+  "src": [
+   "A:234",
+   "C:074",
+   "C:136"
+  ],
+  "comps": [
+   "gw",
+   "hookr",
+   "fmode",
+   "a_cc"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Developers can disable unmanaged hooks."
+ },
+ {
+  "id": "RQ-A-003",
+  "text": "Each adapter MUST emit one UsageEvent with harness, session_id, prompt_id, agent, model, input, output, cache_read, cache_write, cost_estimate_usd, cost_source and auth_mode.",
+  "src": [
+   "A:216",
+   "A:217",
+   "C:074"
+  ],
+  "comps": [
+   "a_cc",
+   "a_cx",
+   "a_ai",
+   "a_sdk",
+   "a_cli",
+   "a_obs",
+   "tee"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Field list comes from the R4 adapter rule."
+ },
+ {
+  "id": "RQ-A-004",
+  "text": "Every cost figure MUST carry cost_source of client, gateway or bill; client and gateway figures are list-price estimates, only the invoice is a bill.",
+  "src": [
+   "C:076",
+   "C:094",
+   "A:232"
+  ],
+  "comps": [
+   "tee",
+   "joiner",
+   "trans",
+   "a_sdk",
+   "a_obs",
+   "a_cli"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-005",
+  "text": "The capability registry MUST hold eight flags per harness (baseUrl, oauthPassthrough, hooksBlocking, otel, budgetFlag, headless, modelRewrite, transcriptPath), and the policy engine MUST degrade to observe-only when a flag is false.",
+  "src": [
+   "C:104",
+   "A:193",
+   "C:074"
+  ],
+  "comps": [
+   "cap",
+   "a_cc",
+   "a_cx",
+   "a_ai",
+   "a_obs"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "The flag names are an R4 design rule; the facts behind each value are sourced."
+ },
+ {
+  "id": "RQ-A-006",
+  "text": "An unknown capability MUST be stored as unknown and treated as false until a test proves it.",
+  "src": [
+   "C:104"
+  ],
+  "comps": [
+   "cap",
+   "a_cx",
+   "a_ai"
+  ],
+  "phase": "P1",
+  "label": "proposal",
+  "note": "DevX proposal. Codex hook schema and ChatGPT sign-in behaviour are not in the corpus."
+ },
+ {
+  "id": "RQ-A-007",
+  "text": "The system MUST pin the route so a developer cannot bypass the gateway: allowedProviders customEndpoint in Claude Code managed settings, model_provider in user-level or managed Codex config.",
+  "src": [
+   "A:193",
+   "C:104"
+  ],
+  "comps": [
+   "a_cc",
+   "a_cx",
+   "authk"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "allowedProviders value is quoted in R4 from notes, not from a primary page."
+ },
+ {
+  "id": "RQ-A-008",
+  "text": "The gateway MUST match each client protocol: Anthropic format with anthropic-beta forwarded for Claude Code, Responses API for Codex (wire_api responses), Chat Completions for Aider.",
+  "src": [
+   "A:193",
+   "C:104",
+   "C:037"
+  ],
+  "comps": [
+   "gw",
+   "a_cc",
+   "a_cx",
+   "a_ai"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Codex wire_api accepts only responses."
+ },
+ {
+  "id": "RQ-A-009",
+  "text": "The gateway MUST forward cache_control and every anthropic-beta value unchanged, and cache reads MUST be re-checked after each Claude Code upgrade.",
+  "src": [
+   "C:052",
+   "C:054",
+   "A:193",
+   "C:088"
+  ],
+  "comps": [
+   "gw",
+   "tee",
+   "a_cc",
+   "p_anth"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "A stripping gateway bills the whole history uncached."
+ },
+ {
+  "id": "RQ-A-010",
+  "text": "The gateway MUST keep one provider endpoint per session, because a provider or model switch mid-session loses the cache.",
+  "src": [
+   "A:231",
+   "A:247"
+  ],
+  "comps": [
+   "gw",
+   "p_rtr",
+   "fb",
+   "p_oai"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-011",
+  "text": "Gateway, hook and OTel rows MUST be joined on session_id and prompt_id.",
+  "src": [
+   "C:074",
+   "A:217"
+  ],
+  "comps": [
+   "joiner",
+   "hookr",
+   "otelr",
+   "gw"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Hook prompt_id equals OTel prompt.id. Gateway spans cannot join the client trace unless CLAUDE_CODE_PROPAGATE_TRACEPARENT is set."
+ },
+ {
+  "id": "RQ-A-012",
+  "text": "Observation paths MUST fail open and budget paths MUST fail closed with HTTP 402 when the budget is exhausted.",
+  "src": [
+   "C:074",
+   "C:001"
+  ],
+  "comps": [
+   "fmode",
+   "gw",
+   "hookr",
+   "tee"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Claude Code behaviour on 402 is not in the corpus; test it."
+ },
+ {
+  "id": "RQ-A-013",
+  "text": "Prompt, tool and response content logging MUST stay off by default and only metadata is stored.",
+  "src": [
+   "A:217",
+   "C:104"
+  ],
+  "comps": [
+   "otelr",
+   "hookr",
+   "trans",
+   "a_obs",
+   "tee"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Opt-ins are the OTEL_LOG_* variables and otel.log_user_prompt."
+ },
+ {
+  "id": "RQ-A-014",
+  "text": "Headless runs MUST pass --max-budget-usd and --max-turns, and interactive runs MUST be capped by gateway virtual-key budgets.",
+  "src": [
+   "C:094",
+   "C:080"
+  ],
+  "comps": [
+   "a_cli",
+   "b_cc",
+   "b_cx",
+   "gw"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "--max-turns flag text appears only in C:080."
+ },
+ {
+  "id": "RQ-A-015",
+  "text": "The OAuth passthrough guard MUST forward the Authorization header and the OAuth capability in anthropic-beta, and MUST NOT store or log tokens.",
+  "src": [
+   "A:193"
+  ],
+  "comps": [
+   "b_oauth",
+   "gw",
+   "a_cc"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Non-storage is a design rule; the corpus states only that the capability must be forwarded."
+ },
+ {
+  "id": "RQ-A-016",
+  "text": "Subscription traffic MUST be tracked as percentage windows from rate_limits, because no dollar figure exists for it.",
+  "src": [
+   "C:076",
+   "A:193",
+   "C:010"
+  ],
+  "comps": [
+   "a_cc",
+   "a_obs",
+   "b_oauth"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-017",
+  "text": "The stream tee MUST pass response bytes to the client unchanged and read usage from a copy.",
+  "src": [
+   "A:233",
+   "A:199"
+  ],
+  "comps": [
+   "tee",
+   "gw"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-018",
+  "text": "The system MUST flag a usage object with unknown extra keys instead of converting it silently.",
+  "src": [
+   "A:233"
+  ],
+  "comps": [
+   "tee",
+   "p_anth",
+   "p_oai",
+   "p_xai",
+   "p_gem",
+   "p_rtr"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-019",
+  "text": "Each model call MUST be counted once whether it arrives through SDK telemetry or the gateway.",
+  "src": [
+   "A:216",
+   "A:217"
+  ],
+  "comps": [
+   "a_sdk",
+   "otelr",
+   "joiner",
+   "tee"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Dual reporting trap."
+ },
+ {
+  "id": "RQ-A-020",
+  "text": "Subagent spend MUST be attributed separately using query_source; result.usage alone is not enough.",
+  "src": [
+   "A:216",
+   "A:217"
+  ],
+  "comps": [
+   "otelr",
+   "joiner",
+   "a_cc",
+   "a_sdk"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-021",
+  "text": "Resumed sessions MUST NOT be summed again, because resumed totals already include earlier spend.",
+  "src": [
+   "A:216",
+   "C:094"
+  ],
+  "comps": [
+   "a_sdk",
+   "a_cli",
+   "b_cc",
+   "trans"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-022",
+  "text": "The hook receiver MUST use last_assistant_message on Stop and SubagentStop, and the replayer MUST copy transcripts, because transcript_path lags and local retention is 30 days.",
+  "src": [
+   "C:074",
+   "C:003"
+  ],
+  "comps": [
+   "hookr",
+   "trans"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "The 30-day figure comes from one source."
+ },
+ {
+  "id": "RQ-A-023",
+  "text": "Policy hooks MUST block with exit code 2 and keep each output string under 10,000 characters.",
+  "src": [
+   "C:074"
+  ],
+  "comps": [
+   "hookr"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "PermissionRequest ignores exit 2."
+ },
+ {
+  "id": "RQ-A-024",
+  "text": "A model, effort, speed or tool-set change mid-session MUST be priced for cache loss first, and the hook receiver SHOULD gate PreModelSwitch.",
+  "src": [
+   "A:204",
+   "C:055",
+   "C:074",
+   "A:192"
+  ],
+  "comps": [
+   "hookr",
+   "a_cc",
+   "fb",
+   "rl"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "No hook rewrites the model of an ordinary request."
+ },
+ {
+  "id": "RQ-A-025",
+  "text": "Model downgrade for Claude Code MUST stay inside the Claude family; a gateway body rewrite is a risk because it is not documented as supported.",
+  "src": [
+   "A:193",
+   "C:073"
+  ],
+  "comps": [
+   "gw",
+   "a_cc",
+   "cap"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "modelRewrite flag defaults to false."
+ },
+ {
+  "id": "RQ-A-026",
+  "text": "Each provider connector MUST return usage fields exactly as the provider names them so the normaliser can apply the per-provider table.",
+  "src": [
+   "A:199",
+   "A:233",
+   "A:221",
+   "A:143",
+   "A:157",
+   "A:231"
+  ],
+  "comps": [
+   "p_anth",
+   "p_oai",
+   "p_xai",
+   "p_gem",
+   "p_rtr"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-027",
+  "text": "The Anthropic connector MUST send cache_control with ttl 5m or 1h, at most 4 breakpoints, longer TTL entries first, and system as an array of blocks.",
+  "src": [
+   "A:199",
+   "A:283"
+  ],
+  "comps": [
+   "p_anth"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-028",
+  "text": "The OpenAI connector MUST send prompt_cache_key per session and cap each prefix and key near 15 requests per minute.",
+  "src": [
+   "A:202",
+   "A:148"
+  ],
+  "comps": [
+   "p_oai"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Hit rate 60% to 87% with the key is self-reported."
+ },
+ {
+  "id": "RQ-A-029",
+  "text": "The OpenAI connector MUST use prompt_cache_options mode and ttl (30m or 12h) on GPT-5.6 and later, and prompt_cache_retention before it.",
+  "src": [
+   "A:201",
+   "A:204"
+  ],
+  "comps": [
+   "p_oai"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Azure bills 12h writes from Nov 1 2026 [A:148]."
+ },
+ {
+  "id": "RQ-A-030",
+  "text": "Connectors MUST NOT add reasoning tokens to output, because they already sit inside output_tokens.",
+  "src": [
+   "A:197",
+   "A:251"
+  ],
+  "comps": [
+   "p_oai",
+   "p_xai",
+   "p_gem"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-031",
+  "text": "The xAI connector MUST send x-grok-conv-id per session and report the 200K band so the calculator can reprice all tokens.",
+  "src": [
+   "A:221",
+   "A:224",
+   "A:225"
+  ],
+  "comps": [
+   "p_xai"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "At 200K and above, cached tokens reprice at 2x too."
+ },
+ {
+  "id": "RQ-A-032",
+  "text": "The Gemini connector MUST read cachedContentTokenCount (REST) or cached_content_token_count (SDK) and record explicit-cache storage use.",
+  "src": [
+   "A:143",
+   "A:280",
+   "A:121"
+  ],
+  "comps": [
+   "p_gem"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Implicit discount 75% [A:121] versus 90% [A:280]; the price book decides. Storage rate not in corpus."
+ },
+ {
+  "id": "RQ-A-033",
+  "text": "The aggregator connector MUST sum inputTokens, cacheReadInputTokens and cacheWriteInputTokens for Bedrock, send cachePoint, and never send ttl to 5-minute-only Bedrock models.",
+  "src": [
+   "A:157",
+   "A:159",
+   "A:160"
+  ],
+  "comps": [
+   "p_rtr"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Bedrock batch has no caching."
+ },
+ {
+  "id": "RQ-A-034",
+  "text": "The aggregator connector MUST send session_id or x-session-id (max 256 characters) to OpenRouter and set provider order, allow_fallbacks, require_parameters and data_collection explicitly.",
+  "src": [
+   "A:231",
+   "A:227",
+   "A:229"
+  ],
+  "comps": [
+   "p_rtr"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Provider fallbacks can break the cache. Default router costs 6.0% more per request."
+ },
+ {
+  "id": "RQ-A-035",
+  "text": "Connectors MUST NOT add volatile values such as timestamps to the prompt top; stable content comes first.",
+  "src": [
+   "A:224"
+  ],
+  "comps": [
+   "p_anth",
+   "p_oai",
+   "p_xai",
+   "p_gem",
+   "gw"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "A timestamp gave 87% versus 3% cache reuse."
+ },
+ {
+  "id": "RQ-A-036",
+  "text": "The connector MUST skip cache_control when the prefix is below the model minimum, and the catalogue MUST hold the larger of two conflicting minimums.",
+  "src": [
+   "A:199",
+   "C:051",
+   "A:201"
+  ],
+  "comps": [
+   "cat",
+   "p_anth",
+   "p_oai"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Sonnet 4.6: 1,024 [A:199] versus 2,048 [C:051]. Opus 4.7: 2,048 versus 4,096."
+ },
+ {
+  "id": "RQ-A-037",
+  "text": "The catalogue MUST match exact model ids and MUST NOT match partial names.",
+  "src": [
+   "A:232"
+  ],
+  "comps": [
+   "cat"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Partial-name matching gives a silent wrong price."
+ },
+ {
+  "id": "RQ-A-038",
+  "text": "The catalogue and rate-limit tracker MUST hold rpm, tpm, rpd and a 429_billed flag per model and tier; flex and batch 429 responses are not charged.",
+  "src": [
+   "A:195",
+   "A:150",
+   "A:219"
+  ],
+  "comps": [
+   "cat",
+   "rl"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "OpenAI flex discount percentage is not stated in the source."
+ },
+ {
+  "id": "RQ-A-039",
+  "text": "A fallback hop MUST be priced and logged with its reason, never silent, and batch or flex work retries on the standard tier after a 429.",
+  "src": [
+   "A:195",
+   "A:281",
+   "A:219",
+   "A:192"
+  ],
+  "comps": [
+   "fb",
+   "rl",
+   "cat"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-040",
+  "text": "After an error the fallback chain SHOULD default to the same model unless the saving exceeds the cache-rewrite cost.",
+  "src": [
+   "A:008",
+   "A:204",
+   "C:030"
+  ],
+  "comps": [
+   "fb"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "A:008 retained the same model after an error 90.2% and 80.9% of the time."
+ },
+ {
+  "id": "RQ-A-041",
+  "text": "The gateway MUST return 402 when the virtual key budget is spent, and in-flight requests MAY finish, so soft-cap overshoot is recorded.",
+  "src": [
+   "C:001",
+   "A:234",
+   "A:242",
+   "A:245"
+  ],
+  "comps": [
+   "gw",
+   "authk",
+   "fmode"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Overshoot size is not quantified in the corpus."
+ },
+ {
+  "id": "RQ-A-042",
+  "text": "The key resolver MUST map each virtual key to tenant, team and agent and MUST count BYOK (bring your own key) spend.",
+  "src": [
+   "C:060",
+   "C:001",
+   "A:245"
+  ],
+  "comps": [
+   "authk"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "A:245 reports BYOK spend was not counted by one gateway."
+ },
+ {
+  "id": "RQ-A-043",
+  "text": "Provider keys MUST be fetched from the secrets vault at call time and never stored in configuration.",
+  "src": [
+   "A:193"
+  ],
+  "comps": [
+   "p_anth",
+   "p_oai",
+   "p_xai",
+   "p_gem",
+   "p_rtr",
+   "authk"
+  ],
+  "phase": "P3",
+  "label": "proposal",
+  "note": "DevX proposal. R4 names no source for the vault rule."
+ },
+ {
+  "id": "RQ-A-044",
+  "text": "For harnesses with no base URL, hook or OTel surface (Gemini CLI, Copilot CLI, Cursor, Amp, Kiro, others), the system MUST read vendor dashboards, exports or local files and label the result observe-only.",
+  "src": [
+   "C:003",
+   "A:056",
+   "C:057",
+   "C:117",
+   "C:119",
+   "A:263"
+  ],
+  "comps": [
+   "a_obs",
+   "cap"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-045",
+  "text": "The gateway MUST own Aider cost, because Aider assumes zero cost for an unknown model.",
+  "src": [
+   "C:040",
+   "C:037"
+  ],
+  "comps": [
+   "a_ai",
+   "gw"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-046",
+  "text": "The Codex adapter MUST test hook stdin and exit-code behaviour, OTel event names and ChatGPT sign-in through a custom provider before relying on them.",
+  "src": [
+   "C:104"
+  ],
+  "comps": [
+   "a_cx",
+   "hookr",
+   "otelr",
+   "cap"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "All three are not in the corpus. Managed Work Cloud ignores model_provider."
+ },
+ {
+  "id": "RQ-A-047",
+  "text": "The OTel receiver MUST ingest claude_code.token.usage, claude_code.cost.usage and claude_code.api_request, and MUST set cardinality options deliberately.",
+  "src": [
+   "A:217",
+   "C:002"
+  ],
+  "comps": [
+   "otelr",
+   "a_cc"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Gateway cannot join client traces by default."
+ },
+ {
+  "id": "RQ-A-048",
+  "text": "The gateway log MUST carry cache fields per caller so per-caller hit rate can be computed.",
+  "src": [
+   "C:052",
+   "C:054"
+  ],
+  "comps": [
+   "tee",
+   "joiner",
+   "gw"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Account rate 77% hid a cron near 0%."
+ },
+ {
+  "id": "RQ-A-049",
+  "text": "Replayed transcript rows MUST be labelled client estimate.",
+  "src": [
+   "C:003",
+   "C:076"
+  ],
+  "comps": [
+   "trans",
+   "a_obs"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-050",
+  "text": "The headless adapter MUST parse claude -p --output-format json for session id, usage and structured_output, and treat exit 0 as success.",
+  "src": [
+   "C:094"
+  ],
+  "comps": [
+   "a_cli",
+   "b_cc"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Piped stdin cap is 10MB."
+ },
+ {
+  "id": "RQ-A-051",
+  "text": "The claude -p runner MUST account for --bare skipping hooks, skills, MCP, plugins, memory and CLAUDE.md, and MUST pass hooks explicitly with --settings if needed.",
+  "src": [
+   "C:094"
+  ],
+  "comps": [
+   "b_cc"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-052",
+  "text": "The codex exec runner MUST put model_provider in user-level config and MUST rely on gateway budgets because no Codex budget flag appears in the corpus.",
+  "src": [
+   "C:035",
+   "C:104"
+  ],
+  "comps": [
+   "b_cx",
+   "a_cx",
+   "a_cli"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-053",
+  "text": "Spend limits MUST live outside the model.",
+  "src": [
+   "C:136"
+  ],
+  "comps": [
+   "gw",
+   "b_cc",
+   "b_cx",
+   "a_cli"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Agents never reference a budget in 14,000+ messages."
+ },
+ {
+  "id": "RQ-A-054",
+  "text": "The gateway SHOULD add under 50 ms at the 95th percentile (p95) before the first byte on the pass-through path.",
+  "src": [],
+  "comps": [
+   "gw",
+   "tee",
+   "authk"
+  ],
+  "phase": "P3",
+  "label": "proposal",
+  "note": "DevX proposal. No corpus latency figure."
+ }
+]

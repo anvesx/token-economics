@@ -1,0 +1,786 @@
+TITLE: AGENTS.md project memory and compaction in the Codex CLI architecture
+URL: https://github.com/castasint/codex-cli-architecture/blob/main/deep-dive/03-memory-context-and-compaction.md
+ORG: GitHub  TYPE: blog  DATE: 2026-02
+
+codex-cli-architecture/deep-dive/03-memory-context-and-compaction.md at main · castasint/codex-cli-architecture · GitHub
+
+ Skip to content
+
+ You signed in with another tab or window. Reload to refresh your session.
+ You signed out in another tab or window. Reload to refresh your session.
+ You switched accounts on another tab or window. Reload to refresh your session.
+
+Dismiss alert
+
+{{ message }}
+
+FilesExpand file tree
+
+main
+
+/
+03-memory-context-and-compaction.mdCopy path
+
+Blame
+More file actions
+
+Blame
+More file actions
+
+Latest commit
+
+HistoryHistory
+
+History
+
+608 lines (466 loc) · 46 KB
+
+main
+
+/
+03-memory-context-and-compaction.mdCopy pathTop
+
+File metadata and controls
+
+Preview
+
+Code
+
+Blame
+
+608 lines (466 loc) · 46 KB
+
+Raw
+Copy raw file
+Download raw fileOutline
+Edit and raw actions
+
+Memory, Context Management & Compaction
+
+This document reverse-engineers how Codex 0.139.0 manages a turn's working context, persists conversations to disk, compacts history when the context window fills, blends AGENTS.md project memory into the developer message, and runs the persistent cross-session "memories" subsystem. The subsystem spans the codex-core crate (context_manager, context, compact*, realtime_context, agents_md, session, state, thread_rollout_truncation, stream_events_utils) plus the dedicated persistence/memory crates codex_rollout, codex_rollout_trace, codex_thread_store, codex_message_history, codex_context_fragments, codex_state, and the three-crate memory pipeline codex_memories_extension / codex_memories_read / codex_memories_write. The unifying theme: an in-RAM ContextManager builds each model prompt; a JSONL rollout file on disk is the durable source of truth; a SQLite state_db indexes those rollouts; compaction (local or remote) replaces old history with a summary; and a separate background pipeline distills finished rollouts into a long-lived memories/ folder loaded back into future system prompts.
+
+Crates & modules
+
+codex_core::context_manager — the in-memory working set of ResponseItems for the active turn.
+
+context_manager::history → ContextManager (for_prompt, process_item, remove_first_item, estimate_token_count, drop_last_n_user_turns, replace_last_turn_images) and the free function is_user_turn_boundary.
+
+context_manager::updates → build_model_instructions_update_item, build_settings_update_items (mid-session model/personality switch injection).
+
+codex_core::context — context fragments that get rendered into the prompt (each implements the ContextualUserFragment trait from codex_context_fragments).
+
+context::environment_context::EnvironmentContext::from_turn_context → the <environment_context> XML block (also ManagedFileSystemContext for sandbox FS perms).
+
+context::internal_model_context::InternalModelContextFragment (impls matches_text/body) plus the free predicate context::internal_model_context::is_valid_source.
+
+sibling fragments (each a ContextualUserFragment::body impl): context::available_plugins_instructions::AvailablePluginsInstructions, context::subagent_notification::SubagentNotification (formatted by session_prefix::format_subagent_notification_message).
+
+codex_core::compact / compact_remote / compact_remote_v2 — three compaction backends.
+
+compact: build_compacted_history, collect_user_messages, content_items_to_text, insert_initial_context_before_last_real_user_or_summary, run_compact_task_inner_impl (local summarization).
+
+compact_remote: should_keep_compacted_history_item, trim_function_call_history_to_fit_context_window, run_remote_compact_task_inner_impl.
+
+compact_remote_v2: build_v2_compacted_history, run_remote_compact_task_inner_impl.
+
+codex_core::realtime_context — startup "background context" block for realtime/voice sessions.
+
+build_realtime_startup_context, build_current_thread_section, load_recent_threads, truncate_realtime_text_to_token_budget, render_tree, format_section, file_name_string.
+
+codex_core::agents_md — locates and loads AGENTS.md / AGENTS.override.md files (warn_invalid_utf8).
+
+codex_core::thread_rollout_truncation — fork/resume truncation: truncate_rollout_to_last_n_fork_turns, initial_history_has_prior_user_turns.
+
+codex_core::stream_events_utils::strip_hidden_assistant_markup_and_parse_memory_citation — strips the hidden <oai-mem-citation> block from the assistant's final message and routes it to the citation parser.
+
+codex_core::state — additional_context, session, turn runtime state.
+
+codex_core::session — turn loop (turn::build_prompt, turn::run_turn), rollout_reconstruction::finalize_active_segment, handlers::set_thread_memory_mode.
+
+codex_context_fragments — the ContextualUserFragment trait machinery (fragment::matches_marked_text, additional_context::AdditionalContextUserFragment / AdditionalContextDeveloperFragment).
+
+codex_message_history — the cross-session user prompt history file (enforce_history_limit, lookup), distinct from the rollout transcript.
+
+codex_rollout — JSONL session persistence: recorder, metadata, list, search, session_index, state_db (SQLite index), compression (cold-rollout compaction worker), policy::persisted_rollout_items.
+
+codex_rollout_trace — a parallel structured trace log (thread, inference, compaction, tool_dispatch, reducer, writer, bundle).
+
+codex_thread_store — higher-level thread abstraction over rollouts (local + local::helpers / local::read_thread / local::live_writer / local::update_thread_metadata, live_thread, types, thread_metadata_sync). Local-vs-remote selection lives in codex_core::thread_manager::thread_store_from_config.
+
+codex_state / codex_rollout::state_db — replay rollout items into structured state (extract::apply_rollout_item).
+
+codex_memories_extension — the live memories tool surface (list/read/search/add_ad_hoc_note) + prompts.
+
+codex_memories_read — citations::parse_memory_citation, thread_ids_from_memory_citation, usage::memories_usage_kinds_from_command.
+
+codex_memories_write — the two-phase background memory consolidation pipeline (phase1, phase2, prompts::build_consolidation_prompt, storage, start::start_memories_startup_task).
+
+1. The in-memory ContextManager — the working set for a turn
+
+codex_core::context_manager::history::ContextManager is the rolling, in-RAM record of ResponseItems that becomes the model input each turn. Its observed methods (from the demangled symbol table) describe its whole contract:
+
+ContextManager::process_item // ingest a new ResponseItem into history
+ContextManager::for_prompt // render the ordered list for the next model request
+ContextManager::estimate_token_count // approximate token usage of current history
+ContextManager::remove_first_item // evict the oldest item (used when over-budget)
+ContextManager::drop_last_n_user_turns // rewind N user turns (fork / "edit message")
+ContextManager::replace_last_turn_images // swap images out of the last turn
+
+The prompt for each turn is assembled in codex_core::session::turn::build_prompt, which pulls ContextManager::for_prompt, prepends the developer/system instructions (base instructions + personality + AGENTS.md blend + environment context + memory summary), and appends the live tool set. estimate_token_count is the trigger source for auto-compaction: when projected tokens approach model_auto_compact_token_limit (relative to model_context_window), a compaction task is launched before the next sampling request.
+
+is_user_turn_boundary — segmenting history into turns
+
+context_manager::history::is_user_turn_boundary classifies whether a given ResponseItem marks the start of a new real user turn. This is the pivotal predicate used by:
+
+drop_last_n_user_turns (how far to rewind on fork / message-edit),
+
+compaction's collect_user_messages and insert_initial_context_before_last_real_user_or_summary (where to splice the regenerated context),
+
+truncation's initial_history_has_prior_user_turns.
+
+The notion of a "real" user message (vs. injected developer/context fragments) is load-bearing: injected fragments like the environment context, AGENTS blend, and memory summary are not user turns and must not be counted as boundaries.
+
+Mid-session settings updates (context_manager::updates)
+
+When the user changes model or personality mid-session, Codex does not rebuild the whole prompt; it appends synthetic items:
+
+build_model_instructions_update_item injects, verbatim:
+
+The user was previously using a different model. Please continue the conversation according to the following instructions:
+
+build_settings_update_items injects a personality-change notice:
+
+The user has requested a new communication style. Future messages should adhere to the following personality:
+
+These keep the rolling history coherent across a model/personality swap without invalidating cached context.
+
+2. Context fragments — how non-message context is rendered
+
+Injected context is modeled through the codex_context_fragments::fragment::ContextualUserFragment trait. Each fragment type implements body() (the rendered text) and matches_text() / matches_marked_text() (so the system can recognize its own previously-injected fragment in history and replace/dedupe it). Observed implementors:
+
+codex_core::context::environment_context::EnvironmentContext — renders <environment_context>.
+
+codex_core::context::internal_model_context::InternalModelContextFragment.
+
+codex_context_fragments::additional_context::AdditionalContextUserFragment / AdditionalContextDeveloperFragment.
+
+codex_core::context::available_plugins_instructions::AvailablePluginsInstructions.
+
+codex_core::context::subagent_notification::SubagentNotification.
+
+The <environment_context> block
+
+EnvironmentContext::from_turn_context builds an XML block from the live TurnContext. The literal tag structure (strings at all-strings.txt:6880–6892):
+
+<environment_context>
+ <cwd>…</cwd>
+ <shell>…</shell>
+ <approval_policy>…</approval_policy>
+ <sandbox_mode>…</sandbox_mode>
+ <network_access>…</network_access>
+ <writable_roots>…</writable_roots>
+ <environment id="…">
+ <cwd>…</cwd>
+ <shell>…</shell>
+ </environment>
+ <current_date>…</current_date>
+ <timezone>…</timezone>
+</environment_context>
+
+Inclusion is gated by config include_environment_context (and per-block toggles include_permissions_instructions, include_apps_instructions, include_collaboration_mode_instructions). The <environment id="…"> sub-blocks correspond to additional writable roots / remote environments added via --add-dir.
+
+3. AGENTS.md project memory
+
+codex_core::agents_md (file core/src/agents_md.rs) discovers and loads project-instruction files. Evidence: error strings error trying to find AGENTS.md docs:, Failed to read global AGENTS.md instructions from, AGENTS.md instructions from \…` contain invalid UTF-8(thewarn_invalid_utf8 path). The recognized filenames, in precedence order: **AGENTS.override.md** then **AGENTS.md**, at two scopes labeled in code as **Global** and **Project`** (strings near agents_md.rs:108 / :172 / :225).
+
+The blended block is wrapped with the literal markers # AGENTS.md instructions for … and embedded under <INSTRUCTIONS> alongside <apps_instructions> and <skill> wrappers (string at all-strings.txt:48319 / 49267 / 51564). When migrating from external agents, Codex also recognizes CLAUDE.md as an AGENTS.md-equivalent source (external_agent_config.rs, key find_repo_agents_md_source).
+
+The agent's understanding of its own AGENTS.md contract is itself baked into the base instructions (prompt-assets.txt:8, and the # AGENTS.md spec block at all-strings.txt:56430):
+
+# AGENTS.md spec
+- Repos often contain AGENTS.md files. These files can appear anywhere within the repository.
+- These files are a way for humans to give you (the agent) instructions or tips for working within the container.
+…
+ - The scope of an AGENTS.md file is the entire directory tree rooted at the folder that contains it.
+ - For every file you touch in the final patch, you must obey instructions in any AGENTS.md
+ file whose scope includes that file.
+ - More-deeply-nested AGENTS.md files take precedence in the case of conflicting instructions.
+ - Direct system/developer/user instructions (as part of a prompt) take precedence over AGENTS.md instructions.
+- The contents of the AGENTS.md file at the root of the repo and any directories from the CWD up
+ to the root are included with the developer message and don't need to be re-read.
+
+A longer, container-oriented variant (all-strings.txt:48319–48322) adds the rule:
+
+Files called AGENTS.md commonly appear in many places inside a container - at "/", in "~",
+deep within git repositories, or in any other directory…
+When two AGENTS.md files disagree, the one located deeper in the directory structure overrides
+the higher-level file, while instructions given directly in the prompt by the system, developer,
+or user outrank any AGENTS.md content.
+
+Config keys governing the blend: project_doc_max_bytes (byte cap on the loaded blend), project_doc_fallback_filenames (alternates if AGENTS.md is absent), child_agents_md (feature flag controlling whether nested subdirectory AGENTS files are pulled in). The /init slash command "create an AGENTS.md file with instructions for Codex" (prompt string at line 43) writes a starter file.
+
+4. Compaction — three backends
+
+Compaction replaces a long history with a compact summary so the conversation can continue under the context window. Codex ships three implementations, selected by feature flags and config:
+
+Module
+Where summarization runs
+Selected by
+
+compact
+Locally — Codex issues its own summarization model call
+default
+
+compact_remote
+Remote — backend performs compaction
+remote_models / responses-websockets path
+
+compact_remote_v2
+Remote v2 — streamed single-output compaction
+feature flag remote_compaction_v2
+
+The user-facing trigger is also exposed as a /compact-style command and as the app-server thread/compacted notification ({ "method": "thread/compacted", "params": … }).
+
+4.1 Local compaction (codex_core::compact)
+
+The pipeline (run_compact_task_inner_impl, file core/src/compact.rs and core/src/tasks/compact.rs):
+
+collect_user_messages walks history and extracts the user-authored messages (the durable intent), using content_items_to_text to flatten content items into plain text. is_user_turn_boundary keeps only real user turns.
+
+Codex sends the conversation plus a summarization prompt to the model. The prompt is configurable via compact_prompt (config + the MCP/app-server compact-prompt parameter: "Prompt used when compacting the conversation.") or experimental_compact_prompt_file (load from a file). The default summarization prompt is stored verbatim in the binary, anchored to core/src/compact.rs:254:
+
+You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.
+
+The reciprocal resume prompt (injected into the post-compaction history so the continuing model can build on the summary) is also present verbatim:
+
+Another language model started to solve this problem and produced a summary of its thinking
+process. You also have access to the state of the tools that were used by that language model.
+Use this to build on the work that has already been done and avoid duplicating work. Here is
+the summary produced by the other language model, use the information in this summary to assist
+with your own analysis:
+
+When no summary could be produced the placeholder (no summary available) is substituted, and a multi-compaction UX warning is shown: "Heads up: Long threads and multiple compactions can cause the model to be less accurate. Start a new thread when possible to keep threads small and targeted."
+
+build_compacted_history assembles the new history: the generated summary plus the preserved user messages and initial context.
+
+insert_initial_context_before_last_real_user_or_summary re-injects the initial-context block (system/AGENTS/environment) at the correct splice point — immediately before the last real user message or before the summary marker — so the post-compaction prompt still carries the durable project context. This is the key correctness invariant: compaction must not drop AGENTS.md/environment context.
+
+If even the act of compacting overflows the window, the loop evicts oldest items and retries (string emitted from core/src/compact.rs):
+
+Context window exceeded while compacting; removing oldest history item. Error:
+
+The compacted output is persisted as a rollout line tagged auto-compact- (string at all-strings.txt:6823) and traced via codex_rollout_trace::compaction::append_with_context_best_effort.
+
+4.2 Remote compaction (compact_remote)
+
+Two helpers shape what survives a remote compaction:
+
+should_keep_compacted_history_item — predicate deciding which original history items to retain alongside the remote-produced summary (e.g., keep recent user turns / drop stale tool noise).
+
+trim_function_call_history_to_fit_context_window — specifically prunes function-call / tool-output items (typically the bulkiest part of history) until the retained set fits the window. Tool outputs are the first thing sacrificed.
+
+4.3 Remote compaction v2 (compact_remote_v2)
+
+build_v2_compacted_history consumes a streamed remote response that must yield exactly one compaction output item; the strictness is enforced with hard errors (core/src/compact_remote_v2.rs:205):
+
+remote compaction v2 expected exactly one compaction output item, got … from … output items
+remote compaction v2 stream closed before response.completed
+internal error: entered unreachable code: compaction output must exist when count is exactly one
+rewrote history outputs before remote compaction v2
+
+The endpoint lives in codex-api/src/endpoint/compact.rs (failed to encode compaction input:).
+
+4.4 Compaction hooks
+
+codex_hooks::events::compact exposes lifecycle hooks: PreCompact and PostCompact (config matchers, parsed by parse_pre_completed / parse_post_completed, serialized via pre_command_input_json / post_command_input_json). Hooks::preview_pre_compact / preview_post_compact render them. This lets external scripts observe or veto a compaction.
+
+flowchart TD
+ A["Turn loop: estimate_token_count"] -->|approaching model_auto_compact_token_limit| B{compaction backend?}
+ B -->|default| C["compact::run_compact_task_inner_impl"]
+ B -->|remote_models| D["compact_remote::run_remote_compact_task_inner_impl"]
+ B -->|remote_compaction_v2| E["compact_remote_v2::run_remote_compact_task_inner_impl"]
+ C --> C1["collect_user_messages"]
+ C --> C2["model summarization call (compact_prompt)"]
+ C1 & C2 --> C3["build_compacted_history"]
+ C3 --> C4["insert_initial_context_before_last_real_user_or_summary"]
+ D --> D1["should_keep_compacted_history_item"]
+ D --> D2["trim_function_call_history_to_fit_context_window"]
+ E --> E1["build_v2_compacted_history (exactly 1 output)"]
+ C4 & D2 & E1 --> F["new ContextManager history"]
+ F --> G["rollout line tagged auto-compact-*"]
+ F --> H["rollout_trace::compaction"]
+ F --> I["PreCompact / PostCompact hooks"]
+
+ Loading
+
+5. Rollout persistence — the JSONL source of truth
+
+Every session is recorded to a JSONL rollout file by codex_rollout::recorder (file rollout/src/recorder.rs). The structure is described in-prompt by the memories layout text (all-strings.txt:54483):
+
+These files are append-only `jsonl`:
+ `session_meta.payload.id` identifies the session,
+ `turn_context` marks turn boundaries,
+ `event_msg` is the lightweight status stream, and
+ `response_item` contains actual messages, tool calls, and tool outputs.
+
+So each rollout line is one of: session_meta, turn_context, event_msg, or response_item. The recorder:
+
+open_log_file opens/creates the file; resume logs Resuming rollout from … and Resumed rollout with … items.
+
+page_from_filesystem_scan / thread_item_sort_key / cursor_from_thread_item support paginated listing.
+
+fill_missing_thread_item_metadata / fill_missing_thread_item_metadata_from_state_db backfill metadata.
+
+strip_legacy_ghost_snapshot_rollout_line drops obsolete ghost_snapshot lines on read (a migration detail; ghost_snapshot is also a config key).
+
+File naming & layout
+
+Rollout filenames use the prefix rollout- (all-strings.txt:4909) followed by a timestamp + UUID, parsed by list::parse_timestamp_uuid_from_filename and list::rollout_date_parts (date-partitioned directory layout, formatted with format_rfc3339). Related specialized rollouts: auto-review-rollout-*.jsonl (review threads) and auto-compact-* lines (compaction checkpoints). Files live under $CODEX_HOME (default ~/.codex), with a sqlite_home for the index DB.
+
+persisted_rollout_items
+
+codex_rollout::policy::persisted_rollout_items decides which in-memory items are actually written (e.g., ephemeral threads are skipped — Whether the thread is ephemeral and should not be materialized on disk).
+
+SQLite state DB index (codex_rollout::state_db)
+
+A SQLite database (sqlite feature, failed to open state db at …) indexes all rollouts so that listing/search/resume don't require scanning every JSONL file:
+
+reconcile_rollout / apply_rollout_items keep the DB in sync with files; on drift, read_repair_rollout_path self-heals.
+
+A one-time backfill of pre-existing rollouts is driven by codex_rollout::metadata::backfill_sessions_with_lease (lease-guarded so only one process scans) plus the state-DB gate functions state_db::wait_for_backfill_gate / state_db::require_backfill_complete, so reads wait for completeness (state db backfill already running at …, state db backfill scanned=…, state db backfill is …, timed out waiting for state db backfill at …, state db backfill not complete at …). metadata::backfill_watermark_for_path records progress.
+
+list_threads_db answers thread/turns/list; find_rollout_path_by_id resolves a thread id to its file.
+
+mark_thread_memory_mode_polluted records when a thread's memory mode was tampered with (relevant to the memories subsystem deciding whether to consume a rollout).
+
+A diagnostic dump exists (rollout DB rows:, rollout DB active rows:, rollout DB stale rows:, rollout DB archive mismatches:) and a CLI recovery path (cli/src/state_db_recovery.rs).
+
+Cold-rollout compression (codex_rollout::compression)
+
+A background worker compresses old ("cold") rollouts to save disk, gated by feature flag local_thread_store_compression:
+
+spawn_rollout_compression_worker → worker::run loops, calling collect_next_compression_job and compress_rollout_if_cold_blocking / compress_rollouts_in_root.
+
+materialize_rollout_for_append_blocking transparently decompresses a cold rollout when it needs to be appended to again.
+
+Paths distinguish plain_rollout_path vs compressed_rollout_path; cleanup_stale_temps_in_root removes interrupted temp files.
+
+Structured trace (codex_rollout_trace)
+
+In parallel to the JSONL rollout, Codex writes a structured trace bundle (codex_rollout_trace::writer, ::bundle) with typed sections: thread, inference (with write_response_payload_best_effort), compaction, tool_dispatch, mcp, code_cell, and a reducer that normalizes conversation/tool events. Every append is "best effort" (append_with_context_best_effort) so tracing never breaks a turn.
+
+sequenceDiagram
+ participant T as Turn loop
+ participant CM as ContextManager (RAM)
+ participant R as rollout::recorder (JSONL)
+ participant DB as rollout::state_db (SQLite)
+ participant TR as rollout_trace (structured)
+ participant C as compression worker
+ T->>CM: process_item(response_item)
+ CM->>R: append session_meta / turn_context / event_msg / response_item
+ R->>DB: reconcile_rollout / apply_rollout_items
+ T->>TR: inference / tool_dispatch / compaction (best effort)
+ Note over C: later, when rollout is "cold"
+ C->>R: compress_rollout_if_cold_blocking → compressed_rollout_path
+
+ Loading
+
+6. Thread store, resume, fork & truncation
+
+codex_thread_store is the higher-level abstraction over rollouts. codex_thread_store::local reads/writes the on-disk store (local::helpers::stored_thread_from_rollout_item, local::read_thread::stored_thread_from_meta_line, local::update_thread_metadata::apply_metadata_update, local::live_writer::sync_materialized_rollout_path). Selection of local-vs-remote happens in codex_core::thread_manager::thread_store_from_config (gated by experimental_thread_store; note experimental_thread_store_endpoint is now rejected: "experimental_thread_store_endpoint is no longer supported; remove it from config.toml"); forking is seeded by thread_manager::fork_history_from_snapshot.
+
+Resume vs fork (CLI)
+
+Both codex resume and codex fork take a [SESSION_ID] (UUID or session name) or --last (most-recent) and an optional [PROMPT] (codex-resume--help.txt, codex-fork--help.txt):
+
+Resume continues the same thread, appending to the existing rollout (Resuming rollout from …). --include-non-interactive widens the picker; --all disables cwd filtering.
+
+Fork creates a new thread seeded from a copy of the source thread's history (Source thread id when this thread was created by forking another thread). Threads forked from the same root share a Session id shared by threads that belong to the same session tree.
+
+App-server equivalents: thread/resume, thread/fork, thread/rollback, thread/read.
+
+Truncation on fork/resume (codex_core::thread_rollout_truncation)
+
+truncate_rollout_to_last_n_fork_turns trims a resumed/forked rollout to the last N fork turns so the reconstructed ContextManager starts from a bounded window rather than replaying an enormous history.
+
+initial_history_has_prior_user_turns detects whether the seed history already contains real user turns (so the system knows whether to inject fresh initial context or splice into existing turns).
+
+ContextManager::drop_last_n_user_turns is the runtime counterpart used by the TUI "edit a previous message" / rollback flow.
+
+Reconstruction of an interrupted/active session is handled by codex_core::session::rollout_reconstruction::finalize_active_segment, and codex_state::extract::apply_rollout_item / codex_rollout::state_db::apply_rollout_items replay JSONL lines back into structured state.
+
+7. codex_message_history — the user-prompt history (≠ rollout)
+
+Separate from the per-session rollout transcript, codex_message_history maintains the cross-session history of user prompts (the up-arrow recall list in the TUI). It is a small file with two operations: enforce_history_limit (cap the number of stored entries) and lookup (resolve an entry by id/offset). The TUI side mirrors it (codex_tui::app::thread_routing::append_message_history_entry / lookup_message_history_entry). Config keys: history (with max_bytes, persistence). The log_user_prompt config gates whether prompts are recorded at all.
+
+8. Realtime startup context (codex_core::realtime_context)
+
+For realtime/voice (realtime_conversation feature) sessions, Codex injects a one-time "background context" block built from local data. build_realtime_startup_context assembles three labeled sections (strings at all-strings.txt:48206, 50179):
+
+This is background context about recent work and machine/workspace layout. It may be
+incomplete or stale. Use it to inform responses, and do not repeat it back unless relevant.
+
+[Current Thread] <- build_current_thread_section (from current thread history)
+[Recent Work] <- load_recent_threads (local thread metadata; "Recent sessions:",
+ "Latest activity:", "Latest branch:")
+[Machine / Workspace Map] <- render_tree over:
+ "Working directory tree:", "Git root tree:", "User root tree:"
+ (also: "Current working directory:", "Working directory name:",
+ "Git root:", "Git project:", "User root:")
+
+Notes
+Built at realtime startup from the current thread history, local thread metadata, and a
+bounded local workspace scan. This excludes repo memory instructions, AGENTS files,
+project-doc prompt blends, and memory summaries.
+
+Key details:
+
+render_tree prints a bounded directory tree (working dir, git root, user root). file_name_string and format_section format entries.
+
+load_recent_threads reads recent thread metadata from the thread store (failed to load realtime startup threads from thread store:).
+
+truncate_realtime_text_to_token_budget caps the whole block to a token budget so realtime startup stays small.
+
+It is explicitly additive and bounded — the "Notes" line documents that it deliberately excludes AGENTS/project-doc/memory-summary content (those go through the normal text-prompt path, not realtime).
+
+Failure is non-fatal: realtime startup context unavailable; skipping injection.
+
+Config: experimental_realtime_ws_startup_context, experimental_realtime_start_instructions, experimental_realtime_ws_backend_prompt.
+
+9. Persistent memories subsystem (codex_memories_*)
+
+This is a distinct, long-lived, cross-session memory store under $CODEX_HOME/.../memories/, separate from rollouts and AGENTS.md. Feature-gated by memories / memory_tool; surfaced in /experimental as:
+
+Allow Codex to create new memories from conversations and bring relevant memories into new conversations.
+NEW: Codex can now generate and use memories. Try it now with /memories
+
+9.1 Folder layout
+
+From the consolidation prompt (all-strings.txt:55596) and tool strings (54454, 54569):
+
+memories/
+ memory_summary.md # always loaded into the system prompt; first line MUST be exactly `v1`
+ MEMORY.md # searchable handbook registry (primary grep target)
+ raw_memories.md # temp: merged raw memories from Phase 1, input to Phase 2
+ skills/<skill-name>/ # reusable procedures: SKILL.md + scripts/ templates/ examples/
+ rollout_summaries/<slug>.md # per-rollout recaps + pruned evidence snippets
+ extensions/ad_hoc/notes/ # user-requested ad-hoc note files
+
+9.2 Read path — the ## Memory system-prompt block
+
+When use_memories is on, codex_memories_extension::prompts injects a ## Memory section into the system prompt and inlines memory_summary.md between ========= MEMORY_SUMMARY BEGINS ========= and ========= MEMORY_SUMMARY ENDS =========. Excerpts (all-strings.txt:54459+):
+
+## Memory
+You have access to a memory folder with guidance from prior runs. It can save
+time and help you stay consistent. Use it whenever it is likely to help.
+Decision boundary: should you use memory for a new user query?
+- Skip memory ONLY when the request is clearly self-contained …
+- Hard skip examples: current time/date, simple translation, … one-line shell command …
+Memory layout (general -> specific):
+- {{ base_path }}/memory_summary.md (already provided below; do NOT open again)
+- {{ base_path }}/MEMORY.md (searchable registry; primary file to query)
+- {{ base_path }}/skills/<skill-name>/ …
+- {{ base_path }}/rollout_summaries/ (per-rollout recaps + evidence snippets)
+Quick memory pass (when applicable):
+1. Skim the MEMORY_SUMMARY below and extract task-relevant keywords.
+2. Search {{ base_path }}/MEMORY.md using those keywords.
+…
+Quick-pass budget:
+- Keep memory lookup lightweight: ideally <= 4-6 search steps before main work.
+
+The block also encodes a staleness policy ("When answering from memory without current verification: … say that it may be stale or outdated") and an update policy: the model may only write memories when the user explicitly asks, and only by dropping a single note into extensions/ad_hoc/notes/<timestamp>-<short slug>.md — never by editing MEMORY.md/memory_summary.md directly.
+
+9.3 The live memory tools (codex_memories_extension::tools)
+
+Four tools are exposed (schemas at all-strings.txt:54454):
+
+list — "List immediate files and directories under a path in the Codex memories store." (ListArgs: cursor, max_results).
+
+read — "Read a Codex memory file by relative path, optionally starting at a 1-indexed line offset…" (ReadArgs: line_offset, max_lines).
+
+search — "Search Codex memory files for substring matches…" with match modes Any / AllOnSameLine / AllWithinLines (SearchArgs: queries, match_mode, context_lines, case_sensitive, normalized).
+
+add_ad_hoc_note — "Create one append-only ad-hoc memory note after the user explicitly asks Codex to remember, forget, or update something." Filename must match the regex ^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-[a-z0-9][a-z0-9-]{0,79}\.md$ (validated by local::ad_hoc_note::validate_filename).
+
+Path safety is enforced: notes "must stay within the memories root", "must not be a symlink", and must not traverse "through a non-directory path component". Tool calls are metered (metrics::record_tool_call, telemetry key codex.memories.tool.call).
+
+The whole extension is feature-gated; if no_memories_if_mcp_or_web_search is set, memory tools are suppressed when MCP servers or web search are active (to avoid context bloat).
+
+9.4 Citation markup (codex_memories_read::citations + strip_hidden_assistant_markup_and_parse_memory_citation)
+
+When the model used any memory file, the prompt requires it to append exactly one hidden <oai-mem-citation> block as the very last content of its final reply (all-strings.txt:54518):
+
+<oai-mem-citation>
+<citation_entries>
+MEMORY.md:234-236|note=[responsesapi citation extraction code pointer]
+rollout_summaries/2026-02-17T21-23-02-LN3m-example.md:10-12|note=[weekly report format]
+</citation_entries>
+<rollout_ids>
+019c6e27-e55b-73d1-87d8-4e01f1f75043
+019c7714-3b77-74d1-9866-e1f484aae2ab
+</rollout_ids>
+</oai-mem-citation>
+
+On the receiving side:
+
+codex_core::stream_events_utils::strip_hidden_assistant_markup_and_parse_memory_citation strips this hidden block from the assistant text before it is shown to the user and hands it to the parser.
+
+codex_memories_read::citations::parse_memory_citation parses citation_entries (each <file>:<start>-<end>|note=[…]) into a MemoryCitationEntry (fields line_start, etc.).
+
+thread_ids_from_memory_citation extracts the <rollout_ids> UUIDs — this is the signal fed back to the write pipeline about which prior rollouts the agent found useful.
+
+usage::memories_usage_kinds_from_command classifies how memory was used (memory_summary, memory_md, raw_memories, skills, rollout_summaries, other — the scope enum at metrics::scope_from_path).
+
+The rule "Never include memory citations inside pull-request messages" and "Never cite blank lines" are explicit guardrails in the prompt.
+
+9.5 Write path — two-phase background consolidation (codex_memories_write)
+
+Memories are generated asynchronously (feature generate_memories) by a startup task, not during the turn:
+
+start::start_memories_startup_task kicks off the pipeline at session start, subject to guard::rate_limits_check (only runs if min_rate_limit_remaining_percent headroom remains; otherwise logs "skipping memories startup because Codex rate limits are below the configured threshold") and pruning (extensions::prune::prune_old_extension_resources_with_now). If the state DB is unavailable the task self-skips ("state db unavailable for memories startup pipeline; skipping", memories/write/src/start.rs:47).
+
+Phase 1 (phase1) — claims finished rollouts as jobs (phase1::claim_startup_jobs), filters and serializes their response items (phase1::job::serialize_filtered_rollout_response_items redacts secrets → [REDACTED_SECRET]), and runs an extraction model (config extract_model) to produce raw memories (phase1::output_schema for the structured output; the stage-1 user message is built by prompts::build_stage_one_input_message). Pruning is phase1::prune; metrics via phase1::emit_metrics. Job selection is bounded by max_rollouts_per_startup, max_rollout_age_days, min_rollout_idle_hours.
+
+Phase 2 (phase2) — phase2::agent::loop_agent runs the consolidation model (consolidation_model) with prompts::build_consolidation_prompt (config/prompt via phase2::agent::get_config / get_prompt) to merge raw_memories.md into the durable MEMORY.md / memory_summary.md / rollout_summaries/ / skills/. Watermarks (phase2::get_watermark) and per-job claims (phase2::job::claim) prevent reprocessing.
+
+storage writes the artifacts (rollout_summary_file_stem, prune_rollout_summaries) and workspace::render_workspace_diff_file captures workspace deltas.
+
+The consolidation prompt encodes strict invariants (all-strings.txt:55598+):
+
+- memory_summary.md … Always loaded into the system prompt. First line must be exactly `v1`.
+- Raw rollouts are immutable evidence. NEVER edit raw rollouts.
+- Redact secrets: never store tokens/keys/passwords; replace with [REDACTED_SECRET].
+- Summary schema reset: if `memory_summary.md` is missing, empty, or does not start with
+ exactly `v1`, regenerate only `memory_summary.md` from scratch after `MEMORY.md` is current.
+
+flowchart LR
+ subgraph "Write (background)"
+ S["start_memories_startup_task"] --> G["guard: rate_limits_check"]
+ G --> P1["phase1: claim finished rollouts"]
+ P1 -->|serialize_filtered_rollout_response_items| X["extract_model"]
+ X --> RM["raw_memories.md"]
+ RM --> P2["phase2: build_consolidation_prompt + consolidation_model"]
+ P2 --> M["MEMORY.md / memory_summary.md / rollout_summaries/ / skills/"]
+ end
+ subgraph "Read (per turn)"
+ M --> RP["memories_extension::prompts (## Memory + memory_summary)"]
+ RP --> TOOLS["list / read / search / add_ad_hoc_note tools"]
+ TOOLS --> ANS["model answer + <oai-mem-citation>"]
+ ANS --> STRIP["strip_hidden_assistant_markup_and_parse_memory_citation"]
+ STRIP --> CIT["parse_memory_citation → rollout_ids feed back to Write"]
+ end
+ CIT -.->|useful rollout_ids| P1
+
+ Loading
+
+10. End-to-end data flow
+
+flowchart TD
+ U["User prompt"] --> TC["TurnContext"]
+ TC --> EC["EnvironmentContext::from_turn_context (<environment_context>)"]
+ AG["agents_md: load AGENTS.override.md / AGENTS.md (Global, Project)"] --> DEV["developer message blend"]
+ MEM["memories: ## Memory + memory_summary.md (v1)"] --> DEV
+ EC --> DEV
+ DEV --> BP["session::turn::build_prompt"]
+ CM["ContextManager::for_prompt (rolling history)"] --> BP
+ BP --> MODEL["model sampling request"]
+ MODEL --> RI["ResponseItems"]
+ RI --> CMP["ContextManager::process_item"]
+ RI --> REC["rollout::recorder (JSONL: session_meta/turn_context/event_msg/response_item)"]
+ REC --> SDB["state_db (SQLite index)"]
+ CMP -->|estimate_token_count near limit| COMP["compact / compact_remote / compact_remote_v2"]
+ COMP --> CMP
+ RI --> CIT["strip_hidden_assistant_markup_and_parse_memory_citation"]
+ REC -.->|finished rollout| MW["memories_write (phase1/phase2)"]
+ MW --> MEM
+
+ Loading
+
+11. Config keys & flags (reference)
+
+Context-window & compaction
+
+Key
+Role
+
+model_context_window
+Total token window for the model.
+
+model_auto_compact_token_limit
+Token threshold at which auto-compaction fires.
+
+model_auto_compact_token_limit_scope
+Scope the auto-compact limit applies to.
+
+compact_prompt
+Custom summarization prompt for compaction.
+
+experimental_compact_prompt_file
+Load the compaction prompt from a file.
+
+tool_output_token_limit
+Cap on tool-output size that enters history.
+
+feature remote_compaction_v2
+Enable streamed remote compaction v2.
+
+feature remote_models / responses_websockets[_v2]
+Path that enables remote compaction.
+
+Instructions / context blend
+
+Key
+Role
+
+instructions / developer_instructions
+Base + developer instruction overrides.
+
+model_instructions_file
+Load base instructions from a file.
+
+include_environment_context
+Toggle the <environment_context> block.
+
+include_permissions_instructions / include_apps_instructions / include_collaboration_mode_instructions
+Per-block prompt toggles.
+
+project_doc_max_bytes
+Byte cap on the AGENTS.md blend.
+
+project_doc_fallback_filenames
+Alternates when AGENTS.md is missing.
+
+project_root_markers
+Markers used to find the project root for doc discovery.
+
+feature child_agents_md
+Pull nested subdirectory AGENTS.md files.
+
+Rollout / thread store
+
+Key
+Role
+
+sqlite_home / feature sqlite
+Location/enablement of the state-DB index.
+
+feature local_thread_store_compression
+Enable cold-rollout compression worker.
+
+ghost_snapshot
+Legacy snapshot toggle (lines stripped on read).
+
+experimental_thread_store
+Select remote thread store.
+
+experimental_thread_store_endpoint
+Deprecated — string: `experimental_thread_store_endpoint` is no longer supported; remove it from config.toml.
+
+experimental_thread_config_endpoint
+Remote thread config loader.
+
+history (persistence, max_bytes) / log_user_prompt
+User-prompt history file controls.
+
+Memories subsystem ([features].memories + a [memories]-style table)
+
+Key
+Role
+
+feature memories / memory_tool
+Enable the memories subsystem / tool.
+
+generate_memories
+Run the background write pipeline.
+
+use_memories
+Inject ## Memory + memory_summary into the prompt.
+
+dedicated_tools
+Expose list/read/search/add_ad_hoc_note as dedicated tools.
+
+extract_model / consolidation_model
+Phase-1 / Phase-2 models.
+
+max_raw_memories_for_consolidation
+Cap raw memories merged per consolidation.
+
+max_rollouts_per_startup / max_rollout_age_days / min_rollout_idle_hours
+Phase-1 job selection bounds.
+
+max_unused_days
+Prune memories unused past this window.
+
+min_rate_limit_remaining_percent
+Skip generation if rate-limit headroom is low.
+
+no_memories_if_mcp_or_web_search
+Suppress memory tools when MCP/web search active.
+
+Realtime context
+
+Key
+Role
+
+experimental_realtime_ws_startup_context
+Provide/override the realtime startup block.
+
+experimental_realtime_start_instructions
+Realtime start instructions.
+
+experimental_realtime_ws_backend_prompt
+Backend prompt for realtime sessions.
+
+CLI
+
+codex resume [SESSION_ID|--last] [PROMPT] — continue an existing thread (--all, --include-non-interactive).
+
+codex fork [SESSION_ID|--last] [PROMPT] — branch a new thread from an existing one.
+
+codex exec resume … --last — non-interactive resume.
+
+codex archive / codex unarchive — archive rollouts (mirrors state_db archive rows).
+
+MCP/app-server codex tool params: base-instructions, developer-instructions, compact-prompt.
+
+12. Edge cases & safety
+
+Compaction overflow loop: if compaction itself overflows, oldest items are evicted and retried (Context window exceeded while compacting; removing oldest history item), so a turn can always make progress.
+
+Initial-context preservation: insert_initial_context_before_last_real_user_or_summary guarantees AGENTS.md/environment context survives compaction; is_user_turn_boundary ensures injected fragments are never mistaken for user turns.
+
+Tool-output sacrifice order: remote compaction prunes function-call/tool-output history first (trim_function_call_history_to_fit_context_window) before touching user messages.
+
+Remote v2 strictness: exactly one compaction output item is required; violations are hard unreachable!/errors rather than silent fallbacks.
+
+Ephemeral threads: persisted_rollout_items + the ephemeral flag mean some sessions are never written to disk; thread/turns/list is "unavailable before first user message" (rollout not yet materialized).
+
+State-DB drift: read_repair_rollout_path and the diagnostic dump self-heal/expose stale or duplicate rows; backfill is gated so reads never see a partial index.
+
+Memory path traversal: ad-hoc note writes are validated against a strict filename regex and confined to the memories root, reject symlinks, and reject traversal through non-directories.
+
+Secret redaction: both the write pipeline (phase1::job::serialize_filtered_rollout_response_items) and the consolidation prompt mandate [REDACTED_SECRET]; raw rollouts are immutable evidence and never edited. The binary carries the actual scrubbing regexes: sk-[A-Za-z0-9]{20,}, \bAKIA[0-9A-Z]{16}\b, (?i)\bBearer\s+[A-Za-z0-9._\-]{16,}\b, and a generic (?i)\b(api[_-]?key|token|secret|password)\b(\s*[:=]\s*)(["']?)[^\s"']{8,}, all rewritten to [REDACTED_SECRET] / Bearer [REDACTED_SECRET].
+
+Memory staleness honesty: the prompt forces the model to label memory-derived, unverified facts as possibly stale and to offer a live refresh.
+
+Citation hiding: <oai-mem-citation> is stripped from user-visible output by strip_hidden_assistant_markup_and_parse_memory_citation; citations are forbidden inside PR messages.
+
+UTF-8 safety: agents_md::warn_invalid_utf8 replaces invalid byte sequences and warns rather than failing the load.
+
+Memory-mode pollution: mark_thread_memory_mode_polluted / set_thread_memory_mode track when a thread's memory mode changed mid-session so the write pipeline can decide whether the rollout is a trustworthy memory source.
+
+Cross-references to other subsystems
+
+Prompt assembly / personas — base instructions, personality variants, <INSTRUCTIONS>/<skill>/<apps_instructions> wrappers (see the Prompts/Instructions deep-dive).
+
+Tools & MCP — the memory tools are an "extension" surfaced through the same tool-dispatch path; tool_search lazy-loads tools; tool outputs are the bulk that compaction trims.
+
+Session & turn loop — session::turn::build_prompt / run_turn consume the ContextManager and trigger compaction.
+
+Hooks — PreCompact/PostCompact and SessionStart hooks observe the lifecycle.
+
+App-server protocol — thread/resume|fork|rollback|read, thread/compacted, ThreadTokenUsageUpdated, getConversationSummary expose this subsystem to GUI clients.
+
+Subagents / multi-agent — forked threads share a session tree; subagent rollouts feed the same memory pipeline.
+
+ You can’t perform that action at this time.

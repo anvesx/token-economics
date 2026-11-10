@@ -1,0 +1,227 @@
+TITLE: AI Agent Cost Per Task [2026]: Token Budgets and Break-Even Math
+URL: https://www.kunalganglani.com/blog/ai-agent-cost-per-task-2026
+ORG: Kunal Ganglani  TYPE: blog  DATE: 2026
+
+AI Agent Cost Per Task: Token Budgets & Break-Even Math 
+
+ Skip to content 
+
+ 🤖Part of theAI Agent Architecture & Frameworks series→ 
+
+Listen to this article
+
+--:--1x 
+ ⚡ 30-second version 
+AI coding agents like Aider, Claude Code, and OpenHands cost anywhere from $0.03 to $2.60 per task depending on your model, tool, and how much codebase context gets loaded. Most of the bill comes from context overhead — system prompts and repo maps — not the code the agent actually writes. This breakdown shows you the real numbers, the break-even math for local vs API deployment, and how to set token budgets that don't blow up your quarterly spend. 
+
+AI agent cost per task is the total API spend — input tokens, output tokens, and overhead — consumed each time a coding agent completes a discrete unit of work like solving a bug, generating a function, or shipping a pull request. On current benchmark data, that number ranges from $0.03 to $0.13 per task depending on your model and tool, and most engineering teams have zero visibility into it.
+Pricing got reshuffled when Claude Fable 5 launched on June 9, 2026, GPT-5 hit Aider's benchmark at $29.08 for 225 tasks, and Gemini 2.5 Flash-Lite showed up as an ultra-cheap option. If your team's AI agent token budget was set before these releases, it's already wrong.
+A single AI coding task costs between $0.03 (Gemini 2.5 Pro) and $0.13 (GPT-5 high reasoning) based on Aider's polyglot benchmark of 225 exercises across 6 languages.
+Claude Code enterprise deployments average $13 per developer per active day, or $150–250 per month, with 90% of users staying below $30/day.
+The DeepSeek R1 + Claude Sonnet hybrid architecture hit state-of-the-art coding accuracy on Aider's polyglot benchmark in January 2025, at 14× less cost than OpenAI o1 alone.
+Running a local LLM breaks even against API costs at roughly 5–10 million tokens per month, depending on your GPU hardware.
+Prompt caching with Anthropic's cache_control can cut repeat-context costs by 90% on cached tokens in agentic loops.The cheapest token is the one you never send. Most agent overhead comes from context, not generation.
+What Does an AI Coding Agent Actually Cost Per Task?
+Let's ground this in real numbers. Paul Gauthier, creator of Aider, maintains the most transparent public cost data for AI coding agents. His polyglot benchmark runs 225 Exercism coding exercises across C++, Go, Java, JavaScript, Python, and Rust — and publishes the total dollar cost for each model.
+Here's what the benchmark data shows per task:
+
+Agent/ModelBenchmark Cost (225 tasks)Cost Per TaskPass RateCost Per Solved Task
+GPT-5 (high reasoning)$29.08$0.12988%$0.147
+Claude Sonnet 5~$12–15~$0.053–0.06785–90%~$0.062–0.074
+Gemini 2.5 Pro$6.32$0.02872%$0.039
+DeepSeek R1 + Sonnet$13.29~$0.05964%~$0.092
+DeepSeek R1 + Sonnet figures are Aider's published polyglot result (R1 as architect, claude-3-5-sonnet-20241022 as editor, January 2025).
+Based on the pricing data I maintain at kunalganglani.com/llm-prices, GPT-5's per-task cost is 4.6× higher than Gemini 2.5 Pro — but its pass rate is also 16 percentage points higher. That's the core tradeoff every team needs to model: cost per task vs. cost per solved task. A cheaper model that fails more often can actually cost you more once you factor in retries and the human time spent cleaning up bad output.
+For Claude Code specifically, Anthropic's cost documentation pegs enterprise usage at $13 per developer per active day. If a developer submits roughly 5–8 coding tasks per day (a mix of bug fixes, feature implementations, and refactors), that works out to $1.60–2.60 per task. That's a lot higher than the raw benchmark numbers, and the reason is simple: real-world sessions carry way more context.
+🤖
+
+Hands-on tool
+AI Agent Cost Simulator
+Set the models, turns and tool calls for an agent run and see the monthly API bill, context growth included.Simulate the bill →
+How Token Usage Breaks Down in an Agentic Coding Session
+The gap between benchmark cost and real-world cost comes down to one thing: token overhead. A benchmark task gets a clean prompt and a clean file. A real PR involves layers of context that multiply your token bill.
+Here's how tokens actually distribute across a typical agentic session:
+Repository map generation — The agent scans your codebase structure to understand file relationships. For a medium-sized repo (500–2,000 files), this eats 2,000–8,000 input tokens. Aider's repo-map is particularly efficient here, using tree-sitter to build a compact summary.
+File reading and context loading — The agent reads relevant source files into context. A typical 3-file change loads 3,000–15,000 tokens of existing code.
+System prompt and instructions — Every agent carries a system prompt. Claude Code's is substantial. Combined with any CLAUDE.md project instructions, this adds 1,500–4,000 tokens per turn.
+Planning and reasoning — Chain-of-thought or extended thinking output. With GPT-5 on high reasoning effort, this can generate 2,000–10,000 output tokens before a single line of code gets written.
+Code generation — The actual edit. Typically 200–2,000 tokens for a focused change.
+Test execution and iteration — If the agent runs tests and retries on failure, each iteration re-sends the full context. Two retries can triple the session cost.
+Commit message and cleanup — Usually under 200 tokens. Trivial.
+Look at that breakdown. Actual code generation is often only 5–15% of total tokens consumed. Everything else is context overhead. This is why reducing LLM API costs in agentic workflows requires fundamentally different strategies than optimizing single-shot completions.
+When I built this site's multi-agent publishing pipeline — 7 agents handling research, copywriting, images, review, language, publishing, and distribution — I learned that model-per-job-shape (Sonnet for tool loops, Opus for prose) beats one-model-everywhere on both cost and quality. The same principle applies to coding agents: use a cheap model for planning and repo scanning, and an expensive one only for the final code generation step.
+Token Overhead: System Prompts, Repo Maps, and Context Bloat
+The number most teams don't track and absolutely should: the token overhead multiplier. That's the ratio of total tokens consumed to actual task-relevant tokens. In my analysis of OpenCode vs Claude Code token overhead, the gap between tools was 4.7×. One tool consumed nearly five times more tokens than another to accomplish the same task.
+Three factors drive this:
+System prompt size. Claude Code's system prompt is one of the largest in the industry — tool definitions, safety instructions, coding conventions, behavioral guidelines. Every single API call pays for re-sending this prompt unless you're using prompt caching (more on that below).
+Repo map granularity. Aider sends a compact tree-sitter-based map. Other tools send full file contents. On a 1,000-file repo, the difference can be 20,000+ tokens per turn. That adds up fast.
+Conversation history accumulation. This is the silent killer. In multi-turn agentic sessions, each new message includes the full conversation history. A 10-turn debugging session with a 4,000-token system prompt and 8,000 tokens of repo context means the 10th API call sends roughly 120,000+ input tokens — even if the actual new content is 200 tokens.
+This is why context engineering for AI agents is a cost discipline, not just a quality discipline. Every token you keep out of context saves money on every subsequent turn.
+If your agent’s context is coming from a vector store, token overhead and quality failures often start upstream in retrieval, not generation. I wrote up the retrieval-first workflow I use in RAG Evaluation Metrics for Retrieval Quality: My Production Playbook to catch regressions when chunking, embeddings, or filters change.
+
+📬 Stay in the loop
+Get new posts on AI, engineering, and emerging tech.
+One useful email a week — no spam, unsubscribe anytime.
+Free: Agent Engineering Patterns (PDF)Or subscribe via RSS
+Per-Task Cost Comparison: Aider vs Claude Code vs OpenHands
+Let's put the three major AI coding agents side by side on cost economics:
+
+DimensionAiderClaude CodeOpenHands
+Pricing modelPay-per-token (BYOK)Subscription (Pro/Max) or APIPay-per-token or self-hosted
+Cheapest viable modelGemini 2.5 Pro ($0.028/task)Claude Sonnet 5 (included in subscription)Any LLM (pluggable backend)
+Cost per task (benchmark)$0.028–$0.129~$1.60–2.60 (real-world)Varies by model
+Free tierYes (OpenRouter, Gemini API free tier)No (Pro plan starts ~$20/mo)Yes (self-hosted, BYOK)
+Budget enforcementManual (token tracking)/usage command + spend limitsCloud budget enforcement
+Local model supportYes (Ollama, OpenAI-compatible)No (Anthropic API only)Yes (pluggable backends)
+GitHub stars~50KClosed source80,700+
+Here's what this actually tells you: Aider and OpenHands give you model flexibility, which means cost flexibility. Claude Code locks you into Anthropic's models but offers a simpler subscription path for teams that don't want to manage API keys and token budgets.
+If you’re choosing an agent framework that will drive those per-task economics, I’ve compared the main options in LangGraph vs CrewAI vs AutoGen vs PydanticAI [2026 Matrix]. It’s a useful way to map orchestration style and tool-calling patterns to the kinds of token overhead you’ll see in real sessions.
+For individual developers, Aider with Gemini 2.5 Pro is the cheapest high-performing option at $0.028 per task. For teams that want turnkey deployment, Claude Code's $150–250 per developer per month is predictable but 10–50× more expensive per task than direct API usage with Aider. That's not a rounding error. That's a fundamentally different cost structure.
+OpenHands sits in an interesting middle ground: 80,700+ GitHub stars, pluggable LLM backends including local models, and enterprise features like Kubernetes deployment in customer VPCs. If your team already has API keys and wants open-source control, OpenHands is the cost-optimization play. Related read REA: Reverse Engineer Anything With AI Agents REA is the open-source MCP server that lets Claude Code, Codex, and Cursor reverse-engineer binaries, Electron apps, APKs, and live… 9 min read 
+Monthly Burn Rate at Team Scale
+Here's the math most engineering managers haven't done. Take a team of 10 developers, each averaging 20 PRs per month with AI agent assistance. Assume each PR involves 3–5 agentic tasks (planning, implementation, test generation, debugging, refactoring).
+Conservative estimate: 10 devs × 20 PRs × 4 tasks = 800 agent tasks/month.
+
+Model ChoiceCost/TaskMonthly Cost (10 devs)Annual Cost
+GPT-5 (high)$0.129$103$1,236
+Claude Sonnet 5 (API)~$0.060$48$576
+Gemini 2.5 Pro$0.028$22$264
+DeepSeek R1 + Sonnet~$0.059$47$564
+Claude Code (subscription)flat rate$1,500–2,500$18,000–30,000
+The delta is massive. A 10-person team using Claude Code subscriptions pays $18,000–30,000 per year. The same team using Aider with Gemini 2.5 Pro on a pure API model pays $264 per year for equivalent benchmark-level tasks.
+Now, these aren't perfectly equivalent. Real-world sessions carry more context than benchmarks. Multiply the API estimates by 3–5× for a more realistic projection that accounts for conversation overhead, retries, and repo context:
+Once you start multiplying benchmark estimates by 3–5× for real-world sessions, cost spikes often come from retries and behavior variance as much as raw token volume. I lay out a release-gating approach for that in How to Do Non Deterministic AI System Testing [2026], including tolerance bands, cohort diffs, and eval-regression postmortems.
+
+Model ChoiceRealistic Monthly (10 devs)Realistic Annual
+GPT-5 (high)$310–515$3,700–6,200
+Claude Sonnet 5 (API)$144–240$1,730–2,880
+Gemini 2.5 Pro$66–110$800–1,320
+Claude Code (subscription)$1,500–2,500$18,000–30,000
+At 50 developers, Claude Code subscriptions hit $90,000–150,000 annually. At that scale, the conversation about local LLM deployment or API-direct approaches stops being a developer preference and becomes a serious infrastructure decision.
+Hosted API vs Local Model: The Break-Even Formula
+Every cost-conscious team eventually asks: at what point does running your own GPU pay for itself versus paying API rates?
+The break-even formula is straightforward:
+(GPU amortized monthly cost + electricity monthly cost) ÷ tokens generated per month = effective cost per token
+Compare that to the API price per token for your target model.
+Let me walk through three scenarios using data from the local LLM hardware guides and break-even calculator published on this site:
+Light usage (<5M tokens/month): A developer running an RTX 4070 ($550, amortized over 36 months = ~$15/month) plus ~$8/month electricity generates roughly 2–5M tokens monthly with a quantized 32B model. Effective cost: $4.60–11.50 per million tokens. Gemini 2.5 Pro API costs roughly $1.25–3.50 per million tokens. Verdict: API wins. The GPU sits idle too much to justify itself.
+Medium usage (5–50M tokens/month): A team sharing an RTX 4090 ($1,600, amortized = ~$44/month) plus $15/month electricity, generating 20M tokens/month. Effective cost: ~$2.95 per million tokens. Claude Sonnet API at $3–15 per million tokens (depending on input/output ratio). Verdict: Break-even zone. Local wins on heavy input-token workloads like repo scanning and context loading. API wins on light, bursty usage.
+Heavy usage (50M+ tokens/month): A dedicated Mac Studio M4 Max or multi-GPU rig generating 100M+ tokens/month. Effective cost drops below $1 per million tokens. Verdict: Local wins decisively. At this volume, you're saving $200–1,000+ per month versus API pricing.
+The crossover typically happens around 5–10 million tokens per month. Below that, API convenience wins. Above that, the amortized GPU cost becomes negligible per token.
+For a deeper dive with an interactive calculator, see the Local LLM Cost vs Cloud API break-even analysis I maintain on this site.
+Prompt Caching: How to Cut Repeat-Context Costs by 60–90%
+Prompt caching is the single most impactful cost reduction technique for agentic workflows, and most teams aren't using it. That's just money left on the table.
+Here's how it works: Anthropic's cache_control parameter lets you mark portions of your prompt (system prompts, repo maps, conversation history) as cacheable. On subsequent API calls within the cache TTL (5 minutes for standard, 1 hour for extended), cached tokens are charged at a 90% discount. You pay roughly 10% of the normal input token price.
+For AI agents in production, where the same system prompt and repo context get re-sent on every turn of a multi-step session, the savings are dramatic. A 10-turn session where 80% of tokens are cacheable context costs roughly 30–40% of what it would cost without caching.
+OpenAI offers automatic prompt caching on their newer models. No code changes required, but you get less control over what gets cached.
+The practical impact: teams running agentic coding sessions with prompt caching enabled typically see 50–70% total cost reduction versus uncached sessions of the same length. On longer sessions (15+ turns), savings approach 80%.
+If you're running Claude Code via the API (not the subscription), enabling prompt caching is a configuration change that pays for itself immediately. For custom agents built on LangChain or LlamaIndex, you need to structure your prompts with cache breakpoints explicitly. It's extra work, but the ROI is obvious.
+Hybrid Agent Architectures: Cheap Planner + Expensive Executor
+Hybrid architectures can cut cost sharply versus a single frontier reasoning model. Paul Gauthier showed it with data.
+In January 2025, Gauthier published results showing that combining DeepSeek R1 (for reasoning and planning) with Claude Sonnet (for code editing) hit state-of-the-art results on Aider's polyglot benchmark at 14× less cost than using OpenAI o1 alone. R1 handles the "thinking" at a fraction of the token cost. Sonnet handles the precision editing.
+This pattern generalizes. The hybrid architecture splits agent work into two phases:
+Planning phase — Use a cheap, fast model (DeepSeek R1, Gemini 2.5 Flash, or a local LLM) to analyze the codebase, identify relevant files, and draft an implementation plan. This phase is token-heavy but tolerance for imperfection is high.
+Execution phase — Route the plan to a frontier model (Claude Opus 4.8, Claude Fable 5, or GPT-5) for the actual code generation. This phase needs precision but consumes fewer tokens because the plan constrains the scope.
+I learned this lesson directly while building this site's 7-agent blog pipeline: deterministic gates before LLM review catch more errors than doubling the review model's size. Applied to coding agents, a cheap model that identifies the right files to edit saves more money than optimizing the expensive model that writes the code.
+The math works because planning tokens are 5–20× cheaper than execution tokens when you use model tiering, and good planning reduces execution retries by 40–60%.
+Setting and Enforcing Token Budgets
+Once you understand the cost structure, enforcement is the next step. Here's how each major tool handles AI agent token budget management in 2026:
+Claude Code has the most built-in budget tooling. The /usage command shows real-time session token consumption. For teams on Claude for Enterprise, administrators can set per-developer spend limits. Anthropic's documentation recommends starting with a small pilot group to establish a baseline before wider rollout. Practical advice that too many teams skip.
+Aider exposes token counts per session and supports --max-chat-history-tokens to cap conversation history growth. Because Aider uses bring-your-own-key (BYOK), budget enforcement happens at the API provider level — you set spending limits in your OpenAI, Anthropic, or Google Cloud dashboard.
+OpenHands provides usage reporting and budget enforcement through its Cloud offering. The enterprise version runs on Kubernetes in your VPC, giving infrastructure teams the ability to set resource limits at the container level. A more ops-native approach to cost control.
+Custom agents (built on LangChain, LlamaIndex, or similar) need manual instrumentation. The standard approach: use a token-counting library to pre-flight each API call, track cumulative spend in a session store, and hard-stop when a budget threshold is hit. More development overhead, but maximum control.
+For any tool, the practical recommendation is the same: set a per-developer daily limit at 2× your expected average. Anthropic's data shows 90% of Claude Code users stay below $30 per active day. Start there, monitor for 2 weeks, then adjust.
+Model Selection Guide: Cheapest Options That Still Work
+Not every coding task needs a frontier model. Here's a tiered approach to model selection for AI coding agents based on task complexity:
+Tier 1 — Simple edits and boilerplate ($0.01–0.03/task): Gemini 2.5 Flash-Lite, Claude Haiku, or GPT-4o Mini. Use these for rename refactors, adding log statements, generating test scaffolding, writing docstrings. Pattern-matching tasks that cost almost nothing.
+Tier 2 — Standard implementation ($0.03–0.07/task): Gemini 2.5 Pro, Claude Sonnet 5, or DeepSeek V3. Implementing a function from a spec, fixing a bug with a clear reproduction, adding a new API endpoint. This is the sweet spot for daily coding work.
+Tier 3 — Complex multi-file changes ($0.07–0.15/task): GPT-5, Claude Opus 4.8, or Claude Fable 5. Architectural refactors, cross-cutting changes spanning 5+ files, debugging subtle concurrency issues. Reserve these for when Tier 2 fails or produces code that needs heavy human correction.
+Aider supports free model tiers via OpenRouter (with daily limits) and Gemini 2.5 Pro on the Gemini API's free tier — enabling $0/month entry-level usage for individual developers willing to accept rate limits. For a comparison of free Claude Code alternatives, several open-source options exist that bring cost to near-zero.
+The cheapest model that reliably completes coding tasks? Gemini 2.5 Pro at $0.028 per benchmark task, with a 72% pass rate. The DeepSeek R1 + Sonnet hybrid is not cheaper: on Aider's polyglot leaderboard it costs about $0.059 per task and passes 64%. Its documented win is matching state-of-the-art accuracy (at the time) for 14× less than OpenAI o1 alone.
+How to Track and Monitor AI Agent API Spend
+You can't optimize what you can't see. Here are the practical approaches by tool:
+Claude Code: Run /usage in any session to see token counts and estimated cost. For team deployments, Claude for Enterprise provides admin dashboards with per-developer spend, usage trends, and export for chargeback accounting. Anthropic's recommendation to start with a pilot group isn't just about budgeting — it's about establishing your team's specific cost baseline, since per-developer costs vary wildly based on codebase size and working patterns.
+Aider: Token usage is printed at the end of each session. For programmatic tracking, Aider supports --analytics and outputs structured logs you can pipe to any observability tool. Since it's BYOK, you also get the API provider's built-in usage dashboards.
+OpenHands Cloud: Built-in usage reporting with organization-level budget caps. The enterprise self-hosted version integrates with standard cloud monitoring stacks.
+Custom agents: Instrument your LLM calls with a lightweight middleware that logs model, tokens in, tokens out, latency, and cost per call. Store it in a time-series database. Build alerts at 80% of daily and monthly budget thresholds. This is unglamorous infrastructure work, but teams that skip it consistently overspend by 30–50%.
+For cross-tool cost comparison, the LLM pricing tracker I maintain on this site provides live per-token pricing across providers — useful for modeling "what if we switched from GPT-5 to Gemini 2.5 Pro" scenarios without running actual benchmarks. Per-token price comparisons mislead without cache-hit and retry assumptions baked in, so use workload-shaped estimates, not just raw rates.
+What This Means for Your AI Coding Budget
+Per-token prices have dropped 60–80% year-over-year across major providers. That's the good news. The bad news: agent usage is growing faster than prices are falling. More tasks, more retries, more context, more developers with access. Teams that felt comfortable with their AI spend six months ago are already behind.
+Three predictions for the next 12 months:
+Subscription models will win for most teams. Despite the per-task cost premium, Claude Code's flat-rate subscription eliminates budget anxiety and surprise bills. Teams with 5–20 developers will increasingly prefer a predictable $200/dev/month over obsessing over API calls. The math only flips at 50+ developers, where aggregate spend justifies dedicated infrastructure and local AI deployment.
+Hybrid architectures will become the default. The 14× cost reduction from R1 + Sonnet isn't a curiosity — it's a template. By the end of 2026, every major agent framework will offer built-in model routing that automatically sends planning work to cheap models and execution work to frontier models.
+Token budgets will become a line item in engineering planning. Right now, most teams treat AI agent spend as a misc. expense buried in cloud costs. Within a year, it'll sit alongside CI/CD costs and cloud compute in quarterly planning. The teams that instrument their spend now will have 6 months of data to budget against. The teams that don't will keep getting surprised by invoices they can't explain to finance.
+The engineering leaders who win this transition aren't the ones who spend the most on AI agents or the least. They're the ones who know exactly what they're spending — per task, per developer, per project — and can tell you whether it's worth it. 
+
+Continue reading
+
+Agent Per-Task Cost Calculation: Retries, Tools, Caching
+A spreadsheet-ready expected-cost model for agent workflows that includes retries, tool-call fanout, context growth, and caching. Plus hard budgets you can actually enforce.
+
+July 18, 2026
+Read more
+
+OpenCode vs Claude Code Token Overhead: The 4.7x Gap
+Claude Code sends 33,000 tokens before reading your prompt. OpenCode sends 7,000. Here's the cache economics, the multiplier stack, and the break-even math for teams.
+
+July 13, 2026
+Read more
+
+CLI-Anything: Make Any Software Agent-Native
+CLI-Anything wraps any app in a thin command-line shim so AI agents can drive it like grep or git. Here's how it works, why CLIs beat prompt DSLs, and where it fits next to MCP.
+
+October 17, 2026
+Read more
+
+OpenRig: Build a 3-Agent Claude Code + Codex Network
+OpenRig is an open-source harness that runs Claude Code, Codex and the Pi coding agent as one team. Here's what it is, plus a hand-built three-agent rig: the architecture, the handoff protocol, the guardrails, and what it costs.
+
+October 15, 2026
+Read more
+
+Written by · Published July 14, 2026 · Last reviewed October 31, 2026 Kunal Ganglani 
+ Why trust this I build AI agents end-to-end in production — see what I've shipped. See proof → 
+Software engineering leader based in Toronto with 10+ years shipping production systems at scale. Specializes in AI engineering, local LLMs, RAG pipelines, and AI agent architecture. Builder of the LLM Benchmarks dataset (80+ measured models), the LLM Hardware Checker, and LLM Prices tracker. Currently building at the intersection of AI and practical infrastructure. 
+ Work with me 
+I help teams ship AI systems that survive production — architecture reviews, local-LLM
+ & hardware strategy, advisory calls. See services → 
+
+Share this post
+Share on XLinkedInRedditHacker NewsCopy Link 
+
+Cite this article
+APABibTeXMarkdown
+Kunal Ganglani (2026, July 14). AI Agent Cost Per Task: Token Budgets & Break-Even Math. Kunal Ganglani. Retrieved November 9, 2026, from https://www.kunalganglani.com/blog/ai-agent-cost-per-task-2026Copy citation 
+ #ai-agents#llm-cost#claude-code#aider#token-optimization#developer-tools#production-ai ↑ ↑ ↓ ↓ ← → ← → B A 
+ FAQ 
+Frequently Asked Questions 
+ 01 How much does it cost to run an AI coding agent per pull request? 
+
+A typical PR involves 3–5 agentic tasks. At API rates, this ranges from $0.09 (Gemini 2.5 Pro, 3 tasks) to $0.65 (GPT-5 high reasoning, 5 tasks) using benchmark numbers. Real-world costs are 3–5× higher due to context overhead, putting the realistic range at $0.27–$3.25 per PR depending on model choice and codebase complexity. 02 What is the average token usage for an AI agent task? 
+
+A focused single-file coding task typically consumes 8,000–25,000 input tokens and 1,000–5,000 output tokens. Multi-file changes with test iteration can reach 50,000–150,000 input tokens per session. The majority of input tokens are context (system prompts, repo maps, conversation history), not the actual task description. 03 Is it cheaper to run a local LLM or use an API for AI coding agents? 
+
+At fewer than 5 million tokens per month, APIs are cheaper due to GPU idle time. Between 5–10 million tokens monthly, costs roughly equalize. Above 10 million tokens monthly, local deployment on hardware like an RTX 4090 or Mac Studio M4 Max is significantly cheaper. The exact crossover depends on your electricity costs and GPU choice. 04 How do I set a token budget for an AI agent? 
+
+In Claude Code, use the /usage command to monitor and set spend limits through your admin dashboard. In Aider, set --max-chat-history-tokens and configure spending limits at your API provider level. In OpenHands Cloud, use built-in budget enforcement. For custom agents, implement a token-counting middleware that tracks cumulative spend and hard-stops at your threshold. 05 What is the cheapest AI model for coding agents? 
+
+Gemini 2.5 Pro at $0.028 per benchmark task is the cheapest high-performing option on Aider's polyglot leaderboard. The DeepSeek R1 + Claude 3.5 Sonnet hybrid costs about $0.059 per task with a 64% pass rate, so it is neither cheaper nor more reliable than Gemini 2.5 Pro; its documented win is state-of-the-art accuracy at 14× less cost than OpenAI o1. Aider also supports free tiers via OpenRouter and Gemini 2.5 Pro on the Gemini API's free tier, though these come with daily rate limits. 06 How does OpenHands compare to Claude Code on cost? 
+
+OpenHands is open-source with 80,700+ GitHub stars and supports pluggable LLM backends, meaning you control model choice and cost. Claude Code is proprietary with subscription pricing of $150–250 per developer per month. OpenHands offers more cost flexibility but requires more setup; Claude Code offers simplicity at a premium. 
+
+📬 Stay in the loop
+Get new posts on AI, engineering, and emerging tech.
+One useful email a week — no spam, unsubscribe anytime.
+Free: Agent Engineering Patterns (PDF)Or subscribe via RSS 
+
+🔖 Reading list+ Save this post
+🤝 Work with me
+🧭AI engineering advisoryArchitecture reviews, local-LLM & hardware strategy — from the engineer behind these benchmarks.
+🎮 Play a quick game
+🚩FlagdleGuess the country from its flag.
+⌨️Dev WordleWordle for developers — every answer is a tech term.
+🍉Watermelon MergeDrop and merge fruits — pure dopamine.All games →
+🛠 Top tools
+🎨FLUX Image GeneratorText → photoreal image in 3 seconds.
+🖥LLM Hardware CheckerWhich open LLMs your Mac or GPU can actually run.
+$LLM API Price Tracker70+ models, live pricing across all major providers.All tools →

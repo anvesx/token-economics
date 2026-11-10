@@ -1,0 +1,639 @@
+TITLE: Prompt caching best practices (OpenRouter)
+URL: https://openrouter.ai/docs/guides/best-practices/prompt-caching
+ORG: OpenRouter  TYPE: doc  DATE: 2026-11
+
+Prompt Caching - Optimize AI Model Costs with Smart Caching
+
+Documentation Index
+Fetch the complete documentation index at: /docs/llms.txt
+Use this file to discover all available pages before exploring further.
+Skip to main content
+
+Assistant
+
+Responses are generated using AI and may contain mistakes.
+
+SuggestionsHow do I get started using decision models like Jev?
+
+To save on inference costs, you can enable prompt caching on supported providers and models.
+Most providers automatically enable prompt caching, but note that some (see Alibaba and Anthropic below) require you to enable it on a per-message basis.
+When using caching (whether automatically in supported models, or via the cache_control property), OpenRouter uses provider sticky routing to maximize cache hits — see Provider Sticky Routing below for details.
+
+​
+Provider Sticky Routing
+To maximize cache hit rates, OpenRouter uses provider sticky routing to route your subsequent requests to the same provider endpoint after a cached request. This works automatically with both implicit caching (e.g. OpenAI, DeepSeek, Gemini 2.5) and explicit caching (e.g. Anthropic cache_control breakpoints).
+How it works:
+
+After a request that uses prompt caching, OpenRouter remembers which provider served your request.
+
+Subsequent requests for the same model are routed to the same provider, keeping your cache warm.
+
+Sticky routing only activates when the provider’s cache read pricing is cheaper than regular prompt pricing, ensuring you always benefit from cost savings.
+
+If the sticky provider becomes unavailable, OpenRouter automatically falls back to the next-best provider.
+
+Sticky routing is not used when you specify a manual provider order via provider.order — in that case, your explicit ordering takes priority.
+
+Sticky sessions expire after 60 minutes of inactivity. Each successful request resets the timer. If the sticky provider returns an error, the cache is not updated, allowing the next request to be re-routed.
+
+Sticky routing granularity:
+Sticky routing is tracked at the account level, per model, and per conversation. By default, OpenRouter identifies conversations by hashing the first system (or developer) message and the first non-system message in each request, so requests that share the same opening messages are routed to the same provider. This means different conversations naturally stick to different providers, improving load-balancing and throughput while keeping caches warm within each conversation.
+
+​
+Using session_id for sticky sessions
+For more explicit control over sticky routing, you can pass a session_id in your request. When a session_id is present, OpenRouter uses it directly as the sticky routing key instead of deriving one from message hashing. This is especially useful for multi-turn agentic workflows where the opening messages may change between requests but you still want to route to the same provider.
+You can provide session_id in two ways:
+
+Request body: Include session_id as a top-level field in your request body. If both are provided, the body value takes precedence.
+
+Header: Set the x-session-id HTTP header.
+
+The session_id must be at most 256 characters.
+If neither is set, OpenRouter falls back to the OpenAI-style prompt_cache_key request field as the sticky routing key. Clients that already send prompt_cache_key get session-pinned routing without any changes.
+
+{
+ "model": "anthropic/claude-sonnet-5.5",
+ "session_id": "my-agent-session-abc123",
+ "messages": [
+ {
+ "role": "user",
+ "content": "Continue our conversation..."
+ }
+ ]
+}
+
+When session_id is set, sticky routing activates on any successful request — even before cache usage is observed — so that subsequent requests in the same session benefit from prompt caching from the start. Without session_id, sticky routing only activates after a cache hit is detected.
+
+When using router models like Auto Router or Pareto Router, sticky routing also reuses the resolved model on a best-effort basis when it remains in the current candidate set, not just the provider. The cache hint is ignored when it falls out of that set, so the router may select a different model on a later turn. See Auto Router — Session Stickiness for details.
+
+​
+Grouping requests across modalities
+Beyond sticky routing, OpenRouter uses session_id to group your requests in the Sessions view on the Logs page. One session_id links requests across conversation turns, retries, and different modalities. This lets you trace a full agent session in one place.
+This grouping works across the synchronous endpoints, not just chat completions:
+
+Chat and Responses: send session_id in the request body, or the x-session-id header.
+
+Embeddings, reranking, speech-to-text, text-to-speech, image generation, and video generation: send the x-session-id header. These endpoints do not accept a body session_id. They use the value only for grouping, so sticky routing does not apply to them.
+
+The 256-character limit applies to both inputs. Send a consistent x-session-id across a multimodal workflow to group all of those generations under one session. For example, an agent transcribes audio, calls a chat model, then generates an image.
+
+The Batch API does not yet group its generations by session_id.
+
+​
+Inspecting cache usage
+To see how much caching saved on each generation, you can:
+
+Click the detail button on the Activity page
+
+Use the /api/v1/generation API, documented here
+
+Check the prompt_tokens_details object in the usage response included with every API response
+
+The cache_discount field in the response body will tell you how much the response saved on cache usage. Some providers, like Anthropic, will have a negative discount on cache writes, but a positive discount (which reduces total cost) on cache reads.
+
+​
+Usage object fields
+The usage object in API responses includes detailed cache metrics in the prompt_tokens_details field:
+
+{
+ "usage": {
+ "prompt_tokens": 10339,
+ "completion_tokens": 60,
+ "total_tokens": 10399,
+ "prompt_tokens_details": {
+ "cached_tokens": 10318,
+ "cache_write_tokens": 0
+ }
+ }
+}
+
+The key fields are:
+
+cached_tokens: Number of tokens read from the cache (cache hit). When this is greater than zero, you’re benefiting from cached content.
+
+cache_write_tokens: Number of tokens written to the cache. This appears on the first request when establishing a new cache entry.
+
+​
+OpenAI
+Caching price changes:
+
+Cache writes: no cost on models before the GPT-5.6 family. GPT-5.6 and later charge cache writes at 1.25x the price of the original input pricing, even with automatic caching — no opt-in required.
+
+Cache reads: (depending on the model) charged at 0.25x or 0.50x the price of the original input pricing
+
+Click here to view OpenAI’s cache pricing per model.
+Prompt caching with OpenAI is automated and does not require any additional configuration. There is a minimum prompt size of 1024 tokens. On GPT-5.6 and later you can turn caching off per request to avoid the cache-write charge on prompts you will not send again.
+Click here to read more about OpenAI prompt caching and its limitation.
+
+​
+Explicit prompt caching
+Caching price changes:
+
+Cache writes (30-minute TTL, default): charged at 1.25x the price of the original input pricing (same rate as automatic cache writes on GPT-5.6 and later)
+
+Cache writes (12-hour TTL): charged at 2.5x the price of the original input pricing
+
+Cache reads: charged at the model’s discounted cache read rate, same as automatic caching, regardless of TTL
+
+Explicit prompt caching works on both the Chat Completions and Responses APIs, and gives you direct control over cache boundaries instead of relying on OpenAI’s automatic breakpoint placement. Cached prefixes have a minimum 30-minute TTL by default, or 12 hours with "ttl": "12h". See OpenAI’s explicit prompt caching docs for upstream details.
+
+OpenAI explicit prompt caching is only supported by OpenAI GPT-5.6 and newer.
+There are two controls:
+
+prompt_cache_breakpoint: placed on an individual text content block (input_text in Responses, text in Chat Completions) to mark the end of a reusable prefix. Everything through that block becomes the candidate cached prefix. Automatic caching remains enabled.
+
+prompt_cache_options: placed at the request root. Setting mode to "explicit" disables OpenAI-managed breakpoints so only blocks marked with prompt_cache_breakpoint participate in caching. Use ttl to set the minimum cache lifetime for every breakpoint the request writes: "30m" (default) or "12h". A prompt_cache_breakpoint can carry its own ttl to override the request-level value for that boundary, so a long-lived system prompt can be cached for 12 hours while the rest of the conversation keeps the 30-minute default.
+
+Responses API:
+
+{
+ "model": "openai/...",
+ "prompt_cache_key": "my-session-key",
+ "prompt_cache_options": {
+ "mode": "explicit",
+ "ttl": "30m"
+ },
+ "input": [
+ {
+ "role": "user",
+ "content": [
+ {
+ "type": "input_text",
+ "text": "<REUSABLE_PREFIX>",
+ "prompt_cache_breakpoint": {
+ "mode": "explicit"
+ }
+ },
+ {
+ "type": "input_text",
+ "text": "<TASK_SPECIFIC_SUFFIX>"
+ }
+ ]
+ }
+ ]
+}
+
+Chat Completions API:
+
+{
+ "model": "openai/...",
+ "prompt_cache_key": "my-session-key",
+ "prompt_cache_options": {
+ "mode": "explicit",
+ "ttl": "30m"
+ },
+ "messages": [
+ {
+ "role": "user",
+ "content": [
+ {
+ "type": "text",
+ "text": "<REUSABLE_PREFIX>",
+ "prompt_cache_breakpoint": {
+ "mode": "explicit"
+ }
+ },
+ {
+ "type": "text",
+ "text": "<TASK_SPECIFIC_SUFFIX>"
+ }
+ ]
+ }
+ ]
+}
+
+12-hour TTL for a long-lived system prompt, with the rest of the conversation on the 30-minute default (Chat Completions shown; the Responses API takes the same fields on input_text blocks):
+
+{
+ "model": "openai/...",
+ "prompt_cache_options": {
+ "mode": "explicit",
+ "ttl": "30m"
+ },
+ "messages": [
+ {
+ "role": "system",
+ "content": [
+ {
+ "type": "text",
+ "text": "<SHARED_INSTRUCTIONS_AND_TOOLS>",
+ "prompt_cache_breakpoint": {
+ "mode": "explicit",
+ "ttl": "12h"
+ }
+ }
+ ]
+ },
+ {
+ "role": "user",
+ "content": [
+ {
+ "type": "text",
+ "text": "<CONVERSATION_SO_FAR>",
+ "prompt_cache_breakpoint": {
+ "mode": "explicit"
+ }
+ }
+ ]
+ }
+ ]
+}
+
+Tokens written with a 12-hour TTL are billed at the 12-hour cache-write rate; the rest of the write is billed at the 30-minute rate. Both are included in cache_write_tokens in the response usage.
+
+The block-level markers are interchangeable: a text block marked with Anthropic-style cache_control gets a prompt_cache_breakpoint when routed to a supporting OpenAI model, and a block marked with prompt_cache_breakpoint gets a default (5-minute) cache_control when routed to Anthropic or Google. TTLs are not translated — a cache_control ttl is dropped toward OpenAI, a prompt_cache_breakpoint ttl is dropped toward Anthropic or Google, and the request-level prompt_cache_options stays OpenAI-only.
+Cache activity is reported in usage.input_tokens_details (Responses) and usage.prompt_tokens_details (Chat Completions): cache_write_tokens counts prompt tokens written to the cache, and cached_tokens counts prompt tokens read from it.
+
+​
+Disabling prompt caching
+Because GPT-5.6 and later bill cache writes at 1.25x the input price whether or not the cached prefix is ever read again, a prompt of 1024 tokens or more that is only sent once costs more with caching on than off. To turn caching off for a request, set prompt_cache_options.mode to "explicit" and do not mark any content block with prompt_cache_breakpoint. Explicit mode disables OpenAI’s automatic breakpoints, and with no explicit breakpoints the request has no cacheable prefix, so it is billed at the plain input rate with no cache write.
+
+{
+ "model": "openai/...",
+ "prompt_cache_options": {
+ "mode": "explicit"
+ },
+ "messages": [
+ {
+ "role": "user",
+ "content": "<ONE_OFF_PROMPT>"
+ }
+ ]
+}
+
+The same prompt_cache_options field works on the Responses API. Prompts under the 1024-token minimum are never cached, so they carry no cache write with either mode. Models before GPT-5.6 have no cache-write cost, so there is nothing to turn off there. When caching is disabled, cache_write_tokens in the response usage reads 0.
+
+​
+Grok
+Caching price changes:
+
+Cache writes: no cost
+
+Cache reads: charged at 0.25x the price of the original input pricing
+
+Click here to view Grok’s cache pricing per model.
+Prompt caching with Grok is automated and does not require any additional configuration.
+
+​
+Moonshot AI
+Caching price changes:
+
+Cache writes: no cost
+
+Cache reads: charged at 0.25x the price of the original input pricing
+
+Prompt caching with Moonshot AI is automated and does not require any additional configuration.
+
+​
+Groq
+Caching price changes:
+
+Cache writes: no cost
+
+Cache reads: charged at 0.5x the price of the original input pricing
+
+Prompt caching with Groq is automated and does not require any additional configuration. Currently available on Kimi K2 models.
+Click here to view Groq’s documentation.
+
+​
+Alibaba Qwen
+Caching price changes for explicit caching:
+
+Cache writes: charged at 1.25x the price of the original input pricing
+
+Cache reads: charged at 0.1x the price of the original input pricing
+
+Alibaba prompt caching requires explicit cache breakpoints. Add cache_control: { "type": "ephemeral" } to content blocks you want to cache, using the same syntax as Anthropic explicit caching. Cache writes use a 5-minute TTL.
+Alibaba explicit caching is available on deepseek/deepseek-v3.2, qwen/qwen3-max, qwen/qwen-plus, qwen/qwen3.6-plus, qwen/qwen3-coder-plus, and qwen/qwen3-coder-flash. Snapshot endpoints, including qwen/qwen3.5-plus-02-15 and qwen/qwen3.5-flash-02-23, do not support explicit caching.
+
+​
+Example
+
+{
+ "model": "qwen/qwen3-coder-plus",
+ "messages": [
+ {
+ "role": "user",
+ "content": [
+ {
+ "type": "text",
+ "text": "Use the reference below when answering."
+ },
+ {
+ "type": "text",
+ "text": "HUGE TEXT BODY",
+ "cache_control": {
+ "type": "ephemeral"
+ }
+ },
+ {
+ "type": "text",
+ "text": "Summarize the main implementation details."
+ }
+ ]
+ }
+ ]
+}
+
+See all 25 lines
+
+​
+Anthropic Claude
+Caching price changes:
+
+Cache writes (5-minute TTL): charged at 1.25x the price of the original input pricing
+
+Cache writes (1-hour TTL): charged at 2x the price of the original input pricing
+
+Cache reads: charged at 0.1x the price of the original input pricing
+
+There are two ways to enable prompt caching with Anthropic:
+
+Automatic caching: Add a single cache_control field at the top level of your request. The system automatically applies the cache breakpoint to the last cacheable block and advances it forward as conversations grow. Best for multi-turn conversations.
+
+Explicit cache breakpoints: Place cache_control directly on individual content blocks for fine-grained control over exactly what gets cached. There is a limit of four explicit breakpoints. It is recommended to reserve the cache breakpoints for large bodies of text, such as character cards, CSV data, RAG data, book chapters, etc.
+
+Automatic caching (top-level cache_control) is supported on the Anthropic, Google Vertex AI, Azure, and Amazon Bedrock providers, as well as Claude Platform on AWS. On Amazon Bedrock, OpenRouter translates the top-level field into a trailing cache breakpoint (Bedrock’s simplified cache management), since Bedrock’s InvokeModel API does not accept the top-level field directly. Explicit per-block cache_control breakpoints work across all Anthropic-compatible providers including Bedrock and Vertex.
+
+Responses API support: The Responses API supports automatic caching via top-level cache_control. Anthropic-style per-block cache_control inside input items is not exposed through the Responses API — instead use OpenAI’s per-block prompt_cache_breakpoint, which OpenRouter converts to a default cache_control breakpoint when the request is routed to Anthropic or Google. Note that prompt_cache_breakpoint carries no ttl; if you need to set a cache ttl, use the Chat Completions or Anthropic Messages API with cache_control.
+By default, the cache expires after 5 minutes, but you can extend this to 1 hour by specifying "ttl": "1h" in the cache_control object.
+Click here to read more about Anthropic prompt caching and its limitation.
+
+​
+Minimum token requirements
+Each model has a minimum cacheable prompt length (see Anthropic’s cache limitations):
+
+512 tokens: Claude Fable 5.1, Claude Opus 5.5, Claude Opus 5, Claude Sonnet 5.5, Claude Fable 5, Claude Haiku 5.5
+
+4,096 tokens: Claude Opus 4.6, Claude Opus 4.5, Claude Haiku 4.5
+
+2,048 tokens: Claude Opus 4.7, Claude Haiku 3.5
+
+1,024 tokens: Claude Opus 4.8, Claude Sonnet 5, Claude Sonnet 4.6, Claude Sonnet 4.5, Claude Opus 4.1, Claude Opus 4, Claude Sonnet 4
+
+Prompts shorter than these minimums will not be cached.
+
+​
+Cache TTL Options
+OpenRouter supports two cache TTL values for Anthropic:
+
+5 minutes (default): "cache_control": { "type": "ephemeral" }
+
+1 hour: "cache_control": { "type": "ephemeral", "ttl": "1h" }
+
+The 1-hour TTL is useful for longer sessions where you want to maintain cached content across multiple requests without incurring repeated cache write costs. The 1-hour TTL costs more for cache writes (2x base input price vs 1.25x for 5-minute TTL) but can save money over extended sessions by avoiding repeated cache writes. The 1-hour TTL for explicit cache breakpoints is supported across all Claude model providers (Anthropic, Amazon Bedrock, and Google Vertex AI).
+
+​
+Caching in the Batch API
+cache_control breakpoints work on Anthropic :batch endpoints the same way as on the sync API, but the requests inside a single batch may process concurrently and in any order — a cache written by one line is not guaranteed to be visible to other lines in the same batch. To get reliable cache hits, use "ttl": "1h" breakpoints on a shared prefix and reuse that prefix across successive batches (or warm the cache with a sync request first): the first batch pays the cache-write price and later batches read from the cache for as long as it stays warm.
+
+​
+Examples
+
+​
+Automatic caching (recommended for multi-turn conversations)
+With automatic caching, add cache_control at the top level of the request. The system automatically caches all content up to the last cacheable block:
+
+{
+ "model": "~anthropic/claude-sonnet-latest",
+ "cache_control": { "type": "ephemeral" },
+ "messages": [
+ {
+ "role": "system",
+ "content": "You are a historian studying the fall of the Roman Empire. You know the following book very well: HUGE TEXT BODY"
+ },
+ {
+ "role": "user",
+ "content": "What triggered the collapse?"
+ }
+ ]
+}
+
+As the conversation grows, the cache breakpoint automatically advances to cover the growing message history.
+Automatic caching with 1-hour TTL:
+
+{
+ "model": "~anthropic/claude-sonnet-latest",
+ "cache_control": { "type": "ephemeral", "ttl": "1h" },
+ "messages": [
+ {
+ "role": "system",
+ "content": "You are a helpful assistant."
+ },
+ {
+ "role": "user",
+ "content": "What is the meaning of life?"
+ }
+ ]
+}
+
+​
+Explicit cache breakpoints (fine-grained control)
+System message caching example (default 5-minute TTL):
+
+{
+ "messages": [
+ {
+ "role": "system",
+ "content": [
+ {
+ "type": "text",
+ "text": "You are a historian studying the fall of the Roman Empire. You know the following book very well:"
+ },
+ {
+ "type": "text",
+ "text": "HUGE TEXT BODY",
+ "cache_control": {
+ "type": "ephemeral"
+ }
+ }
+ ]
+ },
+ {
+ "role": "user",
+ "content": [
+ {
+ "type": "text",
+ "text": "What triggered the collapse?"
+ }
+ ]
+ }
+ ]
+}
+
+See all 29 lines
+User message caching example with 1-hour TTL:
+
+{
+ "messages": [
+ {
+ "role": "user",
+ "content": [
+ {
+ "type": "text",
+ "text": "Given the book below:"
+ },
+ {
+ "type": "text",
+ "text": "HUGE TEXT BODY",
+ "cache_control": {
+ "type": "ephemeral",
+ "ttl": "1h"
+ }
+ },
+ {
+ "type": "text",
+ "text": "Name all the characters in the above book"
+ }
+ ]
+ }
+ ]
+}
+
+See all 25 lines
+
+​
+DeepSeek
+Caching price changes:
+
+Cache writes: charged at the same price as the original input pricing
+
+Cache reads: charged at 0.1x the price of the original input pricing
+
+Prompt caching with DeepSeek is automated and does not require any additional configuration.
+
+​
+Z.AI
+Caching price changes:
+
+Cache writes: no cost (Z.AI currently lists cached input storage as limited-time free)
+
+Cache reads: charged at the discounted cached-input rate shown on each model page (typically about 0.2x the price of the original input pricing)
+
+Click here to view Z.AI’s cache pricing per model.
+Prompt caching with Z.AI is automated and does not require any additional configuration. Cache reads are reported in the cached_tokens field of prompt_tokens_details in the usage response.
+Click here to read more about Z.AI context caching.
+To improve cache hit rates, OpenRouter sends Z.AI a session affinity key with each request, derived from your account and, when provided, your session_id. Passing a session_id in multi-turn conversations keeps requests from the same session on the same cache.
+
+​
+Google Gemini
+
+​
+Implicit Caching
+Gemini 2.5 series models and newer support implicit caching, providing automatic caching functionality similar to OpenAI’s automatic caching. Implicit caching works seamlessly — no manual setup or additional cache_control breakpoints required.
+Pricing Changes:
+
+No cache write or storage costs.
+
+Cached tokens are charged at 0.25x the original input token cost.
+
+Note that the TTL is on average 3-5 minutes, but will vary. Requests must also meet a minimum prompt size to be eligible for caching, which varies by model: 1024 tokens for Gemini 2.5 Flash and 4096 tokens for Gemini 2.5 Pro.
+Official announcement from Google
+
+To maximize implicit cache hits, keep the initial portion of your message arrays consistent between requests. Push variations (such as user questions or dynamic context elements) toward the end of your prompt/requests.
+
+​
+Pricing Changes for Cached Requests:
+
+Cache Writes: Charged at the input token cost plus 5 minutes of cache storage, calculated as follows:
+
+Cache write cost = Input token price + (Cache storage price × (5 minutes / 60 minutes))
+
+Cache Reads: Charged at 0.25× the original input token cost.
+
+​
+Supported Models and Limitations:
+Only certain Gemini models support caching. Please consult Google’s Gemini API Pricing Documentation for the most current details.
+Cache Writes have a 5 minute Time-to-Live (TTL) that does not update. After 5 minutes, the cache expires and a new cache must be written.
+Gemini models have typically have a 4096 token minimum for cache write to occur. Cached tokens count towards the model’s maximum token usage. Gemini 2.5 Pro has a minimum of 4096 tokens, and Gemini 2.5 Flash has a minimum of 1024 tokens.
+
+​
+How Gemini Prompt Caching works on OpenRouter:
+OpenRouter simplifies Gemini cache management, abstracting away complexities:
+
+You do not need to manually create, update, or delete caches.
+
+You do not need to manage cache names or TTL explicitly.
+
+​
+How to Enable Gemini Prompt Caching:
+Gemini caching in OpenRouter requires you to insert cache_control breakpoints explicitly within message content, similar to Anthropic. We recommend using caching primarily for large content pieces (such as CSV files, lengthy character cards, retrieval augmented generation (RAG) data, or extensive textual sources).
+
+There is not a limit on the number of cache_control breakpoints you can include in your request. OpenRouter will use only the last breakpoint for Gemini caching across normal message content. Including multiple breakpoints is safe and can help maintain compatibility with Anthropic, but only the final one will be used for Gemini.
+
+Gemini has a single systemInstruction field, and cached Gemini content treats that systemInstruction as immutable. On OpenRouter, this means cache_control inside the first system or developer message can cache the normalized system prompt, but it cannot preserve an uncached dynamic tail inside that same message. If you need part of your prompt to stay dynamic, move that dynamic content into a later user message instead of appending it after a cached block in the first system message.
+
+​
+Examples:
+
+​
+System Message Caching Example
+
+{
+ "messages": [
+ {
+ "role": "system",
+ "content": [
+ {
+ "type": "text",
+ "text": "You are a historian studying the fall of the Roman Empire. Below is an extensive reference book:"
+ },
+ {
+ "type": "text",
+ "text": "HUGE TEXT BODY HERE",
+ "cache_control": {
+ "type": "ephemeral"
+ }
+ }
+ ]
+ },
+ {
+ "role": "user",
+ "content": [
+ {
+ "type": "text",
+ "text": "What triggered the collapse?"
+ }
+ ]
+ }
+ ]
+}
+
+See all 29 lines
+This pattern works when the cached system content is stable across requests. If you need a dynamic prompt segment, place it in a later user message rather than as uncached trailing content in the first system message.
+
+​
+User Message Caching Example
+
+{
+ "messages": [
+ {
+ "role": "user",
+ "content": [
+ {
+ "type": "text",
+ "text": "Based on the book text below:"
+ },
+ {
+ "type": "text",
+ "text": "HUGE TEXT BODY HERE",
+ "cache_control": {
+ "type": "ephemeral"
+ }
+ },
+ {
+ "type": "text",
+ "text": "List all main characters mentioned in the text above."
+ }
+ ]
+ }
+ ]
+}
+
+See all 24 lines
+
+Was this page helpful?
+
+YesNo
+
+ {"docsConfig":{"theme":"mint","$schema":"https://mintlify.com/docs.json","name":"OpenRouter | Documentation","colors":{"primary":"#7624F4","light":"#7624F4","dark":"#C8FF00"},"logo":{"light":"https://mintcdn.com/openrouter-d02e98a0/ksNSeB_K7gD-BUDh/assets/logo-v2-light.svg?fit=max\u0026auto=format\u0026n=ksNSeB_K7gD-BUDh\u0026q=85\u0026s=690e45873843519efe02bcbe45795dac","dark":"https://mintcdn.com/openrouter-d02e98a0/ksNSeB_K7gD-BUDh/assets/logo-v2-dark.svg?fit=max\u0026auto=format\u0026n=ksNSeB_K7gD-BUDh\u0026q=85\u0026s=8ba2f49b11cd9839c37dd03c62537ebd","href":"https://openrouter.ai"},"favicon":"https://mintcdn.com/openrouter-d02e98a0/n3IgkjAMQY8SgOLX/assets/favicon-v2.svg?fit=max\u0026auto=format\u0026n=n3IgkjAMQY8SgOLX\u0026q=85\u0026s=f49800815fcadee8a07dcc093051c2de","appearance":{"default":"dark"},"background":{"color":{"light":"#FCFCFE","dark":"#03080A"}},"navbar":{"links":[{"href":"https://openrouter.ai/models","label":"Models"},{"href":"https://openrouter.ai/benchmarks","label":"Benchmarks"},{"href":"https://openrouter.ai/chat","label":"Chat"},{"href":"https://openrouter.ai/rankings","label":"Rankings"},{"href":"https://openrouter.ai/apps","label":"Apps"},{"href":"https://openrouter.ai/ori","label":"Ori"},{"href":"https://openrouter.ai/pricing","label":"Pricing"}],"primary":{"type":"button","label":"Sign In","href":"https://openrouter.ai/sign-in"}},"seo":{"metatags":{"canonical":"https://openrouter.ai/docs"}},"fonts":{"family":"Plus Jakarta Sans","weight":400},"integrations":{"ga4":{"measurementId":"G-R8YZRJS2XN"},"posthog":{"apiKey":"phc_7ToS2jDeWBlMu4n2JoNzoA1FnArdKwFMFoHVnAqQ6O1","apiHost":"https://us.i.posthog.com"}},"contextual":{"options":["copy","view","chatgpt","claude","perplexity"],"display":"header"},"styling":{"latex":true},"navigation":{"pages":[]}},"deployment":{"deploymentMetadataValue":{"subdomain":"openrouter-d02e98a0","hasAudioNarration":false,"actualSubdomain":"openrouter-d02e98a0","customDomains":["openrouter.ai"],"gitSource":{"_id":"6ad7fa92692c7c940ff17a31","type":"github","owner":"openrouterteam","repo":"docs","deployBranch":"main","contentDirectory":"","isPrivate":false,"mountPath":"","label":""},"feedback":{"contextualFeedback":{"allowEmail":true},"agentFeedback":true,"issues":false,"thumbs":true},"entitlements":{"AI_CHAT":{"status":"ENABLED"},"REMOVE_BRANDING":{"status":"ENABLED"},"CONTEXTUAL_FEEDBACK":{"status":"ENABLED"},"CODE_SNIPPET_FEEDBACK":{"status":"ENABLED"},"WEB_MCP":{"status":"ENABLED"},"NARRATION":{"status":"ENABLED"}},"buildId":"6af19186b478eaada983857b","clientVersion":"0.0.4088","searchFilterCounts":[{"language":"default","tag":"API Reference","count":349},{"language":"default","tag":"Client SDKs","count":248},{"language":"default","tag":"Docs","count":157},{"language":"default","tag":"Cookbook","count":64},{"language":"default","tag":"Agent SDK","count":42},{"language":"default","tag":"TypeScript SDK","count":41},{"language":"default","tag":"Python SDK","count":40},{"language":"default","tag":"Go SDK","count":39},{"language":"default","tag":"Observability","count":29},{"language":"default","tag":"Features","count":24}]},"assistantConfig":{"enableAskAiButton":false,"enableStarterQuestions":true,"enableContextualStarterQuestions":false,"enableAskAiSearchBar":true},"basePath":"/docs","hasChatPermissions":true,"hasWebMcpPermissions":true,"toggles":[{"name":"kill-isr","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"agent-mintlify-slack","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"agent-integrations-settings","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"rbac-expansion","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"automations-pr-grouping","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"custom-prefix","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"analytics-v7","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"user-flows-analytics","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"no-publish-flow","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"workos-onboarding","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"llms-txt-v2","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"snapshot-serving-live","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"stripTemperatureMiddleware","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"support-platform-pylon-zendesk","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"snapshot-serving","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"instant-rollback","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"granular-notifications-server","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"granular-notifications","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"automations-fable","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"fixed-ai-action-pricing","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"automation-resolve-merge-conflict","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"scoped-publishing","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"mintql","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"page-level-analytics","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"editor-version-history-v2","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"billing-page-v2","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"full-page-search","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"workspace-projects","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"assistant-v5","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"fork-pr-previews","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"revalidation-jwt","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"workos-sso-scim","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"hobby-abuse-scan","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"dashboard-inbox","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"workos-signup","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"turbopuffer-dual-write","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"workos-enabled","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"approve-review-flow","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"editor-metadata","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"sso-setup-deadline-banner","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"turbopuffer-serve","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"live-agents","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false},{"name":"comment-mode","enabled":true,"variant":{"name":"disabled","enabled":false,"feature_enabled":true},"impressionData":false}],"starterQuestions":[{"_id":"6ad8ee98f69c2f90c2a8cc12","deploymentId":"6a349898c5627d470e2c2ff7","questionText":"How do I get started using decision models like Jev?","status":"active","generatedBy":"manual","createdAt":"2026-10-21T16:55:52.120Z","updatedAt":"2026-10-21T16:55:52.120Z","__v":0}],"googleFontsInlined":true},"customCss":[{"filePath":"style.css","content":"/* cyrillic-ext */\n@font-face {\n font-family: 'Geist Mono';\n font-style: normal;\n font-weight: 400;\n font-display: swap;\n src: url(/docs/_mintlify/assets/fonts/google/s/geistmono/v6/or3nQ6H-1_WfwkMZI_qYFrodmgPn.woff2) format('woff2');\n unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;\n}\n/* cyrillic */\n@font-face {\n font-family: 'Geist Mono';\n font-style: normal;\n font-weight: 400;\n font-display: swap;\n src: url(/docs/_mintlify/assets/fonts/google/s/geistmono/v6/or3nQ6H-1_WfwkMZI_qYFrMdmgPn.woff2) format('woff2');\n unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;\n}\n/* symbols2 */\n@font-face {\n font-family: 'Geist Mono';\n font-style: normal;\n font-weight: 400;\n font-display: swap;\n src: url(/docs/_mintlify/assets/fonts/google/s/geistmono/v6/or3nQ6H-1_WfwkMZI_qYFg08vz7ehw.woff2) format('woff2');\n unicode-range: U+2000-2001, U+2004-2008, U+200A, U+23B8-23BD, U+2500-259F;\n}\n/* vietnamese */\n@font-face {\n font-family: 'Geist Mono';\n font-style: normal;\n font-weight: 400;\n font-display: swap;\n src: url(/docs/_mintlify/assets/fonts/google/s/geistmono/v6/or3nQ6H-1_WfwkMZI_qYFrgdmgPn.woff2) format('woff2');\n unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;\n}\n/* latin-ext */\n@font-face {\n font-family: 'Geist Mono';\n font-style: normal;\n font-weight: 400;\n font-display: swap;\n src: url(/docs/_mintlify/assets/fonts/google/s/geistmono/v6/or3nQ6H-1_WfwkMZI_qYFrkdmgPn.woff2) format('woff2');\n unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;\n}\n/* latin */\n@font-face {\n font-family: 'Geist Mono';\n font-style: normal;\n font-weight: 400;\n font-display: swap;\n src: url(/docs/_mintlify/assets/fonts/google/s/geistmono/v6/or3nQ6H-1_WfwkMZI_qYFrcdmg.woff2) format('woff2');\n unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;\n}\n/* cyrillic-ext */\n@font-face {\n font-family: 'Geist Mono';\n font-style: normal;\n font-weight: 500;\n font-display: swap;\n src: url(/docs/_mintlify/assets/fonts/google/s/geistmono/v6/or3nQ6H-1_WfwkMZI_qYFrodmgPn.woff2) format('woff2');\n unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;\n}\n/* cyrillic */\n@font-face {\n font-family: 'Geist Mono';\n font-style: normal;\n font-weight: 500;\n font-display: swap;\n src: url(/docs/_mintlify/assets/fonts/google/s/geistmono/v6/or3nQ6H-1_WfwkMZI_qYFrMdmgPn.woff2) format('woff2');\n unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;\n}\n/* symbols2 */\n@font-face {\n font-family: 'Geist Mono';\n font-style: normal;\n font-weight: 500;\n font-display: swap;\n src: url(/docs/_mintlify/assets/fonts/google/s/geistmono/v6/or3nQ6H-1_WfwkMZI_qYFg08vz7ehw.woff2) format('woff2');\n unicode-range: U+2000-2001, U+2004-2008, U+200A, U+23B8-23BD, U+2500-259F;\n}\n/* vietnamese */\n@font-face {\n font-family: 'Geist Mono';\n font-style: normal;\n font-weight: 500;\n font-display: swap;\n src: url(/docs/_mintlify/assets/fonts/google/s/geistmono/v6/or3nQ6H-1_WfwkMZI_qYFrgdmgPn.woff2) format('woff2');\n unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;\n}\n/* latin-ext */\n@font-face {\n font-family: 'Geist Mono';\n font-style: normal;\n font-weight: 500;\n font-display: swap;\n src: url(/docs/_mintlify/assets/fonts/google/s/geistmono/v6/or3nQ6H-1_WfwkMZI_qYFrkdmgPn.woff2) format('woff2');\n unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;\n}\n/* latin */\n@font-face {\n font-family: 'Geist Mono';\n font-style: normal;\n font-weight: 500;\n font-display: swap;\n src: url(/docs/_mintlify/assets/fonts/google/s/geistmono/v6/or3nQ6H-1_WfwkMZI_qYFrcdmg.woff2) format('woff2');\n unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;\n}\n/* cyrillic-ext */\n@font-face {\n font-family: 'Geist Mono';\n font-style: normal;\n font-weight: 600;\n font-display: swap;\n src: url(/docs/_mintlify/assets/fonts/google/s/geistmono/v6/or3nQ6H-1_WfwkMZI_qYFrodmgPn.woff2) format('woff2');\n unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;\n}\n/* cyrillic */\n@font-face {\n font-family: 'Geist Mono';\n font-style: normal;\n font-weight: 600;\n font-display: swap;\n src: url(/docs/_mintlify/assets/fonts/google/s/geistmono/v6/or3nQ6H-1_WfwkMZI_qYFrMdmgPn.woff2) format('woff2');\n unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;\n}\n/* symbols2 */\n@font-face {\n font-family: 'Geist Mono';\n font-style: normal;\n font-weight: 600;\n font-display: swap;\n src: url(/docs/_mintlify/assets/fonts/google/s/geistmono/v6/or3nQ6H-1_WfwkMZI_qYFg08vz7ehw.woff2) format('woff2');\n unicode-range: U+2000-2001, U+2004-2008, U+200A, U+23B8-23BD, U+2500-259F;\n}\n/* vietnamese */\n@font-face {\n font-family: 'Geist Mono';\n font-style: normal;\n font-weight: 600;\n font-display: swap;\n src: url(/docs/_mintlify/assets/fonts/google/s/geistmono/v6/or3nQ6H-1_WfwkMZI_qYFrgdmgPn.woff2) format('woff2');\n unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;\n}\n/* latin-ext */\n@font-face {\n font-family: 'Geist Mono';\n font-style: normal;\n font-weight: 600;\n font-display: swap;\n src: url(/docs/_mintlify/assets/fonts/google/s/geistmono/v6/or3nQ6H-1_WfwkMZI_qYFrkdmgPn.woff2) format('woff2');\n unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;\n}\n/* latin */\n@font-face {\n font-family: 'Geist Mono';\n font-style: normal;\n font-weight: 600;\n font-display: swap;\n src: url(/docs/_mintlify/assets/fonts/google/s/geistmono/v6/or3nQ6H-1_WfwkMZI_qYFrcdmg.woff2) format('woff2');\n unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;\n}\n:root{--inverse: 3 8 10;--inverse-foreground: 252 252 254;--tooltip-background: var(--inverse);--tooltip-foreground: var(--inverse-foreground)}code,pre,pre code,.code-block code,[class*=\"code\"] code{font-family:'Geist Mono', ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace}::selection{background:rgb(118 36 244 / 0.25)}.dark ::selection,html.dark ::selection{background:rgb(200 255 0 / 0.25);color:inherit}.dark,[data-theme=\"dark\"],html.dark{--primary: 200 255 0;--primary-light: 200 255 0;--primary-dark: 200 255 0;--light-primary: 200 255 0;--primary-foreground: 3 8 10;--inverse: 252 252 254;--inverse-foreground: 3 8 10;--default-border-color: rgb(252 252 254 / 0.14)}#navbar{border-radius:0}#sidebar a[aria-current=\"page\"],nav[aria-label=\"Pages\"] a[aria-current=\"page\"]{border-radius:8px}[data-component-part=\"code-block-root\"]{border-radius:8px}a:not([class]){text-decoration-thickness:1px;text-underline-offset:2px;text-decoration-color:rgb(0 0 0 / 0.4)}a:not([class]):hover{text-decoration-color:currentColor}.dark a:not([class]),html.dark a:not([class]){text-decoration-color:rgb(255 255 255 / 0.4)}.dark a:not([class]):hover,html.dark a:not([class]):hover{text-decoration-color:currentColor}.nav-tag-pill-text{background:transparent!important;color:rgb(0 0 0 / 0.5)!important;border:1px solid rgb(0 0 0 / 0.2)!important}.dark .nav-tag-pill-text,html.dark .nav-tag-pill-text{background:transparent!important;color:rgb(252 252 254 / 0.5)!important;border:1px solid rgb(252 252 254 / 0.2)!important}.nav-logo{height:1.5rem}.dark nav[aria-label=\"Pages\"] button[aria-expanded] svg.transition-transform,html.dark nav[aria-label=\"Pages\"] button[aria-expanded] svg.transition-transform{color:rgb(252 252 254 / 0.627)}.dark nav[aria-label=\"Pages\"] button[aria-expanded]:hover svg.transition-transform,html.dark nav[aria-label=\"Pages\"] button[aria-expanded]:hover svg.transition-transform{color:rgb(252 252 254)}nav[aria-label=\"Pages\"] button[aria-expanded] svg.transition-transform{width:0.625rem;height:0.625rem}[role=\"tooltip\"][data-side],[data-radix-popper-content-wrapper]>div[data-state=\"delayed-open\"],[data-radix-popper-content-wrapper]>div[data-state=\"instant-open\"]{background-color:rgb(var(--tooltip-background))!important;color:rgb(var(--tooltip-foreground))!important}.callout [data-component-part=\"callout-content\"]>.code-block:first-child{margin-top:0}.callout [data-component-part=\"callout-content\"]>.code-block:last-child{margin-bottom:0}[data-floating-buttons] button{background-color:rgb(241 239 245)}.dark [data-floating-buttons] button,html.dark [data-floating-buttons] button{background-color:rgb(40 38 44)}[data-component-part=\"update-tag\"]{border:1px solid rgb(0 0 0 / 0.2);border-radius:9999px;padding:0.125rem 0.625rem;font-size:0.75rem;line-height:1.25rem;color:rgb(0 0 0 / 0.6)}.dark [data-component-part=\"update-tag\"],html.dark [data-component-part=\"update-tag\"]{border-color:rgb(252 252 254 / 0.2);color:rgb(252 252 254 / 0.6)}#topbar-cta-button svg{display:none}#topbar-cta-button a{padding-right:0.75rem}#topbar-cta-button .bg-primary-dark{background-color:rgb(var(--primary))}.dark #topbar-cta-button .text-white,html.dark #topbar-cta-button .text-white{color:rgb(3 8 10)}.dark #changelog-filters-content button.bg-primary,html.dark #changelog-filters-content button.bg-primary{color:rgb(3 8 10 / 0.9)!important}.changelog-status-badge{margin-left:0.5rem}.changelog-status-badge[data-color=\"gray\"]{border:1px solid rgb(3 8 10 / 0.3)!important}.dark .changelog-status-badge[data-color=\"gray\"],html.dark .changelog-status-badge[data-color=\"gray\"]{border-color:rgb(252 252 254 / 0.4)!important}.mermaid>svg{margin-inline:auto}.support-matrix table{font-size:0.8125rem}.support-matrix td,.support-matrix th{min-width:0;padding-right:0.5rem;white-space:nowrap}.support-matrix th code{padding-left:0.25rem;padding-right:0.25rem;font-size:0.6875rem}.pr-fig,.pr-mini{--pr-ink: #03080a;--pr-muted: rgb(3 8 10 / 0.69);--pr-rule: rgb(3 8 10 / 0.12);--pr-surface: #ffffff;--pr-positive-text: #007544;--pr-negative-text: #bf0024}.dark .pr-fig,.dark .pr-mini{--pr-ink: #fcfcfe;--pr-muted: rgb(252 252 254 / 0.627);--pr-rule: rgb(252 252 254 / 0.14);--pr-surface: #080d0f;--pr-positive-text: #34dfaa;--pr-negative-text: #ff2d55}.pr-fig{margin:1.5rem 0;padding:1rem;overflow-x:auto;container-type:inline-size;border:1px solid var(--pr-rule);border-radius:8px;background:var(--pr-surface)}.pr-fig svg{display:block;width:100%;height:auto}.pr-mini{margin:1rem 0 1.25rem}.pr-mini svg{display:block;max-width:100%;height:auto;margin-inline:auto}.pr-fig svg text,.pr-mini svg text{font-family:inherit;font-size:12px;fill:var(--pr-muted)}.pr-sw{display:inline-block;flex:none;width:12px;height:12px;border-radius:2px}.pr-bg-price{background:#0088fe}.pr-bg-ttft{background:#ffbb28}.pr-bg-speed{background:#7b68ee}.pr-bg-rel{background:#ff2d55}.pr-bg-429{background:#ff8042}.pr-bg-received{background:var(--pr-ink)}.pr-bg-capacity{background:rgb(var(--gray-400))}.pr-fill-ttft{fill:#ffbb28}.pr-fill-speed{fill:#7b68ee}.pr-fill-rel{fill:#ff2d55}.pr-fill-429{fill:#ff8042}.pr-fig .lbl{font-size:13px;fill:var(--pr-ink)}.pr-fig .num{fill:var(--pr-muted);font-variant-numeric:tabular-nums}.pr-fig .strong{fill:var(--pr-ink);font-weight:600}.pr-fig .halo{paint-order:stroke;stroke:var(--pr-surface);stroke-width:4px;stroke-linejoin:round}.pr-fig .axis{stroke:var(--pr-rule);stroke-width:1}.pr-fig .zone{fill:rgb(0 191 111 / 0.12)}.pr-fig .zone-lbl{font-weight:600;fill:var(--pr-positive-text)}.pr-fig .zone-lbl.muted{fill:var(--pr-muted)}.pr-fig .edge{stroke:#00bf6f;stroke-width:1.5;stroke-dasharray:4 3}.pr-fig .edge-curve{fill:none;stroke:#00bf6f;stroke-width:2;stroke-dasharray:5 3}.pr-fig .curve{fill:none;stroke:var(--pr-ink);stroke-width:2.5}.pr-fig .curve-fill{fill:var(--pr-ink);opacity:0.04}.pr-fig .dot{fill:var(--pr-muted);fill-opacity:0.8;stroke:var(--pr-surface);stroke-width:1.5}.pr-fig .dot-in{fill:#00bf6f;stroke:var(--pr-surface);stroke-width:1.5}.pr-fig .got{fill:none;stroke:var(--pr-ink);stroke-width:2}.pr-fig .got-fill{fill:var(--pr-ink);opacity:0.06}.pr-fig .cap{fill:none;stroke:#da70d6;stroke-width:2.5}.pr-fig .real{fill:none;stroke:var(--pr-muted);stroke-width:1.5;stroke-dasharray:5 4}.pr-fig .rate{fill:#ff8042}.pr-legend{display:flex;flex-wrap:wrap;justify-content:center;gap:0.375rem 1rem;margin-top:0.75rem;font-size:12px;color:var(--pr-muted)}.pr-legend span{display:inline-flex;align-items:center;gap:0.375rem}.pr-ln{display:inline-block;width:18px;height:0}.pr-ln-cap{border-top:2.5px solid #da70d6}.pr-ln-real{border-top:1.5px dashed var(--pr-muted)}.pr-table{margin-top:0.875rem;border-top:1px solid var(--pr-rule);font-size:12px}.pr-row{display:grid;grid-template-columns:76px minmax(0, 1fr) 84px;gap:0.5rem;align-items:center;padding:0.375rem 0;border-bottom:1px solid var(--pr-rule)}.pr-head{color:var(--pr-muted);white-space:nowrap}.pr-sub::before{content:\", \"}.pr-name{font-weight:600;color:var(--pr-ink)}.pr-bar{display:flex;height:10px}.pr-bar i{display:block;height:100%}.pr-share{display:flex;align-items:center;gap:0.375rem}.pr-share i{display:block;height:10px;max-width:54px;border-radius:2px;background:var(--pr-muted);opacity:0.5}.pr-share b{font-weight:600;font-variant-numeric:tabular-nums;color:var(--pr-muted)}@media (max-width: 560px){.pr-row{grid-template-columns:76px minmax(0, 1fr) 32px}.pr-share i{display:none}.pr-head{white-space:normal}.pr-sub{display:block}.pr-sub::before{content:none}}@container (max-width: 480px){.pr-fig svg text{font-size:15px}.pr-fig svg .lbl{font-size:16px}}@container (max-width: 400px){.pr-fig svg text{font-size:17px}.pr-fig svg .lbl{font-size:18px}}.pr-mini-row{display:flex;justify-content:center;align-items:center;gap:0.75rem 1.5rem}.pr-mini-row svg{flex:0 1 auto;min-width:0;margin-inline:0}@media (max-width: 640px){.pr-mini-row{flex-wrap:wrap}}.pr-mini .strong-lbl{fill:var(--pr-ink);font-weight:600}.pr-mini .amt{text-anchor:end;font-variant-numeric:tabular-nums}.pr-mini .op{font-size:20px}.pr-mini .paper{fill:var(--pr-surface);stroke:var(--pr-rule);stroke-width:1}.pr-mini .usual{stroke:var(--pr-muted);stroke-width:1;stroke-dasharray:3 3}.pr-mini .sum-line{stroke:var(--pr-ink);stroke-width:1}.pr-mini .price-pill{fill:#0088fe;opacity:0.12}.pr-mini .pill-text{fill:var(--pr-ink);font-weight:600;font-variant-numeric:tabular-nums}.pr-mini .neg-pill{fill:#ff2d55;opacity:0.12}.pr-mini .neg-text{font-size:13px;fill:var(--pr-negative-text);font-weight:600;font-variant-numeric:tabular-nums}.pr-mini .span-stream{fill:var(--pr-muted);opacity:0.3}.pr-mini .span-total{fill:var(--pr-rule)}.pr-mini .extra{opacity:0.45}.pr-mini .bad{fill:none;stroke:#ff2d55;stroke-width:1.5}.pr-mini .tree{fill:none;stroke:var(--pr-muted);stroke-width:1}.pr-mini .brace{fill:none;stroke:var(--pr-muted);stroke-width:1.25}.pr-mini .big-arrow{fill:none;stroke:var(--pr-ink);stroke-width:3}.pr-mini .big-arrow-head,.pr-mini .user-dot{fill:var(--pr-ink)}.pr-factors ul{list-style:none;padding-left:0}.pr-factors li{padding-left:0!important}.pr-factors li::before{display:none}.pr-factors .pr-sw,h3 .pr-sw{margin-right:0.625rem;transform:translateY(1px)}h3 .pr-sw{width:13px;height:13px;transform:translateY(-2px)}.pr-cols{display:grid;grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));gap:0 1.75rem}"}],"page":{"pagePath":"guides/best-practices/prompt-caching","slug":"/guides/best-practices/prompt-caching","pageMetadata":{"publish":true,"title":"Prompt Caching","description":"Cache prompt messages","seoTitle":"Prompt Caching | Reduce AI Model Costs with OpenRouter","og:site_name":"OpenRouter Documentation","og:title":"Prompt Caching - Optimize AI Model Costs with Smart Caching","og:description":"Reduce your AI model costs with OpenRouter's prompt caching feature. Learn how to cache and reuse responses across OpenAI, Anthropic Claude, and DeepSeek models.","og:image":"https://openrouter.ai/dynamic-og?title=Prompt%20Caching\u0026description=Optimize%20AI%20model%20costs%20with%20OpenRouter","og:image:width":1200,"og:image:height":630,"twitter:card":"summary_large_image","twitter:site":"@OpenRouter","noindex":false,"nofollow":false,"icon":"database","href":"/guides/best-practices/prompt-caching"},"description":{"compiledSource":"\"use strict\";\nconst {jsx: _jsx} = arguments[0];\nconst {useMDXComponents: _provideComponents} = arguments[0];\nfunction _createMdxContent(props) {\n const _components = {\n p: \"p\",\n ..._provideComponents(),\n ...props.components\n };\n return _jsx(_components.p, {\n children: \"Cache prompt messages\"\n });\n}\nfunction MDXContent(props = {}) {\n const {wrapper: MDXLayout} = {\n ..._provideComponents(),\n ...props.components\n };\n return MDXLayout ? _jsx(MDXLayout, {\n ...props,\n children: _jsx(_createMdxContent, {\n ...props\n })\n }) : _createMdxContent(props);\n}\nreturn {\n default: MDXContent\n};\n","frontmatter":{},"scope":{}},"pageType":"default","mdx":{"mdxSource":{"compiledSource":"\"use strict\";const{Fragment:_Fragment,jsx:_jsx,jsxs:_jsxs}=arguments[0];const{useMDXComponents:_provideComponents}=arguments[0];const MOONSHOT_CACHE_READ_MULTIPLIER=`0.25`;const GROQ_CACHE_READ_MULTIPLIER=`0.5`;const GROK_CACHE_READ_MULTIPLIER=`0.25`;const GOOGLE_CACHE_READ_MULTIPLIER=`0.25`;const GOOGLE_CACHE_MIN_TOKENS_2_5_PRO=`4096`;const GOOGLE_CACHE_MIN_TOKENS_2_5_FLASH=`1024`;const DEEPSEEK_CACHE_READ_MULTIPLIER=`0.1`;const ANTHROPIC_CACHE_WRITE_MULTIPLIER=`1.25`;const ANTHROPIC_CACHE_READ_MULTIPLIER=`0.1`;const ALIBABA_CACHE_WRITE_MULTIPLIER=`1.25`;const ALIBABA_CACHE_READ_MULTIPLIER=`0.1`;function _createMdxContent(props){const _components={a:`a`,code:`code`,li:`li`,ol:`ol`,p:`p`,pre:`pre`,span:`span`,strong:`strong`,ul:`ul`,..._provideComponents(),...props.components},{CodeBlock,Heading,Info,Note,Tip}=_components;if(!CodeBlock)_missingMdxReference(`CodeBlock`,true);if(!Heading)_missingMdxReference(`Heading`,true);if(!Info)_missingMdxReference(`Info`,true);if(!Note)_missingMdxReference(`Note`,true);if(!Tip)_missingMdxReference(`Tip`,true);return _jsxs(_Fragment,{children:[_jsx(_components.p,{children:`To save on inference costs, you can enable prompt caching on supported providers and models.`}),`\n`,_jsx(_components.p,{children:`Most providers automatically enable prompt caching, but note that some (see Alibaba and Anthropic below) require you to enable it on a per-message basis.`}),`\n`,_jsxs(_components.p,{children:[`When using caching (whether automatically in supported models, or via the `,_jsx(_components.code,{children:`cache_control`}),` property), OpenRouter uses provider sticky routing to maximize cache hits — see `,_jsx(_components.a,{href:`#provider-sticky-routing`,children:`Provider Sticky Routing`}),` below for details.`]}),`\n`,_jsx(Heading,{level:`2`,id:`provider-sticky-routing`,children:`Provider Sticky Routing`}),`\n`,_jsxs(_components.p,{children:[`To maximize cache hit rates, OpenRouter uses `,_jsx(_components.strong,{children:`provider sticky routing`}),` to route your subsequent requests to the same provider endpoint after a cached request. This works automatically with both implicit caching (e.g. OpenAI, DeepSeek, Gemini 2.5) and explicit caching (e.g. Anthropic `,_jsx(_components.code,{children:`cache_control`}),` breakpoints).`]}),`\n`,_jsx(_components.p,{children:_jsx(_components.strong,{children:`How it works:`})}),`\n`,_jsxs(_components.ul,{children:[`\n`,_jsx(_components.li,{children:`After a request that uses prompt caching, OpenRouter remembers which provider served your request.`}),`\n`,_jsx(_components.li,{children:`Subsequent requests for the same model are routed to the same provider, keeping your cache warm.`}),`\n`,_jsx(_components.li,{children:`Sticky routing only activates when the provider’s cache read pricing is cheaper than regular prompt pricing, ensuring you always benefit from cost savings.`}),`\n`,_jsx(_components.li,{children:`If the sticky provider becomes unavailable, OpenRouter automatically falls back to the next-best provider.`}),`\n`,_jsxs(_components.li,{children:[`Sticky routing is not used when you specify a manual `,_jsx(_components.a,{href:`/guides/routing/provider-selection`,children:`provider order`}),` via `,_jsx(_components.code,{children:`provider.order`}),` — in that case, your explicit ordering takes priority.`]}),`\n`,_jsxs(_components.li,{children:[`Sticky sessions expire after `,_jsx(_components.strong,{children:`60 minutes`}),` of inactivity. Each successful request resets the timer. If the sticky provider returns an error, the cache is not updated, allowing the next request to be re-routed.`]}),`\n`]}),`\n`,_jsx(_components.p,{children:_jsx(_components.strong,{children:`Sticky routing granularity:`})}),`\n`,_jsx(_components.p,{children:`Sticky routing is tracked at the account level, per model, and per conversation. By default, OpenRouter identifies conversations by hashing the first system (or developer) message and the first non-system message in each request, so requests that share the same opening messages are routed to the same provider. This means different conversations naturally stick to different providers, improving load-balancing and throughput while keeping caches warm within each conversation.`}),`\n`,_jsxs(Heading,{level:`3`,id:`using-session_id-for-sticky-sessions`,children:[`Using `,_jsx(_components.code,{children:`session_id`}),` for sticky sessions`]}),`\n`,_jsxs(_components.p,{children:[`For more explicit control over sticky routing, you can pass a `,_jsx(_components.code,{children:`session_id`}),` in your request. When a `,_jsx(_components.code,{children:`session_id`}),` is present, OpenRouter uses it directly as the sticky routing key instead of deriving one from message hashing. This is especially useful for multi-turn agentic workflows where the opening messages may change between requests but you still want to route to the same provider.`]}),`\n`,_jsxs(_components.p,{children:[`You can provide `,_jsx(_components.code,{children:`session_id`}),` in two ways:`]}),`\n`,_jsxs(_components.ul,{children:[`\n`,_jsxs(_components.li,{children:[_jsx(_components.strong,{children:`Request body`}),`: Include `,_jsx(_components.code,{children:`session_id`}),` as a top-level field in your request body. If both are provided, the body value takes precedence.`]}),`\n`,_jsxs(_components.li,{children:[_jsx(_components.strong,{children:`Header`}),`: Set the `,_jsx(_components.code,{children:`x-session-id`}),` HTTP header.`]}),`\n`]}),`\n`,_jsxs(_components.p,{children:[`The `,_jsx(_components.code,{children:`session_id`}),` must be at most 256 characters.`]}),`\n`,_jsxs(_components.p,{children:[`If neither is set, OpenRouter falls back to the OpenAI-style `,_jsx(_components.code,{children:`prompt_cache_key`}),` request field as the sticky routing key. Clients that already send `,_jsx(_components.code,{children:`prompt_cache_key`}),` get session-pinned routing without any changes.`]}),`\n`,_jsx(CodeBlock,{filename:``,lines:`true`,numberOfLines:`10`,language:`json`,children:_jsx(_components.pre,{className:`shiki shiki-themes github-light-default dark-plus`,style:{backgroundColor:`#ffffff`,\"--shiki-dark-bg\":`#0B0C0E`,color:`#1f2328`,\"--shiki-dark\":`#D4D4D4`},language:`json`,children:_jsxs(_components.code,{language:`json`,numberOfLines:`10`,children:[_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`{`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"model\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"anthropic/claude-sonnet-5.5\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"session_id\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"my-agent-session-abc123\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"messages\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: [`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` {`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"role\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"user\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"content\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"Continue our conversation...\"`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` ]`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`}`})}),`\n`]})})}),`\n`,_jsxs(_components.p,{children:[`When `,_jsx(_components.code,{children:`session_id`}),` is set, sticky routing activates on any successful request — even before cache usage is observed — so that subsequent requests in the same session benefit from prompt caching from the start. Without `,_jsx(_components.code,{children:`session_id`}),`, sticky routing only activates after a cache hit is detected.`]}),`\n`,_jsx(Info,{children:_jsxs(_components.p,{children:[`When using router models like `,_jsx(_components.a,{href:`/guides/routing/routers/auto-router`,children:`Auto Router`}),` or `,_jsx(_components.a,{href:`/guides/routing/routers/pareto-router`,children:`Pareto Router`}),`, sticky routing also reuses the `,_jsx(_components.strong,{children:`resolved model`}),` on a best-effort basis when it remains in the current candidate set, not just the provider. The cache hint is ignored when it falls out of that set, so the router may select a different model on a later turn. See `,_jsx(_components.a,{href:`/guides/routing/routers/auto-router#session-stickiness`,children:`Auto Router — Session Stickiness`}),` for details.`]})}),`\n`,_jsx(Heading,{level:`3`,id:`grouping-requests-across-modalities`,children:`Grouping requests across modalities`}),`\n`,_jsxs(_components.p,{children:[`Beyond sticky routing, OpenRouter uses `,_jsx(_components.code,{children:`session_id`}),` to group your requests in the `,_jsx(_components.a,{href:`https://openrouter.ai/logs?tab=sessions`,children:`Sessions view on the Logs page`}),`. One `,_jsx(_components.code,{children:`session_id`}),` links requests across conversation turns, retries, and different modalities. This lets you trace a full agent session in one place.`]}),`\n`,_jsx(_components.p,{children:`This grouping works across the synchronous endpoints, not just chat completions:`}),`\n`,_jsxs(_components.ul,{children:[`\n`,_jsxs(_components.li,{children:[_jsx(_components.strong,{children:`Chat and Responses`}),`: send `,_jsx(_components.code,{children:`session_id`}),` in the request body, or the `,_jsx(_components.code,{children:`x-session-id`}),` header.`]}),`\n`,_jsxs(_components.li,{children:[_jsx(_components.strong,{children:`Embeddings, reranking, speech-to-text, text-to-speech, image generation, and video generation`}),`: send the `,_jsx(_components.code,{children:`x-session-id`}),` header. These endpoints do not accept a body `,_jsx(_components.code,{children:`session_id`}),`. They use the value only for grouping, so sticky routing does not apply to them.`]}),`\n`]}),`\n`,_jsxs(_components.p,{children:[`The 256-character limit applies to both inputs. Send a consistent `,_jsx(_components.code,{children:`x-session-id`}),` across a multimodal workflow to group all of those generations under one session. For example, an agent transcribes audio, calls a chat model, then generates an image.`]}),`\n`,_jsx(Note,{children:_jsxs(_components.p,{children:[`The `,_jsx(_components.a,{href:`/batch-quickstart`,children:`Batch API`}),` does not yet group its generations by `,_jsx(_components.code,{children:`session_id`}),`.`]})}),`\n`,_jsx(Heading,{level:`2`,id:`inspecting-cache-usage`,children:`Inspecting cache usage`}),`\n`,_jsx(_components.p,{children:`To see how much caching saved on each generation, you can:`}),`\n`,_jsxs(_components.ol,{children:[`\n`,_jsxs(_components.li,{children:[`Click the detail button on the `,_jsx(_components.a,{href:`https://openrouter.ai/activity`,children:`Activity`}),` page`]}),`\n`,_jsxs(_components.li,{children:[`Use the `,_jsx(_components.code,{children:`/api/v1/generation`}),` API, `,_jsx(_components.a,{href:`/api/api-reference/generations/get-request-\u0026-usage-metadata-for-a-generation`,children:`documented here`})]}),`\n`,_jsxs(_components.li,{children:[`Check the `,_jsx(_components.code,{children:`prompt_tokens_details`}),` object in the `,_jsx(_components.a,{href:`/cookbook/administration/usage-accounting`,children:`usage response`}),` included with every API response`]}),`\n`]}),`\n`,_jsxs(_components.p,{children:[`The `,_jsx(_components.code,{children:`cache_discount`}),` field in the response body will tell you how much the response saved on cache usage. Some providers, like Anthropic, will have a negative discount on cache writes, but a positive discount (which reduces total cost) on cache reads.`]}),`\n`,_jsx(Heading,{level:`3`,id:`usage-object-fields`,children:`Usage object fields`}),`\n`,_jsxs(_components.p,{children:[`The usage object in API responses includes detailed cache metrics in the `,_jsx(_components.code,{children:`prompt_tokens_details`}),` field:`]}),`\n`,_jsx(CodeBlock,{filename:``,lines:`true`,numberOfLines:`11`,language:`json`,children:_jsx(_components.pre,{className:`shiki shiki-themes github-light-default dark-plus`,style:{backgroundColor:`#ffffff`,\"--shiki-dark-bg\":`#0B0C0E`,color:`#1f2328`,\"--shiki-dark\":`#D4D4D4`},language:`json`,children:_jsxs(_components.code,{language:`json`,numberOfLines:`11`,children:[_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`{`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"usage\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: {`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"prompt_tokens\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0550AE`,\"--shiki-dark\":`#B5CEA8`},children:`10339`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"completion_tokens\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0550AE`,\"--shiki-dark\":`#B5CEA8`},children:`60`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"total_tokens\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0550AE`,\"--shiki-dark\":`#B5CEA8`},children:`10399`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"prompt_tokens_details\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: {`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"cached_tokens\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0550AE`,\"--shiki-dark\":`#B5CEA8`},children:`10318`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"cache_write_tokens\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0550AE`,\"--shiki-dark\":`#B5CEA8`},children:`0`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`}`})}),`\n`]})})}),`\n`,_jsx(_components.p,{children:`The key fields are:`}),`\n`,_jsxs(_components.ul,{children:[`\n`,_jsxs(_components.li,{children:[_jsx(_components.code,{children:`cached_tokens`}),`: Number of tokens read from the cache (cache hit). When this is greater than zero, you’re benefiting from cached content.`]}),`\n`,_jsxs(_components.li,{children:[_jsx(_components.code,{children:`cache_write_tokens`}),`: Number of tokens written to the cache. This appears on the first request when establishing a new cache entry.`]}),`\n`]}),`\n`,_jsx(Heading,{level:`2`,id:`openai`,children:`OpenAI`}),`\n`,_jsx(_components.p,{children:`Caching price changes:`}),`\n`,_jsxs(_components.ul,{children:[`\n`,_jsxs(_components.li,{children:[_jsx(_components.strong,{children:`Cache writes`}),`: no cost on models before the GPT-5.6 family. GPT-5.6 and later charge cache writes at 1.25x the price of the original input pricing, even with automatic caching — no opt-in required.`]}),`\n`,_jsxs(_components.li,{children:[_jsx(_components.strong,{children:`Cache reads`}),`: (depending on the model) charged at 0.25x or 0.50x the price of the original input pricing`]}),`\n`]}),`\n`,_jsx(_components.p,{children:_jsx(_components.a,{href:`https://platform.openai.com/docs/pricing`,children:`Click here to view OpenAI’s cache pricing per model.`})}),`\n`,_jsxs(_components.p,{children:[`Prompt caching with OpenAI is automated and does not require any additional configuration. There is a minimum prompt size of 1024 tokens. On GPT-5.6 and later you can `,_jsx(_components.a,{href:`#disabling-prompt-caching`,children:`turn caching off per request`}),` to avoid the cache-write charge on prompts you will not send again.`]}),`\n`,_jsx(_components.p,{children:_jsx(_components.a,{href:`https://platform.openai.com/docs/guides/prompt-caching`,children:`Click here to read more about OpenAI prompt caching and its limitation.`})}),`\n`,_jsx(Heading,{level:`3`,id:`explicit-prompt-caching`,children:`Explicit prompt caching`}),`\n`,_jsx(_components.p,{children:`Caching price changes:`}),`\n`,_jsxs(_components.ul,{children:[`\n`,_jsxs(_components.li,{children:[_jsx(_components.strong,{children:`Cache writes (30-minute TTL, default)`}),`: charged at 1.25x the price of the original input pricing (same rate as automatic cache writes on GPT-5.6 and later)`]}),`\n`,_jsxs(_components.li,{children:[_jsx(_components.strong,{children:`Cache writes (12-hour TTL)`}),`: charged at 2.5x the price of the original input pricing`]}),`\n`,_jsxs(_components.li,{children:[_jsx(_components.strong,{children:`Cache reads`}),`: charged at the model’s discounted cache read rate, same as automatic caching, regardless of TTL`]}),`\n`]}),`\n`,_jsxs(_components.p,{children:[`Explicit prompt caching works on both the `,_jsx(_components.a,{href:`/api/api-reference/chat/create-a-chat-completion`,children:`Chat Completions`}),` and `,_jsx(_components.a,{href:`/api/api-reference/responses/create-a-response`,children:`Responses`}),` APIs, and gives you direct control over cache boundaries instead of relying on OpenAI’s automatic breakpoint placement. Cached prefixes have a minimum 30-minute TTL by default, or 12 hours with `,_jsx(_components.code,{children:`\"ttl\": \"12h\"`}),`. See `,_jsx(_components.a,{href:`https://developers.openai.com/api/docs/guides/prompt-caching?prompt-cache-api=chat-completions#prompt-cache-breakpoints`,children:`OpenAI’s explicit prompt caching docs`}),` for upstream details.`]}),`\n`,_jsx(Info,{children:_jsx(_components.p,{children:`OpenAI explicit prompt caching is only supported by OpenAI GPT-5.6 and newer.`})}),`\n`,_jsx(_components.p,{children:`There are two controls:`}),`\n`,_jsxs(_components.ul,{children:[`\n`,_jsxs(_components.li,{children:[_jsx(_components.code,{children:`prompt_cache_breakpoint`}),`: placed on an individual text content block (`,_jsx(_components.code,{children:`input_text`}),` in Responses, `,_jsx(_components.code,{children:`text`}),` in Chat Completions) to mark the end of a reusable prefix. Everything through that block becomes the candidate cached prefix. Automatic caching remains enabled.`]}),`\n`,_jsxs(_components.li,{children:[_jsx(_components.code,{children:`prompt_cache_options`}),`: placed at the request root. Setting `,_jsx(_components.code,{children:`mode`}),` to `,_jsx(_components.code,{children:`\"explicit\"`}),` disables OpenAI-managed breakpoints so only blocks marked with `,_jsx(_components.code,{children:`prompt_cache_breakpoint`}),` participate in caching. Use `,_jsx(_components.code,{children:`ttl`}),` to set the minimum cache lifetime for every breakpoint the request writes: `,_jsx(_components.code,{children:`\"30m\"`}),` (default) or `,_jsx(_components.code,{children:`\"12h\"`}),`. A `,_jsx(_components.code,{children:`prompt_cache_breakpoint`}),` can carry its own `,_jsx(_components.code,{children:`ttl`}),` to override the request-level value for that boundary, so a long-lived system prompt can be cached for 12 hours while the rest of the conversation keeps the 30-minute default.`]}),`\n`]}),`\n`,_jsx(_components.p,{children:`Responses API:`}),`\n`,_jsx(CodeBlock,{filename:``,numberOfLines:`26`,language:`json`,children:_jsx(_components.pre,{className:`shiki shiki-themes github-light-default dark-plus`,style:{backgroundColor:`#ffffff`,\"--shiki-dark-bg\":`#0B0C0E`,color:`#1f2328`,\"--shiki-dark\":`#D4D4D4`},language:`json`,children:_jsxs(_components.code,{language:`json`,numberOfLines:`26`,children:[_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`{`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"model\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"openai/...\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"prompt_cache_key\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"my-session-key\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"prompt_cache_options\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: {`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"mode\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"explicit\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"ttl\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"30m\"`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` },`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"input\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: [`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` {`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"role\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"user\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"content\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: [`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` {`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"type\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"input_text\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"text\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"\u003cREUSABLE_PREFIX>\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"prompt_cache_breakpoint\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: {`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"mode\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"explicit\"`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` },`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` {`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"type\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"input_text\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"text\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"\u003cTASK_SPECIFIC_SUFFIX>\"`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` ]`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` ]`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`}`})}),`\n`]})})}),`\n`,_jsx(_components.p,{children:`Chat Completions API:`}),`\n`,_jsx(CodeBlock,{filename:``,numberOfLines:`26`,language:`json`,children:_jsx(_components.pre,{className:`shiki shiki-themes github-light-default dark-plus`,style:{backgroundColor:`#ffffff`,\"--shiki-dark-bg\":`#0B0C0E`,color:`#1f2328`,\"--shiki-dark\":`#D4D4D4`},language:`json`,children:_jsxs(_components.code,{language:`json`,numberOfLines:`26`,children:[_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`{`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"model\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"openai/...\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"prompt_cache_key\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"my-session-key\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"prompt_cache_options\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: {`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"mode\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"explicit\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"ttl\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"30m\"`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` },`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"messages\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: [`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` {`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"role\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"user\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"content\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: [`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` {`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"type\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"text\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"text\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"\u003cREUSABLE_PREFIX>\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"prompt_cache_breakpoint\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: {`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"mode\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"explicit\"`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` },`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` {`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"type\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"text\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#116329`,\"--shiki-dark\":`#9CDCFE`},children:` \"text\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"\u003cTASK_SPECIFIC_SUFFIX>\"`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` ]`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` ]`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`}`})}),`\n`]})})}),`\n`,_jsxs(_components.p,{children:[`12-hour TTL for a long-lived system prompt, with the rest of the conversation on the 30-minute default (Chat Completions shown; the Responses API takes the same fields on `,_jsx(_components.code,{children:`input_text`}),` blocks):`]}),`\n`,_jsx(CodeBlock,{filename:``,numberOfLines:`34`,language:`json`,children:_jsx(_components.pre,{className:`shiki shiki-themes github-light-default dark-plus`,style:{backgroundColor:`#ffffff`,\"--shiki-dark-bg\":`#0B0C0E`,color:`#1f2328`,\"--s

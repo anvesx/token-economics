@@ -1,0 +1,384 @@
+TITLE: How to Use a Smart Orchestrator Model to Direct Cheaper Sub-Agent Models in Claude Code
+URL: https://www.mindstudio.ai/blog/smart-orchestrator-cheaper-sub-agent-models-claude-code
+ORG: MindStudio  TYPE: blog  DATE: 2026-04
+
+How to Use a Smart Orchestrator Model to Direct Cheaper Sub-Agent Models in Claude Code | MindStudioSkip to main content
+
+Product
+AI ModelsAI Media WorkbenchAgent Skills PluginWorkflow CapabilitiesPricing
+Learn
+UniversityDocumentationBlogAbout
+
+Log inGet StartedMy Workspace
+
+The Problem With Using One Model for Everything
+
+Running an expensive frontier model on every task in a coding workflow is like hiring a senior architect to carry boxes. The model is capable, but most tasks don’t need that level of reasoning — and the cost adds up fast.
+
+Multi-agent workflows solve this by splitting work intelligently. A smart orchestrator model handles planning, decision-making, and review. Cheaper sub-agent models handle the heavy lifting: code generation, file manipulation, test execution, and repetitive tasks. Done right, this pattern can cut your token costs by 5 to 10 times without meaningfully affecting output quality.
+
+This guide walks through how to set up that pattern inside Claude Code — using Claude Opus (or another frontier model) as your orchestrator while routing routine work to models like DeepSeek or Gemma.
+
+What the Orchestrator-Subagent Pattern Actually Means
+
+In a traditional single-model setup, every task — whether it’s writing a complex algorithm or generating a boilerplate function — runs through the same model at the same cost per token. There’s no differentiation based on task complexity.
+
+The orchestrator-subagent pattern introduces a two-tier structure:
+
+Orchestrator: A high-capability model responsible for understanding goals, breaking tasks into subtasks, delegating work, evaluating outputs, and deciding next steps.
+
+Sub-agents: Cheaper, faster models that execute specific tasks — generating code, running searches, reading files, writing tests — under the orchestrator’s direction.
+
+Everyone else built a construction worker.
+We built the contractor.
+
+🦺
+
+CODING AGENT
+
+Types the code you tell it to.
+One file at a time.
+
+🧠
+
+CONTRACTOR · REMY
+
+Runs the entire build.
+UI, API, database, deploy.
+
+The AI agent that builds enterprise-grade apps for any businessTry Remy today
+
+The orchestrator doesn’t need to be the most expensive model available. It just needs to be smarter at reasoning and coordination than the tasks require for raw execution. Claude Opus is well-suited here because its reasoning quality is high, and you use it only when planning or reviewing — not on every token of code it generates.
+
+This model is common in frameworks like CrewAI and LangGraph, and Anthropic has built native support for it directly into Claude Code.
+
+How Claude Code Supports Multi-Agent Workflows
+
+Claude Code is Anthropic’s agentic coding tool. It runs in your terminal, has direct access to your file system and shell, and can execute commands, read and write code, run tests, and interact with external APIs.
+
+What makes it particularly useful for orchestration is its native support for spawning sub-agents using the Task tool. When Claude Code runs as an orchestrator, it can spin up entirely separate Claude instances — or route tasks to different models — each operating in parallel or in sequence.
+
+The Task Tool
+
+The Task tool is how Claude Code creates and delegates to sub-agents. When the orchestrator calls Task, it:
+
+Defines what the sub-agent should accomplish
+
+Specifies the context the sub-agent needs
+
+Receives the result when the sub-agent completes
+
+Each sub-agent operates in its own isolated context. This is important because it means the sub-agent doesn’t have access to everything the orchestrator knows — only what it’s explicitly told. That isolation keeps things clean and focused.
+
+Model Selection at the Task Level
+
+Claude Code supports configuring which model handles which role. The orchestrator can be set to a different model than the sub-agents, giving you direct control over where the expensive model’s tokens go.
+
+Setting Up Claude Opus as the Orchestrator
+
+To configure Claude Opus as the orchestrator, you set it as the primary model in your Claude Code session. This is the model that reads your initial prompt, understands the goal, plans the approach, and coordinates sub-agents.
+
+Step 1: Install Claude Code
+
+If you haven’t already, install Claude Code via npm:
+
+npm install -g @anthropic-ai/claude-code
+
+Authenticate with your Anthropic API key:
+
+claude config set api_key YOUR_API_KEY
+
+Step 2: Set the Orchestrator Model
+
+Launch Claude Code with Opus as the primary model:
+
+claude --model claude-opus-4-5
+
+Or set it persistently in your project config:
+
+claude config set model claude-opus-4-5
+
+This model handles all orchestration-level reasoning. It’s where your complex decision-making happens — but not where your bulk code generation happens.
+
+Step 3: Write a System Prompt That Positions It as an Orchestrator
+
+Claude Code accepts custom system prompts via a CLAUDE.md file in your project root. This is where you define the orchestrator’s role.
+
+A simple example:
+
+# Role
+You are an orchestrator. Your job is to plan tasks, delegate them to sub-agents, 
+review their outputs, and iterate as needed.
+
+# Guidelines
+- Break complex tasks into focused subtasks.
+- Use sub-agents for code generation, file reads, test runs, and searches.
+- Review sub-agent outputs before accepting them.
+- Do not write code yourself unless no sub-agent is available.
+- When a sub-agent's output is wrong, correct your instructions and retry — 
+ do not fix the output manually unless it's a minor formatting issue.
+
+This framing keeps the expensive model focused on coordination rather than raw generation.
+
+Configuring Cheaper Sub-Agent Models
+
+Self-host
+Remy.
+On-prem or in your private cloud. Remy and every app you build stay inside your walls.
+The AI platform for building secure, compliant enterprise appsTry Remy today
+
+This is where the cost savings come from. Instead of routing every sub-task back to Opus, you point routine tasks at faster, cheaper models.
+
+Supported Sub-Agent Models
+
+Claude Code’s multi-agent setup works with models available through Anthropic’s API natively. For external models like DeepSeek or Gemma, you’ll route them through compatible API endpoints that Claude Code can call.
+
+Common options for sub-agents:
+
+Claude Haiku — Anthropic’s fastest, cheapest model. Native to Claude Code. Great for file reads, simple code snippets, and formatting tasks.
+
+DeepSeek Coder — Strong on code-specific tasks at a fraction of the cost of frontier models. Accessible via DeepSeek’s API.
+
+Gemma 3 (via Ollama or Google’s API) — Capable open-weight model, useful for general-purpose sub-tasks.
+
+Qwen2.5-Coder — Another strong open-source coding model that handles repetitive code generation well.
+
+Step 4: Configure Sub-Agent Model Routing
+
+Claude Code allows you to specify the model for sub-agents using the --model flag when tasks are spawned programmatically, or by setting environment-level configurations.
+
+For direct control, you can use the claude SDK in a custom orchestration script:
+
+import anthropic
+
+client = anthropic.Anthropic()
+
+# Orchestrator call — uses Opus
+orchestrator_response = client.messages.create(
+ model="claude-opus-4-5",
+ max_tokens=1024,
+ messages=[{
+ "role": "user",
+ "content": "Plan how to refactor the authentication module. Break it into subtasks."
+ }]
+)
+
+# Parse orchestrator output to get task list
+tasks = parse_tasks(orchestrator_response.content)
+
+# Sub-agent calls — uses Haiku for execution
+for task in tasks:
+ sub_agent_response = client.messages.create(
+ model="claude-haiku-4-5",
+ max_tokens=4096,
+ messages=[{
+ "role": "user", 
+ "content": task
+ }]
+ )
+ # Collect and return to orchestrator for review
+
+This gives you explicit control over which model handles which phase.
+
+Step 5: Use Claude Code’s Native Task Delegation
+
+If you’re working inside Claude Code’s interactive mode rather than scripting it, you can instruct the orchestrator via your CLAUDE.md to delegate using the Task tool automatically.
+
+When Claude Code sees a complex request, with the right system prompt, it will:
+
+Decompose the goal into sub-tasks
+
+Spawn sub-agents for each
+
+Collect results
+
+Review and synthesize
+
+The model selection for sub-agents can be specified in the Task call parameters.
+
+Designing Tasks for Each Model Tier
+
+The key to making this cost-effective is assigning the right work to the right tier. If your orchestrator is doing tasks a sub-agent could handle, you’re burning money. If your sub-agents are handling tasks that require complex reasoning, you’ll get bad outputs.
+
+What to Give the Orchestrator (Opus)
+
+Understanding the overall goal and user intent
+
+Breaking the goal into concrete, focused sub-tasks
+
+Reviewing sub-agent outputs for correctness
+
+Deciding whether to retry, refine, or accept
+
+Handling ambiguous situations where judgment matters
+
+Synthesizing outputs into a coherent final result
+
+What to Give Sub-Agents (Haiku / DeepSeek / Gemma)
+
+Writing specific functions or classes
+
+Generating boilerplate code
+
+Running file reads and reporting content
+
+Writing tests for a given function signature
+
+Executing shell commands and returning output
+
+Searching documentation or files
+
+Reformatting or refactoring well-defined code blocks
+
+The rule of thumb: if you could give a junior developer a clear, unambiguous task and get a reliable result, a sub-agent can handle it. If the task requires judgment, context-awareness, or architectural thinking, keep it with the orchestrator.
+
+Developers have their tools.Enterprises have Remy.
+
+Developers> add rate limiting to the API
+● Reading src/server.ts
+● Editing 3 files
++ import { limit } from 'rate'
+- app.use(cors())
+✓ Tests passed · ready for PR
+
+Enterprises
+Loan Approvals● Live
+SOC 2Role-based accessSelf-hosted
+Mortgage · $412,000Approved
+Small business · $85,000Approved
+Auto · $31,500Approved
+The AI platform for building secure, compliant enterprise appsTry Remy today
+
+A Practical Example: Refactoring a Module With Orchestrated Agents
+
+Here’s how this looks end-to-end on a realistic task: refactoring a legacy authentication module.
+
+User prompt to orchestrator (Opus):
+
+Refactor auth/session.py to use JWT tokens instead of server-side sessions. Keep the existing API surface intact.
+
+Orchestrator’s plan (generated internally):
+
+Read auth/session.py to understand current implementation
+
+Read auth/routes.py to understand how session functions are called
+
+Generate a new JWT-based implementation of session.py
+
+Update any route handlers that need modification
+
+Write unit tests for the new implementation
+
+Review all changes for consistency
+
+Task delegation:
+
+Tasks 1–2: Sub-agent reads files and returns content
+
+Task 3: Sub-agent generates the new session.py
+
+Task 4: Sub-agent updates routes based on the new API
+
+Task 5: Sub-agent writes tests
+
+Task 6: Orchestrator reviews all outputs, checks for inconsistencies, requests fixes if needed
+
+In this example, Opus only uses tokens for planning (step 0), reviewing (step 6), and handling any corrections. Everything else runs through a cheaper model. On a task this size, you might use 2,000–3,000 Opus tokens and 15,000–25,000 Haiku or DeepSeek tokens — a significant cost difference given the price gap between frontier and budget models.
+
+Common Mistakes (and How to Avoid Them)
+
+Over-relying on the orchestrator for execution
+
+If your orchestrator ends up writing code directly instead of delegating, you’ve defeated the purpose. Write your CLAUDE.md explicitly telling it not to do so.
+
+Giving sub-agents too much context
+
+Sub-agents work best with focused, bounded tasks. If you dump an entire codebase into a sub-agent’s context, you’re wasting tokens on that tier too. Have the orchestrator extract only the relevant context before delegating.
+
+Trusting sub-agent outputs without review
+
+Cheaper models make more mistakes. The orchestrator’s review step isn’t optional — it’s where you catch errors before they compound. Build explicit review checkpoints into your workflow.
+
+Using a fixed model for every sub-task
+
+Some sub-tasks are harder than others. A quick file read works fine with Haiku. A complex algorithmic implementation might warrant bumping up to Sonnet. Design your routing to match task complexity, not just task type.
+
+Ignoring context window limits
+
+When orchestrating multiple sub-agents in parallel, each one has its own context window. If you need results from multiple sub-agents synthesized, that synthesis happens at the orchestrator level — and you need to budget context for it. Keep sub-agent outputs concise before sending them back.
+
+Frequently Asked Questions
+
+What’s the difference between an orchestrator and a sub-agent in Claude Code?
+
+An orchestrator is the model responsible for understanding the overall goal, planning how to achieve it, delegating work to other models, and reviewing outputs. A sub-agent is a model (often cheaper and faster) that executes specific, bounded tasks under the orchestrator’s direction. In Claude Code, this is implemented using the Task tool, which lets the orchestrator spawn isolated agent instances.
+
+Can I use non-Anthropic models as sub-agents in Claude Code?
+
+Build enterprise applications with AI.
+Secure. Regulation-compliant.
+Auditable. Scalable.
+The AI platform for building secure, compliant enterprise appsTry Remy today
+
+Yes, but with some setup. Claude Code natively supports Anthropic models. To use models like DeepSeek Coder or Gemma as sub-agents, you’ll typically route them through compatible API endpoints — either by wrapping them in a script-level orchestration layer or using a proxy that exposes them via an OpenAI-compatible API. Tools like LiteLLM can help bridge this.
+
+How much can I actually save with orchestrator-subagent routing?
+
+Cost savings depend on the proportion of work handled by cheaper models. In a well-designed workflow, 80–90% of token usage moves to cheaper models. Claude Haiku, for instance, costs roughly 25x less than Claude Opus per token as of mid-2025. DeepSeek models are even cheaper. Real-world savings of 5–10x on total token cost are common for projects where generation and execution tasks dominate.
+
+Does using a cheaper sub-agent model hurt code quality?
+
+For well-scoped tasks with clear instructions, the quality difference is minimal. Modern budget models handle straightforward code generation competently. Where quality drops are noticeable is on tasks requiring architectural judgment, complex reasoning, or resolving ambiguity — which is exactly why those tasks stay with the orchestrator. The review step is also critical: catching and correcting sub-agent errors before they propagate maintains overall output quality.
+
+How do I handle errors when a sub-agent produces bad output?
+
+The orchestrator should detect bad output during its review step and respond in one of three ways: provide better instructions and retry with the same sub-agent, escalate the task to a more capable model, or handle the task itself if the error is minor. Build explicit error handling into your orchestration logic rather than assuming sub-agents will always succeed.
+
+Is this pattern only useful for large projects?
+
+No. Even on smaller projects, routine tasks like writing tests, generating documentation, or reformatting code can run on cheaper models without any meaningful quality loss. The orchestrator-subagent pattern scales down well — even a simple two-call setup (plan with Opus, generate with Haiku) produces cost savings without adding significant complexity.
+
+Key Takeaways
+
+The orchestrator-subagent pattern splits work by complexity: expensive frontier models handle reasoning and review, cheaper models handle execution.
+
+Claude Code supports this natively through the Task tool, which lets an orchestrator spawn isolated sub-agents.
+
+Setting up Opus as the orchestrator and Haiku or DeepSeek as sub-agents can reduce token costs by 5–10x without meaningful quality loss.
+
+The most important design decisions are what work each tier handles and how the orchestrator reviews sub-agent output.
+
+For workflows that extend into business tooling (Slack, Notion, HubSpot, etc.), MindStudio’s Agent Skills Plugin adds a clean infrastructure layer that handles API connections without extra setup.
+
+The pattern takes a bit of upfront design, but once it’s running, it’s one of the most effective ways to run capable AI workflows without your API bill scaling linearly with usage. Start with a simple two-tier setup, observe where the orchestrator is doing work a sub-agent could handle, and optimize from there.
+Editorial standards
+
+Related Articles
+
+July 20, 2026
+Open-Weight AI Reaches the Frontier: What Kimi K3 Means for Your Agent Stack
+For the first time, an open-weight model matches frontier performance on coding. Here's what Kimi K3's release means for AI builders and agent stacks.
+LLMs & ModelsMulti-AgentAI Concepts
+
+July 17, 2026
+How to Use GPT-5.6 Ultra Mode: Multi-Agent Coordination for Complex Tasks
+GPT-5.6 Ultra mode spawns at least four AI agents simultaneously to tackle demanding tasks. Here's when to use it and what to expect on cost and speed.
+GPT & OpenAIMulti-AgentWorkflows
+
+July 12, 2026
+How to Use Grok 4.5 as a Cheaper Sub-Agent in Multi-Model AI Workflows
+Grok 4.5 matches GPT-5.5 on coding benchmarks at $2 per million input tokens. Learn how to route tasks to it from a smarter orchestrator model.
+Multi-AgentWorkflowsLLMs & Models
+
+July 9, 2026
+How to Use Fable 5 as Architect and Grok 4.5 as Construction Crew in Multi-Agent Workflows
+Use frontier models for planning and cheaper models for execution. This real example built a 50-district 3D city for $8 using this split-model pattern.
+Multi-AgentWorkflowsLLMs & Models
+
+Presented by MindStudio
+
+No spam. Unsubscribe anytime.
+
+You're in! Check your inbox.
+
+Get weekly AI insights from MindStudioSubscribe

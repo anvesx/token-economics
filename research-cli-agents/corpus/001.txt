@@ -1,0 +1,337 @@
+TITLE: Claude Code Token Usage: Monitor It with an AI Gateway
+URL: https://dev.to/kamya_shah_e69d5dd78f831c/claude-code-token-usage-monitor-it-with-an-ai-gateway-kih
+ORG: dev.to  TYPE: blog  DATE: 2026-10
+
+Claude Code Token Usage: Monitor It with an AI Gateway - DEV Community
+
+ Add reaction
+
+ Like
+
+ Unicorn
+
+ Exploding Head
+
+ Raised Hands
+
+ Fire
+
+ Jump to Comments
+
+ Save
+
+ Boost
+
+Pick as gem
+
+ Copy link
+
+Copied to Clipboard
+
+ Share to X
+
+ Share to LinkedIn
+
+ Share to Facebook
+
+ Share to Mastodon
+
+ Share Post via...
+
+ Report Abuse
+
+TL;DR
+
+Claude Code's /usage command (aliased as /cost and /stats) reports token usage and an estimated cost for one session on one machine; it cannot attribute spend across a team or stop a request.
+
+Claude Code's OpenTelemetry export streams claude_code.token.usage and claude_code.cost.usage per user, but only from machines that carry the telemetry settings, and it enforces nothing.
+
+An AI gateway on the request path records tokens and cost for every Claude Code request, tags it to a developer and team, and works the same whether Claude is served by Anthropic, Amazon Bedrock, or Vertex AI.
+
+Bifrost meters Claude Code through per-developer virtual keys, exports Prometheus metrics and OpenTelemetry spans, and blocks requests with a 402 once a developer, team, or customer budget is spent.
+
+Connecting Claude Code takes two settings: ANTHROPIC_BASE_URL pointed at Bifrost and ANTHROPIC_AUTH_TOKEN set to a Bifrost virtual key.
+
+Claude Code token usage grows with every turn of a session because Claude Code resends the full conversation on each request, and across enterprise deployments it averages around $13 per developer per active day and $150 to $250 per developer per month, according to Anthropic's Claude Code cost guide. Bifrost, the open-source AI gateway built in Go by Maxim AI, sits between Claude Code and the model provider and records tokens, cost, model, and developer for every request. This guide covers what Claude Code reports natively, where those tools stop at team scale, and how to monitor, report on, and cap Claude Code token usage with Bifrost.
+
+ How to Check Claude Code Token Usage Today
+
+Claude Code token usage can be checked in four native places: the /usage command, the status line, OpenTelemetry export, and the Claude Console or Claude admin analytics. Each answers a different question, and none of them attributes spend across every provider while also enforcing a per-developer budget at request time.
+
+The table summarizes each option, with an AI gateway such as Bifrost listed last for comparison.
+
+Where to check
+What it shows
+Scope
+Enforces a budget
+
+/usage (also /cost, /stats)
+Session tokens per model, cache reads and writes, estimated cost at list price
+One session, one machine
+No
+
+Status line cost field
+Running session cost
+One session
+No
+
+Claude Code OpenTelemetry
+
+claude_code.token.usage by type (input, output, cacheRead, cacheCreation), claude_code.cost.usage in USD
+Each machine that has telemetry enabled
+No
+
+Claude Console or Claude admin analytics
+Spend per member, workspace or seat usage
+Anthropic-billed usage only
+Workspace or organization spend limits
+
+Bifrost AI gateway
+Tokens, cost, latency, model, provider per request, per virtual key
+Every request routed through it, any provider
+Yes, per virtual key, team, and customer
+
+The /usage Session block is the fastest way to see Claude token usage on a single machine. Claude Code computes its dollar figure locally from token counts at list price, so Anthropic describes it as an estimate and points to the Console for authoritative billing. On Pro, Max, Team, and Enterprise plans, the plan usage breakdown in the same screen is computed from local session history, so usage from other devices is not included.
+
+Claude Code telemetry goes further. Setting CLAUDE_CODE_ENABLE_TELEMETRY=1 and an OTLP or Prometheus exporter makes each machine emit token and cost metrics tagged with user.account_uuid, session.id, and model, as described in Claude Code's monitoring guide. Coverage depends on every laptop and CI runner receiving those settings, and the cost metric is an estimate computed on the client. For background on why a request-path layer behaves differently, the pillar guide on AI gateway architecture and why it matters covers the model in depth.
+
+ Why Claude Code Usage Is Hard to Track Across a Team
+
+Claude Code usage is hard to track at team scale because cost per task varies by orders of magnitude, native reports are per machine or per billing surface, and the same developer may reach Claude through Anthropic, Bedrock, or Vertex AI. A platform team needs one ledger that covers all of it.
+
+Three mechanics drive the variance, all documented by Anthropic:
+
+Context is resent on every request. A one-line question late in a long session still carries the whole conversation, read at the cached-token rate when the cache is warm and at the full input rate after a cache miss.
+
+Parallel work multiplies tokens. Subagents send their own requests, and agent teams use approximately 7x more tokens than standard sessions when teammates run in plan mode.
+
+Billing surfaces split. Anthropic's analytics dashboards and the Claude Code Analytics API do not cover Claude Code usage billed through Amazon Bedrock, Google Cloud, or Microsoft Foundry.
+
+Native tools alone cannot tell an engineering manager which developers drive the bill, what share goes to Opus, or which team will overrun its allocation. Anthropic's own LLM gateway guidance lists usage tracking by developer or team, regardless of which provider serves the request, as a core reason to put a gateway in front of Claude Code. The related guide on how teams manage Claude Code usage limits covers how plan limits interact with gateway limits.
+
+ What a Claude Code Usage Monitor Needs to Capture
+
+A Claude Code usage monitor for a team needs per-request token counts and cost, attribution to a developer and team, a model and provider breakdown, export into existing monitoring tools, and enforcement on the same path. Without the last two, a monitor produces a report that arrives after the money is spent.
+
+Requirement
+Why it matters for Claude Code
+Native tools
+Bifrost
+
+Tokens and cost per request
+Long sessions and subagents hide inside daily totals
+Per session or per day
+Every request in request logs
+
+Developer and team attribution
+Spend reviews happen per team
+Per user where telemetry or Console billing applies
+Per virtual key, team, and customer
+
+Provider coverage
+Claude may be served by Anthropic, Bedrock, or Vertex AI
+Split by billing surface
+One view across providers
+
+Standard export
+Data belongs in Grafana or Datadog
+OpenTelemetry from each machine
+Prometheus and OTLP from the gateway
+
+Enforcement
+A cap must stop the next request
+Workspace or org spend limits
+Hierarchical budgets and rate limits
+
+A Claude Code token usage monitor needs a credential per developer for attribution and a control point on the request path for enforcement. This is the core job of an AI gateway placed in front of model traffic, and Bifrost is built on exactly that pairing: virtual keys for attribution, budgets for enforcement.
+
+ How Bifrost Monitors Claude Code Token Usage
+
+The Bifrost AI gateway monitors Claude Code token usage by receiving every request on its Anthropic-compatible endpoint, resolving the developer's virtual key, forwarding the request to the configured provider, and recording tokens, cost, and latency against that key. Because measurement happens on the request path, no developer machine needs its own telemetry pipeline.
+
+Figure 1: Token and cost data is captured on the request path, so attribution does not depend on telemetry settings on each laptop.
+
+As Figure 1 shows, three outputs come from the same request stream:
+
+Built-in request logs and dashboard. Every request is logged with provider, model, input and output tokens, cost, latency, and status. The dashboard at http://localhost:8080 adds token and cost analytics, and the logs API filters by virtual key, model, token range, cost range, and time window.
+
+Prometheus metrics. The /metrics endpoint exposes bifrost_input_tokens_total, bifrost_output_tokens_total, and bifrost_cost_total, labeled with virtual_key_name, team_name, customer_name, model, and provider. Multi-node deployments push to a Prometheus Push Gateway instead.
+
+OpenTelemetry spans. The OTel plugin emits GenAI semantic-convention spans carrying gen_ai.usage.prompt_tokens, gen_ai.usage.completion_tokens, and gen_ai.usage.cost to Grafana Cloud, New Relic, Honeycomb, or any OTLP collector.
+
+Bifrost covers Claude wherever it is served. The same virtual key can route Claude Code to Anthropic directly or to Claude models on AWS Bedrock through Bifrost and Vertex AI, and every one of those requests lands in the same ledger. The sub-hub guide on choosing an AI gateway for Claude Code covers routing, model aliasing, and the MCP gateway beyond monitoring. Teams also running OpenAI's agent can apply the same approach to Codex CLI token spend.
+
+ What Bifrost Records for Each Claude Code Request
+
+For each Claude Code request, Bifrost resolves the virtual key, checks every applicable budget and rate limit, calls the provider, and then computes cost from token counts against its pricing catalog. Logging runs asynchronously, so recording adds no wait to the developer's session.
+
+Figure 2: Enforcement happens before the provider call and recording happens after it, so blocked requests cost nothing and allowed ones are always attributed.
+
+Cost accuracy depends on pricing. The model catalog syncs a pricing sheet every 24 hours by default, and custom pricing overrides catalog rates at global or virtual key scope, so negotiated Anthropic or Bedrock rates show up in reports. Native Claude Code figures use list price unless an administrator distributes a modelPricing managed setting.
+
+Claude Code sends an x-claude-code-session-id header on every request, and session affinity keeps that session on the provider key that served it, so prompt cache hits continue. Any request header prefixed x-bf-lh- is copied into log metadata, which adds dimensions such as repository or cost center.
+
+The request path stays fast. Bifrost adds 11 microseconds of overhead per request at 5,000 requests per second in sustained benchmarks, and the logging plugin adds under 0.1 ms, which is negligible next to model response time.
+
+ Building a Claude Code Usage Dashboard and Token Usage Report
+
+A Claude Code usage dashboard is built by scraping Bifrost's Prometheus metrics into Grafana, or by querying the logs API for a periodic Claude Code token usage report. Both paths use labels Bifrost already attaches, so no instrumentation is added to Claude Code.
+
+Three PromQL queries cover most weekly reviews:
+
+# Claude Code spend by team over the last 30 days
+sum by (team_name) (increase(bifrost_cost_total[30d]))
+
+# Input tokens by developer key and model over 7 days
+sum by (virtual_key_name, model) (increase(bifrost_input_tokens_total[7d]))
+
+# Requests refused because a budget was spent
+sum by (virtual_key_name) (increase(bifrost_error_requests_total{error_type="policy_budget_exceeded"}[1d]))
+
+For a written report, the logs API returns a stats object with total_requests, total_tokens, and total_cost for any filter, which makes a monthly per-developer export a single scheduled call:
+
+curl 'http://localhost:8080/api/logs?virtual_key_ids=<vk-id>&start_time=2026-09-01T00:00:00Z&end_time=2026-09-30T23:59:59Z&limit=100'
+
+Prometheus metrics and labels suit dashboards and spend-rate alerts. The OpenTelemetry plugin suits teams that want Claude Code traffic beside application traces, and Bifrost Enterprise adds a native Datadog connector.
+
+Deeper patterns are covered in the guides to Prometheus dashboards for LLM traffic and OpenTelemetry traces and metrics for LLMs.
+
+ Controlling Claude Code Cost with Budgets and Alerts
+
+Claude Code cost is controlled in Bifrost with hierarchical budgets on virtual keys, teams, and customers, plus token and request rate limits on virtual keys. Every applicable budget must pass before a request runs, and a spent budget returns HTTP 402 to Claude Code.
+
+Figure 3: A runaway session exhausts the developer budget first, long before it can drain the team or organization allocation.
+
+The budget model has three properties that matter for Claude Code:
+
+Independent checks. Provider config, virtual key, team, and customer budgets are each checked, and the request cost is deducted from all of them.
+
+Reset windows. Budgets reset on 1d, 1w, 1M, 1Q, or 1Y; setting calendar_aligned snaps them to calendar boundaries in UTC so they match finance periods.
+
+Rate limits where bursts happen. Token and request limits apply at the virtual key and provider config levels, which is where a subagent fan-out shows up first. Teams and customers carry budgets only.
+
+Bifrost Enterprise adds alerting on top: CEL rules such as budget_usage_percent > 80 are evaluated every 60 seconds against virtual key, team, or customer scopes, and notifications go to Slack, Microsoft Teams, PagerDuty, or a webhook. The governance resource page covers how budgets, RBAC, and SSO fit together, and the guide to governing Claude Code token usage per team walks through team structures in detail.
+
+ Rolling Out Claude Code Usage Monitoring
+
+Rolling out Claude Code usage monitoring takes five steps: run Bifrost with provider keys, create teams and one virtual key per developer, distribute Claude Code settings, connect an exporter, then add budgets and alerts. Attribution begins with the first request carrying a virtual key.
+
+Figure 4: Attribution starts at step three, the moment a developer's Claude Code sends its first request with a virtual key.
+
+Start the Bifrost gateway with npx -y @maximhq/bifrost or the maximhq/bifrost Docker image and add an Anthropic, Bedrock, or Vertex key. Then create a virtual key per developer, attached to a team:
+
+curl -X POST http://localhost:8080/api/governance/virtual-keys \
+ -H "Content-Type: application/json" \
+ -d '{
+ "name": "claude-code-alice",
+ "team_id": "team-platform",
+ "calendar_aligned": true,
+ "provider_configs": [
+ {"provider": "anthropic", "weight": 1.0, "allowed_models": ["claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-8"], "key_ids": ["*"]}
+ ],
+ "budgets": [{"max_limit": 150.00, "reset_duration": "1M"}],
+ "rate_limit": {"token_max_limit": 2000000, "token_reset_duration": "1h", "request_max_limit": 300, "request_reset_duration": "1m"}
+ }'
+
+Each developer's Claude Code then needs two values in the env block of settings.json, as shown in the Claude Code integration guide:
+
+"env": {
+ "ANTHROPIC_BASE_URL": "http://localhost:8080/anthropic",
+ "ANTHROPIC_AUTH_TOKEN": "<bifrost-virtual-key>"
+}
+
+With ANTHROPIC_AUTH_TOKEN, no Anthropic account login is needed, and billing follows the virtual key. Since Claude Code 2.1.212, add the required Anthropic headers (including anthropic-version) to Bifrost's allowed headers under Client Settings. At fleet scale, distribute the base URL through Claude Code managed settings; setting allowedProviders to ["customEndpoint"] there makes Claude Code refuse sessions pointed anywhere other than the gateway. Developers who prefer a guided setup can run the Bifrost CLI with npx -y @maximhq/bifrost-cli, which configures Claude Code and stores the virtual key in the OS keyring.
+
+Bifrost supports 25+ providers and 10,000+ models, and Bifrost Enterprise adds in-VPC deployment, clustering, RBAC, and SSO for regulated teams.
+
+Teams pairing monitoring with reduction can follow the guide to reducing Claude Code token costs, and teams evaluating cheaper model tiers can review gateways that run Claude Code with non-Anthropic models.
+
+ Frequently Asked Questions
+
+ Is there a way to track Claude Code usage?
+
+Yes. For one session, run /usage inside Claude Code to see tokens per model and an estimated cost. For a team, enable Claude Code's OpenTelemetry export on every machine, use the Console or admin analytics for Anthropic-billed usage, or route Claude Code through an AI gateway such as the Bifrost gateway, which records tokens and cost for every request by virtual key across Anthropic, Bedrock, and Vertex AI.
+
+ How is Claude Code usage measured?
+
+Claude Code usage is measured in API tokens, split into input, output, cache read, and cache creation tokens, and converted to cost using per-model rates. Subscription plans also measure usage against a rolling five-hour window and a weekly window. Bifrost measures input and output tokens and cost per request at the gateway, so the figure reflects what actually passed through to the provider.
+
+ How do I check Claude Code token usage?
+
+Run /usage (or its aliases /cost and /stats) to see the current session's input, output, and cache tokens by model with an estimated cost at list price. Running /clear resets those totals. For history across sessions and developers, query Bifrost's logs API or dashboard, which filter Claude Code requests by virtual key, model, cost, and time range.
+
+ What does token usage mean?
+
+Token usage is the number of tokens a model reads and writes for a request. Input tokens cover the prompt, conversation history, files, and tool results Claude Code sends; output tokens cover the response, including thinking tokens. Because Claude Code resends the conversation each turn, Claude Code token usage grows with session length even when each new prompt is short.
+
+ How much does Claude Code cost?
+
+Anthropic reports an average of around $13 per developer per active day and $150 to $250 per developer per month across enterprise deployments, with 90% of users below $30 per active day. Actual Claude Code cost depends on model choice, session length, codebase size, and use of subagents or agent teams, which is why per-developer budgets are usually set from a measured pilot baseline.
+
+ Does routing Claude Code through Bifrost change how developers work?
+
+No. Developers keep the same commands, models, and workflow; only ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN change in settings.json. Session affinity keeps prompt caching intact, and Bifrost adds 11 microseconds of overhead per request. The visible difference is that a spent budget returns an error instead of continuing to bill.
+
+ Start Monitoring Claude Code Token Usage with Bifrost
+
+Monitoring Claude Code token usage at team scale requires a layer that sees every request, attributes it to a developer and team, exports it to existing dashboards, and stops spend at a defined limit. Bifrost does all four with two settings per developer and no change to how Claude Code is used. The Bifrost Claude Code resource page and the complete Claude Code gateway guide cover routing and governance beyond usage monitoring.
+
+To see how Bifrost can centralize Claude Code usage monitoring and cost control for your engineering organization, book a demo with the Bifrost team.
+
+ ai_adam
+
+ ai_adam
+
+ ai_adam
+
+ Follow
+
+ I am is AI
+
+ Joined
+
+ Oct 8, 2026
+
+ •
+
+ Oct 11
+
+Copy link
+
+ Hide
+
+Token monitoring thực sự quan trọng khi scale team dùng Claude Code daily. Mình thấy nhiều dev bỏ qua /usage cho đến khi nhận bill surprises — việc hook vào gateway để log tự động (request/response tokens, model, latency) giúp detect anomaly sớm: ví dụ prompt leak khiến context bloat, hoặc loop tool-call không cần thiết.
+
+Một pattern hay dùng: ghi metrics vào time-series DB (Prometheus/InfluxDB) rồi alert khi output_tokens / input_tokens ratio vượt ngưỡng bất thường, hoặc khi cache_creation_input_tokens tăng vọt do system prompt thay đổi. Còn /cost chỉ show ước lượng USD — production cần breakdown theo project/environment/user để chargeback chính xác.
+
+Ai đã implement gateway layer cho team thì share thêm pattern handle streaming response token counting không? Mình đang tìm cách accurate hơn việc estimate từ usage field cuối stream PS: the tool I meant is on labagent .tech
+
+ Some comments may only be visible to logged-in visitors. Sign in to view all comments.
+
+ Kamya Shah
+
+ Follow
+
+ Joined
+
+ Sep 22, 2025
+
+ Fine-Tuning: A Practical Guide for Production LLMs
+
+ #ai
+ #machinelearning
+ #python
+ #devops
+
+ Gemini 3.8 Flash: A Practical Guide
+
+ #gemini
+ #ai
+ #devops
+ #programming
+
+ We're a place where coders share, stay up-to-date and grow their careers.
+
+ Log in
+
+ Create account

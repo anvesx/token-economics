@@ -1,0 +1,135 @@
+TITLE: AI Gateway vs. OpenAI API (Vercel)
+URL: https://vercel.com/i/ai-gateway-vs-openai-api-direct
+ORG: Vercel  TYPE: blog  DATE: 2026-07
+
+AI Gateway vs. OpenAI API - Vercel
+Skip to content
+
+27 Jul 2026
+10 min read
+
+Copy
+
+Most teams running applications and LLM agents at scale don't realize that choosing between a direct integration and AI Gateway is a reliability decision before a convenience one.
+They start on OpenAI with a direct integration, because a gateway looks like overhead when you have only one model and provider. That setup sends every request to one provider with nowhere to fall back, so a rate limit, timeout, or outage takes the request down with it.
+Across the AI Gateway fleet, 3.5% of requests succeed only because the gateway failed them over to a second provider, and those rescued calls skew expensive enough to carry 4.9% of spend.
+On a direct integration, every one of those is a user-visible error you resolve by hand. The rest of this comparison works through that reliability gap alongside cost, caching, and migration.
+Copy link to headingKey takeaways
+
+Across the AI Gateway fleet, 3.5% of requests complete only after failing over to another provider. On a single-provider direct path, those requests fail.
+
+Direct calls are simpler for a single-provider prototype, and that simplicity fades once you maintain retry, backoff, and deprecation migrations yourself.
+
+AI Gateway routes tokens at the provider list price with zero markup. Optional features like team-wide Zero Data Retention add $0.10 per 1,000 requests.
+
+Go direct when you need prompt cache control, since a gateway can silently invalidate cache hits and a 90% cached-token discount changes your unit economics.
+
+AI SDK 7 uses AI Gateway as its default provider, so teams already on the AI SDK write extra code to go direct.
+Copy link to headingWhat is Vercel AI Gateway?
+AI Gateway is a managed routing layer between your application and AI providers. One unified endpoint reaches hundreds of models from every major provider, with automatic failover, model fallbacks, bring-your-own-key (BYOK) credentials, caching, and routing rules that can rewrite or deny model requests. Token pricing follows the provider's list price with zero markup.
+The gateway routes to models that already exist. Model hosting and fine-tuning stay provider functions, and the routing layer reflects what we learned about load balancing across a mixture of providers while scaling v0.
+That operational experience is also why observability ships inside the gateway from day one instead of arriving as a later add-on. The gateway reports per-model time to first token (TTFT) and spend, with token counts in the same view, so you get the reporting a direct integration would make you build or buy separately.
+All of it runs on infrastructure Vercel operates end-to-end. Under the hood, it's a Node.js service running on Fluid compute across multiple Amazon Web Services (AWS) regions, fronted by the Global Network with Anycast routing and private backbone connectivity. Every hop, from client ingress to provider response, stays inside Vercel-managed boundaries, so traffic avoids unpredictable public internet routes.
+Copy link to headingWhat calling the OpenAI API directly gives you
+The direct path gives you deterministic routing and full control over the request. Your code holds an API key, sends requests straight to OpenAI's endpoint, and handles retry, backoff, and error parsing in-process. Every request goes exactly where you point it, with nothing in between to reinterpret it.
+That control earns its keep when you need provider-specific behavior. The OpenAI provider exposes options a unified API may not fully surface, and a direct integration gives you hands-on control of prompt caching. Anthropic cache reads, for example, use manual cache_control markers and are billed at one-tenth of the base input rate.
+The operational burden ships in the same box. OpenAI enforces tiered rate limits tied to cumulative spend, and Tier 1 starts at a $100 monthly cap. Those same tiers set your tokens-per-minute (TPM) budget, and a single request counts against it in full.
+On a Tier 1 account whose flagship model allows 30,000 TPM, one request over 30,000 tokens fails outright, so the model's 128,000-token context window is unreachable in a single call until you move up a tier. Newer long-context models carry a separate long-context limit, so treat the exact numbers as tier- and model-specific.
+The failure mode is expensive to debug. Short prompts pass and long ones fail, so the errors look random until someone finds the tier table and realizes a limit labeled per minute is capping the size of a single request.
+Copy link to headingHow AI Gateway and the direct OpenAI API compare
+The five dimensions below split cleanly, drawn from production fleet behavior rather than a feature sheet. Reliability and caching decide most real cases, and the rest matter only at the margins.
+
+Dimension
+Vercel AI Gateway
+Direct OpenAI API
+
+Reliability and failover
+Automatic. 3.5% of requests complete after a fallback
+Retry and fallback logic lives in your code. The December 26, 2024 outage ran about four and a half hours for the API, with failover requiring manual intervention
+
+Latency overhead
+Sub-20ms at the gateway layer (Vercel-published figure, no controlled head-to-head published). Zo Computer saw 25.7% better average latency on its most-used model after switching
+Zero added network hop
+
+Token cost
+Provider list price, zero markup. Optional Zero Data Retention (ZDR) or provider allowlist adds $0.10 per 1,000 requests. Custom Reporting queries cost $5.00 per 1,000
+Provider list price, no platform surcharges
+
+Observability
+Built-in TTFT and spend reporting, with token counts and per-model breakdowns, plus a Custom Reporting API queryable by user, tag, provider, or credential type
+Build or buy a logging layer separately
+
+Migration effort
+AI SDK with a gateway model string, such as openai/gpt-5.5 and no import. OpenAI Python SDK migrates via a base-URL swap
+Requires installing and importing @ai-sdk/openai, plus provider-specific code to maintain
+On reliability, failover rescued 4.9% of dollars across the fleet, not only requests, because the rescued calls skew larger and more expensive than the ones that never fail. A direct integration turns that same 4.9% into failed requests that burn retry time and become incident reviews your team runs by hand.
+The uptime providers publish hides most of that failure risk. OpenAI currently reports 99.93% API uptime, and that number is accurate. Your application experiences something different. During the December 2024 incident, error rates went above 90% on agents and real-time speech endpoints, batch endpoints crossed the same threshold, and text completions stayed up. A provider's service-level agreement (SLA) measures request-level uptime, and a production application experiences cost-weighted uptime, measured on exactly the calls that paid for the model. That distinction is why the common advice to go direct and add a gateway later understates the risk.
+On caching, AI Gateway's caching: 'auto' option applies the right cache strategy per provider, which matters for providers like Anthropic and MiniMax that require explicit cache markers. BYOK requests are excluded from the published latency and throughput metrics because their performance "depends on your own provider credentials, not AI Gateway's." Teams whose margins ride on cache hit rates should read that exclusion carefully.
+Copy link to headingWhen to route through AI Gateway
+Route through AI Gateway once your application calls more than one model, or once you're running agents at volume, because at that point the gateway is doing real work and the alternative is doing that work by hand.
+Going direct keeps retry logic, fallback routing, and provider health monitoring inside your application code, and the gateway moves all of it into infrastructure. OpenAI's postmortem for its December 26, 2024 outage stated that region-wide failover "currently requires manual intervention from the hosting cloud provider." A direct integration has no answer to a sentence like that, and your code waits.
+Provider count climbs with scale whether you plan for it or not. In production data, teams sending 1M to 10M requests a month use 18 distinct models on average, and teams past 10M use 35. Nobody managing 35 models hand-writes 35 retry paths.
+Route through AI Gateway when any of the following holds:
+
+The application calls more than one provider or model.
+
+Retry and fallback logic is duplicated across two or more services.
+
+A compliance audit trail is required.
+
+The team can't absorb an extended provider outage without paging someone.
+Each of these is a case where the routing work already exists, and the only open question is who maintains it. Okara shows the managed version at scale: the team ran eight separate provider SDKs, each with its own key management and edge cases, before consolidating onto AI Gateway. Okara now processes four billion tokens a day for 120,000 companies, retry and fallback handling lives entirely in the routing layer, and new models are usable on launch day without an adapter or a deploy cycle.
+Copy link to headingWhen to call the OpenAI API directly
+Go direct in three cases, and all three are narrower than they look.
+Copy link to heading1. Single-provider prototypes
+If the app calls one model from one provider with no plans to switch, direct calls are the cleaner choice. The gateway would add a hop while doing nothing you need yet, and direct calls keep one fewer moving part between your code and the response. Kong draws the same boundary, scoping direct integration to early-stage prototypes, single-developer projects, and single-provider setups with no plans to scale.
+Copy link to heading2. Load-bearing prompt caching
+Abstraction layers can invalidate cache hits without telling you. A documented AutoGPT failure showed the Anthropic structured-output path embedding a fresh per-call random token into the cached system prompt, which invalidated the ephemeral cache on every request. AI Gateway's caching: 'auto' option exists for this exact problem, and any team with precise cache requirements should still measure hit rates through the gateway before committing.
+Copy link to heading3. Fine-tuned or provider-specific models
+A unified API can't expose fine-tuning parameters or provider-specific inference options without leaking the abstraction. Options like parallelToolCalls, store, and user are first-class on the direct provider. Reaching them through a gateway means working around its unified interface.
+Copy link to headingMove off your direct OpenAI integration with AI Gateway
+Every production AI application ends up with a gateway. The only real question is whether it runs as managed infrastructure or as an unmanaged one assembled across application code after the first incident. A team maintaining retry and fallback logic across more than two services has already built a distributed gateway, without the observability or the failover guarantees that make one worth running.
+AI Gateway gives teams that layer as managed infrastructure:
+
+Automatic failover: When a provider errors, rate-limits, or times out, the gateway reissues the request to a healthy alternative, which is how 3.5% of fleet requests still succeed.
+
+Zero-markup pricing with BYOK: Tokens bill at the provider's list price, including when you bring your own key, so the reliability layer doesn't come with a token tax.
+
+Spend controls: Per-key budgets return a 402 when a key is exceeded, which turns a runaway agent loop into a rejected request instead of a surprise invoice.
+
+Built-in observability: Per-model TTFT, spend, and token counts are reported in one view, with a Custom Reporting API queryable by user, tag, provider, or credential type.
+
+One-string AI SDK migration: AI SDK 7 defaults to the gateway, so adopting it is a model-string change rather than a new dependency to maintain.
+Start a new project and route your first model call through AI Gateway with a single model string, or read the AI Gateway docs to plan a migration from a direct integration.
+Copy link to headingFAQs about AI Gateway vs. OpenAI API
+Copy link to headingDoes AI Gateway add cost on top of what I'd pay OpenAI directly?
+No. On base token cost, the gateway charges zero markup and bills at the provider's list price. Optional capabilities cost extra, like team-wide Zero Data Retention at $0.10 per 1,000 requests and Custom Reporting queries at $5.00 per 1,000 queries. BYOK fallback to system credentials is billed against your credits balance.
+Copy link to headingHow much latency does routing through the gateway add?
+Vercel publishes a sub-20ms figure for the gateway layer itself, without a controlled head-to-head against direct calls. One independent benchmark found the native Anthropic SDK 15 to 20% faster on small prompts and roughly even at large context, where Tier 1 rate limits forced multi-minute delays on the native SDK that the gateway avoided.
+Copy link to headingCan I use the gateway with my existing OpenAI Python SDK?
+Yes. Migration is a base-URL swap with no code changes. Pass your AI Gateway API key as the api_key parameter and point base_url at the AI Gateway endpoint.
+Copy link to headingDoes BYOK mean I pay provider prices with no markup?
+Yes. BYOK requests carry no markup or platform fee, and BYOK is available on the paid tier. Budget for fallback usage, because if a request using your own credentials fails, the gateway retries it with system credentials, and that usage is charged against your credits balance.
+Copy link to headingDoes AI Gateway work outside the Vercel platform?
+Yes. The gateway is a standard HTTP endpoint, so any SDK with a configurable base URL can point at it, including the OpenAI Python SDK and the Anthropic SDK, no matter where your application is deployed. The AI SDK can use the same endpoint.
+More AI Gateway articles
+
+AI Gateway
+Open weight models for teams routing production traffic off frontier APIs
+
+Open weight models are not open source. Compare the license conditions, the per-token economics, and what breaks when you swap a closed model out.
+
+AI Gateway
+LiteLLM vs OpenRouter for production AI teams
+
+Compare LiteLLM vs OpenRouter on deployment model, latency path, failover, observability, and ops burden, then pick the one your team can run.
+
+AI Gateway
+LiteLLM alternatives for platform teams weighing key custody against patch load
+
+Compare LiteLLM alternatives on license, self-hosting, provider coverage, and patch record, plus what moving off the proxy costs a team running it.
+Ready to deploy?
+Start deployingTalk to an expert
+
+Loading status…
+Select a display theme:systemlightdark

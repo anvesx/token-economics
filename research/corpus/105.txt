@@ -1,0 +1,1864 @@
+TITLE: TRIM: Token Reduction and Inference Modeling for Cost-Effective Language Generation
+URL: https://arxiv.org/abs/2412.07682
+ORG: arXiv  TYPE: paper  DATE: 2024-12
+
+TRIM: Token Reduction and Inference Modeling for Cost-Effective
+Language Generation
+Alfredo Garrachón Ruiz and Tomás de la Rosa and Daniel Borrajo
+AI Research, JPMorganChase
+
+arXiv:2412.07682v5 [cs.CL] 24 Nov 2025
+
+Abstract
+The high inference cost of Large Language
+Models (LLMs) poses challenges, especially
+for tasks requiring lengthy outputs. However,
+natural language often contains redundancy,
+which presents an opportunity for optimization. We have observed that LLMs can generate distilled language (i.e., concise outputs
+that retain essential meaning) when prompted
+appropriately. We propose TRIM, a pipeline for
+saving computational cost in which the LLM
+omits a predefined set of semantically irrelevant and easily inferable words based on the
+context during inference. Then, a specifically
+trained smaller language model with lower inference cost reconstructs the distilled answer
+into the ideal answer. Our experiments show
+promising results, particularly on the proposed
+NaLDA evaluation dataset focused on the reconstruction task, with 19.4% saved tokens on
+average for GPT-4o and only a tiny decrease
+in evaluation metrics. This suggests that the
+approach can effectively balance efficiency and
+accuracy in language processing tasks.
+
+1
+
+Introduction
+
+Large language models (LLMs) have shown remarkable capabilities across a wide range of tasks,
+from natural language understanding to creative
+content generation. However, the computational
+cost of inference and the associated energy consumption present significant challenges. As the demand for AI applications continues to grow, these
+costs are expected to escalate, raising concerns
+about sustainability and accessibility (Wu et al.,
+2022). Addressing these issues is crucial to ensure that future advancements in AI remain feasible and widely deployable. Hence, we propose a
+new technique to save tokens at inference time by
+skipping less informative function words that are
+easily-inferable based on the context. Later on, we
+propose to regenerate them based on the context
+
+with a cost-effective alternative, leveraging the fact
+that natural language is considerably redundant.
+As part of our feasibility analysis, we verified
+that state-of-the-art LLMs can omit a predefined
+set of easily-inferable words, even without being
+specifically designed for this task. Studies in cognitive linguistics suggest that human readers naturally infer missing function words based on context
+(Ferreira and Patson, 2007). Similarly, transformerbased models use masked language modeling to
+predict the intentionally masked tokens based on
+the context (Devlin et al., 2019). Our hypothesis is that small language models can mirror this
+human reading abilities of filling the gaps for lowinformation easily-inferable words.
+In this work, the main contribution is the proposal of a novel pipeline called TRIM. This
+pipeline reduces the inference cost of LLMs by
+omitting easily-inferable words, which are later
+on reconstructed using much smaller specifically
+trained language models. This approach is orthogonal to other optimization techniques, and could be
+applicable as LLMs continue to grow in size and
+capabilities. To support this pipeline, we propose
+also an algorithm designed to sort a list of words
+by how easily they can be inferred from the context
+based on a corpus of texts, as well as a technique to
+experimentally define the length of the set of words
+based on metrics losses as the percentage of saved
+tokens increases. To support our evaluation, we developed a new dataset specifically designed for the
+reconstruction task and covering five different text
+generation types. Additionally, we introduce a new
+evaluation metric tailored to assess reconstruction
+performance, focusing on the words omitted and
+subsequently inferred. The results show that even
+omitting around one fifth of the full text, models
+that are hundreds of times smaller can reconstruct
+distilled text without losing significant text quality
+according to different metrics, keeping the semantic meaning practically intact.
+
+2
+
+Related Work
+
+In this section we review several approaches to
+optimize LLM inference which are related to our
+work.
+2.1
+
+Prompt Compression
+
+One alternative to decrease the computational cost
+is setting the focus on reducing the input by prompt
+compression. This could be a token-level removal of less relevant words (Jiang et al., 2023;
+Pan et al., 2024; Fu et al., 2024), a learned policy guided by reinforcement learning (Jung and
+Kim, 2024), context-aware sentence encoding approached (Liskavets et al., 2024), and more (Zhang
+et al., 2025). These techniques operate on the input rather than the output, making our approach
+complementary to prompt compression.
+2.2
+
+Inference Optimizations
+
+The research of general inference optimization techniques around LLM has been a hot topic with several different techniques proposed. Some of them
+relate to the computation of the tokens from the
+prompt using parallel and key-value cached techniques (Miao et al., 2023a; Patel et al., 2024). In
+other implementations, smaller LLM models can
+be used to generate multiple output sequences in
+parallel which are then merged and verified (Miao
+et al., 2023b). Another way to save costs at inference time for complex tasks consists of building a sequence of increasing-size LLMs, where a
+(larger) model at step N is only queried when the
+answer of the model at step N − 1 is not deem
+reliable (Chen et al., 2023). Furthermore, several
+techniques around the instance and cluster level optimization have been proposed (Zhen et al., 2025).
+All of these techniques are compatible with our
+approach as they tackle the problem from different points of view, making them orthogonal to our
+proposal.
+2.2.1
+
+2019) or in a more general scope, infilling (Donahue et al., 2020), rely on markers indicating where
+to substitute the text. In our approach, the input
+text at inference time would not have indication of
+what positions contained an omitted word. Text
+with omitted words can also be used as negative
+examples, to improve the performance of automatic
+translators (Yang et al., 2019), but to our knowledge omitted-content texts have not been used to
+train for inference efficiencies purposes.
+
+3
+
+The feasibility of our approach relies on the LLM
+being able to perform the task of generating an
+answer omitting a set of words that do not contribute to the semantic meaning. This is a task for
+which the LLM was not originally trained. To verify this assumption, we performed an exploratory
+analysis where we used the GPT-4o model from
+OpenAI (OpenAI, 2025), and developed a prompt
+to carry out this task indicating also that omitted
+words should be easily inferrable in a later stage.
+The prompt includes a pre-defined set of words
+composed by determiners and conjunctions with a
+total of 23 words such as: (the, a, an, and, but, so,
+that). See supplementary material (Section A.1)
+for details regarding the full set of words, designed
+prompt and further analysis. We took 500 knowledge questions (See dataset in Section 6) and gave
+them to the LLM in two rounds, first with the previously defined prompt appended and then without
+it to collect the original expected answer. We computed the average number of words from the set
+present in both types of answers (Table 1). We
+observed how the LLM is able to complete the task
+effectively, generating the answer omitting nearly
+all words. Interestingly, the average is not zero, indicating that in some scenarios the LLM preserves
+some of these words pro-actively deciding that they
+are not easily-inferable a posteriori based on the
+context in that scenario.
+
+Text Reconstruction
+
+Text reconstruction has been studied since long
+time ago. Text with mutilated characters require
+reconstruction (Miller and Friedman, 1957) due to
+errors that occur in message transmission or typing.
+One of the core learning ideas in Natural Language
+Processing (NLP) is having a vectorized representation that allows models to reconstruct back the
+original text (Oshri and Khandwala, 2015). Nevertheless, NLP tasks, such as masking (Devlin et al.,
+
+Exploratory Research
+
+Text Type
+
+Avg. count from word set
+
+Std. Deviation
+
+Original
+Distilled
+
+22.50
+0.32
+
+5.77
+0.62
+
+Table 1: Average count of the words present in the text.
+
+4
+
+Semantic Relevance Of Words
+
+The importance of certain words in conveying semantic meaning is a well-documented phenomenon
+
+in English (Zipf, 1949). Common words, such as
+articles and determiners, often contribute little to
+the overall meaning of a sentence. These are typically classified as function words, serving a grammatical role rather than adding substantial content
+or meaning. (Jurafsky and Martin, 2000; Manning
+and Schütze, 1999). Even though function words
+provide little semantic meaning, not all of them
+can be effectively reconstructed on the basis of context. Some of them, such as pronouns or quantifiers,
+cannot be always inferred based on context. For
+example, in the sentence "I went to the marathon in
+the city center", if we remove the function words,
+the sentence will be "went marathon city center".
+The words "the", "to", and "in" are easily recovered
+based on the context, but the first pronoun could be
+any of the personal pronouns.
+The categorization and role of function words
+are clear from the English grammar and linguistic theory. However, few NLP studies have analyzed them regarding how they affect representation learning (Kim et al., 2019). Our interest in this
+paper lies on how easy it is for a language model
+to infer the function words based on the context,
+so then we can select a set of easily-inferable function words to be included in the instruction prompt.
+For this purpose, we propose a new algorithm that
+leverages language models trained with masking
+technique. This approach enables the sorting of an
+input word list (i.e. function words, stop words...)
+based on how easily are them inferred based on
+the context The algorithm focuses on calculating
+the difference in probability between the actual
+word and the alternative most probable word in a
+fixed position based on the context. This difference
+represents the prevalence of the actual word over
+the distribution of the rest of possible words. This
+means that, the bigger the difference, the less doubt
+a language model has about choosing that word
+over the rest, and, therefore, it is easily-inferable
+based on the context.
+For a given text c (e.g. a paragraph from a corpus) and a word w, let c′ be the text c with the word
+w masked. We define the probability difference as:
+∆P = P (w | c′ ) − P (walt | c′ )
+where P (walt | c′ ) is the probability of occurrence of the most probable alternative word
+(walt ̸= w) given the same context, obtained using
+the LM. The sorted list of function words based
+on this criteria is computed following Algorithm 1.
+
+After computing ∆P for all function words in each
+corpus fragment, it computes the average for each
+word, and returns the input list of words sorted by
+this average.
+Algorithm 1 Words sorted by ease of inference
+1: Input: Word set W = {w1 , w2 , . . . , wn },
+2:
+text corpus C = {c1 , c2 , . . . , cm },
+3:
+language model LM
+4: Output: Sorted W’ by probability difference ∆Pj
+5: for each ci ∈ C do
+6:
+for each wj ∈ W do
+7:
+if wj ∈ ci then
+8:
+Compute ∆Pi,j with LM
+9:
+end if
+10:
+end for
+11: end for
+12: for each wj ∈ W do
+13:
+∆Pj = average(∆Pi,j )
+14: end for
+15: W ′ = Sort W by ∆Pj in descending order
+16: return W’
+
+5
+
+Cost-Saving Pipeline
+
+The exploratory research showed the feasibility of
+the initial idea. Now, we cover the development and
+specification of the pipeline. We propose TRIM
+(Token Reduction and Inference Modeling pipeline
+for cost-effective language generation), a pipeline
+for wrapping the use of generative LLMs (both
+closed and open) to save costs during output generation of natural language through the philosophy
+of omitting the generation of easily-inferable lowinformative words. Later on, a much smaller and
+optimized language model handles the reconstruction of the full text. The pipeline, also depicted in
+Figure 1, comprises the following elements:
+Instruction: Let I be the instruction where the
+task of omitting easily-inferable words based on a
+pre-defined set is explained in detail to the LLM.
+Easily-Inferable Word Set: Let W be a set of
+words with low semantic relevance (i.e. function
+words, stop words...) deemed as easily-inferable
+based of the context. This set can be experimentally
+collected from a corpus using Algorithm 1.
+Instruction Prompt: Let P be the prompt designed to instruct the LLM in the task of omitting
+words given W based o the instruction I.
+Generation Model: Let MG be the generative
+LLM model capable of generating a response to a
+query, omitting words from W . The response is
+called distilled answer AD .
+Reconstruction Model: Let MR be an encoderdecoder model fine-tuned to reconstruct truncated
+
+output into full narrative text with regards of the
+specific set of words W .
+Being Q the user query and A the expected answer returned to the user in normal conditions, the
+pipeline process could be exemplified as:
+AD = MG (Q, P (W ))
+A = MR (AD )
+
+6
+
+Datasets & Models
+
+For the experimentation, we used two datasets.
+Firstly, the Wikipedia dump, which is composed of
+a large amount of well-written and grammatically
+correct data on the domain of knowledge (Foundation). Different subsets from it will be used for
+analyzing the ease of inferring functions words, and
+also for training and testing reconstruction models.
+Secondly, we have created a new evaluation
+dataset specifically tailored to evaluate the performance of the reconstruction model MR in the context of the TRIM pipeline where it reconstructs distilled text generated by a given generation model
+MG , resembling a real use case scenario. In this
+dataset, called Natural Language Distilled Answers
+dataset - NaLDA, we cover five main task types
+of the natural language generation field: create,
+knowledge-answer, re-write, summarize and translate. The selection of this 5 task types comes
+from the research in the literature on natural language generation tasks performed by LLMs, like
+the building of the Alpaca Dataset (Taori et al.,
+2023). The NaLDA dataset is composed of 44.800
+entries across the 5 task types, where each entry
+instructs a given generation model MG to generate, for a given word set W , a distilled answer AD
+and the ideal answer A to a task. With these two
+answers, a reconstruction model MR can be later
+on evaluated. See supplementary material (Section A.2) for specifications on the NaLDA dataset
+elaboration, prompts and examples.
+For Algorithm 1, which generates a sorted set
+of contextually easily-inferable words, we use the
+RoBERTa model (Liu et al., 2019). RoBERTa efficiently computes word occurrence probabilities at
+masked positions based on context.
+As the generation model MG for the evaluation, we consider models from (1) OpenAI (OpenAI, 2025), such as GPT-4o (gpt-4o-2024-08-06),
+GPT-4.1-mini (gpt-4.1-mini-2025-04-14) and GPT4.1 (gpt-4.1-2025-04-14) and models from (2)
+Anthropic (Anthropic, 2025), including Claude
+
+Sonnet 4 (claude-sonnet-4-20250514) and Claude
+Opus 4.1 (claude-opus-4-1-20250805).
+To evaluate reconstruction models, we trained
+the following models: (1) BART from Facebook
+AI, an early transformer with an auto-regressive decoder (Lewis et al., 2019); (2) Google’s T5, known
+for strong summarization and translation (Raffel
+et al., 2023); and (3) Alibaba’s Qwen2.5 (0.5B and
+1.5B variants), top-ranked among instruct models
+of similar size according to the Open LLM Leaderboard (Yang et al., 2024; Fourrier et al., 2024).
+These models are much smaller than state-of-theart LLMs, making them suitable for reconstruction tasks with lower computational costs. Table 2
+shows their parameter sizes.
+BART
+
+T5
+
+Qwen2.5-0.5
+
+Qwen2.5-1.5
+
+0.139
+
+0.223
+
+0.5
+
+1.5
+
+Table 2: Size in billions of the selected models.
+
+7
+
+Evaluation
+
+The evaluation is divided into two experiments.
+The first one applies Algorithm 1 for the identification of a good set of easily-inferable words W
+without notable downgrade in the metrics. In the
+second experiment, once the set W has been fixed,
+several language models will be trained and evaluated in the task of the reconstruction model MR .
+We also analyzed if the results validate the applicability of the complete pipeline without noticing
+relevant deterioration in the output.
+The general evaluation metrics employed to
+compare texts encompass three primary aspects:
+grammatical similarity, semantic similarity, and
+coherence. Grammatical similarity between two
+texts is assessed using SacreBLEU, METEOR, and
+ROUGE, which primarily perform n-gram-based
+comparisons (Post, 2018; Banerjee and Lavie,
+2005; Lin, 2004). For semantic similarity, we use
+cosine similarity, which measures the similarity between two texts using RoBERTa embeddings (Liu
+et al., 2019; Salton et al., 1975). For textual coherence, we use the perplexity metric, which quantifies
+coherence and fluency based on how easily a language model (in our case, GPT-2 (Radford et al.,
+2019)) can predict the next tokens, where lower values indicates higher fluency and coherence (Manning and Schütze, 1999). These experiments were
+performed on AWS "g4dn.xlarge" machines with
+Nvidia "T4" GPU with 16GB of memory.
+
+Figure 1: Diagram of the proposed cost-saving pipeline with examples
+
+7.1
+
+Metrics for Reconstruction Task
+
+Furthermore, we thought it was necessary to find a
+specific metric that would evaluate the reconstruction of the words from the easily-inferable word
+set W . The general NLP metrics focus on comparing two pieces of text that can come in different sizes (i.e., word, sentence, paragraph...), but
+they do not offer the versatility of focusing only
+on a specific set of words according to their exact position in the ideal text, covering the cases
+of omission, substitution, match or insertion. To
+this extent, we developed a new evaluation metric
+specifically focused on evaluating the performance
+of the reconstruction task, given the ideal text and
+the reconstructed one. We first had to find a way of
+matching the two texts, so we can later on check
+each word position. The Needleman-Wunsch algorithm, used in bio-informatics to align protein or
+nucleotide sequences, offers this desired feature of
+alignment (Needleman and Wunsch, 1970). Then,
+we analyzed and adapted it to our scenario, effectively aligning two texts (one being the original
+and one being the altered one) even over scenarios
+where there are missing, different or extra words.
+After applying the algorithm, we can compare
+each positions in the alignment. Since we know
+beforehand the set of easily-inferable words W that
+have been omitted, we can account for scenarios
+involving omission, substitution, match or insertion
+for those words. With this information, we obtain
+precision, recall and F1 values to get a clearer view
+of the quality of the reconstruction task. We consider as true positives (TP) the match scenario, as
+false positive (FP) scenarios of inferring a word
+that is incorrect (insertion and substitution), and as
+false negative (FN) scenarios where the ideal word
+is not inferred (omission and substitution). From
+
+now on, these metrics will be referred as Θ metrics.
+
+7.2
+
+Inferable Word Set
+
+In this study, we obtain the set of words W that
+will be used in the next experiment, analyzing how
+metrics degrade as the size of this set increases.
+This will allow us to empirically decide a good
+choice of W . We applied Algorithm 1 using a
+random sample of 100,000 paragraphs from the
+Wikipedia dump as the text corpus, an extended
+list of 127 English function words (Jurafsky and
+Martin, 2000) as word set, and RoBERTa as the
+language model. This returned the list of function
+words sorted by ease of inference based on the
+context regarding the text corpus.
+To determine the boundary for W , we followed
+an iterative procedure in which the T5 model is finetuned for the reconstruction task using the top-N
+words from the sorted list, increasing the subset in 5
+words, from size 5 up to 60 (12 levels). For each of
+these trainings we used a new random Wikipedia
+sample containing 100,000 paragraph pairs (distilled, original) where the distilled text is built by
+removing the words of the corresponding level. Additional 5,000 pairs for testing were built with the
+same schema. The performance is then evaluated
+at each of these levels, analyzing the degradation
+of the results as the set size increases.
+Figure 2 shows the metric values plotted against
+the percentage of saved tokens per level, with trend
+lines extrapolated. From level 5 onward (about 18%
+saved tokens), further increases in saved tokens are
+minimal while metric degradation continues. Thus,
+we set the boundary at level 5 and select these 25
+function words (set W ) for the final evaluation.
+
+Figure 2: Evaluation at different levels of saved tokens.
+
+7.3
+
+Reconstruction Model
+
+From this point forward, we use the fixed set W
+and focus on developing the final reconstruction
+models MR to infer the omitted words. For training, we selected a new random sample of 100,000
+Wikipedia paragraphs and removed the easily inferable words in W , creating the training corpus.
+The four chosen language models for MR were
+fine-tuned on this reconstruction task using the new
+corpus. Training details are provided in Table 7 of
+the Supplementary Material.
+We tested each reconstruction model MR on two
+evaluation sets. First, on a new sample of 9,000
+Wikipedia paragraphs to validate the training, and
+second, on the NaLDA dataset for each of the generation models MG (Section 6). Table 3 presents
+the NaLDA results with GPT-4o as MG , including
+metrics comparing the distilled and ideal answers.
+Detailed results for other generation models are
+provided in Table 9 of the Supplementary Material.
+Regarding the Θ metrics on the NaLDA dataset
+(Table 3), overall results indicate good performance
+(82.8 F1 score or higher), with no significant differences between models. Smaller encoder-decoder
+models like Bart and T5 show higher precision,
+while larger decoder-only models such as Qwen2.5
+(0.5B and 1.5B) achieve better recall. These differences likely stem from their architectures: encoderdecoder models use cross-attention for better context understanding, while decoder-only models
+tend to be more verbose and infer more terms.
+Regarding the rest of metrics, we observe that
+the grammatical metrics have good values across
+all models as well, being Qwen2.5(1.5B) the one
+obtaining the best results. All models achieve nearperfect scores on the semantic metric, demonstrat-
+
+ing that their outputs effectively preserve the intended meaning. The perplexity suffers a small increase over the original one, being Qwen2.5(1.5B)
+the one obtaining the lowest perplexity. These results were obtained with a significant percentage
+of saved tokens, 18.85% in the Wikipedia sample
+and 19.41% for the answers in the NaLDA dataset.
+The metrics for the distilled text show significantly lower grammatical scores and higher perplexity, while the semantic metric remains nearly
+perfect. This indicates that removing the easilyinferable word set W disrupts grammatical structure and coherence but largely preserves the original semantic content.
+Since there is no significant difference among
+models, any can be used effectively for the reconstruction task. Notably, T5 outperforms Qwen2.5
+(0.5B) and is comparable to Qwen2.5 (1.5B), even
+surpassing the latter in some metrics despite being
+nearly seven times smaller. Given its smaller size,
+lower cost, and strong performance, T5 appears
+to be the optimal choice for this task. Focusing
+on T5, we compared generation models MG for
+generalization (Table 4). All models perform the
+task successfully with similar results, despite large
+differences in price and size. However, comparing
+models is complicated due to variations in saved
+tokens, which are inversely related to metric performance. This highlights the value of prior experimentation (Section 7.2) in identifying the balance
+between saved tokens and desired performance,
+as some models are more verbose and use more
+function words. Overall, GPT-4o follows specific
+instructions most effectively, achieving the highest θ metrics, while Claude models show stronger
+grammatical metrics but save the fewest tokens.
+We also compared evaluation results between
+the NaLDA dataset (using GPT-4o as MG ) and a
+Wikipedia sample. Again, the results are consistent
+with LLM showing the ability to omit only contextually inferable words, rather than all pre-defined
+words, highlighting its nuanced understanding. See
+results for Wikipedia sample and discussion in Appendix A.5
+7.3.1
+
+Results across different task types
+
+Examining results across the five NaLDA task
+types using GPT-4o as MG and T5 as MR (Figure 3), several insights emerge. The reconstruction
+model MR performs best on the knowledge-answer
+task, where the LLM generates responses to knowledge questions. These outputs are argumentative
+
+Bart
+
+T5
+
+Qwen2.5-0.5
+
+Qwen2.5-1.5
+
+Distilled Text
+
+Θ Precision (%)
+Θ Recall (%)
+Θ F1 (%)
+
+88.81(9.59)
+82.50(11.04)
+85.11(9.36)
+
+90.14(9.41)
+82.24(11.91)
+85.51(9.79)
+
+82.11(11.64)
+84.33(10.27)
+82.77(9.98)
+
+85.35(10.78)
+87.65(9.19)
+86.10(9.12)
+
+95.67(17.31)
+8.61(10.50)
+14.11(15.51)
+
+SacreBLEU (%)
+METEOR (%)
+ROUGE-1 (%)
+ROUGE-L(%)
+Cosine Similarity (%)
+Perplexity
+Perplexity Original
+Saved Tokens (%)
+Training Time (h)
+Parameters (B)
+
+81.32(9.83)
+91.51(5.79)
+94.82(3.33)
+93.56(4.08)
+99.98(0.03)
+35.06(18.72)
+25.59(13.87)
+19.41(5.84)
+1.5
+0.139
+
+82.92(10.69)
+92.15(6.85)
+95.13(3.99)
+93.96(4.66)
+99.99(00.02)
+31.53(17.46)
+25.59(13.87)
+19.41(5.84)
+3
+0.223
+
+81.59(9.84)
+92.73(5.42)
+94.62(3.54)
+93.03(4.43)
+99.98(00.02)
+32.52(17.48)
+25.59(13.87)
+19.41(5.84)
+7.5
+0.5
+
+83.99(9.25)
+93.70(4.84)
+95.26(3.25)
+94.10(3.98)
+99.98(00.03)
+31.13(16.54)
+25.59(13.87)
+19.41(5.84)
+18
+1.5
+
+49.25(12.61)
+74.95(7.52)
+85.79(4.47)
+85.78(4.50)
+99.92(00.04)
+158.66(139.41)
+25.59(13.87)
+—
+—
+—
+
+Table 3: Average (standard deviation) metrics results over the NaLDA dataset using GPT-4o as MG
+GPT-4o
+
+GPT-4.1-mini
+
+GPT-4.1
+
+Sonnet-4
+
+Opus-4.1
+
+Θ Precision (%)
+Θ Recall (%)
+Θ F1 (%)
+
+90.14(9.41)
+82.24(11.91)
+85.51(9.79)
+
+87.14(11.28)
+79.64(12.39)
+82.52(10.87)
+
+88.41(10.10)
+82.22(12.01)
+84.73(10.06)
+
+87.15(12.42)
+81.56(13.74)
+83.39(12.51)
+
+88.56(9.98)
+81.12(12.12)
+84.03(10.32)
+
+SacreBLEU (%)
+METEOR (%)
+ROUGE-1 (%)
+ROUGE-L (%)
+Cosine Similarity (%)
+Perplexity
+Perplexity Original
+Saved Tokens (%)
+
+82.92(10.69)
+92.15(6.85)
+95.13(3.99)
+93.96(4.66)
+99.99(0.02)
+31.53(17.46)
+25.59(13.87)
+19.41(5.84)
+
+75.21(10.33)
+88.49(6.01)
+92.58(3.68)
+90.95(4.35)
+99.98(0.02)
+37.67(20.43)
+26.51(16.13)
+22.79(5.44)
+
+81.78(9.48)
+92.10(5.00)
+94.86(3.09)
+93.75(3.70)
+99.99(0.02)
+35.03(18.20)
+27.18(12.89)
+19.45(5.32)
+
+85.13(9.00)
+93.48(5.26)
+95.71(3.28)
+94.81(3.74)
+99.99(0.02)
+35.36(19.04)
+30.85(18.06)
+17.83(5.00)
+
+86.49(8.25)
+93.76(5.17)
+96.11(3.09)
+95.22(3.50)
+99.99(0.02)
+35.25(18.36)
+30.74(15.90)
+17.38(4.36)
+
+Table 4: Average (standard deviation) metrics results over the NaLDA dataset using T5 as MR
+
+and align well with the Wikipedia-based training
+data. In contrast, MR shows lower performance
+on rewrite, summarize, and translate tasks, with
+an average metric decrease of about 5.77%. This
+suggests that the TRIM pipeline is more effective
+when the LLM produces free-form text rather than
+working from a provided passage.
+
+Additionally, the percentage of saved tokens
+varies across task types, even though the word
+set W remains constant. This variation does not
+directly correlate with evaluation metric performance. For instance, the knowledge-answer task
+type achieves both high scores and a high percentage of saved tokens, while the create task type saves
+fewer tokens but still performs well. This suggests
+that factors such as task type and the nature of
+the output text also influence token savings. Aside
+from these differences, all F1 scores are above 8̃0%,
+indicating that the pipeline is effective across all
+narrative tasks.
+
+8
+
+Discussion
+
+8.1
+
+Cost Saving
+
+Estimating the cost of using LLM API services
+at token level is a non trivial task (GPT). Costs
+depend on many factors, including type of task,
+prompt quality, customization, API call volume,
+and computational resources. Nevertheless, the
+model size is the most relevant feature when considering model inference cost. Neither OpenAI nor
+Anthropic have officially disclosed the size of their
+most recent models. There have been attempts of
+estimate the size of these models by comparing
+them with open-source models, reaching a general
+consensus estimate for the GPT-4o and Sonnet 3.5
+models of around 200 billions parameters, placing
+models such as Sonnet 4, GPT-4.1 and Opus 4.1
+at even higher values (Abacha et al., 2025; Erdil,
+2024). Although not knowing their sizes exactly,
+we want to make an exercise to illustrate how we
+should think about the potential cost savings of
+our pipeline. Our proposal should consider the
+gain/losses of processing text, which for cost purposes is measured by its size. The relevant text
+
+adds 169 extra tokens to the prompt (See prompt
+2 in Supplementary Material A.1), so it would be
+compensated after 42 and 34 omitted tokens (fewer
+number of words) for the GPT and Claude models respectively. The final results depends on the
+tokens saved by each model using TRIM, but to
+exemplify with GPT-4o (19.4% saved tokens) and
+Sonnet 4 (17.83% saved tokens), natural language
+generation answers longer than ∼216 tokens and
+∼190 tokens will have better inference cost with
+our pipeline respectively.
+8.2
+
+Figure 3: Comparison of metrics for GPT-4o as MG
+and T5 as MR across the 5 different task types of the
+NaLDA dataset.
+
+fragments are:
+Extra inputs (I) : The extra text added to the
+prompt to specify the task of omitting function
+words. Specifically for our pipeline, the size of
+P(I, W ).
+Gained output (G): the gains of saved tokens
+compared to the vanilla generation. This is the
+difference between size(A) and size(AD ).
+Reconstruction inputs (IR ): the query for the
+reconstruction task. This is equivalent to size(AD ).
+Reconstruction output (OR ): the text generated
+for the final output. This is equivalent to size(A).
+On the other hand, we express the input/output
+costs per size unit using the same subscripts as
+i , C o be the input and output
+models. So, let CD
+D
+i , C o the incost for the generation model, and CR
+R
+put and output cost for the reconstruction model.
+The requirement framework for which our pipeline
+application would make sense is expressed by the
+formula:
+o
+i
+i
+o
+CD
+G ≥ CD
+I + CR
+IR + CR
+OR
+
+In our evaluation, reconstruction models range
+from 0.139 to 1.5 billion parameters, which is at
+least two orders of magnitude smaller than the
+size estimation of the generation models MG employed like GPT-4o, GPT-4.1, Sonnet 4 and Opus
+4.1. Therefore, the relevant term in the right hand
+i I. Using available prices for the GPT
+side is CD
+and Claude API services as a proxy of cost, we
+i /C o is ∼0.25 for GPT and
+see that the ratio CD
+D
+∼0.2 for Claude. In our experiments, instruction I
+
+Other Language Opportunities
+
+Although this study focused on English, the technique is language independent. Most languages
+follow the Zipf distribution (Piantadosi, 2014), and
+frequency ranks are highly correlated across languages (Calude and Pagel, 2011), though prior
+analyses emphasized word semantics over function words. Our final easily-inferable word set W
+overlaps with only four words from the Swadesh
+list (Swadesh, 1952), leaving language-specific
+benefits as an open question for future work. Languages like Spanish, French, and Italian, which
+rely on frequent function words for grammatical
+cohesion, may adapt well to this approach, while
+languages with greater morphological complexity,
+such as Finnish or Turkish, may present additional
+challenges.
+
+9
+
+Conclusion
+
+We proposed TRIM, a pipeline for reducing LLM
+text generation costs by omitting words that are easily inferred and reconstructing them with a smaller
+model trained for this task. To support this, we introduced an algorithm for ranking word inferability,
+built the NaLDA evaluation dataset across five generation tasks, and presented a new reconstruction
+metric. Our experiments with four reconstruction
+models showed strong performance and an average
+token savings of 19.41% for GPT-4o, demonstrating TRIM’s potential for improving cost efficiency
+in natural language generation.
+
+10
+
+Limitations
+
+We acknowledge some limitation this pipeline
+could have both during evaluation and in possible
+application scenarios out of scope. In the evaluation, we have attempted to cover a wide range of
+perspectives, from semantic content to grammatical structure evaluations, including the coherence
+
+of the text and a new metric specifically focused
+on the task of text reconstruction, paying attention to the subset of terms expected to be omitted
+and reconstructed. Thus, there are scenarios where
+automated evaluation may error and excessively
+penalize the effectiveness of the entire pipeline.
+Examples of this occurrence can happen in scenarios where function words in the text can be omitted
+or exchange with others while the sentence remains
+grammatically and semantically correct, preserving
+also its coherence. An example can be the sentence
+"I work from 9 to 5." If we compare it with the
+sentence "I work 9 till 5," the function word "from"
+has been omitted and the function word "to" has
+been replaced by "till." While the evaluation of
+semantic meaning will indicate that these two sentences are equivalent, the rest of the general and
+specific grammatical structure metrics will indicate
+lower performance. Therefore, a human evaluation
+of the entire pipeline would be interesting to assess
+these types of scenarios as well.
+Although the experiments explored the capability of an LLM to generate output without including
+words that could be inferred later, it did not consider how this might negatively impact the LLM’s
+performance. LLMs are trained on vast datasets of
+human-written text that follow grammatical rules.
+Consequently, their output is based on this training
+data and on the sequence of tokens already produced during a session. If the usual grammatical
+structure is absent at generation and at the previous
+generated data, this could disrupt the ongoing token
+generation. For example, a previous study remarks
+the importance of a (different) set of tokens at generation time called stylistic tokens (e.g., ‘Hello’,
+‘Thank’, ‘However’, ‘Remember’, etc.), which include transitional phrases, discourse markers, and
+safety disclaimers (Lin et al., 2023). Nevertheless,
+in a proper implementation, the potential penalty
+would only affect new generation of text. After
+generating a piece of text, the reconstruction model
+would restore its grammatical structure. The distilled piece of text in the context window would
+then be replaced by the reconstructed one. For subsequent generations, as the intrinsic grammatical
+structure was restored, the LLM would not face
+any penalties regarding previous generations.
+In this study we have primarily focused on the
+natural language generation domain, where structured and verbose content enables effective tokensaving by omitting low-information words with
+minimal impact on semantic clarity. However,
+
+generalizing this pipeline to other domains is not
+straightforward, like conversational as it could lack
+of enough amount of easily-inferable low-semantic
+words for the trade-off of adding extra tokens at
+the initial instruction, or code generation where
+one bad inferred word could imply an execution
+error. Moreover, during experimentation neither
+the so called "reasoning" models like o3 nor the
+reasoning capabilities of models like Clause Opus
+4.1 or Sonnet 4 were used. Despite believing that
+the reasoning process can greatly benefit from the
+use of this pipeline from the cost perspective, the
+focus of this research has been on the response generated by the model itself and its applicability for
+the reasoning step is left for future research.
+
+Disclaimer
+This paper was prepared for informational purposes
+by the Artificial Intelligence Research group of JPMorgan Chase & Co. and its affiliates ("JP Morgan”) and is not a product of the Research Department of JP Morgan. JP Morgan makes no representation and warranty whatsoever and disclaims
+all liability, for the completeness, accuracy or reliability of the information contained herein. This
+document is not intended as investment research or
+investment advice, or a recommendation, offer or
+solicitation for the purchase or sale of any security,
+financial instrument, financial product or service,
+or to be used in any way for evaluating the merits of
+participating in any transaction, and shall not constitute a solicitation under any jurisdiction or to any
+person, if such solicitation under such jurisdiction
+or to such person would be unlawful.
+© 2025 JPMorgan Chase & Co. All rights reserved
+
+References
+How much does it cost to use gpt models? gpt-3 pricing
+explained. https://neoteric.eu/blog/how-muc
+h-does-it-cost-to-use-gpt-models-gpt-3-p
+ricing-explained/. Accessed: 2024-10-24.
+Asma Ben Abacha, Wen wai Yim, Yujuan Fu, Zhaoyi
+Sun, Meliha Yetisgen, Fei Xia, and Thomas Lin.
+2025. Medec: A benchmark for medical error detection and correction in clinical notes. Preprint,
+arXiv:2412.19260.
+Anthropic. 2025. Claude. Accessed: 2025-07-16.
+Satanjeev Banerjee and Alon Lavie. 2005. Meteor: An
+automatic metric for mt evaluation with improved correlation with human judgments. In Proceedings of
+
+the ACL Workshop on Intrinsic and Extrinsic Evaluation Measures for MT and/or Summarization, pages
+65–72.
+Andreea S Calude and Mark Pagel. 2011. How do we
+use language? shared patterns in the frequency of
+word use across 17 world languages. Philosophical Transactions of the Royal Society B: Biological
+Sciences, 366(1567):1101–1107.
+Lingjiao Chen, Matei Zaharia, and James Zou. 2023.
+Less is more: Using multiple llms for applications
+with lower costs. In Workshop on efficient systems
+for foundation models@ ICML2023.
+Jacob Devlin, Ming-Wei Chang, Kenton Lee, and
+Kristina Toutanova. 2019. Bert: Pre-training of deep
+bidirectional transformers for language understanding. Preprint, arXiv:1810.04805.
+Chris Donahue, Mina Lee, and Percy Liang. 2020. Enabling language models to fill in the blanks. arXiv
+preprint arXiv:2005.05339.
+Ege Erdil. 2024. Frontier language models have become
+much smaller. Accessed: 2025-09-22.
+Fernanda Ferreira and Nikole D. Patson. 2007. The
+‘good enough’ approach to language comprehension.
+Language and Linguistics Compass, 1(1-2):71–83.
+Wikimedia Foundation. Wikimedia downloads.
+Clémentine Fourrier, Nathan Habib, Alina Lozovskaya,
+Konrad Szafer, and Thomas Wolf. 2024. Open llm
+leaderboard v2. https://huggingface.co/space
+s/open-llm-leaderboard/open_llm_leaderbo
+ard.
+Qichen Fu, Minsik Cho, Thomas Merth, Sachin
+Mehta, Mohammad Rastegari, and Mahyar Najibi.
+2024. Lazyllm: Dynamic token pruning for efficient long context llm inference. arXiv preprint
+arXiv:2407.14057.
+Huiqiang Jiang, Qianhui Wu, Chin-Yew Lin, Yuqing
+Yang, and Lili Qiu. 2023. LLMLingua: Compressing
+prompts for accelerated inference of large language
+models. In Proceedings of the 2023 Conference on
+Empirical Methods in Natural Language Processing,
+pages 13358–13376, Singapore.
+Hoyoun Jung and Kyung-Joong Kim. 2024. Discrete
+prompt compression with reinforcement learning.
+IEEE Access, 12:72578–72587.
+
+Mike Lewis, Yinhan Liu, Naman Goyal, Marjan
+Ghazvininejad, Abdelrahman Mohamed, Omer Levy,
+Ves Stoyanov, and Luke Zettlemoyer. 2019. Bart: Denoising sequence-to-sequence pre-training for natural
+language generation, translation, and comprehension.
+Preprint, arXiv:1910.13461.
+Bill Yuchen Lin, Abhilasha Ravichander, Ximing Lu,
+Nouha Dziri, Melanie Sclar, Khyathi Chandu, Chandra Bhagavatula, and Yejin Choi. 2023. The unlocking spell on base llms: Rethinking alignment via
+in-context learning. Preprint, arXiv:2312.01552.
+Chin-Yew Lin. 2004. Rouge: A package for automatic
+evaluation of summaries. In Text Summarization
+Branches Out: Proceedings of the ACL-04 Workshop,
+pages 74–81.
+Barys Liskavets, Maxim Ushakov, Shuvendu Roy,
+Mark Klibanov, Ali Etemad, and Shane Luke. 2024.
+Prompt compression with context-aware sentence encoding for fast and improved llm inference. arXiv
+preprint arXiv:2409.01227.
+Yinhan Liu, Myle Ott, Naman Goyal, Jingfei Du, Mandar Joshi, Danqi Chen, Omer Levy, Mike Lewis,
+Luke Zettlemoyer, and Veselin Stoyanov. 2019.
+Roberta: A robustly optimized bert pretraining approach. Preprint, arXiv:1907.11692.
+Christopher D. Manning and Hinrich Schütze. 1999.
+Foundations of Statistical Natural Language Processing. MIT Press, Cambridge, MA.
+Xupeng Miao, Gabriele Oliaro, Zhihao Zhang, Xinhao
+Cheng, Hongyi Jin, Tianqi Chen, and Zhihao Jia.
+2023a. Towards efficient generative large language
+model serving: A survey from algorithms to systems.
+arXiv preprint arXiv:2312.15234.
+Xupeng Miao, Gabriele Oliaro, Zhihao Zhang, Xinhao Cheng, Zeyu Wang, Zhengxin Zhang, Rae
+Ying Yee Wong, Alan Zhu, Lijie Yang, Xiaoxiang
+Shi, et al. 2023b. Specinfer: Accelerating generative large language model serving with tree-based
+speculative inference and verification. arXiv preprint
+arXiv:2305.09781.
+George A Miller and Elizabeth A Friedman. 1957. The
+reconstruction of mutilated english texts. Information and Control, 1(1):38–55.
+Saul B. Needleman and Christian D. Wunsch. 1970.
+A general method applicable to the search for similarities in the amino acid sequence of two proteins.
+Journal of Molecular Biology, 48(3):443–453.
+
+Daniel Jurafsky and James H. Martin. 2000. Speech
+and Language Processing: An Introduction to Natural Language Processing, Computational Linguistics,
+and Speech Recognition. Prentice Hall.
+
+OpenAI. 2025. Gpt. Accessed: 2025-07-16.
+
+Najoung Kim, Roma Patel, Adam Poliak, Alex Wang,
+Patrick Xia, R Thomas McCoy, Ian Tenney, Alexis
+Ross, Tal Linzen, Benjamin Van Durme, et al. 2019.
+Probing what different nlp tasks teach machines
+about function word comprehension. arXiv preprint
+arXiv:1904.11544.
+
+Zhuoshi Pan, Qianhui Wu, Huiqiang Jiang, Menglin
+Xia, Xufang Luo, Jue Zhang, Qingwei Lin, Victor Rühle, Yuqing Yang, Chin-Yew Lin, et al. 2024.
+Llmlingua-2: Data distillation for efficient and faithful task-agnostic prompt compression. arXiv preprint
+arXiv:2403.12968.
+
+Barak Oshri and Nishith Khandwala. 2015. There and
+back again: Autoencoders for textual reconstruction.
+
+Pratyush Patel, Esha Choukse, Chaojie Zhang, Aashaka
+Shah, Íñigo Goiri, Saeed Maleki, and Ricardo Bianchini. 2024. Splitwise: Efficient generative llm inference using phase splitting. In 2024 ACM/IEEE
+51st Annual International Symposium on Computer
+Architecture (ISCA), pages 118–132. IEEE.
+Steven T Piantadosi. 2014. Zipf’s word frequency law
+in natural language: A critical review and future directions. Psychonomic bulletin & review, 21:1112–
+1130.
+Matt Post. 2018. A call for clarity in reporting bleu
+scores. Preprint, arXiv:1804.08771.
+Alec Radford, Jeff Wu, Rewon Child, David Luan,
+Dario Amodei, and Ilya Sutskever. 2019. Language
+models are unsupervised multitask learners.
+Colin Raffel, Noam Shazeer, Adam Roberts, Katherine
+Lee, Sharan Narang, Michael Matena, Yanqi Zhou,
+Wei Li, and Peter J. Liu. 2023. Exploring the limits
+of transfer learning with a unified text-to-text transformer. Preprint, arXiv:1910.10683.
+Gerard Salton, Anita Wong, and Chung-Shu Yang. 1975.
+A vector space model for automatic indexing. Communications of the ACM, 18(11):613–620.
+Morris Swadesh. 1952. Lexico-statistic dating of prehistoric ethnic contacts: with special reference to north
+american indians and eskimos. Proceedings of the
+American philosophical society, 96(4):452–463.
+Rohan Taori, Ishaan Gulrajani, Tianyi Zhang, Yann
+Dubois, Xuechen Li, Carlos Guestrin, Percy Liang,
+and Tatsunori B. Hashimoto. 2023. Stanford alpaca:
+An instruction-following llama model. https://gi
+thub.com/tatsu-lab/stanford_alpaca.
+Carole-Jean Wu, Ramya Raghavendra, Udit Gupta,
+Bilge Acun, Newsha Ardalani, Kiwan Maeng, Gloria Chang, Fiona Aga, Jinshi Huang, Charles Bai,
+et al. 2022. Sustainable ai: Environmental implications, challenges and opportunities. Proceedings of
+Machine Learning and Systems, 4:795–813.
+An Yang, Baosong Yang, Binyuan Hui, Bo Zheng,
+Bowen Yu, Chang Zhou, Chengpeng Li, Chengyuan
+Li, Dayiheng Liu, et al. 2024. Qwen2 technical report. Preprint, arXiv:2407.10671.
+Zonghan Yang, Yong Cheng, Yang Liu, and Maosong
+Sun. 2019. Reducing word omission errors in neural
+machine translation: A contrastive learning approach.
+In Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics, pages 6191–
+6196.
+Zheng Zhang, Jinyi Li, Yihuai Lan, Xiang Wang, and
+Hao Wang. 2025. An empirical study on prompt
+compression for large language models. Preprint,
+arXiv:2505.00019.
+
+Ranran Zhen, Juntao Li, Yixin Ji, Zhenlin Yang, Tong
+Liu, Qingrong Xia, Xinyu Duan, Zhefeng Wang,
+Baoxing Huai, and Min Zhang. 2025. Taming the
+titans: A survey of efficient llm inference serving.
+Preprint, arXiv:2504.19720.
+George K. Zipf. 1949. Human Behavior and the Principle of Least Effort. Addison-Wesley.
+
+A
+A.1
+
+Supplementary Material
+Capabilities of LLMS on Omitting
+Function Words
+
+For this exploratory experiment we have used the
+model "GPT-4o" OpenAI through its API in its version "gpt-4o-2024-08-06". The list of articles and
+conjunctions used are: the, a, an, as, though, because, before, even, if, that, since, so, than, unless,
+until, when, whenever, where, whereas, wherever,
+while, and, but. The set of prompts used in this
+experimentation are the following:
+Prompt 1:
+{query}
+
+Respond just in a paragraph.
+
+Prompt 2: Respond just in a paragraph in
+a distilled way removing the redundant and
+semantic-irrelevant words of the language such as:
+{list_of _words}. That is to say, omit the words of
+the ideal answer that do not affect directly to the semantic meaning and can be reconstructed later on
+based on the context. This task will be carried out
+by another language model in charge of generating
+those omitted words based on the list provided and
+reconstructing the ideal answer. Return only the
+distilled answer, nothing else. {query}
+Figure 4 shows the relationship between the
+length (measured in tokens) of the vanilla answer
+(answer to prompt 1) and the difference in tokens
+between the vanilla answer and distilled answer
+(answer to prompt 2), showing how the trend line
+grows linearly. It is important to note that both
+answers were generated in separate sessions, so
+their differences cannot be fully explained simply
+by omitted tokens.
+
+A.2
+
+NaLDA Dataset Elaboration
+
+To build this dataset, we used two approaches depending on the task type. For knowledge questionanswering (QA) and create tasks, we generated
+synthetic questions using various templates for diversity. For knowledge QA tasks, we created 9,000
+questions across 30 general topics (such as Science, History, Art). For each topic, we selected
+20 concepts and 5 keywords per concept. We then
+used templates to generate questions focused on
+explanations and comparisons between keywords
+and concepts. The topics, concepts, and keywords
+were generated with GPT-4o and reviewed by humans for accuracy. Below is an example of a template question using the keyword "decentralization"
+linked to the concept "blockchain", related to one
+of the topics "technology".
+• What is decentralization in the context of
+blockchain?
+• Who are the main contributors of decentralization in the context of blockchain and a summary of their contribution?
+• Define in what techniques or research has decentralization influenced and how, out of the
+context of blockchain
+• What is the state of the art and future or expected development of decentralization in the
+context of blockchain?
+• Summarize the concepts relevant for the general knowledge and understanding of decentralization in the context of blockchain?
+• What is the difference between decentralization and smart contracts in the context of
+blockchain?
+For the create tasks, we have gathered 8,800 different instructions related to create a story. Each
+story creation task is composed of a place, a theme
+and a historical character from a sample of 20
+places, 20 themes and 20 historical characters.
+These sets have been also generated by the LLM
+with a human curation after generation to verify its
+validity. Here is a set of examples of tasks generated:
+
+Figure 4: Vanilla Answer Length vs Length Difference
+Between Answers
+
+• Write a story located in a Pirate Ship, with
+Abraham Lincoln as the main character and a
+theme of eroism and Sacrifice.
+
+• Imagine a tale set in a Industrial Revolution
+Factory, featuring Napoleon Bonaparte and exploring the theme of Survival and Resilience.
+• Create a narrative in a Underwater City, where
+Leonardo da Vinci faces challenges related to
+Family and Legacy.
+• Develop a plot in Santiago Bernabeu, starring
+Albert Einstein and centered around Fantasy
+and Magic.
+• Craft a story in a Arctic Base, with Cristiano
+Ronaldo navigating the complexities of Mystery and Intrigue.
+For the re-write, summarize, and translate tasks,
+we sampled paragraphs from the Wikipedia text
+corpus and created instructions for each task type,
+resulting in 9,000 entries per type. For re-write
+tasks, the LLM was told to change the style. For
+summarize tasks, we used longer paragraphs to better fit the task and instructed the LLM to summarize them. For translate tasks, we selected Spanish
+Wikipedia paragraphs and asked the LLM to translate them into English. In our pipeline, each of
+these entries corresponds to query Q.
+Furthermore, we have to amend each query with
+the custom prompt P ′ that instructs the generator
+model MG to generate both the ideal and distilled
+version of the answer. This custom prompt P ′ is a
+variation of the instruction prompt P of the TRIM
+pipeline where, in addition to generate the distilled
+answer based on the given set of words W , it has to
+generate also the ideal answer so we can evaluate
+later on. Ideally, the generation of the ideal and
+distilled answer should be requested in different
+sessions, so the distilled one would simulate the
+real scenario of our pipeline, and the ideal would be
+the ground truth. Otherwise, the LLM would have
+the context of the ideal to generate the distilled version. However, after carrying some experiments we
+realized that doing it in different sessions produce
+additional variability (e.g., synonyms, grammatical
+alternative and paraphrasing) that affects directly
+the evaluation purpose of this dataset, preventing us
+of using them in the evaluation (see Supplementary
+Material A.3). Under the assumption that the LLM
+can generate distilled text directly as shown in Section 3, we keep the single session generation to
+focus the evaluation on the ability of reconstructing
+the distilled narrative.
+Here is the custom prompt P ′ that is used together with each task to form the dataset: I want
+
+you to return only a json with two fields “original_text” and “distilled_text”. The original text
+is the response to the question in one paragraph.
+Then, for the distilled text, return the same response
+but removing the redundant terms of the language
+such as: {set_of_easily-inferable_words} that do
+not affect directly to the semantic and can be reconstructed later on based on the context. That is to
+say, omit the words of the ideal answer that do not
+affect directly to the semantic meaning and can be
+reconstructed later on based on the context. This
+task will be carried out by another language model
+in charge of generating those omitted words based
+on the list provided and reconstructing the ideal answer. Keep the rest of the terms and the structure of
+the original response, only remove those redundant
+terms. Here is the task: {query}
+A.3
+
+Consistency Among Responses in LLMs
+
+We have also carried out an experimentation on the
+consistency among different LLM answers which
+conditions the evaluation of this paper when dealing with generative models. We have taken a set of
+20 knowledge questions, getting the answer of each
+of the questions 10 times in different sessions (with
+temperature 0 looking for maximum replicability),
+and compared the successive generations with the
+first one. As can be seen in the Table 5, although
+the semantic content measured by cosine similarity gives a perfect result, the other metrics related
+to n-grams and grammatical structure are weaker.
+This indicates that among the responses the semantic content is maintained, but their grammatical
+structure varies considerably.
+
+BLEU
+ROUGE-1
+ROUGE-L
+METEOR
+Cosine Similarity
+
+Mean
+
+Variance
+
+0.77
+0.87
+0.83
+0.83
+1.00
+
+0.03
+0.01
+0.02
+0.02
+0.00
+
+Table 5: Exploratory results on the consistency among
+answers to the same questions by LLM.
+
+A.4
+
+Aligning Function Words and Θ-metrics
+
+Θ-metrics are the metrics designed and used in our
+evaluation with the purpose of considering only the
+performance over the function words prediction or
+reconstruction. Consider the following example:
+• Original: The history of art is the fascinating
+subject of human culture.
+
+• Reconstructed: History of the art is a fascinating subject of human culture.
+After removing all non-function words and aligning the resulting sequences with the NeedlemanWunsch algorithm (Needleman and Wunsch, 1970),
+we can compute matches and errors as in Table 6.
+In terms of binary classification result, the matches
+correspond to the true positives. The false positives
+are the insertions plus the substitutions. The false
+negative are the omission plus the substitutions.
+Then, precision, recall and F1 score are computed
+in the standard way.
+A.5
+
+Results on Validation Set
+
+Looking at the differences between evaluation
+sets (NaLDA dataset using GPT-4o as MG and
+Wikipedia sample), we observe that the results of
+the Θ metrics are better on the NaLDA dataset,
+while the rest of the metrics are slightly better on average in the Wikipedia sample (See Table 8). This indicates that, while the reconstruction model generally performs better on the validation dataset—built with the same philosophy as the
+training data—it achieves better results on metrics
+focused solely on reconstructing the pre-defined
+word set when the LLM chooses which terms to
+omit during generation, rather than omitting all of
+them directly.
+Furthermore, an interesting insight emerges in
+the Θ metrics of the distilled text (i.e., matching distilled text with the ground truth). In the Wikipedia
+sample evaluation, the Θ-recall is 0 because these
+words are removed directly from the text. In contrast, in the NaLDA dataset evaluation, the Θ-recall
+is 8.6%, showing that the LLM does not erase all
+words from the list, but only those it considers
+easily-inferable from context, as instructed in the
+prompt (see Appendix A.2).
+Both of these insights demonstrate a desirable
+capability of the LLM: not only omitting a predefined set of words during generation, but also
+identifying when a word is not easily-inferable
+based on context and choosing not to omit it, even
+if it is in the pre-defined word set W . These results
+are consistent with the exploratory analysis shown
+in Table 1.
+
+Original
+Predict
+
+The
+—
+
+of
+of
+
+—
+the
+
+the
+a
+
+of
+of
+
+Result
+
+omission
+
+match
+
+insertion
+
+substitution
+
+match
+
+Table 6: Example of aligned function words and matching result.
+
+Training size
+Epochs
+Learning Rate
+Batch Size
+Gradient step
+Weight decay
+FP16
+Training (hours)
+
+BART
+
+T5
+
+Qwen2-0.5
+
+Qwen2-1.5
+
+100.000
+5
+5e-5
+8
+8
+0.01
+True
+
+100.000
+5
+5e-5
+8
+16
+0.01
+True
+
+100.000
+3
+4e-5
+4
+32
+0.1
+True
+
+100.000
+2.5
+3e-5
+4
+8
+0.1
+True
+
+1.5
+
+3
+
+7.5
+
+17
+
+Table 7: Summary of the training process for the selected models.
+
+Figure 5: Visual comparison of the results for the reconstruction models in the NaLDA dataset using GPT-4o as MG
+
+Bart
+
+T5
+
+Qwen2.5-0.5
+
+Qwen2.5-1.5
+
+Distilled Text
+
+Θ Precision (%)
+Θ Recall (%)
+Θ F1 (%)
+
+88.44(12.67)
+81.58(14.74)
+84.33(12.71)
+
+88.50(12.64)
+81.61(14.93)
+84.39(12.85)
+
+80.30(14.96)
+82.23(14.42)
+80.73(13.62)
+
+83.60(14.07)
+86.14(13.02)
+84.40(12.57)
+
+100.00(00.00)
+00.00(00.00)
+00.00(00.00)
+
+SacreBLEU (%)
+METEOR (%)
+ROUGE-1 (%)
+ROUGE-L (%)
+Cosine Similarity (%)
+Perplexity
+Perplexity Original
+Saved Tokens (%)
+Training Time (h)
+Parameters (B)
+
+87.02(8.77)
+94.87(4.57)
+96.61(2.89)
+95.81(3.46)
+99.99(00.04)
+42.91(31.48)
+37.28(26.13)
+18.85(5.87)
+1.5
+0.139
+
+88.38(8.53)
+95.55(4.19)
+96.92(2.77)
+96.14(3.30)
+99.99(00.03)
+39.35(29.46)
+37.28(26.13)
+18.85(5.87)
+3
+0.223
+
+86.01(9.06)
+95.77(3.78)
+96.19(3.10)
+94.99(3.87)
+99.98(00.03)
+40.52(29.48)
+37.28(26.13)
+18.85(5.87)
+7.5
+0.5
+
+88.51(8.28)
+96.61(3.30)
+96.79(2.85)
+95.94(3.46)
+99.98(00.04)
+39.01(27.76)
+37.28(26.13)
+18.85(5.87)
+18
+1.5
+
+51.00(13.22)
+76.10(7.11)
+86.19(4.38)
+86.19(4.38)
+99.92(00.07)
+208.21(200.66)
+37.28(26.13)
+—
+—
+—
+
+Table 8: Average (standard deviation) metric results over the evaluation dataset from the Wikipedia dump.
+
+Metric
+
+Bart
+
+T5
+
+Qwen2.5-0.5
+
+Qwen2.5-1.5
+
+GPT-4o
+Θ Precision (%)
+Θ Recall (%)
+Θ F1 (%)
+
+88.81(9.59)
+82.50(11.04)
+85.11(9.37)
+
+90.14(9.41)
+82.24(11.91)
+85.51(9.79)
+
+82.11(11.64)
+84.33(10.27)
+82.77(9.98)
+
+85.35(10.78)
+87.65(9.19)
+86.10(9.12)
+
+SacreBLEU (%)
+METEOR (%)
+ROUGE-1 (%)
+ROUGE-L (%)
+Cosine Similarity (%)
+Perplexity
+Perplexity Original
+Saved Tokens (%)
+
+81.32(9.83)
+91.51(5.79)
+94.82(3.33)
+93.56(4.08)
+99.98(0.03)
+35.06(18.72)
+25.59(13.87)
+19.41(5.84)
+
+82.92(10.69)
+92.15(6.85)
+95.13(3.99)
+93.96(4.66)
+99.99(0.02)
+31.53(17.46)
+25.59(13.87)
+19.41(5.84)
+
+81.59(9.84)
+92.73(5.42)
+94.62(3.54)
+93.03(4.43)
+99.98(0.02)
+32.52(17.48)
+25.58(13.84)
+19.41(5.83)
+
+83.99(9.25)
+93.70(4.84)
+95.26(3.25)
+94.10(3.98)
+99.98(0.03)
+31.13(16.54)
+25.58(13.85)
+19.41(5.83)
+
+GPT-4.1-mini
+Θ Precision (%)
+Θ Recall (%)
+Θ F1 (%)
+
+86.29(11.35)
+79.79(11.95)
+82.28(10.60)
+
+87.14(11.28)
+79.64(12.39)
+82.52(10.87)
+
+78.61(13.06)
+81.98(11.23)
+79.64(11.08)
+
+82.13(12.27)
+85.60(10.29)
+83.25(10.31)
+
+SacreBLEU (%)
+METEOR (%)
+ROUGE-1 (%)
+ROUGE-L (%)
+Cosine Similarity (%)
+Perplexity
+Perplexity Original
+Saved Tokens (%)
+
+73.16(10.02)
+87.59(5.73)
+92.07(3.42)
+90.30(4.16)
+99.98(0.03)
+42.06(21.90)
+26.52(16.33)
+22.80(5.44)
+
+75.21(10.33)
+88.49(6.01)
+92.58(3.68)
+90.95(4.35)
+99.98(0.02)
+37.67(20.43)
+26.51(16.13)
+22.79(5.44)
+
+73.29(10.01)
+88.68(5.50)
+91.60(3.65)
+89.45(4.51)
+99.97(0.03)
+39.30(20.42)
+26.40(15.46)
+22.80(5.43)
+
+76.02(9.64)
+89.85(5.13)
+92.31(3.50)
+90.72(4.20)
+99.97(0.03)
+37.05(19.42)
+26.35(14.81)
+22.81(5.42)
+
+GPT-4.1
+Θ Precision (%)
+Θ Recall (%)
+Θ F1 (%)
+
+87.73(10.19)
+82.31(11.65)
+84.46(9.79)
+
+88.41(10.10)
+82.22(12.01)
+84.73(10.06)
+
+79.53(12.38)
+84.09(11.00)
+81.23(10.56)
+
+83.20(11.51)
+87.51(9.91)
+84.84(9.65)
+
+SacreBLEU (%)
+METEOR (%)
+ROUGE-1 (%)
+ROUGE-L (%)
+Cosine Similarity (%)
+Perplexity
+Perplexity Original
+Saved Tokens (%)
+
+79.66(9.57)
+91.11(5.14)
+94.30(3.15)
+93.09(3.80)
+99.98(0.02)
+38.84(19.61)
+27.18(12.89)
+19.45(5.32)
+
+81.78(9.48)
+92.10(5.00)
+94.86(3.09)
+93.75(3.70)
+99.99(0.02)
+35.03(18.20)
+27.18(12.89)
+19.45(5.32)
+
+79.23(9.60)
+92.07(4.89)
+93.79(3.39)
+92.28(4.16)
+99.98(0.02)
+36.43(18.41)
+27.18(12.89)
+19.45(5.32)
+
+81.60(9.17)
+92.93(4.58)
+94.42(3.25)
+93.31(3.88)
+99.98(0.03)
+34.96(17.52)
+27.18(12.89)
+19.46(5.32)
+
+Sonnet-4
+Θ Precision (%)
+Θ Recall (%)
+Θ F1 (%)
+
+86.46(12.59)
+82.75(12.97)
+83.73(12.09)
+
+87.15(12.42)
+81.56(13.74)
+83.39(12.51)
+
+77.68(14.17)
+84.01(12.53)
+79.79(12.66)
+
+81.53(13.39)
+87.82(11.44)
+83.70(11.88)
+
+SacreBLEU (%)
+METEOR (%)
+ROUGE-1 (%)
+ROUGE-L (%)
+Cosine Similarity (%)
+Perplexity
+Perplexity Original
+Saved Tokens (%)
+
+84.36(8.43)
+93.61(4.36)
+95.73(2.72)
+94.81(3.23)
+99.99(0.03)
+38.04(19.73)
+30.84(18.05)
+17.83(5.00)
+
+85.13(9.00)
+93.48(5.26)
+95.71(3.28)
+94.81(3.74)
+99.99(0.02)
+35.36(19.04)
+30.85(18.06)
+17.83(5.00)
+
+83.56(8.53)
+94.48(4.15)
+95.33(2.95)
+93.95(3.64)
+99.98(0.02)
+35.86(18.54)
+30.79(17.60)
+17.83(4.99)
+
+86.25(7.84)
+95.43(3.55)
+96.01(2.67)
+95.11(3.16)
+99.98(0.02)
+36.52(223.85)
+30.81(17.83)
+17.83(4.99)
+
+Θ Precision (%)
+Θ Recall (%)
+Θ F1 (%)
+
+88.17(10.03)
+83.19(11.23)
+85.05(9.75)
+
+88.56(9.98)
+81.12(12.12)
+84.03(10.32)
+
+79.26(12.32)
+84.53(10.76)
+81.15(10.73)
+
+83.34(11.37)
+88.56(9.41)
+85.27(9.71)
+
+SacreBLEU (%)
+METEOR (%)
+ROUGE-1 (%)
+ROUGE-L (%)
+Cosine Similarity (%)
+Perplexity
+Perplexity Original
+Saved Tokens (%)
+
+86.56(7.35)
+94.51(4.01)
+96.50(2.40)
+95.62(2.86)
+99.98(0.03)
+37.48(18.85)
+30.74(15.90)
+17.38(4.36)
+
+86.49(8.25)
+93.76(5.17)
+96.11(3.09)
+95.22(3.50)
+99.99(0.02)
+35.25(18.36)
+30.74(15.90)
+17.38(4.36)
+
+85.85(7.43)
+95.59(3.68)
+96.26(2.60)
+94.89(3.25)
+99.98(0.02)
+35.28(17.95)
+30.75(15.90)
+17.38(4.36)
+
+88.61(6.69)
+96.54(3.01)
+96.94(2.24)
+96.06(2.73)
+99.98(0.02)
+33.78(17.07)
+30.75(15.89)
+17.38(4.37)
+
+Opus-4.1
+
+Table 9: Average (standard deviation) metrics results over the NaLDA dataset for each MG and M R models using
+the word set W obtained during evaluation.

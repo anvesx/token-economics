@@ -1,0 +1,613 @@
+TITLE: Evaluating Memory Condensation Strategies for Coding Agents in Data-Driven Scientific Discovery
+URL: https://arxiv.org/abs/2605.18854
+ORG: arXiv  TYPE: paper  DATE: 2026-05
+
+Preprint. Under review.
+
+Evaluating Memory Condensation Strategies for Coding
+Agents in Data-Driven Scientific Discovery
+Renuka Chintalapati1 , Sid Raskar1 , Anurag Acharya1 ,
+Jared Willard2 , Patrick Emami2 , Sameera Horawalavithana1
+1 Pacific Northwest National Laboratory
+
+2 National Laboratory of the Rockies
+
+arXiv:2605.18854v1 [cs.LG] 13 May 2026
+
+renuka.chintalapati@pnnl.gov, s.raskar@pnnl.gov, anurag.acharya@pnnl.gov,
+jared.willard@nlr.gov, patrick.emami@nlr.gov, yasanka.horawalavithana@pnnl.gov
+
+Abstract
+Coding agents accumulate extensive context during long-running tasks, yet
+fixed context windows force practitioners to choose between truncation and
+task failure. While numerous memory condensation strategies have been
+proposed from simple sliding windows to LLM-generated summaries, no
+systematic comparison exists to guide strategy selection, especially in scientific discovery tasks. We evaluate 8 memory condensation strategies using
+GPT-4o on 60 DiscoveryBench tasks spanning 6 scientific domains (480
+total evaluations). We find that no condenser significantly alters hypothesis
+quality, while LLM-based condensers increase token costs by 24–94%, and
+masking the tool-call outputs achieves an 8.6% net savings. We also noticed
+that the optimal condenser applied in data-driven scientific discovery tasks
+varies by scientific domain and task length.
+
+1
+
+Introduction
+
+As large language models (LLMs) transition from single-turn tools to autonomous agents
+that pursue goals across extended interactions (Sumers et al., 2024), context becomes central
+to reliable reasoning. Relevant information keeps agents aligned with their goals, while
+missing or incomplete context leads to drift or hallucination. This has elevated “context engineering” (Mei et al., 2025) into a growing discipline focused on managing long interaction
+histories. However, agents accumulate context rapidly from tool outputs to files and error
+logs, often reaching tens or hundreds of thousands of tokens (Yao et al., 2022). Even with
+larger context windows, models still degrade on long inputs (Liu et al., 2024), and costs
+scale with context length. Users must therefore choose between retaining all information at
+high computational cost, or compressing aggressively and risk losing important details.
+Memory condensation strategies offer a practical alternative to naive truncation. These
+methods selectively compress or preserve important context: sliding-window techniques
+keep recent events, masking strategies hide verbose outputs, and summarization methods
+distill long histories into compact representations (Zhang et al., 2024; Du et al., 2025; Packer
+et al., 2024). Sliding windows prioritize recency, summarization targets semantic compression (Liu et al., 2023), and attention-based approaches rely on the model’s ability to identify
+salient content. This raises a key question: which of these memory condensation approaches leads
+to better performance?
+Despite growing interest, systematic comparison of condensation strategies remains limited.
+Recent benchmarks evaluate agent memory quality (Bian et al., 2026; Chen et al., 2025;
+Deshpande et al., 2025; Tang et al., 2026), cost-aware planning (Liu et al., 2025; Wolff & Bennati, 2026), framework-level efficiency (Yin et al., 2025; Roig, 2025), prompt caching (Lumer
+et al., 2026), and performance under growing context (Fang et al., 2026), while Dong et al.
+(2025) find that compressed LLMs degrade on complex tasks. However, none of these
+works compare multiple condensation strategies while controlling for task type and model.
+Scientific discovery is a particularly compelling setting for this comparison: agents must
+maintain coherent, multi-step reasoning chains, remembering earlier statistical findings,
+variable relationships, and failed hypotheses across long data-exploration sessions.
+1
+
+Preprint. Under review.
+
+To this end, we evaluate eight memory condensation strategies on DiscoveryBench (Majumder et al., 2024), a benchmark focused on data-driven discovery tasks spanning six
+scientific domains—Biology, Economics, Engineering, Humanities, Meta Science, and Sociology. These tasks mirror real scientific-coding workloads, requiring both software engineering (e.g., data processing, debugging) and scientific reasoning (e.g., hypothesis formation,
+statistical interpretation).
+Our evaluation addresses three research questions: RQ1: How does memory condensation
+impact task completion rates, token savings and solution quality? RQ2: Do different scientific
+domains benefit from different condensation approaches? RQ3: How do token costs scale with task
+length across condensation strategies?
+Our contributions: (1) We conduct a systematic evaluation of 8 condensation strategies (5
+heuristic, 3 LLM-based) across 480 tasks in 6 scientific domains; (2) We show that masking
+the tool-call outputs outside a recent attention window with compact placeholders records
+the highest efficiency, achieving 8.6% token savings without LLM overhead; (3) We find
+that no condenser produces statistically significant changes in hypothesis quality while
+LLM-based condensers increase total token usage by 24–94% due to condensation overhead
+and additional agent turns meaning they incur substantial cost without measurable quality
+benefit. (4) We demonstrate strong domain dependence where the tool-call output masking
+method that saves up to 52% tokens in verbose domains like sociology, only provides limited
+benefit in concise Meta Science tasks. On the other hand, LLM-based condensers record
+greater quality gains in harder domains (e.g., biology, economics) and heuristic methods
+suffice in simpler ones.
+
+2
+
+Agentic Memory Condensation Techniques
+
+In this study, we used OpenHands (Wang et al., 2024a) (formerly OpenDevin), an opensource platform for LLM-powered software development agents, enabling code execution,
+file operations, web browsing, and human communication. We selected OpenHands because its open-source nature provides transparency into agent internals for reproducible
+experimentation, and its modular Condenser interface allows systematic comparison of
+condensation strategies without modifying core agent logic.
+As agents engage in long-running tasks, conversation histories grow substantially, leading
+to increased API costs and degraded effectiveness (Mei et al., 2025). OpenHands represents
+these histories as a stream of events, discrete units comprising agent actions (code execution,
+file operations, commands) and observations (tool outputs, error messages, results). OpenHands addresses context growth through a condenser abstraction that maintains bounded
+context while preserving essential information (Packer et al., 2024; Chhikara et al., 2025).
+The framework implements multiple strategies varying along two dimensions: compression
+mechanism (heuristic vs. LLM-based) and computational overhead (no additional LLM calls vs.
+requiring inference) (Du et al., 2025; Shan et al., 2025).
+Condensers are configured via parameters: keep first specifies how many initial events
+(typically system prompt and task description) to always preserve; max size sets the event
+count threshold that triggers condensation; max events bounds the total events retained; and
+attention window controls how many recent observations remain unmasked.
+Heuristic Strategies apply deterministic rules without additional LLM inference (Du et al.,
+2025). The simplest is NoOp condenser, a pass-through baseline that preserves all events and
+serves as our upper bound for information retention. Two strategies implement variations
+of sliding window eviction: RecentEvents condenser maintains a fixed-size FIFO window
+retaining keep first initial events plus the most recent events up to max events total, while
+AmortizedForgetting condenser triggers when count exceeds max size and aggressively reduces to max size/2 events, preserving head (task setup) and minimal tail (recent context).
+ObservationMasking condenser targets verbose observations rather than event count: it retains all events in the history but replaces tool output content outside an attention window
+with placeholder tokens, preserving the full event sequence while reducing token volume.
+2
+
+Preprint. Under review.
+
+Finally, ConversationWindow condenser preserves essential dialogue structure and triggers
+reactively on overflow errors rather than proactively on size thresholds.
+LLM-Based Strategies invoke a secondary model for intelligent compression (Zhong et al.,
+2023; Liu et al., 2023), trading computational overhead for semantic understanding. LLMSummarizing condenser generates free-form summaries that capture user goals, completed
+and pending tasks, code state, and error history—replacing dropped events with a condensed narrative. StructuredSummary condenser produces structured summaries with 18
+predefined fields (task status, file modifications, test results, git state) via function calling,
+ensuring consistent information extraction. LLMAttention condenser takes a different approach: rather than summarizing, it queries the model to rank all events by relevance to
+the current task, retaining the highest-ranked events regardless of recency (Yan et al., 2025).
+These LLM strategies use GPT-5-mini for condensation.
+Condensers follow three triggering modes: proactive methods (RecentEvents, Amortized, and
+all LLM-based) run once the event count exceeds a threshold; per-turn methods (ObservationMasking) apply transformations every iteration; and reactive methods (ConversationWindow)
+trigger only when a context-overflow error occurs.
+
+3
+
+Experimental Setup
+
+We design experiments to evaluate how condensation strategies affect agent performance
+on scientific reasoning tasks. Our evaluation framework measures computational efficiency,
+enabling comparison of the 8 condensation strategies described in Section 2.
+3.1
+
+Implementation
+
+Agent Framework We use the CodeActAgent Wang et al. (2024b), OpenHands’ default
+agent architecture that interleaves reasoning with executable code actions and no modifications were made to the agent itself.
+Runtime Environment Agents execute in isolated Docker containers using the OpenHands runtime image (oh v1.2.1) with python:3.12-bookworm as the base image. Each task
+runs in a fresh container with standardized dependencies including pandas, numpy, scipy,
+scikit-learn, and statsmodels for data analysis tasks. The sandboxed environment ensures
+reproducibility and prevents cross-task contamination.
+LLM Integration We interface with language models through LiteLLM (v1.74.3+), providing unified API access across providers. All agent experiments use GPT-4o via Azure
+OpenAI Service as the backbone model. Calls use temperature=0.0 for deterministic outputs, num retries=8 with exponential backoff, and caching prompt=true where supported.
+LLM-based condensers use GPT-5-mini for condensation, a smaller and cost efficient model
+than the main agent. Hypothesis quality evaluation utilizes GPT-4o as the LLM Judge
+model.
+3.2
+
+Evaluation Tasks
+
+DiscoveryBench We use DiscoveryBench (Majumder et al., 2024), which evaluates LLM
+capabilities in data-driven scientific discovery. The dataset comprises 144 real-world tasks
+across six domains—Biology, Economics, Engineering, Humanities, Meta Science, and
+Sociology—each requiring agents to analyze datasets and generate testable hypotheses
+derived from published research. Each task provides: (1) a scientific query requiring data
+analysis, (2) one or more datasets (CSV/JSON) with real-world measurements, (3) metadata
+describing variables and relationships, (4) a gold hypothesis for evaluation, and (5) workflow
+tags indicating expected analytical approaches.
+We use DiscoveryBench because its open-ended scientific reasoning tasks introduce realistic
+memory-management challenges not present in code-focused benchmarks. Tasks range
+from 5–22 events, requiring agents to maintain coherent, long-horizon reasoning chains
+3
+
+Preprint. Under review.
+
+Domain
+
+Tasks
+
+Biology
+Engineering
+Sociology
+Humanities
+Economics
+Meta Science
+
+10
+10
+10
+10
+10
+10
+
+Avg Ev.
+11.0
+10.7
+10.2
+8.6
+8.1
+5.4
+
+Primary Challenge
+Statistical tests
+Requirements tracing
+Causal inference
+Archaeological patterns
+Econometric modeling
+Literature synthesis
+
+Table 1: DiscoveryBench domain characteristics. Event counts from NoOp baseline.
+across diverse domains. Data-intensive fields such as Engineering and Sociology produce
+verbose file interactions whereas compact domains like Meta Science and Humanities
+require preserving inferential structure within shorter contexts.
+Table 1 highlights these differences: Biology tasks average 11.0 events with complex statistical analyses; Engineering averages 10.7 events with requirements tracing; and Meta Science
+tasks, though shortest at 5.4 events, demand precise literature synthesis. Our evaluation
+uses stratified sampling: 10 tasks per domain (test split only) across six domains (60 total)
+yielding 480 evaluations in total (60 × 8 condensers).
+3.3
+
+Evaluation Metrics
+
+Our evaluation captures both computational efficiency and hypothesis quality.
+Efficiency Metrics We measure efficiency along multiple dimensions: token usage (total
+input and output tokens consumed, reported as average per instance and percentage savings
+relative to NoOp baseline), event count (number of agent interactions to task completion,
+with task-level breakdown of faster/same/slower than baseline), and input/output ratio
+(decomposition into prompt vs. completion tokens). We also track token accumulation (cumulative growth revealing linear vs. quadratic cost scaling), and domain-specific performance
+(per-domain savings to identify which task types benefit from each condenser).
+Hypothesis Quality (LLM-as-Judge) We assess hypothesis quality using an LLM-asJudge framework adapted from DiscoveryBench (Majumder et al., 2024). A judge model
+(GPT-4o via Azure OpenAI) evaluates generated hypotheses against gold standards across
+three dimensions: Context Matching (ternary: 1.0 for very similar, 0.5 for partial match, 0.0
+for different temporal/conditional/scope context), Variable Overlap (F1 score with fuzzy
+matching for equivalent variable names), and Relationship Similarity (ternary: 1.0 for very
+similar, 0.5 for more general, 0.0 for different). The final score weights context most heavily,
+as correct scope and conditions are prerequisites for a valid scientific hypothesis: Score =
+0.4 × Context + 0.3 × Variable F1 + 0.3 × Relation.
+Few-Shot Judge Calibration We augment the relationship similarity and context matching
+dimensions with few-shot examples that clarify statistical equivalences (e.g., showing that
+a “positive relationship” corresponds to a correlation of +0.66), preventing penalties for
+scientifically precise hypotheses. Since our primary objective is to compare condensation
+strategies, we incorporated a robust LLM judge and conducted manual spot checks of its
+outputs to verify that scoring remained reasonable across condensers.
+3.4
+
+Experimental Protocol
+
+Condenser Configuration We use a two-stage calibration process to determine condenser
+settings. First, we run the NoOp (no-condensation) baseline across all 60 tasks to characterize
+uncondensed behavior, which averages 9 events per task (range: 5–22) and roughly 75k
+tokens. Based on these statistics, we set max size=8, ensuring condensation activates only
+for tasks exceeding the median event count, thereby avoiding unnecessary compression on
+shorter tasks while focusing on cases where memory pressure is most significant.
+4
+
+Preprint. Under review.
+
+Condenser
+
+Type
+
+Parameters
+
+NoOp
+RecentEvents
+Amortized
+ObservationMasking
+ConversationWindow
+
+Baseline
+Heuristic
+Heuristic
+Heuristic
+Heuristic
+
+—
+max events=8, keep first=2
+max size=8, keep first=2
+attention window=5
+(reactive trigger)
+
+LLMSummarizing
+StructuredSummary
+LLMAttention
+
+LLM-based
+LLM-based
+LLM-based
+
+max size=8, keep first=2
+max size=8, keep first=2
+max size=8, keep first=2
+
+Table 2: Condenser parameters calibrated from NoOp baseline (avg 9.0 events).
+
+Figure 1: Hypothesis quality scores (LLM-as-Judge)
+
+We preserve the first two messages (keep first=2) to retain the system prompt and task
+description, satisfying the constraint keep first < max size/2. For ObservationMasking, we
+set attention window=5, which keeps the five most recent observations unmasked. Table 2
+summarizes the full configuration.
+Triggering Mechanisms Condensers employ three paradigms: proactive (RecentEvents,
+Amortized, LLM-based) activate when event count exceeds max size; per-turn (ObservationMasking) applies transformations every iteration regardless of context size; reactive (ConversationWindow) activates only on explicit context overflow errors. Each task runs with
+max iterations=50 and temperature=0.0 for deterministic outputs.
+
+4
+
+Empirical Analysis
+
+We present experimental results evaluating 8 memory condensation strategies on DiscoveryBench, addressing the research questions posed in Section 1.
+4.1
+
+RQ1: How does memory condensation impact task completion rates, token savings
+and solution quality?
+
+An important question is whether condensation degrades task performance. We evaluate
+this through task completion metrics and hypothesis quality assessment.
+5
+
+Preprint. Under review.
+
+Condenser
+ObservationMasking
+ConversationWindow
+Amortized
+RecentEvents
+LLMSummarizing
+StructuredSummary
+LLMAttention
+NoOp (Baseline)
+
+Average Tokens Savings Average Events Faster Same Slower
+68,718
+74,243
+77,824
+85,971
+92,880
+119,505
+145,738
+75,147
+
+8.6%
+1.2%
+−3.6%
+−14.4%
+−23.6%
+−59.0%
+−93.9%
+—
+
+9.6
+9.8
+12.2
+10.0
+13.3
+15.9
+17.6
+9.0
+
+32%
+30%
+18%
+35%
+33%
+18%
+20%
+—
+
+27%
+27%
+22%
+22%
+15%
+12%
+13%
+—
+
+41%
+43%
+60%
+43%
+52%
+70%
+67%
+—
+
+Table 3: DiscoveryBench results (60 tasks × 8 condensers). Average total tokens and event
+counts per instance, with savings relative to NoOp baseline.
+
+Figure 2: Hypothesis quality analysis. (a) Box plots with individual data points and mean ±
+95% CI (black diamonds). The dashed line marks the NoOp baseline (0.591) - All confidence
+intervals overlap (b) Per-dimension breakdown (mean ± std). Relationship scoring shows
+the highest variance across all condensers, while Variable F1 remains the most stable.
+
+Task Completion All heuristic condensers maintain 100% task completion; LLM-based
+condensers achieve 93–98% completion. However, we noticed that most methods increase
+total token usage relative to the NoOp baseline. Only ObservationMasking (+8.6%) and
+ConversationWindow (+1.2%) achieve net savings, while all others add 4–94% more tokens
+due to condensation overhead and extra agent turns (see Table 3). Across methods, 41–70%
+of tasks require more events, with only 18–35% completing faster. LLM-based condensers
+are especially inefficient: StructuredSummary increases usage by 59% (70% tasks slower) and
+LLMAttention by 94% (67% slower). These slowdowns stem from agents losing necessary
+context and retrying failed approaches, compounded by the added LLM inference overhead.
+Hypothesis Quality Hypothesis quality remains relatively comparable across condensers,
+ranging from 0.559 (RecentEvents) to 0.637 (LLMSummarizing), compared to the NoOp baseline of 0.591 (Figure 1). As shown in Figure 2a, all confidence intervals overlap with
+the baseline, and paired Wilcoxon signed-rank tests confirm no significant differences (all
+p > 0.05, Bonferroni-corrected). LLMSummarizing achieves the highest scores across all three
+dimensions (Context: 0.675 vs. 0.658 (baseline), Variable F1: 0.800 vs. 0.742 (baseline), Relationship: 0.425 vs. 0.350), indicating that summarization helps agents retain task-relevant
+information. RecentEvents performs worst due to discarding older reasoning steps important for multi-step discovery. No condenser produces a statistically significant change in
+hypothesis quality. This shows memory condensation minimally affects hypothesis quality,
+and that cost, not quality - largely differentiates strategies.
+6
+
+Preprint. Under review.
+
+Figure 3: Token Savings vs Hypothesis Quality.
+
+Figure 4: Input vs. output token breakdown. Input tokens dominate at 93–98% across all
+condensers. Cost savings come from total reduction, not ratio optimization.
+
+Token Savings vs. Hypothesis Quality Figure 3 reports the token savings and hypothesis
+quality across different memory condensation techniques after 60 runs each. ObservationMasking is the most efficient method in saving tokens with near-baseline quality. While
+LLM-based methods do not achieve any token savings over the baseline, the StructuredSummary method comes closest to matching baseline quality, whereas LLMSummarizing
+most closely matches the baseline’s token savings. In the context of LLMSummarizing, we
+believe that developing effective token-saving strategies will be useful to fully capitalize on
+its potential performance advantages.
+Figure 4 further shows that input tokens dominate total cost (94–98%) for all condensers.
+LLM-based strategies produce a slightly higher share of output tokens due to condensation
+steps, but input tokens remain the primary cost driver, highlighting that reducing total
+token count matters more than optimizing the input/output ratio.
+Key finding: All heuristic condensers maintain 100% task completion; LLM-based condensers achieve 93–98% completion and have no statistically significant effect on hypothesis
+quality (Wilcoxon p > 0.05, Bonferroni-corrected). Scores range from 0.559 (RecentEvents) to
+7
+
+Preprint. Under review.
+
+0.637 (LLMSummarizing) vs. 0.591 baseline, with all confidence intervals overlapping (Figure 2a). LLMSummarizing best preserves reasoning chains, leading on all three dimensions
+- especially Relationship (0.425 vs. 0.350) - at 24% higher token cost. ObservationMasking
+offers the best efficiency - quality balance (8.6% savings, 0.572 quality).
+4.2
+
+RQ2: Do different scientific domains benefit from different condensation
+approaches?
+
+Key finding: No single condenser wins across domains. As shown in Figure 5b, Sociology
+benefits most from condensation (52% savings with ObservationMasking), as its verbose
+regression outputs contain large execution traces with sparse hypothesis-relevant content.
+MetaScience resists condensation entirely, its compact, already-aggregated outputs leave
+little noise to remove. Engineering also favors ObservationMasking (7%), whereas Economics
+is hardest to compress, with only LLMSummarizing providing modest savings (3.3%). LLMbased methods show negative savings in Biology (−158%) and Engineering (−180%), where
+over-compression of multi-step statistical reasoning causes context loss and retries that
+compound condensation overhead.
+4.3
+
+RQ3: How do token costs scale with task length across condensation strategies?
+
+Key finding: Memory condensation benefits grow with task length, but only heuristic
+methods record net token savings—and only on long tasks. Figure 6a shows the average
+cumulative prompt tokens per turn. Without condensation (NoOp), cumulative cost grows
+steeply from ∼9 K tokens at turn 0 to ∼93 K by turn 6 and ∼376 K by turn 18. All condensers
+track close to NoOp through the first 4–5 turns, after which the lines diverge: ObservationMasking and ConversationWindow accumate tokens in a slower rate, reaching roughly half
+the NoOp total by turn 15. Figure 6b breaks this pattern down by task duration (Short ≤ 7
+events, n = 28; Medium 8–10, n = 15; Long > 10, n = 17). Short tasks incur overhead for
+every condenser (−45% to −149%) because condensation costs cannot be amortized over
+few turns. Medium tasks still show net increases across the board. Only long tasks (> 10
+events) record true savings where ObservationMasking +33.5%, ConversationWindow +26.3%,
+RecentEvents +19.9%, and Amortized +17.0% have token savings. LLM-based condensers
+remain net-negative even on long tasks (StructuredSummary −30.8%, LLMAttention −60.5%),
+with only LLMSummarizing roughly breaking even (+0.4%).
+
+5
+
+Conclusion
+
+We evaluated 8 memory condensation strategies across 480 DiscoveryBench instances in 6
+scientific domains. No condenser produces a statistically significant change in hypothesis
+
+(a) Average tokens (K) by domain and condenser.
+Lighter colors indicate lower token usage.
+
+(b) Best condenser per domain with maximum
+savings achieved.
+
+Figure 5: Domain-specific condenser performance analysis.
+8
+
+Preprint. Under review.
+
+(a) Average cumulative prompt tokens per LLM turn, averaged across all 60 instances. NoOp (red)
+exhibits quadratic growth reaching ∼375 K by turn 19, while all condensers maintain sub-linear token
+accumulation, with the gap widening progressively at later turns.
+
+(b) Token savings (%) by task length. Tasks are grouped as short (≤7 events), medium (8–10 events),
+and long (> 10 events) based on NoOp agent-event counts. Positive values indicate savings; negative
+values indicate overhead.
+
+Figure 6: Token growth patterns demonstrating the efficiency benefits of condensation for
+long-running tasks.
+
+quality, while LLM-based condensers increase total token cost by 24–94%. ObservationMasking achieves the largest net savings (8.6%) without degrading quality. All heuristic
+condensers maintain 100% task completion, while LLM-based condensers achieve 93–98%.
+Quality varies only modestly (0.559–0.637), indicating that cost, not quality - differentiates
+strategies. Domain context matters substantially: ObservationMasking saves 52% on verbose
+sociology tasks but provides no benefit on compact meta-science tasks. Only long tasks
+(>10 events) yield positive savings for heuristic condensers (17–34%), while short tasks see
+increased costs across all strategies. These findings motivate adaptive meta-condensers that
+select or blend strategies at runtime based on domain, task length, and output verbosity.
+
+6
+
+Limitations
+
+Our study has three main limitations. First, all evaluations use a single backbone model
+(GPT-4o) with GPT-5-mini for LLM-based condensation; condensation effectiveness may
+differ for models with smaller context windows or weaker instruction-following capabilities.
+Second, DiscoveryBench tasks range from 5–22 events; real-world scientific workflows
+involving hundreds of iterations may amplify or shift the patterns we observe, particularly
+the task-length threshold at which condensation becomes cost-effective. Third, we treat condenser selection as a static, per-run choice; in practice, agents could benefit from switching
+strategies mid-task as context demands evolve, a direction our findings on task-length and
+domain dependence directly motivate.
+9
+
+Preprint. Under review.
+
+7
+
+Acknowledgments
+
+This work was supported by the U.S. Department of Energy, Advanced Scientific Computing
+Research program and Pacific Northwest National Laboratory (PNNL), which is operated
+by Battelle Memorial Institute for the U.S. Department of Energy under Contract DEAC05–76RLO1830. This research used resources of the National Energy Research Scientific
+Computing Center (NERSC), a Department of Energy User Facility using NERSC award
+ASCR-ERCAP0038273. This manuscript is identified as PNNL-SA-222584.
+
+References
+Haonan Bian, Zhiyuan Yao, Sen Hu, Yuxin Wang, and Xin Chen. Realmem: Benchmarking
+llms in real-world memory-driven interaction, 2026. URL http://arxiv.org/abs/2601.
+06966.
+Yifan Chen, Zixuan Wang, Yang Liu, and Min Zhang. Halumem: Operation-level hallucination evaluation for memory systems in llm agents, 2025. URL http://arxiv.org/abs/
+2511.03506.
+Prateek Chhikara, Dev Khant, Saket Aryan, Taranjeet Singh, and Deshraj Yadav. Mem0:
+Building production-ready ai agents with scalable long-term memory, 2025. URL http:
+//arxiv.org/abs/2504.19413.
+Aditya Deshpande, Sandeep Kumar, Yuxin Wang, and Wei Chen. Memtrack: Multi-platform
+dynamic environments for memory and state tracking evaluation, 2025. URL http:
+//arxiv.org/abs/2510.01353.
+Peijie Dong, Zhenheng Tang, Xiang Liu, Lujun Li, Xiaowen Chu, and Bo Li. Can compressed
+llms truly act? an empirical evaluation of agentic capabilities in llm compression, 2025.
+URL http://arxiv.org/abs/2505.19433.
+Yiming Du, Wenyu Huang, Danna Zheng, Zhaowei Wang, Sebastien Montella, Mirella
+Lapata, Kam-Fai Wong, and Jeff Z. Pan. Rethinking memory in ai: Taxonomy, operations,
+topics, and future directions, 2025. URL http://arxiv.org/abs/2505.00675.
+Shicheng Fang, Yuxin Wang, Xiaoran Liu, Jiahao Lu, Chuanyuan Tan, Xinchi Chen,
+Yining Zheng, Xuanjing Huang, and Xipeng Qiu. Agentlongbench: A controllable
+long benchmark for long-contexts agents via environment rollouts, 2026. URL http:
+//arxiv.org/abs/2601.20730.
+Jiayu Liu, Cheng Qian, Zhaochen Su, Mo Yang, and Wei Chen. Costbench: Evaluating
+multi-turn cost-optimal planning and adaptation in dynamic environments, 2025. URL
+http://arxiv.org/abs/2511.02734.
+Lei Liu, Xiaoyan Yang, Yue Shen, Binbin Hu, Zhiqiang Zhang, Jinjie Gu, and Guannan Zhang.
+Think-in-memory: Recalling and post-thinking enable llms with long-term memory, 2023.
+URL http://arxiv.org/abs/2311.08719.
+Nelson F Liu, Kevin Lin, John Hewitt, Ashwin Paranjape, Michele Bevilacqua, Fabio Petroni,
+and Percy Liang. Lost in the middle: How language models use long contexts. Transactions
+of the association for computational linguistics, 12:157–173, 2024.
+Elias Lumer, Faheem Nizar, Akshaya Jangiti, Kevin Frank, Anmol Gulati, Mandar Phadate,
+and Vamse Kumar Subbiah. Don’t break the cache: An evaluation of prompt caching for
+long-horizon agentic tasks, 2026. URL http://arxiv.org/abs/2601.06007.
+Bodhisattwa Prasad Majumder, Harshit Surana, Dhruv Agarwal, Bhavana Dalvi Mishra,
+Abhijeetsingh Meena, Aryan Prakhar, Tirth Vora, Tushar Khot, Ashish Sabharwal, and
+Peter Clark. Discoverybench: Towards data-driven discovery with large language models,
+2024. URL http://arxiv.org/abs/2407.01725.
+10
+
+Preprint. Under review.
+
+Lingrui Mei, Jiayu Yao, Yuyao Ge, Yiwei Wang, Baolong Bi, Yujun Cai, Jiazhi Liu, Mingyu
+Li, Zhong-Zhi Li, Duzhen Zhang, Chenlin Zhou, Jiayi Mao, Tianze Xia, Jiafeng Guo, and
+Shenghua Liu. A survey of context engineering for large language models, 2025. URL
+http://arxiv.org/abs/2507.13334.
+Charles Packer, Sarah Wooders, Kevin Lin, Vivian Fang, Shishir G. Patil, Ion Stoica, and
+Joseph E. Gonzalez. Memgpt: Towards llms as operating systems, 2024. URL http:
+//arxiv.org/abs/2310.08560.
+JV Roig. Towards a standard, enterprise-relevant agentic ai benchmark: Lessons from 5.5
+billion tokens, 2025. URL http://arxiv.org/abs/2511.08042.
+Lianlei Shan, Shixian Luo, Zezhou Zhu, Yu Yuan, and Yong Wu. Cognitive memory in large
+language models, 2025. URL http://arxiv.org/abs/2504.02441.
+Theodore R. Sumers, Shunyu Yao, Karthik Narasimhan, and Thomas L. Griffiths. Cognitive
+architectures for language agents, 2024. URL http://arxiv.org/abs/2309.02427.
+Zecheng Tang, Baibei Ji, Ruoxi Sun, Haitian Wang, WangJie You, Zhang Yijun, Wenpeng
+Zhu, Ji Qi, Juntao Li, and Min Zhang. Memoryrewardbench: Benchmarking reward
+models for long-term memory management in large language models, 2026. URL http:
+//arxiv.org/abs/2601.11969.
+Xingyao Wang, Boxuan Chen, Ziyi Adler, Tianjun Chen, Yufan Ma, Yueqi Zhou, Hoang
+Dai Tran Shi, Kai-Wei Chang, and Graham Neubig. Openhands: An open platform for ai
+software developers as generalist agents, 2024a. URL http://arxiv.org/abs/2407.16741.
+Xingyao Wang, Yangyi Chen, Lifan Yuan, Yizhe Zhang, Yunzhu Li, Hao Peng, and Heng
+Ji. Executable code actions elicit better llm agents. In Proceedings of the 41st International
+Conference on Machine Learning (ICML), 2024b. URL http://arxiv.org/abs/2402.01030.
+Benedict Wolff and Jacopo Bennati. Cost and accuracy of long-term memory in distributed
+multi-agent systems, 2026. URL http://arxiv.org/abs/2601.07978.
+Sikuan Yan, Xiufeng Yang, Zuchao Huang, Ercong Nie, Zifeng Ding, Zonggen Li, Xiaowen
+Ma, Hinrich Schütze, Volker Tresp, and Yunpu Ma. Memory-r1: Enhancing large language
+model agents to manage and utilize memories via reinforcement learning, 2025. URL
+http://arxiv.org/abs/2508.19828.
+Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and
+Yuan Cao. React: Synergizing reasoning and acting in language models, 2022. URL
+http://arxiv.org/abs/2210.03629.
+Zhuowen Yin, Cuifeng Gao, Chunsong Fan, Mo Yang, and Wei Chen. A comprehensive
+empirical evaluation of agent frameworks on code-centric tasks, 2025. URL http://arxiv.
+org/abs/2511.00872.
+Zeyu Zhang, Xiaohe Bo, Chen Ma, Rui Li, Xu Chen, Quanyu Dai, Jieming Zhu, Zhenhua
+Dong, and Ji-Rong Wen. A survey on the memory mechanism of large language model
+based agents, 2024. URL http://arxiv.org/abs/2404.13501.
+Wanjun Zhong, Lianghong Guo, Qiqi Gao, He Ye, and Yanlin Wang. Memorybank: Enhancing large language models with long-term memory, 2023. URL http://arxiv.org/abs/
+2305.10250.
+
+11

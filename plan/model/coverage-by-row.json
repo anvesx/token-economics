@@ -1,0 +1,2013 @@
+{
+ "1": [
+  {
+   "id": "C:023",
+   "technique": "Empirical token-consumption analysis and self-prediction of cost on SWE-bench Verified",
+   "how": "No new algorithm; empirical study. OpenHands on SWE-bench Verified (500 tasks x 4 runs) across 8 models, phase analysis (Setup, Explore, Fix, Validate, Closeout), round-level cost decomposition with Sonnet 4.5, and agent self-prediction of its own token use.",
+   "effect": "Agentic coding ~1000x more tokens than code reasoning and chat; input/output ratio 153.85 vs 1.33 and 0.16; cost $1.857 vs $0.016 and $0.023; Most expensive run ~2x cheapest on average (abstract says up to 30x); accuracy peaks at intermediate cost; Cache reads dominate tokens and dollars in every phase; output ~80x pricier per token than cache reads; Self-prediction correlation up to 0.39; every model underestimates; Kendall tau-b 0.32 vs difficulty",
+   "loses": "8 models, one framework (OpenHands), one benchmark; self-prediction noisy and underestimates."
+  },
+  {
+   "id": "C:099",
+   "technique": "Layered AGENTS.md discovery with project_doc_max_bytes cap",
+   "how": "Codex concatenates global then root-to-cwd AGENTS.md files, stopping at 32 KiB default.",
+   "effect": "not measured",
+   "loses": "Large files truncated at cap."
+  }
+ ],
+ "2": [
+  {
+   "id": "A:201",
+   "technique": "Explicit cache breakpoints with per-breakpoint TTL (30m / 12h) and stable-prefix rules",
+   "how": "GPT-5.6+: prompt_cache_breakpoint with ttl; write 1.25x for 30m, 2.5x for 12h, reads 0.1x; min prefix 1,024 tokens; dynamic content goes last; effort changes via appended config update.",
+   "effect": "Cache read 0.1x uncached input (0.05x for GPT-6.1 Sol/Terra).",
+   "loses": "Compaction or rewriting history resets reuse; 12h write costs 2.5x."
+  },
+  {
+   "id": "A:143",
+   "technique": "Gemini implicit and explicit context caching at 10% input price",
+   "how": "Implicit caching is automatic; explicit caching declares content so the discount is guaranteed; minimum 2,048 tokens.",
+   "effect": "Cached tokens cost 10% of standard input on Gemini 2.5 and above; caches deleted within 24 hours (implicit).",
+   "loses": "Explicit cache adds storage cost and management; minimum length applies."
+  },
+  {
+   "id": "C:053",
+   "technique": "Cache-aware cost comparison with TCO model and hybrid routing counterfactual replay",
+   "how": "Longitudinal case study: Langfuse and vLLM telemetry plus Git mining. Fix Commit Ratio via regex over commit messages; difficulty-stratified Mantel-Haenszel odds ratio; TCO = M x (compute + ops + T_iter x wage); hybrid-routing offline counterfactual replay by difficulty tier.",
+   "effect": "99.3% cache hit cut API cost 88.6% to $0.57/M tokens vs $2.83/M shared on-prem; FCR 74.9% vs 45.9%; Mantel-Haenszel OR 3.61; Shared on-prem saves 40.1% true TCO; dedicated costs 43.8% more; High-to-Claude hybrid saves 26.3%",
+   "loses": "One developer, non-randomized, tasks differ between periods; keyword-classified fixes; Period A fix count inflated by CI work; replay assumes tier exchangeability."
+  },
+  {
+   "id": "A:237",
+   "technique": "prompt_cache_key and cache_control breakpoints with 5m/1h TTL via gateway",
+   "how": "OpenAI auto-caches over 1024 tokens with prompt_cache_key for hit control; Anthropic allows up to 4 breakpoints with 5m or 1h TTL.",
+   "effect": "Up to 90% saving on cached tokens.",
+   "loses": "Gateway-specific; some providers 5-minute TTL only."
+  },
+  {
+   "id": "A:148",
+   "technique": "prompt_cache_key, explicit cache breakpoints, 30m/12h TTL option",
+   "how": "Stable prompt_cache_key per shared prefix, up to four explicit breakpoints per request, ttl 30m default or 12h; explicit mode avoids write charges when no breakpoint.",
+   "effect": "Cache writes charged only on GPT-5.6 and later; key beyond about 15 requests per minute may miss cache.",
+   "loses": "Write charges appear on newer models; 12h writes billed from 2026-11-01."
+  },
+  {
+   "id": "A:247",
+   "technique": "caching:'auto' two-marker placement and x-session-affinity header",
+   "how": "Gateway places cache_control on the last message and the message before the last user turn; session affinity header keeps a conversation on the provider holding its cache.",
+   "effect": "Anthropic write 1.25x, read 0.1x; one follow-up read breaks even.",
+   "loses": "One-shot traffic pays write premium; affinity does not guarantee a hit."
+  },
+  {
+   "id": "A:285",
+   "technique": "Per-message effort change without cache invalidation; cache price tiers",
+   "how": "Fable 5.1 supports mid-conversation effort changes (beta) and preserved thinking across model switches; cache read $0.25 vs 5m write $12.50 and 1h write $20 per MTok.",
+   "effect": "Cache read is a quarter of the earlier price; input $10 vs Opus 5.5 $4 per MTok.",
+   "loses": "Forced tool use errors; editing earlier turns invalidates thinking blocks."
+  },
+  {
+   "id": "A:072",
+   "technique": "Explicit cache breakpoints, cache diagnostics (reason: tools_changed), effort change via configuration_update, prewarm",
+   "how": "Stable tool order, allowed_tools and appended developer messages preserve prefix; diagnostics name the miss reason; prewarm at startup; effort change without cache break.",
+   "effect": "Customers: hit rate 83% to 91%, cache writes down about two-thirds, cost down 36%; another 85% to above 90%; 30-minute discount window.",
+   "loses": "Customer-quoted figures, vendor-curated."
+  },
+  {
+   "id": "A:157",
+   "technique": "Implicit versus explicit cache checkpoints; TTL resets on hit",
+   "how": "Explicit checkpoints need minimum prefix tokens per model; static content first; TTL (many models 5 minutes) refreshes on each hit.",
+   "effect": "not measured in the pages read",
+   "loses": "Implicit caching is best effort; minimums vary by model."
+  },
+  {
+   "id": "A:181",
+   "technique": "Peak/off-peak pricing; cache-hit price tier",
+   "how": "Off-peak rates are half of peak; cache hit input is about 2% of miss price on flash ($0.003 vs $0.15 off-peak).",
+   "effect": "Price list only.",
+   "loses": "Time-of-day pricing only helps schedulable work."
+  },
+  {
+   "id": "A:248",
+   "technique": "caching:'auto', cache_anchor_items, cache_ttl, session affinity",
+   "how": "Gateway adds cache markers per provider, pins a conversation to the provider holding its cache, and selects 5-minute or 1-hour lifetime.",
+   "effect": "not measured",
+   "loses": "Gateway lock-in; affinity limits failover."
+  },
+  {
+   "id": "A:258",
+   "technique": "Cached-input discount, sparse attention indexer and speculative decoding at serving level",
+   "how": "Cached input priced at $0.14 per million (90% off); sparse attention picks 2,048 prior tokens; speculative decoding verified by the full model.",
+   "effect": "Peak 446 tok/s; typical 90k prompt with 600 turns mostly cached.",
+   "loses": "Vendor claim for one provider/model."
+  },
+  {
+   "id": "C:010",
+   "technique": "Cache-read at 5% of input on Opus 5.5 and Sonnet 5.5; Haiku 5.5 as cheap subagent",
+   "how": "Price table: Opus 5.5 $4/$20 with cache read $0.20 and write $5 (5m) / $8 (1h); Haiku 5.5 steps price above 100K prompt tokens.",
+   "effect": "Haiku 5.5 over 100K still a quarter of Sonnet 5.5 rate.",
+   "loses": "Third-party blog; prices may change."
+  },
+  {
+   "id": "C:092",
+   "technique": "/usage breakdown and ENABLE_PROMPT_CACHING_1H",
+   "how": "/usage shows parallel sessions, subagents, cache misses, long context as percent of last 24 hours; PreCompact hooks can block compaction; env var opts into 1h TTL.",
+   "effect": "Not measured.",
+   "loses": "Release notes only."
+  }
+ ],
+ "3": [
+  {
+   "id": "A:167",
+   "technique": "KV-aware routing, agent hints (nvext) and selective KV retention",
+   "how": "Harness sends priority, output-length and prefill hints; global index routes to workers with highest cache overlap; ephemeral subagent KV marked for early eviction.",
+   "effect": "Claude Code calls hit 85-97% cache; agent teams 97.2% aggregate hit rate; 11.7x read/write ratio.",
+   "loses": "Needs a Dynamo-based serving stack, not hosted APIs."
+  },
+  {
+   "id": "A:260",
+   "technique": "Session affinity for cache hits; cache and difficulty-aware routing; batch tier",
+   "how": "Keeps an agent on the same server so its context stays cached; routing is cache- and difficulty-aware; Batch is 50% off.",
+   "effect": "Cache hit rates up to 99.6% in long agent sessions; cached input at half price or less; cache writes free.",
+   "loses": "Vendor marketing claims; a customer quote of $4M to $800K is anecdotal."
+  },
+  {
+   "id": "A:072",
+   "technique": "Explicit cache breakpoints, cache diagnostics (reason: tools_changed), effort change via configuration_update, prewarm",
+   "how": "Stable tool order, allowed_tools and appended developer messages preserve prefix; diagnostics name the miss reason; prewarm at startup; effort change without cache break.",
+   "effect": "Customers: hit rate 83% to 91%, cache writes down about two-thirds, cost down 36%; another 85% to above 90%; 30-minute discount window.",
+   "loses": "Customer-quoted figures, vendor-curated."
+  },
+  {
+   "id": "A:182",
+   "technique": "Automatic on-disk prefix cache with persisted prefix units",
+   "how": "Each request persists prefixes at the end of user input and output; a hit needs full match of a persisted unit; common prefixes auto-detected after the second request.",
+   "effect": "Cache hit and miss reported per request; hits may need several seconds to build.",
+   "loses": "Best effort; no guaranteed hit; cleared in hours to days."
+  },
+  {
+   "id": "A:223",
+   "technique": "Prefix prompt cache with x-grok-conv-id routing header",
+   "how": "Matching prefix is reused at reduced price; x-grok-conv-id steers requests to the same server to raise hit rate.",
+   "effect": "Cached tokens billed at a reduced rate (rate not in extract).",
+   "loses": "Not guaranteed; evictions and routing can miss."
+  },
+  {
+   "id": "A:231",
+   "technique": "Provider sticky routing and session_id for cache hits",
+   "how": "After a cached request, later requests go to the same provider; session_id sets the sticky key; Anthropic needs explicit cache_control.",
+   "effect": "Sticky sessions expire after 60 minutes idle; only active when cache read price is lower.",
+   "loses": "Manual provider order disables stickiness; fallback loses cache."
+  }
+ ],
+ "4": [
+  {
+   "id": "A:201",
+   "technique": "Explicit cache breakpoints with per-breakpoint TTL (30m / 12h) and stable-prefix rules",
+   "how": "GPT-5.6+: prompt_cache_breakpoint with ttl; write 1.25x for 30m, 2.5x for 12h, reads 0.1x; min prefix 1,024 tokens; dynamic content goes last; effort changes via appended config update.",
+   "effect": "Cache read 0.1x uncached input (0.05x for GPT-6.1 Sol/Terra).",
+   "loses": "Compaction or rewriting history resets reuse; 12h write costs 2.5x."
+  },
+  {
+   "id": "A:280",
+   "technique": "Implicit caching with 90% discount plus durable tier (24h max)",
+   "how": "Prefixes are cached automatically with a 90% discount, falling to durable storage after eviction; put common content first.",
+   "effect": "90% discount on cached tokens; expiry no later than 24h.",
+   "loses": "Explicit cache adds storage fees; Gemini-specific."
+  },
+  {
+   "id": "A:157",
+   "technique": "Implicit versus explicit cache checkpoints; TTL resets on hit",
+   "how": "Explicit checkpoints need minimum prefix tokens per model; static content first; TTL (many models 5 minutes) refreshes on each hit.",
+   "effect": "not measured in the pages read",
+   "loses": "Implicit caching is best effort; minimums vary by model."
+  },
+  {
+   "id": "A:054",
+   "technique": "Idle-session thinking clearing (clear_thinking_20251015, keep:1) and effort-default / length-limit regression lessons",
+   "how": "Clearing old thinking after 1h idle was meant to shrink the uncached resume; a bug repeated it every turn, causing cache misses; a 25-word between-tool limit cost quality.",
+   "effect": "Prompt ablation showed a 3% eval drop; medium default effort felt less intelligent and was reverted to high/xhigh.",
+   "loses": "Pruning history or verbosity limits can silently hurt quality and cause cache misses; need per-change evals."
+  },
+  {
+   "id": "C:092",
+   "technique": "/usage breakdown and ENABLE_PROMPT_CACHING_1H",
+   "how": "/usage shows parallel sessions, subagents, cache misses, long context as percent of last 24 hours; PreCompact hooks can block compaction; env var opts into 1h TTL.",
+   "effect": "Not measured.",
+   "loses": "Release notes only."
+  }
+ ],
+ "5": [
+  {
+   "id": "C:023",
+   "technique": "Empirical token-consumption analysis and self-prediction of cost on SWE-bench Verified",
+   "how": "No new algorithm; empirical study. OpenHands on SWE-bench Verified (500 tasks x 4 runs) across 8 models, phase analysis (Setup, Explore, Fix, Validate, Closeout), round-level cost decomposition with Sonnet 4.5, and agent self-prediction of its own token use.",
+   "effect": "Agentic coding ~1000x more tokens than code reasoning and chat; input/output ratio 153.85 vs 1.33 and 0.16; cost $1.857 vs $0.016 and $0.023; Most expensive run ~2x cheapest on average (abstract says up to 30x); accuracy peaks at intermediate cost; Cache reads dominate tokens and dollars in every phase; output ~80x pricier per token than cache reads; Self-prediction correlation up to 0.39; every model underestimates; Kendall tau-b 0.32 vs difficulty",
+   "loses": "8 models, one framework (OpenHands), one benchmark; self-prediction noisy and underestimates."
+  },
+  {
+   "id": "C:136",
+   "technique": "Decoupled controller model approves extra token budget from workspace snapshot",
+   "how": "Worker freezes at a 50,000-token limit; a separate controller model scores approve-vs-deny with expected value p>1/2 using task, files, tests snapshot.",
+   "effect": "Injected budget counter referenced 0 times in 14,000+ messages; request_more_budget used 0 of 5,000 turns; approval 97% default, 79% neutral.",
+   "loses": "Controller models biased to approve (four of six); 100-task evaluation set."
+  },
+  {
+   "id": "A:153",
+   "technique": "Session AI-credit cap (/limits set, --max-ai-credits)",
+   "how": "A soft cap on credits per session (min 30; 1 credit = $0.01) stops the agent cleanly at the limit and lets you raise it.",
+   "effect": "not measured",
+   "loses": "Soft limit: in-progress response completes so spend can exceed it; preview feature."
+  },
+  {
+   "id": "C:030",
+   "technique": "Execution-verified downgrade-and-cascade step-level routing labels",
+   "how": "Step-level router mapping a trajectory prefix to a tier (low, mid, mid_high, high). Labels come from a greedy sequential-locking downgrade search: from a successful strong trajectory, try tiers cheapest-up at each step and accept if the full trajectory still passes with no more LLM-call steps. Three-model tier cascade verification; failure-aware COST SAVE; bill = API cost + (1-resolved)*$0.60.",
+   "effect": "Dynamic: trained router resolved 75/100 at $25.66 vs unrouted Opus 4.6 74/100 at $54.73 (-53.1% API cost); Rule-based variant cost $172.56 (6.7x more than trained router); Opus 4.6 as a router predicted high for only 7 of 147 verified-high SWE steps; Cascade recovered 28 of 33 downgradeable labels vs 15 of 33 for single-model probing",
+   "loses": "Small static corpus; greedy search may miss cross-step interactions; labels tied to a fixed pool and price snapshot; dynamic track SWE-bench Verified only (Astropy and Django); English only."
+  },
+  {
+   "id": "C:082",
+   "technique": "Code Review run-frequency setting (once after creation vs every push vs manual)",
+   "how": "Cost multiplies by pushes under After every push; choose Once or Manual and track Average cost per repo.",
+   "effect": "not measured",
+   "loses": "Default for new repos is the costliest setting."
+  },
+  {
+   "id": "A:031",
+   "technique": "Mixture-of-Agents (layered proposers and aggregators)",
+   "how": "Layered proposers and aggregators: y_i = concat_j A_ij(x_i) + x_1, each layer's models see all previous outputs through an Aggregate-and-Synthesize prompt. Default 6 open models, 3 layers, Qwen1.5-110B-Chat final aggregator. MoA-Lite is 2 layers with Qwen1.5-72B aggregator.",
+   "effect": "MoA 65.1+-0.6% LC win; MoA w/ GPT-4o 65.7%; MoA-Lite 59.3%; GPT-4o 57.5%; MoA-Lite matches GPT-4o cost with +1.8 points; MoA-Lite beats GPT-4 Turbo (55.0%) by ~4% at over 2x cost-effectiveness; 6 proposers 61.3% vs 1 proposer 47.8%",
+   "loses": "High time-to-first-token (last layer must finish). First aggregation layer gives most gain. LLM ranker much worse than aggregation."
+  },
+  {
+   "id": "A:039",
+   "technique": "Comp-LLM (sub-query dependency graph with embedding-similarity expert assignment)",
+   "how": "Comp-LLM: decomposer (SFT Llama 2 7B on 1000 GPT-4o examples) -> expert router (mean-pooled embedding, cosine, sq_sim 0.7 else base model) -> DAG scheduler running ready sub-queries in parallel -> aggregator; LoRA experts.",
+   "effect": "Comp-LLM (35B) F1 0.78 vs Llama-2 70B 0.79, Mixtral 0.74, OLMoE 0.52. Decomposer F1 0.87/0.86 vs few-shot 0.48/0.42. 108.78s vs 892.07s for offloaded Llama-2-70B on one A40; latency 1.1x-1.7x vs sequential.",
+   "loses": "Needs experts per domain, static reasoning only, measures size not dollars."
+  },
+  {
+   "id": "C:031",
+   "technique": "RLM-Cascade (complexity router, cheap draft model, Opus verify or skip)",
+   "how": "Local proxy (ANTHROPIC_BASE_URL) with a rule-based O(1) router, no model calls. Requests with a non-empty tools field go straight to Opus. Simple prefixes go to the cheap model only (SKIPPED). Complex keywords or input over 1,500 chars get cheap draft then Opus verify (USE_DRAFT = ACCEPTED, or ENHANCE).",
+   "effect": "Savings 45.8% (service, N=125), 47.4% (architecture set, N=39), 32% (current run, N=12); model predicted 67.2% vs 47.4% observed. p50 latency 2,026 vs 3,698 ms. Quality 100% vs 95% pass (N=20).",
+   "loses": "Tool-selection turns (70-80% of Claude Code turns) bypass to Opus, so savings apply to the ~20-30% text turns. Router is a keyword classifier. One cost inversion (+$0.01189). TTFT 2.1x worse. Learned router, parallel draft+verify, local tier are future work."
+  },
+  {
+   "id": "A:060",
+   "technique": "Harness-level cost and Pass@1 benchmark with a cost-calibrated Lite-80 subset",
+   "how": "Adapter protocol (create_agent, send_task, backup_session, delete_agent, get_docker_args); patch exported from git diff; history after base_commit removed to stop leakage. Lite-80 subset picked by quartile-quota local search with ranking hinge and cost-parity filter.",
+   "effect": "Bare adapter 19.3% vs full adapter 71.2% resolved; largest harness gap at fixed model 24.3 pp; Best Pass@1 Hermes Agent 81.7% at $36; Lite-80 vs full: MAE 0.81 pp at 25.3% of cost",
+   "loses": "Meta-Harness evolved and evaluated on same instances; Lite is a proxy; appendix F is single-run."
+  },
+  {
+   "id": "A:008",
+   "technique": "MTRouter turn-level outcome-estimator routing",
+   "how": "MTRouter: MLP outcome estimator on [history embedding (frozen Qwen3-Embedding-0.6B, 8192 tokens); model embedding (8-d metadata + 16-d residual -> 64-d)]. Target = terminal score minus progress-weighted error penalties (1.0/0.8/0.2). Argmax per turn, $2/episode cap.",
+   "effect": "ScienceWorld 53.8 vs GPT-5 48.4 at -58.7% cost. HLE 26.0 vs 23.8 at -43.4%. OOD ScienceWorld +5.0 at -65.8%; HLE OOD cost -52.3%. ~5 switches vs ~20 (Router-R1). Stays on same model after error 90.2%/80.9% vs 38.3%/66.4%.",
+   "loses": "Offline only; switching can lose prompt cache (authors note)."
+  },
+  {
+   "id": "A:041",
+   "technique": "SLM-first heterogeneous agents with LLM-to-SLM conversion algorithm",
+   "how": "Six-step LLM-to-SLM conversion: secure logging of non-human-facing calls; curate and filter data (10k-100k examples rule of thumb, PII removal); task clustering; SLM selection; specialised fine-tuning (LoRA/QLoRA, optional distillation); iterate and retrain including the router.",
+   "effect": "7B SLM 10-30x cheaper than 70-175B LLM in latency/energy/FLOPs (cited). Replaceable query share 40-70% across three agents (authors' estimates, not measured). SLM defined as under 10B params.",
+   "loses": "Authors list opposing views: LLM generalists win on general language, centralisation economies of scale ('jury is still out'), equally possible worlds. Barriers: infrastructure investment, generalist benchmarks, awareness."
+  },
+  {
+   "id": "C:131",
+   "technique": "Budget Tracker and BATS budget-aware test-time scaling",
+   "how": "Budget Tracker: plug-in that shows remaining and used per-tool budgets each ReAct iteration. BATS: structured tree plan (exploration vs verification clues), self-verification with SUCCESS/CONTINUE/PIVOT decisions, trajectory summarization, LLM judge picks final answer. Unified cost = token cost (input/output/cache) + tool-call cost.",
+   "effect": "Budget Tracker at budget 10 matches ReAct at 100 (12.8% vs 12.6%) with 40.4% fewer search calls, 19.9% fewer browse calls, 31.3% lower cost.; BATS 24.6% BrowseComp, 46.0% BrowseComp-ZH, 27.0% HLE-Search, training-free.; Ablation: removing verification drops BrowseComp 18.7% to 15.4%.",
+   "loses": "Evaluated on web search agents only; tool-call budget, not token budget."
+  },
+  {
+   "id": "C:010",
+   "technique": "Cache-read at 5% of input on Opus 5.5 and Sonnet 5.5; Haiku 5.5 as cheap subagent",
+   "how": "Price table: Opus 5.5 $4/$20 with cache read $0.20 and write $5 (5m) / $8 (1h); Haiku 5.5 steps price above 100K prompt tokens.",
+   "effect": "Haiku 5.5 over 100K still a quarter of Sonnet 5.5 rate.",
+   "loses": "Third-party blog; prices may change."
+  },
+  {
+   "id": "C:073",
+   "technique": "opusplan alias, subagent model setting, effort levels, organization effort caps",
+   "how": "opusplan uses Opus in plan mode and Sonnet in execution; CLAUDE_CODE_SUBAGENT_MODEL sets subagent model; effort sets adaptive reasoning.",
+   "effect": "Not measured.",
+   "loses": "Risk of mismatch with effort after fallback model."
+  }
+ ],
+ "6": [
+  {
+   "id": "A:224",
+   "technique": "Time-at-end-of-message placement, prompt_cache_key, encrypted-reasoning carry-over, compaction",
+   "how": "Keep timestamps out of the system prompt prefix, route each chat with prompt_cache_key, pass toInput() reasoning items so cache covers prior answers, compact with responses.compact().",
+   "effect": "Time at top of system prompt made the same chat cost 2.2-2.9x as much; run cost 56 cents total.",
+   "loses": "Turn after compaction misses cache; single example app, Grok pricing."
+  },
+  {
+   "id": "A:154",
+   "technique": "Copilot CLI background auto-compaction at ~80% (dynamic to 90%) plus /context, /usage, /compact",
+   "how": "Compresses history in background near 80% of token limit, waiting until 90% when static context is 75% or more; /compact manual, /usage and /context for visibility.",
+   "effect": "Threshold behavior only; no savings measured.",
+   "loses": "Compaction reclaims less when static context is large."
+  },
+  {
+   "id": "A:207",
+   "technique": "Retained reasoning plus native compaction, programmatic tool calling, low reasoning effort, small-tier model (Luna) selection",
+   "how": "Persists reasoning across turns with compaction, runs tool orchestration in code outside context, and uses cheaper tiers or lower effort.",
+   "effect": "ARC-AGI-3 13.3% to 38.3% with about 6x fewer output tokens; BrowseComp 84.04% at $1.33 versus 84.36% at $33.27 for GPT-5.5; PlayerZero cost -64%.",
+   "loses": "Vendor and customer testimonials; harness-specific."
+  },
+  {
+   "id": "A:048",
+   "technique": "Length-aware AUC scoring and harmonic-mean ATLAScore over an 8K-1M grid",
+   "how": "ATLAS benchmark. 3+5 taxonomy (foundational: retrieval, aggregation, reasoning; application: QA, ICL, code, memory, holistic). Length-aware trapezoidal AUC per dimension; ATLAScore is the harmonic mean of three category aggregates; delta-method confidence intervals.",
+   "effect": "Gemini-3.1-Pro-Preview leads at 128K; Claude-Opus-4.6 leads at 1M (ATLAScore 70.55). 20 of 26 models change rank between 128K and 1M. Mean relative decay 24.3%; Opus-4.6 loses 8.5%, GLM-4.7 non-reasoning 60.5%. GPT-5.2 retrieval 88.21->47.31 at 1M.",
+   "loses": "English only, holistic at original lengths, model-generated AMemBench transcripts, no summarisation, contamination risk."
+  },
+  {
+   "id": "C:007",
+   "technique": "OpenCode prune-then-summarise; Claude Code three-layer trim, cache-friendly tail trimming, 9-section summary",
+   "how": "OpenCode hides old tool outputs only if it frees over 20,000 tokens and keeps the last 40,000; Claude Code trims the tail to preserve the cache prefix and auto-compacts at window minus 13,000.",
+   "effect": "Worked example on a 15,400-token session; no cost figures.",
+   "loses": "Codex handoff summary is all-or-nothing; source based on reverse engineering."
+  },
+  {
+   "id": "A:250",
+   "technique": "Model natively trained for compaction across multiple context windows",
+   "how": "The model auto-compacts near the window limit and repeats; adds xhigh reasoning effort.",
+   "effect": "30% fewer thinking tokens at medium effort on SWE-bench Verified versus GPT-5.1-Codex.",
+   "loses": "Vendor claim; Codex-specific."
+  },
+  {
+   "id": "C:047",
+   "technique": "Codex compaction backends (default summarization, remote, remote_v2) and two-phase memory consolidation",
+   "how": "Auto-compaction at model_auto_compact_token_limit; memory phase 1 extracts raw memories, phase 2 consolidates into MEMORY.md and summaries.",
+   "effect": "Not measured.",
+   "loses": "Reverse-engineered reading of one Codex version."
+  }
+ ],
+ "8": [
+  {
+   "id": "C:123",
+   "technique": "Small single-task threads and 20% context notice",
+   "how": "Amp warns at 20% of context window; advises small scoped threads because requests above 200k tokens cost roughly twice per token.",
+   "effect": "Over-200k requests about 2x per-token price.",
+   "loses": "Short post, no measurement."
+  },
+  {
+   "id": "C:098",
+   "technique": "One chat per coherent outcome with fork, compact, subagents and AGENTS.md",
+   "how": "Plan mode before hard tasks, short AGENTS.md, /fork only when work branches, subagents for bounded work, one chat per outcome.",
+   "effect": "not measured",
+   "loses": "Qualitative guidance only."
+  },
+  {
+   "id": "A:250",
+   "technique": "Model natively trained for compaction across multiple context windows",
+   "how": "The model auto-compacts near the window limit and repeats; adds xhigh reasoning effort.",
+   "effect": "30% fewer thinking tokens at medium effort on SWE-bench Verified versus GPT-5.1-Codex.",
+   "loses": "Vendor claim; Codex-specific."
+  }
+ ],
+ "9": [
+  {
+   "id": "C:098",
+   "technique": "One chat per coherent outcome with fork, compact, subagents and AGENTS.md",
+   "how": "Plan mode before hard tasks, short AGENTS.md, /fork only when work branches, subagents for bounded work, one chat per outcome.",
+   "effect": "not measured",
+   "loses": "Qualitative guidance only."
+  }
+ ],
+ "10": [
+  {
+   "id": "C:123",
+   "technique": "Small single-task threads and 20% context notice",
+   "how": "Amp warns at 20% of context window; advises small scoped threads because requests above 200k tokens cost roughly twice per token.",
+   "effect": "Over-200k requests about 2x per-token price.",
+   "loses": "Short post, no measurement."
+  }
+ ],
+ "11": [
+  {
+   "id": "C:007",
+   "technique": "OpenCode prune-then-summarise; Claude Code three-layer trim, cache-friendly tail trimming, 9-section summary",
+   "how": "OpenCode hides old tool outputs only if it frees over 20,000 tokens and keeps the last 40,000; Claude Code trims the tail to preserve the cache prefix and auto-compacts at window minus 13,000.",
+   "effect": "Worked example on a 15,400-token session; no cost figures.",
+   "loses": "Codex handoff summary is all-or-nothing; source based on reverse engineering."
+  }
+ ],
+ "12": [
+  {
+   "id": "A:002",
+   "technique": "RouterBench evaluation framework with AIQ metric and Zero router baseline",
+   "how": "Routers are points in the cost-quality plane. Mixing two routers with probability t gives any point on their segment; extrapolation adds cost without quality. The non-decreasing convex hull is the Zero router; AIQ is hull area over [cmin, cmax] divided by the cost span. KNN and MLP routers pick argmax of lambda times predicted quality minus cost; the cascade calls models cheapest first until a judge passes.",
+   "effect": "Oracle: MMLU 0.957 at $0.297 vs GPT-4 0.828 at $4.086; HellaSwag 0.994 at $0.86 vs GPT-4 0.923 at $24.29. Predictive AIQ vs Zero: MMLU 0.773/0.769 vs 0.763; ARC 0.871/0.875 vs 0.877; MBPP 0.644/0.642 vs 0.660; HellaSwag 0.588 all. Cascade at zero error: MMLU 0.901, MBPP 0.862, ARC 0.923, GSM8K 0.680 (Zero 0.628), HellaSwag 0.469 vs Zero 0.607. RAG AIQ: KNN 0.695, MLP 0.675, cascade 0.657, Zero 0.632.",
+   "loses": "Cost and quality only, no latency. Mostly academic multiple-choice tasks, 2023-era models, no coding agents or long contexts. Cost for predictive routers approximated by per-token price. Cascade judge is simulated with perfect knowledge, so results are an upper bound. Three tasks graded by GPT-4. RAG has few models and one client's queries. In-domain train and test split; out-domain test only plotted."
+  },
+  {
+   "id": "A:011",
+   "technique": "Preference-aligned routing via Domain-Action Taxonomy with a 1.5B generative router",
+   "how": "Qwen2.5-1.5B fully fine-tuned to generate a route-policy id given the conversation plus all policy (name, NL description) pairs in the prompt. A separate policy-to-model mapping is edited without retraining. Domain-Action taxonomy with fallback to domain if action is vague.",
+   "effect": "Overall 93.17 vs Claude-sonnet-3.7 92.79 and GPT-4o 89.74; turn 96.05, span 94.98, conversation 88.48. Authors cite +7.71% average over the compared models.",
+   "loses": "Bounded by precision of policy descriptions; quality bounded by user's model-to-policy assignment; all policies sit in the prompt; no cost or answer-quality measurement."
+  },
+  {
+   "id": "A:019",
+   "technique": "Frozen-backbone SLO-decoded router heads with GRPO reward quality - lambda*cost - mu*latency",
+   "how": "One forward pass of a 0.6B model gives task class, routing distribution over a model catalog and embedding, decoded under cost/latency/quality constraints; trained SFT then GRPO.",
+   "effect": "Holdout n=1,941: route_acc 0.791 (+25.8 pts over 53.3% majority), task_acc 0.723; top3 0.990. Experimental.",
+   "loses": "Labels are what models actually served, quality proxy fixed at 1.0; Opus-dominated data; frozen backbone cut accuracy from 0.961."
+  },
+  {
+   "id": "A:028",
+   "technique": "Conformal Cascade: defer when conformal prediction set is not a single answer",
+   "how": "Per tier sample N=16 at T=0.7; nonconformity s=1-freq(a); split-conformal threshold from calibration; accept if prediction set size is between 1 and kappa, else defer to next tier. Cost c1+c2*Pr[|C1|!=1]; beats always-strong if Pr[|C1|=1]>c1/c2.",
+   "effect": "Wins 49 of 72 pairs, ties 6, loses 17 vs oracle-tuned best heuristic; Llama/MMLU kappa 1 to 3 at alpha 0.10: cost 2.86 to 1.34 (-53%) at 5.3 pp accuracy cost; Tier-1 acceptance 0% (MMLU-Pro, GPQA) to 95.6% (Belebele-Eng)",
+   "loses": "Finite answer sets only; marginal guarantee; K=2 only; needs 16 samples per tier and at least 200 labelled calibration examples."
+  },
+  {
+   "id": "A:183",
+   "technique": "Anthropic-compatible endpoint with claude-opus mapped to deepseek-v4-pro, others to deepseek-flash",
+   "how": "Point ANTHROPIC_BASE_URL at DeepSeek; claude-haiku/sonnet names route to the cheaper flash model.",
+   "effect": "not measured",
+   "loses": "Many Anthropic fields ignored (mcp_servers, container); behaviour differs from Claude."
+  },
+  {
+   "id": "A:267",
+   "technique": "Cursor Router modes (Cost, Balance, Intelligence) and pooled usage billing",
+   "how": "Cost mode routes to cheapest-model pool; Balance/Intelligence bill at routed model list price; third-party routes incur Cursor Token Rate.",
+   "effect": "not measured",
+   "loses": "Individual plans only get Cost mode; unused usage does not roll over."
+  },
+  {
+   "id": "C:048",
+   "technique": "Fine-tuned 350M SLM for tool calling (SFT with TRL)",
+   "how": "Supervised fine-tuning of facebook/opt-350m for 1 epoch (HF TRL SFTTrainer) on ToolBench converted to 187,542 Thought/Action/Action Input examples; LR 5e-5, effective batch 32, FP16, gradient checkpointing, 5,860 steps.",
+   "effect": "Pass rate 77.55% overall vs ToolLLaMA-DFS 30.18%, ChatGPT-CoT 26.00%, ToolLLaMA-CoT 16.27%, Claude-CoT 2.73%; 74.0-80.5% across categories.",
+   "loses": "Training data and evaluation tightly coupled; may not generalize beyond ToolBench; controlled API set; retraining needed as APIs evolve; still needs compute and data."
+  },
+  {
+   "id": "C:061",
+   "technique": "LiteLLM budget caps, Langfuse, LLMLingua, RouteLLM, GPTCache semantic cache",
+   "how": "Roundup: LiteLLM max_budget per key; LLMLingua prompt compression; RouteLLM routes between two models by threshold; GPTCache semantic caching.",
+   "effect": "RouteLLM 85% cost reduction keeping 95% GPT-4 quality on MT Bench (45% MMLU, 35% GSM8K); LongLLMLingua +21.4% RAG with 1/4 tokens.",
+   "loses": "Vendor blog citing others' numbers; RouteLLM is binary routing only."
+  },
+  {
+   "id": "A:004",
+   "technique": "GraphRouter heterogeneous graph router (task/query/LLM nodes, edge prediction)",
+   "how": "Heterogeneous graph with task, query and LLM nodes; initial embeddings from a GPT-4o description encoded by BERT. Edges task-query and LLM-query (performance, cost). 2-layer GAT, 32-dim hidden. Trained by edge prediction; inference picks argmax dot product. Reward = alpha*Perf - beta*Cost with (alpha,beta) = (1,0), (0.5,0.5), (0.2,0.8).",
+   "effect": "Performance-First reward 0.539 vs FrugalGPT 0.517, oracle 0.588; Balance 0.209 vs 0.196 (oracle 0.231); Cost-First 0.064 vs 0.057 (oracle 0.072); Claims >=12.28% reward gain and >=88.89% of oracle; Performance-First table gain is ~4%; New LLMs few-shot 0.207 vs C2MAB-V 0.189 (+9.52%), time cost -99.45%",
+   "loses": "Exploratory; no path or taxonomy signals; LLMs handle numeric price and context info poorly; small 4-task benchmark."
+  },
+  {
+   "id": "A:012",
+   "technique": "Arch-Router preference-aligned domain-action routing (1.5B model)",
+   "how": "A 1.5B model maps each prompt to user-defined domain and action routes, each tied to a preferred model, without retraining when models change.",
+   "effect": "Claims state-of-the-art preference matching on conversational data; no cost figure in this page.",
+   "loses": "Routes by declared preference, not measured cost; accuracy numbers not on this page."
+  },
+  {
+   "id": "A:020",
+   "technique": "Cost-Spectrum Contrastive Routing (CSCR): shared embedding plus FAISS k-NN",
+   "how": "Cost-Spectrum Contrastive Routing: prompts (frozen MiniLM + MLP head) and models embedded in one space. Models described by logit footprints (open models) or perplexity fingerprints (black-box APIs). Cost-Spectrum InfoNCE: banded positives (K=5), band-specific temperatures, cost-weighted negatives (gamma=0.2). Routing is one FAISS k-NN lookup.",
+   "effect": "Best AUDC on all three benchmarks; up to 25% better accuracy-cost trade-off. OOD AUDC 0.5146 vs next-best 0.4863. Cost-aware loss lifts AUDC 0.342 to 0.495 and peak accuracy 36% to 54% (ablation).",
+   "loses": "Did not test large pools. Perplexity descriptor is at least 2x slower. Cost-aware training raises cost versus vanilla variant."
+  },
+  {
+   "id": "A:029",
+   "technique": "Two-stage cascade: confidence deferral policy then abstention policy, online-learned",
+   "how": "Two-tier cascade Mbase -> Mlarge -> human. Verification confidence from surrogate token probability YES/(YES+NO) (also self-verification, consistent self-verification, MC-dropout STP), calibrated by Bayesian logistic regression on 100 samples; posterior mean is confidence, posterior std is uncertainty. Defer if confidence <= phi_base; abstain if uncertainty > xi. Thresholds tuned online by Adam on a soft-masked system risk 1-E[Correct]+lc*E[Cost]+la*P(abstain).",
+   "effect": "Cascade has lower cumulative regret than either single model on 4 of 5 datasets; MedQA unclear; Verifying with the large model gives better delta-IBC; on ARC2-simple delta-IBC up to 258.4 +-39.1 with large-model verification vs about -2 to -37 with base; Calibration set size 50-500 samples makes no significant difference; Label flipping in calibration raises regret",
+   "loses": "Sensitive to cost and abstention weights (trivial solutions); initialisation affects convergence; needs human feedback; MedQA no gain; multiple-choice QA only."
+  },
+  {
+   "id": "A:045",
+   "technique": "RouterEval benchmark and oracle-router analysis (model-level scaling)",
+   "how": "RouterEval: router as m-way classifier over an input embedding predicting a one-hot or multi-hot best-LLM vector. Splits 8:1:1; simple m in {3,5}, hard m in {10,100,1000}.",
+   "effect": "A router with p>=0.5 of matching the oracle improves quickly with candidates; about 3-10 candidates most cost-effective, can approach GPT-4 reference with weak models. Existing routers have VR<=1 and VB<=1. Some routers have Ep 0.00-0.03 (collapse to one model).",
+   "loses": "Accuracy only; cost objective deferred; most records not open source; data volume too small for a strong router."
+  },
+  {
+   "id": "A:065",
+   "technique": "Inference production frontier (cost-quality Pareto, optimal concurrency zone)",
+   "how": "Cost per test = hourly GPU cost x wall time. Hourly cost = depreciation + power + maintenance (about $0.79/h per A800; cloud $2.82-5.64/h). Sweep serving concurrency to find the cheapest setting that still meets throughput (>20 tok/s) and TTFT (<1s) limits.",
+   "effect": "WiNGPT-3.5 concurrency 8->48: total time 2034s->774s; 48 optimal. WiNGPT-3.5 76.2 at $0.34 vs Seed-OSS-36B 72.2 at $0.55. Thinking model WiNGPT-3.0 emits 3.44M output tokens vs about 0.35-1.4M for others.",
+   "loses": "No training cost or capex, hardware-stack dependent, proxy benchmark, no confidence intervals, weak link to API billing."
+  },
+  {
+   "id": "A:192",
+   "technique": "Auto Router: eligibility filter, difficulty classification, quality-vs-cost scoring, session affinity",
+   "how": "Filters eligible models, classifies task type and difficulty, ranks by quality versus cost, falls back down the list; session-id header keeps one model per turn for caching.",
+   "effect": "not measured; sticky session lets requests reuse prompt cache.",
+   "loses": "Without session id, requests may switch models and lose cache; no savings number."
+  },
+  {
+   "id": "A:260",
+   "technique": "Session affinity for cache hits; cache and difficulty-aware routing; batch tier",
+   "how": "Keeps an agent on the same server so its context stays cached; routing is cache- and difficulty-aware; Batch is 50% off.",
+   "effect": "Cache hit rates up to 99.6% in long agent sessions; cached input at half price or less; cache writes free.",
+   "loses": "Vendor marketing claims; a customer quote of $4M to $800K is anecdotal."
+  },
+  {
+   "id": "C:029",
+   "technique": "Cascade routing (unified routing plus cascading, proven optimal)",
+   "how": "Routing is a linear program. Theorem 1: the optimum is gamma*s_MIN + (1-gamma)*s_MAX at the lambda that meets the budget, found by binary search over lambda. Cascading is sequential routing over supermodels M_1:i (Theorem 2). Cascade routing picks among all supermodels containing the models already run (Theorem 3), with supermodel quality E[max member quality] and cost summed. Lemma 1 prunes negative-marginal-gain models.",
+   "effect": "Table 1 0-shot AUC at 11 models Low/Med/High: routing 83.25/74.63/72.67, cascade baseline 84.48/73.64/69.79, cascade ours 84.47/75.10/70.26, cascade routing 87.24/77.57/74.40. Gains up to 8% over cascading and 12% over routing. SWE-Bench: 54.12 vs routing 40.47 (10 models). Realistic noisy estimators: 1.2% mean gain. Runtime 15 ms; Greedy 1.4 ms with 0.5-1.3 point loss.",
+   "loses": "Gains depend on estimate quality; with poor estimators cascade routing only matches routing. Quality estimators are trained per model and per computed-model history. Up to 2^k supermodels; Normal handles 40 models in 1 s, Max-Depth 3 handles 80. Hyperparameter search is harder for cascades; in 5-shot low-noise cascade ours trails the baseline in two of three cases."
+  },
+  {
+   "id": "C:049",
+   "technique": "LLM-to-SLM agent conversion algorithm (S1-S6)",
+   "how": "S1-S6 conversion recipe: log non-HCI agent calls; curate and filter (10k-100k examples, remove PII); cluster tasks; select SLM; fine-tune (LoRA/QLoRA/full, optional distillation); iterate and retrain SLMs and router.",
+   "effect": "Cited from other work: 7B SLM 10-30x cheaper than 70-175B LLM. Authors estimate replaceable LLM queries: MetaGPT about 60%, Open Operator about 40%, Cradle about 70%.",
+   "loses": "No measured savings; estimates are the authors'; acknowledges centralized LLM inference may still be cheaper per token (jury still out)."
+  },
+  {
+   "id": "C:063",
+   "technique": "SLM-default, LLM-fallback with uncertainty routing, verifiers, Cost per Successful task (CPS)",
+   "how": "SLM-default routing: small model with guided decoding and validators handles the task; uncertainty or validation failure escalates to a large model. Track Cost per Successful task (CPS) and schema validity; rollback thresholds trigger fallback.",
+   "effect": "Body claims 10-30x lower cost; abstract says 10x-100x (inconsistent).; Table II is placeholder data.",
+   "loses": "Not a controlled experiment; headline factors unmeasured."
+  },
+  {
+   "id": "C:116",
+   "technique": "Premium request multipliers and monthly allowance",
+   "how": "Premium models consume allowance with multipliers; overages billed per request; budgets can be set.",
+   "effect": "Reasoning models may consume 5x or 20x the standard rate.",
+   "loses": "Legacy billing for annual plans only after June 2026."
+  },
+  {
+   "id": "A:005",
+   "technique": "Router-R1 RL-trained multi-round router with cost reward",
+   "how": "Router is a 3B LLM policy trained with PPO that interleaves think with search calls to a pool of 6 LLMs (max 4 routing steps). Reward = format + (1-alpha)*EM outcome + alpha*cost; hierarchical (format failure zeroes others); cost normalized with sliding-window percentiles. New LLMs added via descriptors without retraining.",
+   "effect": "Average EM 0.416 (Qwen router) and 0.409 (Llama router) above baselines.; Adding two unseen LLMs: average EM 0.458 to 0.463 without retraining.; Average API calls about 1.01-1.36.; Alpha 0.6-0.9: performance falls as cost reward rises; emergent small-first then escalate.",
+   "loses": "QA only with Exact Match; cost reward studied only for QA; router itself costs 3B inference per step; no cost-weighted Pareto in the main table."
+  },
+  {
+   "id": "A:013",
+   "technique": "Causal (CATE-corrected) router training mixing gold and preference labels",
+   "how": "Pairwise router (premium vs cheap). Bias between preference-based (PB) and gold-standard (GS) labels is a CATE, estimated with R- or DR-learners; pseudo-GS labels y+bias train a regressor on GS plus corrected PB. Route to premium if predicted gain exceeds cost factor w. GS scale normalised to PB scale.",
+   "effect": "PB-GS difference mean significantly below 0 (p<2.2e-16); Meta-routers gain most when GS data is scarce; PRBench: DR-learner best at small n",
+   "loses": "GS labels from an LLM judge not experts; pairwise only; needs overlapping query support; no headline cost number in text."
+  },
+  {
+   "id": "A:022",
+   "technique": "Learned post-hoc deferral rule on token-level uncertainty quantiles (LM cascade)",
+   "how": "Two-model cascade (FLAN-T5 Base to Large). Deferral score from token-level uncertainty: Chow-Sum, Chow-Average, Chow-Quantile (quantiles of per-token probabilities), and a learned post-hoc MLP (5 layers, 32 units) on quantile features, optionally plus small-model and large-model intermediate embeddings.",
+   "effect": "Chow-Sum defers long outputs, Chow-Average defers short ones (length bias). Post-hoc rule is consistently best or near-best on AUC-DF. Using large-model first-token embedding helps most on classification.",
+   "loses": "Only FLAN-T5 encoder-decoder; decoder-only and RLHF-calibration effects untested. Intermediate large-model embeddings add non-trivial cost. No single best quantile across tasks."
+  },
+  {
+   "id": "A:046",
+   "technique": "RouterArena router leaderboard (accuracy vs cost metrics, 12 routers)",
+   "how": "RouterArena: Arena score=(1+b)AC/(bA+C), log2-normalised cost, b=0.1, cmin 0.0044, cmax 200 per 1k queries.",
+   "effect": "MIRT-BERT 66.9, Azure-Router 66.7, NIRT-BERT 66.1, GPT-5 64.3, vLLM-SR 64.3, CARROT 63.9, RouterDC 33.8; oracle 90.89%. NIRT-BERT ~378% of best model cost; vLLM-SR/CARROT ~35% cheaper under 2% loss; MIRT-BERT ~5x optimal.",
+   "loses": "One-shot queries, not agents."
+  },
+  {
+   "id": "C:030",
+   "technique": "Execution-verified downgrade-and-cascade step-level routing labels",
+   "how": "Step-level router mapping a trajectory prefix to a tier (low, mid, mid_high, high). Labels come from a greedy sequential-locking downgrade search: from a successful strong trajectory, try tiers cheapest-up at each step and accept if the full trajectory still passes with no more LLM-call steps. Three-model tier cascade verification; failure-aware COST SAVE; bill = API cost + (1-resolved)*$0.60.",
+   "effect": "Dynamic: trained router resolved 75/100 at $25.66 vs unrouted Opus 4.6 74/100 at $54.73 (-53.1% API cost); Rule-based variant cost $172.56 (6.7x more than trained router); Opus 4.6 as a router predicted high for only 7 of 147 verified-high SWE steps; Cascade recovered 28 of 33 downgradeable labels vs 15 of 33 for single-model probing",
+   "loses": "Small static corpus; greedy search may miss cross-step interactions; labels tied to a fixed pool and price snapshot; dynamic track SWE-bench Verified only (Astropy and Django); English only."
+  },
+  {
+   "id": "C:117",
+   "technique": "Premium request model multipliers (code review = 13)",
+   "how": "Each prompt uses one premium request times the model's rate; Copilot code review consumes 13 from June 1 2026.",
+   "effect": "not measured",
+   "loses": "Applies to legacy annual plans only."
+  },
+  {
+   "id": "A:006",
+   "technique": "LLMRouterBench unified routing evaluation (Best Single and Oracle baselines, Pareto analysis)",
+   "how": "Benchmark and framework with Collector, Evaluator, Adaptor. 21 datasets, 33 models, 391,645 instances, 23,945 prompts, ~1.8B tokens, $2,771.84 API cost, ~1K GPU hours. Two settings: performance-oriented (20 ~7B models, 15 datasets) and performance-cost (13 flagship models, 10 datasets). 10 routers compared; metrics AvgAcc, Gain@R/B, Gap@O, PerfGain, CostSave, ParetoDist.",
+   "effect": "Best routers: up to +4% AvgAcc and up to 31.7% cost reduction vs GPT-5 (Best Single) at matched accuracy; OpenRouter -24.7% PerfGain, fails to match; Model-recall failure: when <=3 experts are right (410 queries, 11.9%), Avengers 24.6%, EmbedLLM 23.2%; Latency: Qwen3-Thinking vs GLM-4.6 similar cost and accuracy but 262.1s vs 32.4s",
+   "loses": "Not all routers covered; excludes long-context, multimodal, vertical domains; latency approximate via OpenRouter throughput."
+  },
+  {
+   "id": "A:014",
+   "technique": "BayesianRouter (offline multi-task router prior plus online Thompson sampling)",
+   "how": "Offline: SmolLM2-135M encoder over (prompt, response pair) with MLP on [e+e'; |e-e'|]; Bradley-Terry head on reward-model disagreement pairs plus auxiliary per-RM classification head, L = L_bt + lambda L_cls. Online: Bayesian linear Thompson sampling per query, Sigma^-1 += hh^T/sigma^2, offline BT embedding as prior mean; reward is negative DPO loss, quantile-normalised.",
+   "effect": "AlpacaEval-2 63.23 vs best single RM 61.86 and LASER 60.50; GSM8K 75.66; MMLU 57.39; Offline router OOD accuracy 87.92 vs ~87.65 best single (RewardBench 2, 2,939 pairs); LinUCB collapses to a single arm",
+   "loses": "DPO only (PPO untested); gap to oracle remains; slightly slower than the fastest single RM; gains modest."
+  },
+  {
+   "id": "A:023",
+   "technique": "Speculative cascades (deferral rule implemented via speculative execution)",
+   "how": "Speculative cascades. Drafter q proposes gamma tokens; verifier p scores them in parallel. A token-level deferral rule (Chow, Diff, OPT, or token-specific V1-V3) sets target (1-delta)q + delta*p. GenSpecSample (Algorithm 4) generalizes speculative sampling to that target. Lossy SD is a special case.",
+   "effect": "Table 2 (T=1, gamma=5, Small to Large) latency reduction at large-model quality, WMT/XSum/CNNDM: SpecDecode[Lossy] 1.61/1.10/1.57x; SpecCascade[OPT] 1.95/1.17/1.80x; Token 1.85/1.18/1.89x. Best quality at large-model latency, WMT BLEU: Lossy 17.26, OPT 18.33, Token 22.50.",
+   "loses": "Two-model setup only. Higher total compute than sequential cascades. Plug-in estimators need calibrated models. Objective is local per position. Batch size 1, TPU. Evaluation protocol differs from standard SD. No fairness analysis. Paper claims no new state of the art. OPT weaker on Gemma than T5."
+  },
+  {
+   "id": "A:031",
+   "technique": "Mixture-of-Agents (layered proposers and aggregators)",
+   "how": "Layered proposers and aggregators: y_i = concat_j A_ij(x_i) + x_1, each layer's models see all previous outputs through an Aggregate-and-Synthesize prompt. Default 6 open models, 3 layers, Qwen1.5-110B-Chat final aggregator. MoA-Lite is 2 layers with Qwen1.5-72B aggregator.",
+   "effect": "MoA 65.1+-0.6% LC win; MoA w/ GPT-4o 65.7%; MoA-Lite 59.3%; GPT-4o 57.5%; MoA-Lite matches GPT-4o cost with +1.8 points; MoA-Lite beats GPT-4 Turbo (55.0%) by ~4% at over 2x cost-effectiveness; 6 proposers 61.3% vs 1 proposer 47.8%",
+   "loses": "High time-to-first-token (last layer must finish). First aggregation layer gives most gain. LLM ranker much worse than aggregation."
+  },
+  {
+   "id": "A:039",
+   "technique": "Comp-LLM (sub-query dependency graph with embedding-similarity expert assignment)",
+   "how": "Comp-LLM: decomposer (SFT Llama 2 7B on 1000 GPT-4o examples) -> expert router (mean-pooled embedding, cosine, sq_sim 0.7 else base model) -> DAG scheduler running ready sub-queries in parallel -> aggregator; LoRA experts.",
+   "effect": "Comp-LLM (35B) F1 0.78 vs Llama-2 70B 0.79, Mixtral 0.74, OLMoE 0.52. Decomposer F1 0.87/0.86 vs few-shot 0.48/0.42. 108.78s vs 892.07s for offloaded Llama-2-70B on one A40; latency 1.1x-1.7x vs sequential.",
+   "loses": "Needs experts per domain, static reasoning only, measures size not dollars."
+  },
+  {
+   "id": "A:047",
+   "technique": "Application-specific capability profiling testbed (cost-aware model selection per application)",
+   "how": "Eight-step profiling method, Stage 1 built as testbed: sparse versioned model profile where missing never equals zero; comparability only for same attribute, context and dataset; evidence levels L0-L4; Pareto set with evidence counts; plan gate with SHA-256 plan hash and baseline arm; null-agent check; range noise rule with three-state verdict; fail-closed reporting. Constrained model-to-task-part selection (Eq. 11) is planned, not built.",
+   "effect": "Migration fully-correct 98 to 108 of 216 (45.4 to 50.0%, Fisher p=0.39); accepted-but-wrong or unverifiable 9.7% to 21.9% (p=0.023); about 78% of ok verdicts proved nothing. Breadth: agent 91.9% vs cheap 90.5% (p=0.21); agent used 3.0% fewer tokens. Automation: model effect p=0.007, framework p=0.40; tokens 1,953-9,465; CrewAI about 4x. Judge churn 16.2% at T=0; full run $3-4.",
+   "loses": "Stage 1 only; model-vs-framework comparisons are non-causal separate sweeps. Migration inference unpaired, no multiplicity correction. Only P1 and chatbot integrated as probes; Grafana JSON never imported. Adapter-generation hook unevaluated. 15 automation samples unreadable. Caller key crosses a process boundary unprotected. Range rule loses power as repeats grow."
+  },
+  {
+   "id": "A:129",
+   "technique": "LLM-assisted labeling then fine-tuned small NER model (GLiNER, SpanMarker)",
+   "how": "Uses a large LLM to label data, then fine-tunes a compact model for the task and deploys it on a cheap endpoint.",
+   "effect": "Up to 6.4% accuracy gain and up to 80x cheaper inference than large LLMs for financial NER.",
+   "loses": "Needs labeled data and training; narrow task, not general agent work."
+  },
+  {
+   "id": "A:207",
+   "technique": "Retained reasoning plus native compaction, programmatic tool calling, low reasoning effort, small-tier model (Luna) selection",
+   "how": "Persists reasoning across turns with compaction, runs tool orchestration in code outside context, and uses cheaper tiers or lower effort.",
+   "effect": "ARC-AGI-3 13.3% to 38.3% with about 6x fewer output tokens; BrowseComp 84.04% at $1.33 versus 84.36% at $33.27 for GPT-5.5; PlayerZero cost -64%.",
+   "loses": "Vendor and customer testimonials; harness-specific."
+  },
+  {
+   "id": "A:227",
+   "technique": "OpenRouter provider routing (effective price with real cache hit rate, sort, max_price, :floor/:nitro, fallbacks)",
+   "how": "Picks a provider per request by measured effective price reflecting its cache hit rate, throughput, latency and reliability; supports sort, max_price and fallbacks.",
+   "effect": "Not measured; reacts to provider changes within minutes.",
+   "loses": "Provider choice not model choice; bypassed when order or own keys set."
+  },
+  {
+   "id": "A:245",
+   "technique": "Rule-first classifier plus decision model with probability threshold (0.85) routing fast versus frontier tier, per-tier API key budgets",
+   "how": "Explicit rules first, then a decision model picks tier; fast tier accepted only if probability >= 0.85, else frontier; AI Gateway fallbacks and spend caps per tier.",
+   "effect": "Not measured; threshold 0.85 given as an example.",
+   "loses": "Experimental Decision API; threshold needs tuning."
+  },
+  {
+   "id": "C:031",
+   "technique": "RLM-Cascade (complexity router, cheap draft model, Opus verify or skip)",
+   "how": "Local proxy (ANTHROPIC_BASE_URL) with a rule-based O(1) router, no model calls. Requests with a non-empty tools field go straight to Opus. Simple prefixes go to the cheap model only (SKIPPED). Complex keywords or input over 1,500 chars get cheap draft then Opus verify (USE_DRAFT = ACCEPTED, or ENHANCE).",
+   "effect": "Savings 45.8% (service, N=125), 47.4% (architecture set, N=39), 32% (current run, N=12); model predicted 67.2% vs 47.4% observed. p50 latency 2,026 vs 3,698 ms. Quality 100% vs 95% pass (N=20).",
+   "loses": "Tool-selection turns (70-80% of Claude Code turns) bypass to Opus, so savings apply to the ~20-30% text turns. Router is a keyword classifier. One cost inversion (+$0.01189). TTFT 2.1x worse. Learned router, parallel draft+verify, local tier are future work."
+  },
+  {
+   "id": "C:053",
+   "technique": "Cache-aware cost comparison with TCO model and hybrid routing counterfactual replay",
+   "how": "Longitudinal case study: Langfuse and vLLM telemetry plus Git mining. Fix Commit Ratio via regex over commit messages; difficulty-stratified Mantel-Haenszel odds ratio; TCO = M x (compute + ops + T_iter x wage); hybrid-routing offline counterfactual replay by difficulty tier.",
+   "effect": "99.3% cache hit cut API cost 88.6% to $0.57/M tokens vs $2.83/M shared on-prem; FCR 74.9% vs 45.9%; Mantel-Haenszel OR 3.61; Shared on-prem saves 40.1% true TCO; dedicated costs 43.8% more; High-to-Claude hybrid saves 26.3%",
+   "loses": "One developer, non-randomized, tasks differ between periods; keyword-classified fixes; Period A fix count inflated by CI work; replay assumes tier exchangeability."
+  },
+  {
+   "id": "A:007",
+   "technique": "PORT: training-free online routing via ANN query-feature estimation plus one-time dual optimisation",
+   "how": "PORT: kNN (5 neighbours) estimate perf and cost; random-route first eps=0.025 queries; solve dual gamma* once; route to argmax(alpha*d - gamma*_i*g); queue when budget exhausted. Competitive ratio 1-O(eps+delta).",
+   "effect": "Avg 3.55x performance, 1.85x cost efficiency, ~4.25x throughput. Vs BatchSplit +33% perf, +38% cost efficiency. Reaches 75.99-84.66% of approximate optimum.",
+   "loses": "Only perf and cost modelled; needs labelled history; assumes similar queries behave alike and random order."
+  },
+  {
+   "id": "A:015",
+   "technique": "RouterDC: encoder plus LLM embeddings trained with sample-LLM and sample-sample contrastive losses",
+   "how": "RouterDC: encoder plus learnable LLM embeddings, trained with sample-LLM and sample-sample contrastive losses; route a query to the LLM whose embedding is most similar. Clustering similar queries stabilises training.",
+   "effect": "Average 58.54 vs 54.56 (+3.98) in-distribution; OOD 45.85 vs 43.95 (+1.90).; About 6x faster than voting.",
+   "loses": "Needs scored training data per candidate LLM. Limitations section only says scenarios are left to future work."
+  },
+  {
+   "id": "A:032",
+   "technique": "Self-MoA and sequential Self-MoA (aggregate samples from one top model)",
+   "how": "Self-MoA samples N outputs from the single best model (temperature 0.7); one aggregator synthesises them. Self-MoA-Seq aggregates with a sliding window of 6 responses. Regression of mixture performance on quality and Vendi-score diversity.",
+   "effect": "AlpacaEval LC: Self-MoA 65.7 vs Mixed-MoA 59.1 (+6.6); Quality coefficient exceeds diversity coefficient (MMLU 2.558 vs 1.841); Self-MoA with TaskBest averages +3.8%",
+   "loses": "Mixed-MoA wins when models are similar in quality and complementary; gains not monotonic in samples; aggregator context limit."
+  },
+  {
+   "id": "A:040",
+   "technique": "Bayesian aggregation of multi-LLM likelihoods with expected-utility and value-of-information gating",
+   "how": "Elicit p(evidence|state) from M LLMs via contrastive 'assume state s' prompts, aggregate by median, apply Bayes with deployment prior, choose action by minimum expected cost, gather more evidence if value of information exceeds its cost or models disagree.",
+   "effect": "$294,000 (34%) lower total cost vs best single-LLM; parity gap 22 to 5 points. Ablation shares: multi-LLM 51%, sequential 43%, disagreement-triggered screening 20%. 20 LLM queries per observation (M=5, K=4).",
+   "loses": "Synthetic data and simulated screens; latency of 20 queries per step; cost matrix assumed; model IDs and versions inconsistent between abstract and appendix."
+  },
+  {
+   "id": "A:060",
+   "technique": "Harness-level cost and Pass@1 benchmark with a cost-calibrated Lite-80 subset",
+   "how": "Adapter protocol (create_agent, send_task, backup_session, delete_agent, get_docker_args); patch exported from git diff; history after base_commit removed to stop leakage. Lite-80 subset picked by quartile-quota local search with ranking hinge and cost-parity filter.",
+   "effect": "Bare adapter 19.3% vs full adapter 71.2% resolved; largest harness gap at fixed model 24.3 pp; Best Pass@1 Hermes Agent 81.7% at $36; Lite-80 vs full: MAE 0.81 pp at 25.3% of cost",
+   "loses": "Meta-Harness evolved and evaluated on same instances; Lite is a proxy; appendix F is single-run."
+  },
+  {
+   "id": "A:069",
+   "technique": "Shapley-value cost attribution of thinking tokens and turns; price reversal",
+   "how": "Cost c = p_in*n_in + p_out*n_out (+ cache terms for agents). Shapley-value attribution of the cost gap between two models over eight multilinear factors (turns, input, output, cache, thinking tokens, and three prices), with a closed form. Cost treated as a distribution with quantile-level reversal analysis.",
+   "effect": "106 of 336 pairs (32%) show price reversal; 11% on ArenaHard to 57% on MMLU-Pro; Gemini 3 Flash: 80% lower listed price than GPT-5.4 but 38% higher total cost ($705 vs $509); Single-turn: thinking tokens over 95% of the gap; agentic: turns over 80% (Kimi vs GPT-5.4); Repeat-run cost on the same query varies up to 9.7x",
+   "loses": "Costs only, no quality; one price snapshot (May 2026); cost prediction left open; no limitations section."
+  },
+  {
+   "id": "A:122",
+   "technique": "Cost-of-pass and frontier cost-of-pass metric",
+   "how": "cost-of-pass v(m,p) = C_m(p)/R_m(p), the expected cost of one correct answer (assumes independent trials). Frontier cost-of-pass V_p(M) is the minimum over models plus a human-expert baseline. Gain is the reduction when a model is added; family essentialness is the relative frontier increase when a family is removed. Exponential decay fit gives a halving time.",
+   "effect": "Frontier cost-of-pass halves every 2.6 months (MATH-500) and 7.1 months (AIME24); Essentialness: lightweight 93.5% (two-digit addition); reasoning 74.4% (MATH500) and 81.0% (AIME24); large models matter on knowledge tasks (GPQA 33.3%, BBQ 44.7%); Majority voting yields 0% relative gain everywhere; self-refine 24.9% on GPQA; TALE-EP 66.6% on GSM8K",
+   "loses": "Binary pass/fail and expectation only (no variance); ignores verification, retry and tool costs; contamination possible; single prompt setting; i.i.d. retry assumption is contested (A:123); only 16 Tau-bench tasks."
+  },
+  {
+   "id": "A:155",
+   "technique": "Task-based auto model routing along cache boundaries with 10% credit discount",
+   "how": "Scores the task on reasoning, code complexity, bug difficulty and tool needs plus model health, then picks a model; routes along cache boundaries.",
+   "effect": "Paid users get 10% fewer AI credits; vendor says token efficiency improves with no quality regression (no numbers).",
+   "loses": "Vendor claim; model changes over time."
+  },
+  {
+   "id": "A:195",
+   "technique": "Flex service tier (service_tier: flex)",
+   "how": "Tokens priced at Batch API rates, plus caching discounts, in exchange for slower responses and occasional resource unavailability.",
+   "effect": "Batch-rate pricing; no single percentage stated in the part read.",
+   "loses": "Beta, limited models; 15-minute timeout advised; resource-unavailable errors."
+  },
+  {
+   "id": "A:228",
+   "technique": "Decision-model request rating with cost_tier policy and cache-aware model switching",
+   "how": "A fast model rates eleven aspects of the request, then picks model and effort against live prices and cache status within a low/medium/high cost tier.",
+   "effect": "Not measured here; says the new default costs more per task than the old router, and low tier restores prior cost.",
+   "loses": "Model switches cost a cache rebuild, so the router prefers effort changes over model changes."
+  },
+  {
+   "id": "C:032",
+   "technique": "ACRouter: Context-Action-Feedback loop with orchestrator, verifier and memory",
+   "how": "Routing as a Context-Action-Feedback loop (contextual bandit with cumulative regret vs a per-task oracle, reward = score - 0.1*cost). ACRouter: Orchestrator (fine-tuned Qwen3.5-0.8B plus heuristics, DimensionBest prior and top-10 kNN memory neighbours, weighted vote), sandbox Verifier (AST, execution, tests, self-consistency, judge), FIFO memory of 20K entries.",
+   "effect": "Router diagnosis: adding per-dimension performance stats to Sonnet 4.6 router lifts 41.41 to 47.74 (+15.3%); ID: ACRouter 49.98% AvgPerf, cumulative regret 205.5, vs DimensionBest 47.50%; OOD: ACRouter 62.50% vs Always-Opus 57.14%; lightweight classifiers fall to 8.93-21.43%, below Random 31.25%; Perf/$ ID 3.79 vs Always-Opus 1.29; Opus costs about 12x Kimi-K2.5 on the probing set",
+   "loses": "Provider cache hit rates unobservable so dollar costs are secondary; agentic OOD uses a 40-step limit, 176 tasks; ACRouter pays more for Memory and Verifier than static routers; LLM policy plus kNN memory is one instantiation; routing is per task, not per step."
+  },
+  {
+   "id": "C:119",
+   "technique": "Cursor Router modes (Cost, Balance, Intelligence) and Cursor Token Rate",
+   "how": "Router picks Cursor or third-party models per request by mode; third-party use is billed at API list price from prepaid credit.",
+   "effect": "Max Mode on legacy plans costs API rate plus 20%.",
+   "loses": "Pricing doc, not measured."
+  },
+  {
+   "id": "C:129",
+   "technique": "Architect/editor model split and per-task token budgets",
+   "how": "R1 as architect with Sonnet as editor; notes code generation is 5-15% of tokens and Aider's tree-sitter repo map saves 20,000+ tokens per turn.",
+   "effect": "Aider polyglot: DeepSeek R1 + Sonnet $13.29 for 225 tasks, 14x cheaper than o1; Gemini 2.5 Pro $0.028/task at 72% pass.",
+   "loses": "Blog aggregation; real sessions 3-5x benchmark cost."
+  },
+  {
+   "id": "A:008",
+   "technique": "MTRouter turn-level outcome-estimator routing",
+   "how": "MTRouter: MLP outcome estimator on [history embedding (frozen Qwen3-Embedding-0.6B, 8192 tokens); model embedding (8-d metadata + 16-d residual -> 64-d)]. Target = terminal score minus progress-weighted error penalties (1.0/0.8/0.2). Argmax per turn, $2/episode cap.",
+   "effect": "ScienceWorld 53.8 vs GPT-5 48.4 at -58.7% cost. HLE 26.0 vs 23.8 at -43.4%. OOD ScienceWorld +5.0 at -65.8%; HLE OOD cost -52.3%. ~5 switches vs ~20 (Router-R1). Stays on same model after error 90.2%/80.9% vs 38.3%/66.4%.",
+   "loses": "Offline only; switching can lose prompt cache (authors note)."
+  },
+  {
+   "id": "A:016",
+   "technique": "EmbedLLM encoder-decoder model embeddings with matrix-factorization router",
+   "how": "EmbedLLM: model-embedding network maps each model to a vector; question embedded with all-mpnet-base-v2 plus projection; linear classifier on the Hadamard product gives a correctness score (BCE loss). Router picks the model with highest predicted correctness; linear regression on embeddings predicts benchmark accuracy.",
+   "effect": "Correctness forecasting 0.7409 (MF) vs 0.7152 (KNN) at 29K training questions. Routes 3,000 questions in 3.80 s on A100 (over 750/s, 15x the causal-LLM router). Training under 1GB GPU memory.",
+   "loses": "Only 112 models so embeddings are sparse; new model needs retraining; correctness labels only; not agentic."
+  },
+  {
+   "id": "A:033",
+   "technique": "Agent Forest sampling-and-voting",
+   "how": "Agent Forest: sample N outputs from the same LLM, then majority-vote. Code tasks vote by BLEU similarity between samples; closed-ended tasks by answer frequency. Combinable with CoT, debate and other prompting. Hierarchical variant votes within sub-groups, then across groups.",
+   "effect": "Gains: GSM8K 12-24%, MATH 6-10%, Chess 1-4%, MMLU 5-11%, HumanEval 4-9%. Llama2-13B GSM8K .35 to .59; GPT-3.5 .73 to .85. Hierarchical: 21% to 31% homogeneous, 35% to 47% GPT-3.5+GPT-4. Table 5 single-run tokens 138-495.",
+   "loses": "Cost scales with N: every sample is a full generation. Curves stop at N=40. Gain peaks at mid inherent difficulty (steps 100-200) then tapers at 400. Debate on Llama2 HumanEval gave 0 to 0. Code voting relies on BLEU."
+  },
+  {
+   "id": "A:041",
+   "technique": "SLM-first heterogeneous agents with LLM-to-SLM conversion algorithm",
+   "how": "Six-step LLM-to-SLM conversion: secure logging of non-human-facing calls; curate and filter data (10k-100k examples rule of thumb, PII removal); task clustering; SLM selection; specialised fine-tuning (LoRA/QLoRA, optional distillation); iterate and retrain including the router.",
+   "effect": "7B SLM 10-30x cheaper than 70-175B LLM in latency/energy/FLOPs (cited). Replaceable query share 40-70% across three agents (authors' estimates, not measured). SLM defined as under 10B params.",
+   "loses": "Authors list opposing views: LLM generalists win on general language, centralisation economies of scale ('jury is still out'), equally possible worlds. Barriers: infrastructure investment, generalist benchmarks, awareness."
+  },
+  {
+   "id": "A:061",
+   "technique": "Token price half-life and cost decomposition analysis",
+   "how": "Fit exponential price-decay half-lives per price tier, test structural break (Chow), compute Malmquist productivity and DEA efficiency, and regress inference price on training cost.",
+   "effect": "Half-lives: economy 1.10y (R2 0.192), mid 1.55y (R2 0.307), flagship 3.59y but R2 0.031 so not exponential. Reasoning premium averages 31.5x, range 0.51x to 83.3x. GPT-3 $60/M (2020) to Gemini 2.0 Flash $0.10/M (2025-02) is 600x.",
+   "loses": "Only 62 milestone observations, no transaction volume, fast-moving market, low R2 in each tier."
+  },
+  {
+   "id": "A:123",
+   "technique": "Dollar-denominated economic evaluation (cost of mistake, latency, abstention)",
+   "how": "Reward r = -(C + lambda_L*L + lambda_E*1_error + lambda_A*1_abstain): prices of error, latency and abstention. Pick the model or system maximising expected reward, for a standalone LLM, a cascade, or a router with abstention. Cascade error reduction CER = Cov(deferral, small-model error), related to AUARC.",
+   "effect": "Reasoning models cost 10-100x more per query, up to 10x slower, but win once error price exceeds about $0.01 (abstract); Single Qwen3-235B beats a cascade once error price exceeds $0.10; Llama3.1-405B to Qwen3-235B cascade beats the big model up to error price $10,000 and latency $10/minute; Cost and latency are linear in deferral rate",
+   "loses": "MATH only; possible contamination; judge model may inflate 405B's self-verification; no separate limitations section."
+  },
+  {
+   "id": "A:180",
+   "technique": "Total-cost-of-ownership framing: tokens per task, calls per action, retries, routing",
+   "how": "Argues cost per task depends on tokens consumed, model calls, routing, context size and retries, not token price.",
+   "effect": "Cites Gartner AI spend $2.52 trillion in 2026, +44%.",
+   "loses": "Vendor marketing; no technique numbers."
+  },
+  {
+   "id": "A:210",
+   "technique": "Premium request multipliers per model",
+   "how": "Each prompt costs one premium request times a model multiplier; autonomous tool calls do not count.",
+   "effect": "Copilot code review multiplier 13 from 2026-06-01.",
+   "loses": "Legacy plan billing only."
+  },
+  {
+   "id": "A:229",
+   "technique": "Realized price-latency-throughput-reliability provider routing, cache-aware",
+   "how": "Scores each endpoint on realized price, wait time and error rate, shifts traffic from failing endpoints, stays cache-aware.",
+   "effect": "TTFT -16.9%, throughput +16.3%, capacity errors -46%, cost +6.0%.",
+   "loses": "Costs rose 6% for speed and reliability."
+  },
+  {
+   "id": "A:275",
+   "technique": "Asynchronous batch API at up to 50% discount",
+   "how": "Submit a JSONL file of independent requests for 24h completion, separate rate-limit pool.",
+   "effect": "Up to 50% off serverless; under 1,000 requests usually finish in minutes.",
+   "loses": "Not for interactive or stateful work; one model per batch."
+  },
+  {
+   "id": "A:009",
+   "technique": "FLARE length-aware multi-objective router",
+   "how": "FLARE length-aware router. Two XGBoost predictors give accuracy p^ and output length L^ from MiniLM-384 query embeddings plus model features. Latency = k_m*L^ + b_m, cost = pi_in*l_in + pi_out*L^. Filter models with p^ >= tau, then pick argmin alpha*T^ + beta*C^.",
+   "effect": "Up to 68% lower latency and 75% lower cost (Efficient mode, 5-20% accuracy sacrifice). FLARE-Acc keeps accuracy with up to 59% latency and 69% cost cut. Latency vs output length Pearson r=0.96. Routing overhead 18.12ms.",
+   "loses": "Short benchmarks, open models only, three preset modes."
+  },
+  {
+   "id": "A:017",
+   "technique": "Model-SAT aptitude-test router",
+   "how": "Capability instruction = model capability representation + user instruction + Yes/No prompt. The representation is a natural-language aptitude profile from 50 MMLU tasks x 20-shot per candidate. E5-Large encoder, MLP connector, Phi-3-Mini 3.8B; score is P('Yes'). In-batch negatives, two-stage tuning, data refinement. Router never runs candidates.",
+   "effect": "Table 2 (MMLU/ARC-C/TruthfulQA/mean): Model-SAT 79.86 / 72.53 / 65.12 / 72.50 vs encoder-less Phi-3 74.71 / 70.58 / 61.70 / 68.83; High-performance zoo reaches 85.64 MMLU; Union of 5 small models covers 90% of GPT-4o's correct instructions; A new model needs only 50x20 inferences to onboard",
+   "loses": "Benchmark-style multiple-choice instructions, not agent traces; requires training; needs an aptitude test per new model; no limitations section."
+  },
+  {
+   "id": "A:042",
+   "technique": "BELLA critic-based skill profiling and budget-constrained selection",
+   "how": "Four stages: benchmark models on cost and performance; a critic LLM extracts demonstrated skills, missing skills and criticality per task; skills are embedded, hierarchically clustered and labelled into a binary skill vector; select. Matrices C (model proficiency), R (task requirements), cost vector c. Pick M_capable = models with C_ms >= tau for all required skills, then max predicted performance subject to c_m <= B.",
+   "effect": "No empirical results; Motivating price gap: GPT-5 $10/M tokens vs Llama-3.3-70B $0.88/M (11x cheaper)",
+   "loses": "Not empirically evaluated (paper says it requires validation); critic-call overhead, clustering stability and critic variance untested."
+  },
+  {
+   "id": "A:149",
+   "technique": "Trained model router with Balanced/Cost/Quality quality-band modes",
+   "how": "Router model scores prompt complexity and picks the cheapest model within a quality band: about 1-2% of best in Balanced, 5-6% in Cost.",
+   "effect": "Claims cost and latency savings at comparable quality; no figures given.",
+   "loses": "Context window limited by smallest pool model; auto-update changes pool and cost."
+  },
+  {
+   "id": "A:189",
+   "technique": "Dynamic route flow with conditional, percentage, rate-limit and budget-limit nodes",
+   "how": "Versioned JSON/visual route sends segments to different models and falls back when a key's budget or rate quota is exceeded.",
+   "effect": "not measured",
+   "loses": "Gateway configuration only."
+  },
+  {
+   "id": "A:211",
+   "technique": "Premium-request model multipliers; 10% auto-selection discount",
+   "how": "Each model consumes allowance by multiplier: Haiku 4.5 0.33, Sonnet 4.6 9, Opus 4.8 27; auto model selection earns 10% off.",
+   "effect": "Multiplier table only.",
+   "loses": "Legacy plans; subject to change."
+  },
+  {
+   "id": "A:230",
+   "technique": "Spend-share routing with cost_tier and sticky model reuse",
+   "how": "Classifier assigns about 30 task types; picks models by 7-day community spend share within a cost band; keeps the conversation model to protect the cache.",
+   "effect": "Cost at default tier: MMLU Pro $141 vs $393 old, SWE-Atlas QnA $297 vs $464; accuracy about equal in most domains.",
+   "loses": "Vendor benchmark; some tasks regress or cost more, and switching rebuilds cache."
+  },
+  {
+   "id": "A:010",
+   "technique": "Confounder-gadget attack on LLM routers (adversarial robustness of routing)",
+   "how": "Confounder gadget: a query-independent adversarial token prefix prepended to a query to push a binary router's score above its threshold so the query goes to the strong model. Hill climbing: 100 iterations, 32 candidate token swaps, 10-token gadget, early abort after 25 stagnant iterations. Black-box via surrogate router transfer; low-perplexity variant adds a perplexity penalty.",
+   "effect": "White-box upgrade rates mostly 100%, worst 88%; black-box lower but high; Unify: 49% strong-model share, upgrade 79-91%, cost $0.13 to about $0.22 (1.7x); OpenRouter: some gadgets rerouted all queries to GPT, about $0.25 vs $0.03 (over 8x); Perplexity filtering catches plain gadgets (97% TPR at 3% FPR for RSW) but low-perplexity gadgets drop ROCAUC to about 0.66-0.71",
+   "loses": "Binary routers and small or older models; mainly MT-bench for commercial routers; cost inflation measured on small query sets; no test against multi-model or agentic routers; one calibration scheme."
+  },
+  {
+   "id": "A:018",
+   "technique": "Distilled encoder classifier router (mmBERT-small, 7 heads: category, difficulty, stakes, needs_tools/vision/long_context)",
+   "how": "One CPU pass classifies a request on seven questions to pick a model; priced at USD 0.001 per million input tokens.",
+   "effect": "Engine ~14 ms p50 on 4 cores; category accuracy 0.898 vs 0.845 for Jev hosted (vendor test, own data).",
+   "loses": "Vendor self-comparison; synthetic training data; input truncated to 512 tokens; text only."
+  },
+  {
+   "id": "A:158",
+   "technique": "Bedrock intelligent prompt routing (predicted response quality per model, with fallback model)",
+   "how": "A router predicts each model's response quality per request within one family and picks the best cost/quality option, falling back to a default model.",
+   "effect": "Not measured in the page.",
+   "loses": "Same model family only; criteria and fallback must be configured."
+  },
+  {
+   "id": "A:277",
+   "technique": "Serverless vs dedicated endpoint break-even",
+   "how": "Compare per-token serverless price against GPU-hour dedicated cost to find the crossover volume.",
+   "effect": "Example: H100 at $3/hour vs $1 per million tokens crosses at ~72M tokens/day.",
+   "loses": "Illustrative numbers; ignores idle and utilization variance."
+  },
+  {
+   "id": "A:287",
+   "technique": "Provider selection policy suffixes :fastest, :cheapest, :preferred",
+   "how": "Appending a policy suffix to the model id picks the provider by throughput, lowest output price, or user order; no markup on provider rates.",
+   "effect": "Not measured.",
+   "loses": "Only provider choice, not model choice."
+  },
+  {
+   "id": "C:010",
+   "technique": "Cache-read at 5% of input on Opus 5.5 and Sonnet 5.5; Haiku 5.5 as cheap subagent",
+   "how": "Price table: Opus 5.5 $4/$20 with cache read $0.20 and write $5 (5m) / $8 (1h); Haiku 5.5 steps price above 100K prompt tokens.",
+   "effect": "Haiku 5.5 over 100K still a quarter of Sonnet 5.5 rate.",
+   "loses": "Third-party blog; prices may change."
+  },
+  {
+   "id": "C:073",
+   "technique": "opusplan alias, subagent model setting, effort levels, organization effort caps",
+   "how": "opusplan uses Opus in plan mode and Sonnet in execution; CLAUDE_CODE_SUBAGENT_MODEL sets subagent model; effort sets adaptive reasoning.",
+   "effect": "Not measured.",
+   "loses": "Risk of mismatch with effort after fallback model."
+  }
+ ],
+ "14": [
+  {
+   "id": "C:038",
+   "technique": "Edit-format and reasoning-effort cost/accuracy benchmark on polyglot tasks",
+   "how": "Reports pass rate, edit format and total cost per model across 225 Exercism tasks.",
+   "effect": "gpt-5 high 88.0% at $29.08 vs medium 86.7% at $17.69; o3-pro high 84.9% at $146.32.",
+   "loses": "Single benchmark; cost shown at benchmark run time."
+  }
+ ],
+ "15": [
+  {
+   "id": "C:094",
+   "technique": "--bare mode and --max-budget-usd cap for claude -p",
+   "how": "--bare skips hooks, skills, plugins, MCP servers, auto memory and CLAUDE.md for faster startup; budget cap stops background work.",
+   "effect": "not measured (startup time claim only)",
+   "loses": "Bare mode drops project context and OAuth; only API-key auth."
+  }
+ ],
+ "16": [
+  {
+   "id": "A:192",
+   "technique": "Auto Router: eligibility filter, difficulty classification, quality-vs-cost scoring, session affinity",
+   "how": "Filters eligible models, classifies task type and difficulty, ranks by quality versus cost, falls back down the list; session-id header keeps one model per turn for caching.",
+   "effect": "not measured; sticky session lets requests reuse prompt cache.",
+   "loses": "Without session id, requests may switch models and lose cache; no savings number."
+  },
+  {
+   "id": "A:155",
+   "technique": "Task-based auto model routing along cache boundaries with 10% credit discount",
+   "how": "Scores the task on reasoning, code complexity, bug difficulty and tool needs plus model health, then picks a model; routes along cache boundaries.",
+   "effect": "Paid users get 10% fewer AI credits; vendor says token efficiency improves with no quality regression (no numbers).",
+   "loses": "Vendor claim; model changes over time."
+  },
+  {
+   "id": "A:228",
+   "technique": "Decision-model request rating with cost_tier policy and cache-aware model switching",
+   "how": "A fast model rates eleven aspects of the request, then picks model and effort against live prices and cache status within a low/medium/high cost tier.",
+   "effect": "Not measured here; says the new default costs more per task than the old router, and low tier restores prior cost.",
+   "loses": "Model switches cost a cache rebuild, so the router prefers effort changes over model changes."
+  },
+  {
+   "id": "A:246",
+   "technique": "Gateway failover and caching:'auto' with cache-invalidation warning",
+   "how": "Gateway reissues failed requests to another provider and applies provider-specific cache markers; warns abstraction layers can silently invalidate cache hits.",
+   "effect": "3.5% of requests succeed only through failover, carrying 4.9% of spend; zero token markup.",
+   "loses": "A documented AutoGPT bug put a per-call random token in the cached prefix, voiding the 90% discount."
+  },
+  {
+   "id": "A:285",
+   "technique": "Per-message effort change without cache invalidation; cache price tiers",
+   "how": "Fable 5.1 supports mid-conversation effort changes (beta) and preserved thinking across model switches; cache read $0.25 vs 5m write $12.50 and 1h write $20 per MTok.",
+   "effect": "Cache read is a quarter of the earlier price; input $10 vs Opus 5.5 $4 per MTok.",
+   "loses": "Forced tool use errors; editing earlier turns invalidates thinking blocks."
+  },
+  {
+   "id": "C:086",
+   "technique": "Fast mode with separate cache and switch cost",
+   "how": "Fast mode is up to 2.5x faster at $8/$40 on Opus 5.5; first enable pays uncached full price and fast and standard keep separate caches.",
+   "effect": "Up to 2.5x speed at higher per-token cost.",
+   "loses": "Each switch rereads context uncached."
+  },
+  {
+   "id": "A:072",
+   "technique": "Explicit cache breakpoints, cache diagnostics (reason: tools_changed), effort change via configuration_update, prewarm",
+   "how": "Stable tool order, allowed_tools and appended developer messages preserve prefix; diagnostics name the miss reason; prewarm at startup; effort change without cache break.",
+   "effect": "Customers: hit rate 83% to 91%, cache writes down about two-thirds, cost down 36%; another 85% to above 90%; 30-minute discount window.",
+   "loses": "Customer-quoted figures, vendor-curated."
+  },
+  {
+   "id": "A:230",
+   "technique": "Spend-share routing with cost_tier and sticky model reuse",
+   "how": "Classifier assigns about 30 task types; picks models by 7-day community spend share within a cost band; keeps the conversation model to protect the cache.",
+   "effect": "Cost at default tier: MMLU Pro $141 vs $393 old, SWE-Atlas QnA $297 vs $464; accuracy about equal in most domains.",
+   "loses": "Vendor benchmark; some tasks regress or cost more, and switching rebuilds cache."
+  },
+  {
+   "id": "A:248",
+   "technique": "caching:'auto', cache_anchor_items, cache_ttl, session affinity",
+   "how": "Gateway adds cache markers per provider, pins a conversation to the provider holding its cache, and selects 5-minute or 1-hour lifetime.",
+   "effect": "not measured",
+   "loses": "Gateway lock-in; affinity limits failover."
+  }
+ ],
+ "17": [
+  {
+   "id": "A:086",
+   "technique": "Learned gist tokens inserted at sentence ends",
+   "how": "Add learned gist tokens (Ng in {1,2,4,8}) after every sentence-ending punctuation mark. Gist tokens see their own sentence plus earlier gist tokens; regular tokens see their sentence plus gist tokens. Standard LM loss. Three stages: gist embeddings only, full fine-tune, large-batch cooldown. About 4B FineWeb-Edu tokens.",
+   "effect": "Ng=4: about 6x average long-context compression vs about 2x for Activation Beacon; Ng=4 HELMET recall 96 vs base 100; icl 63.2 vs 68.2; Ng=1: recall drops to 1.0, ARC 49.77 vs 59.21",
+   "loses": "Rule-based placement, fixed budget per segment, punctuation sensitivity, does not fully recover base, full mask memory-heavy at 128K, only 3B tested."
+  },
+  {
+   "id": "A:082",
+   "technique": "Gist tokens via modified attention masks",
+   "how": "Gist tokens: insert k gist tokens between prompt and input; mask so later tokens cannot see the prompt; trained by instruction finetuning at no extra cost. Meta-distillation L_G = KL(pLM(y|t,x)||pG(y|G(t),x)).",
+   "effect": "Up to 26x prompt compression, up to 40% FLOPs saving (vs no cache). k=1 sufficient. Win rate vs control LLaMA 48.6/49.7/45.8, FLAN-T5 50.8/46.2/42.5. vs instruction caching only 0.11% FLOPs, 1% wall time, but 26x more prompts cached per storage.",
+   "loses": "Loses nuance; needs finetuning; small models; short (~20-token) prompts."
+  },
+  {
+   "id": "A:083",
+   "technique": "Selective Context (self-information pruning)",
+   "how": "A base causal LM (LLaMA-7B; GPT-3 curie for OpenAI models) computes self-information -log2 P(x_t|x_<t) sentence by sentence. Tokens are merged into lexical units (tokens, noun phrases via spaCy, sentences). Units at or above the p-th percentile of self-information are kept.",
+   "effect": "At ratio 0.5: BERTScore-F1 drop .023, unfaithfulness .038. At ratio 0.2: BERTScore-F1 .931 vs .899 random. Phrase-level units best. One vicuna-13b case: 36% memory (77,695 to 61,885 MB), 1.32x speed.",
+   "loses": "Needs phrase-boundary detection (no verb phrases). Best percentile varies by task and context. Quality drops noticeably from ratio 0.5 up. Never tested on code or tool output."
+  },
+  {
+   "id": "A:085",
+   "technique": "Gist-token context compression with fine-grained autoencoding and segment-wise token importance",
+   "how": "Segment-wise gist compression: L tokens into t gist tokens (ratio L/t); compares memory location (recurrent vs KV) and granularity (coarse vs fine): Coarse-Rec, Coarse-KV, Fine-KV. Adds fine-grained autoencoding and segment-wise token importance estimation (TIE) to fix failures.",
+   "effect": "Fine-KV best, near-lossless on RAG, LongQA, summarization, ICL at low ratios; weak on rerank, synthetic recall and BBH. Autoencoding reconstruction under 20% at high ratios. At ratio 4 synthetic recall improved 52.7% and 33.7% by the two fixes.",
+   "loses": "Models up to 7/8B, 16K window; only compared with full attention; requires continued training and KV access."
+  }
+ ],
+ "18": [
+  {
+   "id": "C:098",
+   "technique": "One chat per coherent outcome with fork, compact, subagents and AGENTS.md",
+   "how": "Plan mode before hard tasks, short AGENTS.md, /fork only when work branches, subagents for bounded work, one chat per outcome.",
+   "effect": "not measured",
+   "loses": "Qualitative guidance only."
+  }
+ ],
+ "21": [
+  {
+   "id": "A:201",
+   "technique": "Explicit cache breakpoints with per-breakpoint TTL (30m / 12h) and stable-prefix rules",
+   "how": "GPT-5.6+: prompt_cache_breakpoint with ttl; write 1.25x for 30m, 2.5x for 12h, reads 0.1x; min prefix 1,024 tokens; dynamic content goes last; effort changes via appended config update.",
+   "effect": "Cache read 0.1x uncached input (0.05x for GPT-6.1 Sol/Terra).",
+   "loses": "Compaction or rewriting history resets reuse; 12h write costs 2.5x."
+  },
+  {
+   "id": "A:224",
+   "technique": "Time-at-end-of-message placement, prompt_cache_key, encrypted-reasoning carry-over, compaction",
+   "how": "Keep timestamps out of the system prompt prefix, route each chat with prompt_cache_key, pass toInput() reasoning items so cache covers prior answers, compact with responses.compact().",
+   "effect": "Time at top of system prompt made the same chat cost 2.2-2.9x as much; run cost 56 cents total.",
+   "loses": "Turn after compaction misses cache; single example app, Grok pricing."
+  },
+  {
+   "id": "A:143",
+   "technique": "Gemini implicit and explicit context caching at 10% input price",
+   "how": "Implicit caching is automatic; explicit caching declares content so the discount is guaranteed; minimum 2,048 tokens.",
+   "effect": "Cached tokens cost 10% of standard input on Gemini 2.5 and above; caches deleted within 24 hours (implicit).",
+   "loses": "Explicit cache adds storage cost and management; minimum length applies."
+  },
+  {
+   "id": "A:260",
+   "technique": "Session affinity for cache hits; cache and difficulty-aware routing; batch tier",
+   "how": "Keeps an agent on the same server so its context stays cached; routing is cache- and difficulty-aware; Batch is 50% off.",
+   "effect": "Cache hit rates up to 99.6% in long agent sessions; cached input at half price or less; cache writes free.",
+   "loses": "Vendor marketing claims; a customer quote of $4M to $800K is anecdotal."
+  },
+  {
+   "id": "A:280",
+   "technique": "Implicit caching with 90% discount plus durable tier (24h max)",
+   "how": "Prefixes are cached automatically with a 90% discount, falling to durable storage after eviction; put common content first.",
+   "effect": "90% discount on cached tokens; expiry no later than 24h.",
+   "loses": "Explicit cache adds storage fees; Gemini-specific."
+  },
+  {
+   "id": "C:053",
+   "technique": "Cache-aware cost comparison with TCO model and hybrid routing counterfactual replay",
+   "how": "Longitudinal case study: Langfuse and vLLM telemetry plus Git mining. Fix Commit Ratio via regex over commit messages; difficulty-stratified Mantel-Haenszel odds ratio; TCO = M x (compute + ops + T_iter x wage); hybrid-routing offline counterfactual replay by difficulty tier.",
+   "effect": "99.3% cache hit cut API cost 88.6% to $0.57/M tokens vs $2.83/M shared on-prem; FCR 74.9% vs 45.9%; Mantel-Haenszel OR 3.61; Shared on-prem saves 40.1% true TCO; dedicated costs 43.8% more; High-to-Claude hybrid saves 26.3%",
+   "loses": "One developer, non-randomized, tasks differ between periods; keyword-classified fixes; Period A fix count inflated by CI work; replay assumes tier exchangeability."
+  },
+  {
+   "id": "A:237",
+   "technique": "prompt_cache_key and cache_control breakpoints with 5m/1h TTL via gateway",
+   "how": "OpenAI auto-caches over 1024 tokens with prompt_cache_key for hit control; Anthropic allows up to 4 breakpoints with 5m or 1h TTL.",
+   "effect": "Up to 90% saving on cached tokens.",
+   "loses": "Gateway-specific; some providers 5-minute TTL only."
+  },
+  {
+   "id": "A:246",
+   "technique": "Gateway failover and caching:'auto' with cache-invalidation warning",
+   "how": "Gateway reissues failed requests to another provider and applies provider-specific cache markers; warns abstraction layers can silently invalidate cache hits.",
+   "effect": "3.5% of requests succeed only through failover, carrying 4.9% of spend; zero token markup.",
+   "loses": "A documented AutoGPT bug put a per-call random token in the cached prefix, voiding the 90% discount."
+  },
+  {
+   "id": "C:054",
+   "technique": "Longitudinal gateway-log cost analysis of nine coding agents",
+   "how": "Computes cost per active user and cached_tokens/input_tokens across a year of gateway traffic.",
+   "effect": "$92/month per active user, Claude Code $108 (P95 $291); 86% cache hit overall, 92% Claude Code; input per call grew 50K to 200K.",
+   "loses": "Single gateway's users; correlational."
+  },
+  {
+   "id": "A:148",
+   "technique": "prompt_cache_key, explicit cache breakpoints, 30m/12h TTL option",
+   "how": "Stable prompt_cache_key per shared prefix, up to four explicit breakpoints per request, ttl 30m default or 12h; explicit mode avoids write charges when no breakpoint.",
+   "effect": "Cache writes charged only on GPT-5.6 and later; key beyond about 15 requests per minute may miss cache.",
+   "loses": "Write charges appear on newer models; 12h writes billed from 2026-11-01."
+  },
+  {
+   "id": "A:221",
+   "technique": "cached_tokens usage field for verifying cache hits",
+   "how": "Read usage.prompt_tokens_details.cached_tokens: 0 is a miss, otherwise tokens reused; multi-turn shows it rising each turn.",
+   "effect": "Example 98 of 125 prompt tokens cached.",
+   "loses": "Verification only; no pricing figure read."
+  },
+  {
+   "id": "A:247",
+   "technique": "caching:'auto' two-marker placement and x-session-affinity header",
+   "how": "Gateway places cache_control on the last message and the message before the last user turn; session affinity header keeps a conversation on the provider holding its cache.",
+   "effect": "Anthropic write 1.25x, read 0.1x; one follow-up read breaks even.",
+   "loses": "One-shot traffic pays write premium; affinity does not guarantee a hit."
+  },
+  {
+   "id": "A:072",
+   "technique": "Explicit cache breakpoints, cache diagnostics (reason: tools_changed), effort change via configuration_update, prewarm",
+   "how": "Stable tool order, allowed_tools and appended developer messages preserve prefix; diagnostics name the miss reason; prewarm at startup; effort change without cache break.",
+   "effect": "Customers: hit rate 83% to 91%, cache writes down about two-thirds, cost down 36%; another 85% to above 90%; 30-minute discount window.",
+   "loses": "Customer-quoted figures, vendor-curated."
+  },
+  {
+   "id": "A:157",
+   "technique": "Implicit versus explicit cache checkpoints; TTL resets on hit",
+   "how": "Explicit checkpoints need minimum prefix tokens per model; static content first; TTL (many models 5 minutes) refreshes on each hit.",
+   "effect": "not measured in the pages read",
+   "loses": "Implicit caching is best effort; minimums vary by model."
+  },
+  {
+   "id": "A:173",
+   "technique": "prompt_cache_key for cache affinity; cached tokens at 10% price",
+   "how": "Sending the same prompt_cache_key on prefix-sharing requests raises hit chance.",
+   "effect": "Cached input billed at 10% of standard price.",
+   "loses": "Hit not guaranteed; short or changing prefixes gain little."
+  },
+  {
+   "id": "A:222",
+   "technique": "Automatic prefix caching with x-grok-conv-id affinity header",
+   "how": "Exactly matching leading messages are cached; setting x-grok-conv-id routes a conversation to maximise hits.",
+   "effect": "not measured in the page read",
+   "loses": "Exact prefix needed."
+  },
+  {
+   "id": "A:248",
+   "technique": "caching:'auto', cache_anchor_items, cache_ttl, session affinity",
+   "how": "Gateway adds cache markers per provider, pins a conversation to the provider holding its cache, and selects 5-minute or 1-hour lifetime.",
+   "effect": "not measured",
+   "loses": "Gateway lock-in; affinity limits failover."
+  },
+  {
+   "id": "A:257",
+   "technique": "Prefix caching with x-session-affinity replica routing",
+   "how": "Cache works only on one replica, so a per-user or session ID routes similar prompts to the same replica.",
+   "effect": "TTFT cut up to 80%; serverless default discount 50%.",
+   "loses": "Exact prefix only; per-replica."
+  },
+  {
+   "id": "A:276",
+   "technique": "Automatic prefix cache discount; batch inference up to 50% off",
+   "how": "Cache is automatic, prefix-based and best effort; asynchronous batch jobs are discounted up to 50%.",
+   "effect": "Batch up to 50% lower cost.",
+   "loses": "No configurable retention; async only."
+  },
+  {
+   "id": "C:121",
+   "technique": "Automatic token caching for API-key and Vertex users; /stats cached-token display",
+   "how": "CLI reuses system instructions and context under API key or Vertex; OAuth users get no caching.",
+   "effect": "not measured",
+   "loses": "Unavailable for OAuth personal accounts; CLI later replaced."
+  },
+  {
+   "id": "A:182",
+   "technique": "Automatic on-disk prefix cache with persisted prefix units",
+   "how": "Each request persists prefixes at the end of user input and output; a hit needs full match of a persisted unit; common prefixes auto-detected after the second request.",
+   "effect": "Cache hit and miss reported per request; hits may need several seconds to build.",
+   "loses": "Best effort; no guaranteed hit; cleared in hours to days."
+  },
+  {
+   "id": "A:223",
+   "technique": "Prefix prompt cache with x-grok-conv-id routing header",
+   "how": "Matching prefix is reused at reduced price; x-grok-conv-id steers requests to the same server to raise hit rate.",
+   "effect": "Cached tokens billed at a reduced rate (rate not in extract).",
+   "loses": "Not guaranteed; evictions and routing can miss."
+  },
+  {
+   "id": "A:231",
+   "technique": "Provider sticky routing and session_id for cache hits",
+   "how": "After a cached request, later requests go to the same provider; session_id sets the sticky key; Anthropic needs explicit cache_control.",
+   "effect": "Sticky sessions expire after 60 minutes idle; only active when cache read price is lower.",
+   "loses": "Manual provider order disables stickiness; fallback loses cache."
+  },
+  {
+   "id": "A:258",
+   "technique": "Cached-input discount, sparse attention indexer and speculative decoding at serving level",
+   "how": "Cached input priced at $0.14 per million (90% off); sparse attention picks 2,048 prior tokens; speculative decoding verified by the full model.",
+   "effect": "Peak 446 tok/s; typical 90k prompt with 600 turns mostly cached.",
+   "loses": "Vendor claim for one provider/model."
+  }
+ ],
+ "22": [
+  {
+   "id": "C:134",
+   "technique": "Trajectory test-outcome vectors by language",
+   "how": "No new method; diagnostic study. Each intermediate solution is re-executed to get a test-outcome vector; transitions labelled breakthrough/stay/improved/regressed/churn/broke/stuck; spans labelled with 12 behaviors by GPT-5-Mini; mixed-effects model on output tokens with problem as random effect.",
+   "effect": "OCaml uses 1.28-1.69x Python tokens (p<0.001). Gemma on OCaml: 1,196 stuck self-loops, 92% of failed snapshots are compile errors. Gemma/Qwen keep working after the first correct solution; over 70% of their spans into STAY are bare writes with no test run.",
+   "loses": "One scaffold, competitive-programming problems only, 4 languages, 5 models; may not generalize to repo-scale work."
+  }
+ ],
+ "23": [
+  {
+   "id": "A:167",
+   "technique": "KV-aware routing, agent hints (nvext) and selective KV retention",
+   "how": "Harness sends priority, output-length and prefill hints; global index routes to workers with highest cache overlap; ephemeral subagent KV marked for early eviction.",
+   "effect": "Claude Code calls hit 85-97% cache; agent teams 97.2% aggregate hit rate; 11.7x read/write ratio.",
+   "loses": "Needs a Dynamo-based serving stack, not hosted APIs."
+  },
+  {
+   "id": "A:111",
+   "technique": "Asynchronous Batch API (JSONL, 24-hour window)",
+   "how": "Submit a JSONL file of requests that completes within 24 hours with a separate higher rate-limit pool.",
+   "effect": "50% lower cost than synchronous calls.",
+   "loses": "Not interactive; up to 24h delay; 200 MB file limit."
+  },
+  {
+   "id": "A:220",
+   "technique": "Message Batches API and Token Counting API",
+   "how": "Batches run asynchronously at a 50 percent cost reduction; POST /v1/messages/count_tokens estimates tokens before sending.",
+   "effect": "50% batch discount.",
+   "loses": "Page is mainly an index; no usage detail."
+  },
+  {
+   "id": "A:255",
+   "technique": "Batch API plus automatic prompt caching on batch jobs",
+   "how": "Async JSONL jobs at 50% off serverless prices, with cached tokens an additional 50% cheaper if static content comes first.",
+   "effect": "50% off plus 50% off cached tokens.",
+   "loses": "Not every model supports batch; jobs can stay pending."
+  },
+  {
+   "id": "A:148",
+   "technique": "prompt_cache_key, explicit cache breakpoints, 30m/12h TTL option",
+   "how": "Stable prompt_cache_key per shared prefix, up to four explicit breakpoints per request, ttl 30m default or 12h; explicit mode avoids write charges when no breakpoint.",
+   "effect": "Cache writes charged only on GPT-5.6 and later; key beyond about 15 requests per minute may miss cache.",
+   "loses": "Write charges appear on newer models; 12h writes billed from 2026-11-01."
+  },
+  {
+   "id": "A:247",
+   "technique": "caching:'auto' two-marker placement and x-session-affinity header",
+   "how": "Gateway places cache_control on the last message and the message before the last user turn; session affinity header keeps a conversation on the provider holding its cache.",
+   "effect": "Anthropic write 1.25x, read 0.1x; one follow-up read breaks even.",
+   "loses": "One-shot traffic pays write premium; affinity does not guarantee a hit."
+  },
+  {
+   "id": "A:072",
+   "technique": "Explicit cache breakpoints, cache diagnostics (reason: tools_changed), effort change via configuration_update, prewarm",
+   "how": "Stable tool order, allowed_tools and appended developer messages preserve prefix; diagnostics name the miss reason; prewarm at startup; effort change without cache break.",
+   "effect": "Customers: hit rate 83% to 91%, cache writes down about two-thirds, cost down 36%; another 85% to above 90%; 30-minute discount window.",
+   "loses": "Customer-quoted figures, vendor-curated."
+  },
+  {
+   "id": "A:182",
+   "technique": "Automatic on-disk prefix cache with persisted prefix units",
+   "how": "Each request persists prefixes at the end of user input and output; a hit needs full match of a persisted unit; common prefixes auto-detected after the second request.",
+   "effect": "Cache hit and miss reported per request; hits may need several seconds to build.",
+   "loses": "Best effort; no guaranteed hit; cleared in hours to days."
+  },
+  {
+   "id": "A:231",
+   "technique": "Provider sticky routing and session_id for cache hits",
+   "how": "After a cached request, later requests go to the same provider; session_id sets the sticky key; Anthropic needs explicit cache_control.",
+   "effect": "Sticky sessions expire after 60 minutes idle; only active when cache read price is lower.",
+   "loses": "Manual provider order disables stickiness; fallback loses cache."
+  }
+ ],
+ "24": [
+  {
+   "id": "A:207",
+   "technique": "Retained reasoning plus native compaction, programmatic tool calling, low reasoning effort, small-tier model (Luna) selection",
+   "how": "Persists reasoning across turns with compaction, runs tool orchestration in code outside context, and uses cheaper tiers or lower effort.",
+   "effect": "ARC-AGI-3 13.3% to 38.3% with about 6x fewer output tokens; BrowseComp 84.04% at $1.33 versus 84.36% at $33.27 for GPT-5.5; PlayerZero cost -64%.",
+   "loses": "Vendor and customer testimonials; harness-specific."
+  }
+ ],
+ "26": [
+  {
+   "id": "C:061",
+   "technique": "LiteLLM budget caps, Langfuse, LLMLingua, RouteLLM, GPTCache semantic cache",
+   "how": "Roundup: LiteLLM max_budget per key; LLMLingua prompt compression; RouteLLM routes between two models by threshold; GPTCache semantic caching.",
+   "effect": "RouteLLM 85% cost reduction keeping 95% GPT-4 quality on MT Bench (45% MMLU, 35% GSM8K); LongLLMLingua +21.4% RAG with 1/4 tokens.",
+   "loses": "Vendor blog citing others' numbers; RouteLLM is binary routing only."
+  },
+  {
+   "id": "A:238",
+   "technique": "Exact-match edge response cache with cache seed",
+   "how": "Hashes URL, body and headers into a key stored on Cloudflare edge; default max-age 7 days; bucket size for multiple responses.",
+   "effect": "not measured",
+   "loses": "Exact match only; any parameter change misses; aimed at dev and test."
+  },
+  {
+   "id": "A:114",
+   "technique": "Semantic cache eviction via combinatorial bandits (CUCB-SC, greedy)",
+   "how": "Loss = sum p(q)*min{c(q), d(q,M)}; NP-hard, non-increasing supermodular. Reverse_Greedy (curvature bound); offline CUCB-SC (pessimistic cost UCB); online CLCB-SC-LS (LCB, stage-based low switching).",
+   "effect": "Regret O(sqrt(mT log(mT)) loglogT), switches O(m loglogT). >=11.75% regret gain (up to 54.04%), switches -90.91%, runtime -85.40%.",
+   "loses": "Synthetic only."
+  },
+  {
+   "id": "A:239",
+   "technique": "Session-id cost attribution, custom property segmentation, graduated budget alerts (50/80/95%), response cache",
+   "how": "Headers tag requests by session and property; alerts at 50%, 80%, 95% of budget; Cache-Control max-age enables response caching.",
+   "effect": "Example dashboard: 73% hit rate saving $1,247 a month (illustrative).",
+   "loses": "Gateway-dependent; example figures."
+  },
+  {
+   "id": "C:047",
+   "technique": "Codex compaction backends (default summarization, remote, remote_v2) and two-phase memory consolidation",
+   "how": "Auto-compaction at model_auto_compact_token_limit; memory phase 1 extracts raw memories, phase 2 consolidates into MEMORY.md and summaries.",
+   "effect": "Not measured.",
+   "loses": "Reverse-engineered reading of one Codex version."
+  }
+ ],
+ "27": [
+  {
+   "id": "C:136",
+   "technique": "Decoupled controller model approves extra token budget from workspace snapshot",
+   "how": "Worker freezes at a 50,000-token limit; a separate controller model scores approve-vs-deny with expected value p>1/2 using task, files, tests snapshot.",
+   "effect": "Injected budget counter referenced 0 times in 14,000+ messages; request_more_budget used 0 of 5,000 turns; approval 97% default, 79% neutral.",
+   "loses": "Controller models biased to approve (four of six); 100-task evaluation set."
+  },
+  {
+   "id": "C:063",
+   "technique": "SLM-default, LLM-fallback with uncertainty routing, verifiers, Cost per Successful task (CPS)",
+   "how": "SLM-default routing: small model with guided decoding and validators handles the task; uncertainty or validation failure escalates to a large model. Track Cost per Successful task (CPS) and schema validity; rollback thresholds trigger fallback.",
+   "effect": "Body claims 10-30x lower cost; abstract says 10x-100x (inconsistent).; Table II is placeholder data.",
+   "loses": "Not a controlled experiment; headline factors unmeasured."
+  },
+  {
+   "id": "C:064",
+   "technique": "OTC-PO / OTC-GRPO tool-productivity reward",
+   "how": "Reward r_final = alpha*r_tool*r_correct (multiplicative; additive was unstable because the model gained reward by calling fewer tools without a correct answer). OTC-PPO: r_tool = cos(m*pi/(2m+c)). OTC-GRPO: f(m,n)=2nm/(m+n), r_tool = sin(f*pi/(2n)), peaking at m=n. GRPO uses the global approximation of optimal tool calls.",
+   "effect": "Up to -68.3% tool calls and +215.4% TP (OTC-PPO 7B NQ: TC 3.282 to 1.040, TP 0.136 to 0.429); 7B NQ EM 0.446 vs 0.449; 3B OTC-PPO NQ EM 0.355 vs 0.403 (drop); Code 7B AIME24: TP 16.4 to 52.4 (+199.4%), TC 2.1 to 0.7, EM 26.7 to 33.3",
+   "loses": "Gains larger at 7B; 3B loses accuracy in some cells; only search and code tools on QA and math; GRPO less stable than PPO."
+  },
+  {
+   "id": "C:043",
+   "technique": "Restart Economics: retry priced by cost per resolved task, iteration cap as a guard, break-even in median attempt costs",
+   "how": "Restart Economics: expected cost per incoming task, with agent spend, verification and a priced outside option (annotated engineer time). Policy ladder: no retry, retry with best attempt budget (K at most 4), retry with a per-attempt iteration cap, schedules by coordinate ascent, a receding-horizon restart rule on three state variables, and cascades across configurations. Exact replay of truncated logged trajectories scores each policy. Break-even is stated in multiples of the median attempt cost.",
+   "effect": "Automated verifier, $100 an hour: retry cuts expected cost 13.2 to 19.6% for six configurations and 4.3% for GPT-5.2; at $300 an hour 16.4 to 21.0% (GPT-5.2 8.0%). Dollar savings per task at $100 an hour: GPT-5 5.67 [3.42, 8.80], GPT-5.2 1.01 [0.45, 2.16]. The iteration cap adds nothing given retry: break-even 2.14 to 3.83 median attempt costs ($1.74 to $7.08 an hour); margin never distinct from zero on the cost side in any of 532 cells; best hindsight cap saves at most $0.03 per task. Attempts still running at 100 calls resolve 33 to 55% of the time. Only 11 to 25% of tasks have mixed outcomes. Cross-configuration outcome correlation 0.62 to 0.90. Cascades save 9.2% in point estimate at $100 an hour, interval includes zero. Review at 0.5 of the outside option: no configuration retries, the cap saves $0.75 to $3.56 per task at $100 an hour. The fitted state rule stops 42 to 78% too early and costs 7 to 32% more than the exact optimum on synthetic attempts.",
+   "loses": "Clean restarts only. One benchmark, one harness (OpenHands CodeActAgent), at most 4 attempts. A configuration is not a model. SWE-bench Verified contamination. The outside option is annotated time, understated for short tasks. The state rule has 8 coefficients; learned monitors are untested. Working paper v0.1, single author, not peer reviewed."
+  },
+  {
+   "id": "C:131",
+   "technique": "Budget Tracker and BATS budget-aware test-time scaling",
+   "how": "Budget Tracker: plug-in that shows remaining and used per-tool budgets each ReAct iteration. BATS: structured tree plan (exploration vs verification clues), self-verification with SUCCESS/CONTINUE/PIVOT decisions, trajectory summarization, LLM judge picks final answer. Unified cost = token cost (input/output/cache) + tool-call cost.",
+   "effect": "Budget Tracker at budget 10 matches ReAct at 100 (12.8% vs 12.6%) with 40.4% fewer search calls, 19.9% fewer browse calls, 31.3% lower cost.; BATS 24.6% BrowseComp, 46.0% BrowseComp-ZH, 27.0% HLE-Search, training-free.; Ablation: removing verification drops BrowseComp 18.7% to 15.4%.",
+   "loses": "Evaluated on web search agents only; tool-call budget, not token budget."
+  },
+  {
+   "id": "C:134",
+   "technique": "Trajectory test-outcome vectors by language",
+   "how": "No new method; diagnostic study. Each intermediate solution is re-executed to get a test-outcome vector; transitions labelled breakthrough/stay/improved/regressed/churn/broke/stuck; spans labelled with 12 behaviors by GPT-5-Mini; mixed-effects model on output tokens with problem as random effect.",
+   "effect": "OCaml uses 1.28-1.69x Python tokens (p<0.001). Gemma on OCaml: 1,196 stuck self-loops, 92% of failed snapshots are compile errors. Gemma/Qwen keep working after the first correct solution; over 70% of their spans into STAY are bare writes with no test run.",
+   "loses": "One scaffold, competitive-programming problems only, 4 languages, 5 models; may not generalize to repo-scale work."
+  }
+ ],
+ "29": [
+  {
+   "id": "A:091",
+   "technique": "NoWait (suppress Wait-like self-reflection tokens at inference)",
+   "how": "Logit processor at inference sets logits of reflection keywords to a large negative value. 15 seed keywords were mined from 32 QwQ-32B runs on AIME 2025 (wait, alternatively, hmm, but, however, check, maybe, verify, again, now) and expanded to all vocabulary tokens containing a keyword as substring. No training or weight change.",
+   "effect": "QwQ-32B AMC23 95.50 (+4.25) at -30% tokens; AIME25 68.00 (+1.33) at -31%; Phi4-R+ AMC23 +6.00 at -28%; Qwen3-32B -13% to -16% tokens; Kimi-VL -40% to -60% tokens on some sets (-7.25 accuracy on EMMA-mini); QwQ-32B-Preview AIME24 42.00 at 5764 tokens vs 8979 baseline; O1-Pruner 33.33",
+   "loses": "Distilled Qwen3-4B/8B/14B degrade (>5 points AIME24, >12 AIME25); suits RL-trained reasoning models; math-heavy benchmarks."
+  },
+  {
+   "id": "A:093",
+   "technique": "THINK-Bench efficiency metrics (useful tokens, reflection quality)",
+   "how": "THINK-Bench: 1375 questions; metrics for thinking efficiency, useful tokens and reflection quality over reasoning-model chains.",
+   "effect": "1375 questions.; Efficiency Grok-3-mini 61.69% vs QwQ-plus 44.58%.",
+   "loses": "Benchmark only; no mitigation."
+  },
+  {
+   "id": "A:054",
+   "technique": "Idle-session thinking clearing (clear_thinking_20251015, keep:1) and effort-default / length-limit regression lessons",
+   "how": "Clearing old thinking after 1h idle was meant to shrink the uncached resume; a bug repeated it every turn, causing cache misses; a 25-word between-tool limit cost quality.",
+   "effect": "Prompt ablation showed a 3% eval drop; medium default effort felt less intelligent and was reverted to high/xhigh.",
+   "loses": "Pruning history or verbosity limits can silently hurt quality and cause cache misses; need per-change evals."
+  },
+  {
+   "id": "A:095",
+   "technique": "Length Controlled Policy Optimization (LCPO) for reasoning-length control",
+   "how": "LCPO: prompt adds 'Think for n_gold tokens' with n_gold ~ Uniform(100,4000); GRPO reward. L1-Exact: correctness minus 0.0003*|n_gold - n_y|. L1-Max: correctness times clipped length slack with delta 0.5, trained 120 steps after 700 of Exact.",
+   "effect": "Beats S1 by 20-25% absolute at 512/1024 tokens. L1-Max matches DeepScaleR-4K with up to 2x fewer tokens. Mean length error about 3% on math (20-40% OOD). Short CoT beats GPT-4o by about 2% at equal length.",
+   "loses": "May not generalize to longer requested lengths; 4K training context; 1.5B math model (7B in appendix); little tuning."
+  }
+ ],
+ "30": [
+  {
+   "id": "C:046",
+   "technique": "Text-as-file-system navigation with coding agents (ripgrep, scripts)",
+   "how": "Place the corpus as a directory of txt files (one JSONL for NQ) and give an off-the-shelf coding agent (Codex GPT-5; Claude Code Sonnet 4.5) only the path and query. It uses grep/rg, sed, nl and Python scripts iteratively. Configs: no retriever, BM25, Gemini embeddings.",
+   "effect": "Beats published SOTA by 17.3% on average; SOTA on 4 of 5 benchmarks; Native search commands per trajectory 14.92 (no retriever) vs 8.33 (Gemini retriever); GPT-5 full-context cost $1.421 per query on Oolong-Syn vs $0.275 on BrowseComp-Plus",
+   "loses": "Retrievers did not consistently help; optimised for coding not long context; costlier than RAG; 200-sample evals; about equal to full context on LongBench."
+  }
+ ],
+ "31": [
+  {
+   "id": "C:044",
+   "technique": "Repository-level RAG taxonomy (graph-based, non-graph, selection by Shapley, context pruning)",
+   "how": "Survey, no algorithm. Taxonomy of RACG by retrieval substrate, control regime and evaluation; agent autonomy levels L0 (static pipeline), L1 (iterative feedback), L2 (autonomous agents).",
+   "effect": "Agentless (L0) cited at 32% on SWE-bench Lite at low cost. Long-context models can match RAG on small repos (Peng et al. 2025).",
+   "loses": "Survey only; no new measurements; cost and latency claims qualitative."
+  }
+ ],
+ "34": [
+  {
+   "id": "C:044",
+   "technique": "Repository-level RAG taxonomy (graph-based, non-graph, selection by Shapley, context pruning)",
+   "how": "Survey, no algorithm. Taxonomy of RACG by retrieval substrate, control regime and evaluation; agent autonomy levels L0 (static pipeline), L1 (iterative feedback), L2 (autonomous agents).",
+   "effect": "Agentless (L0) cited at 32% on SWE-bench Lite at low cost. Long-context models can match RAG on small repos (Peng et al. 2025).",
+   "loses": "Survey only; no new measurements; cost and latency claims qualitative."
+  },
+  {
+   "id": "C:129",
+   "technique": "Architect/editor model split and per-task token budgets",
+   "how": "R1 as architect with Sonnet as editor; notes code generation is 5-15% of tokens and Aider's tree-sitter repo map saves 20,000+ tokens per turn.",
+   "effect": "Aider polyglot: DeepSeek R1 + Sonnet $13.29 for 225 tasks, 14x cheaper than o1; Gemini 2.5 Pro $0.028/task at 72% pass.",
+   "loses": "Blog aggregation; real sessions 3-5x benchmark cost."
+  },
+  {
+   "id": "C:046",
+   "technique": "Text-as-file-system navigation with coding agents (ripgrep, scripts)",
+   "how": "Place the corpus as a directory of txt files (one JSONL for NQ) and give an off-the-shelf coding agent (Codex GPT-5; Claude Code Sonnet 4.5) only the path and query. It uses grep/rg, sed, nl and Python scripts iteratively. Configs: no retriever, BM25, Gemini embeddings.",
+   "effect": "Beats published SOTA by 17.3% on average; SOTA on 4 of 5 benchmarks; Native search commands per trajectory 14.92 (no retriever) vs 8.33 (Gemini retriever); GPT-5 full-context cost $1.421 per query on Oolong-Syn vs $0.275 on BrowseComp-Plus",
+   "loses": "Retrievers did not consistently help; optimised for coding not long context; costlier than RAG; 200-sample evals; about equal to full context on LongBench."
+  }
+ ],
+ "35": [
+  {
+   "id": "C:061",
+   "technique": "LiteLLM budget caps, Langfuse, LLMLingua, RouteLLM, GPTCache semantic cache",
+   "how": "Roundup: LiteLLM max_budget per key; LLMLingua prompt compression; RouteLLM routes between two models by threshold; GPTCache semantic caching.",
+   "effect": "RouteLLM 85% cost reduction keeping 95% GPT-4 quality on MT Bench (45% MMLU, 35% GSM8K); LongLLMLingua +21.4% RAG with 1/4 tokens.",
+   "loses": "Vendor blog citing others' numbers; RouteLLM is binary routing only."
+  },
+  {
+   "id": "A:207",
+   "technique": "Retained reasoning plus native compaction, programmatic tool calling, low reasoning effort, small-tier model (Luna) selection",
+   "how": "Persists reasoning across turns with compaction, runs tool orchestration in code outside context, and uses cheaper tiers or lower effort.",
+   "effect": "ARC-AGI-3 13.3% to 38.3% with about 6x fewer output tokens; BrowseComp 84.04% at $1.33 versus 84.36% at $33.27 for GPT-5.5; PlayerZero cost -64%.",
+   "loses": "Vendor and customer testimonials; harness-specific."
+  }
+ ],
+ "36": [
+  {
+   "id": "A:090",
+   "technique": "Chain of Unconscious Thought prompt plus token-efficient strategies",
+   "how": "Training-free prompt with two parts. RPI (Reasoning Process Internalization): solve in hidden thinking, output a bare-minimum single-line reasoning. TES (Token-Efficient Strategies): 'TOKEN CONSERVATION MODE ACTIVE', symbols and abbreviations, omit articles, strip greetings, and a point rule: each saved token +1, each accuracy error -100.",
+   "effect": "Ablation averages: 354.46 tokens vs CoT 676.85 (-47.6%), accuracy 91.19 vs 88.40 (-2.79 points); RPI alone -31.1% tokens; TES alone -33.9%; Figure 1 claim: -20.51% tokens vs best baseline, 0.1% accuracy drop; Arithmetic sets: 190.19 tokens, 94.28% vs CoT 93.5%",
+   "loses": "QwQ-32B stays high in tokens whatever the prompt; math benchmarks only; accuracy loss vs CoT in the ablation."
+  },
+  {
+   "id": "A:105",
+   "technique": "TRIM distilled output plus small-model reconstruction",
+   "how": "Prompt the LLM to omit a set W of 25 readily inferable function words; a small encoder-decoder or decoder model reconstructs the full text. W is chosen by RoBERTa masked-prediction ranking (cut-off level 5, about 18% tokens saved). Break-even: C_D^o*G >= C_D^i*I + C_R^i*I_R + C_R^o*O_R.",
+   "effect": "GPT-4o with T5: 19.41% tokens saved, Theta F1 85.51, cosine 99.99%; Tokens saved: GPT-4.1-mini 22.79%, Sonnet 4 17.83%, Opus 4.1 17.38%; Added instruction costs 169 tokens; break-even answer length about 216 tokens (GPT-4o), about 190 (Sonnet 4)",
+   "loses": "English only; rewrite/summarize/translate tasks about 5.77% lower; not tested on code, conversation or reasoning models; effect of omission on generation quality untested; needs a trained reconstructor."
+  },
+  {
+   "id": "A:054",
+   "technique": "Idle-session thinking clearing (clear_thinking_20251015, keep:1) and effort-default / length-limit regression lessons",
+   "how": "Clearing old thinking after 1h idle was meant to shrink the uncached resume; a bug repeated it every turn, causing cache misses; a 25-word between-tool limit cost quality.",
+   "effect": "Prompt ablation showed a 3% eval drop; medium default effort felt less intelligent and was reverted to high/xhigh.",
+   "loses": "Pruning history or verbosity limits can silently hurt quality and cause cache misses; need per-change evals."
+  },
+  {
+   "id": "A:095",
+   "technique": "Length Controlled Policy Optimization (LCPO) for reasoning-length control",
+   "how": "LCPO: prompt adds 'Think for n_gold tokens' with n_gold ~ Uniform(100,4000); GRPO reward. L1-Exact: correctness minus 0.0003*|n_gold - n_y|. L1-Max: correctness times clipped length slack with delta 0.5, trained 120 steps after 700 of Exact.",
+   "effect": "Beats S1 by 20-25% absolute at 512/1024 tokens. L1-Max matches DeepScaleR-4K with up to 2x fewer tokens. Mean length error about 3% on math (20-40% OOD). Short CoT beats GPT-4o by about 2% at equal length.",
+   "loses": "May not generalize to longer requested lengths; 4K training context; 1.5B math model (7B in appendix); little tuning."
+  }
+ ],
+ "37": [
+  {
+   "id": "A:118",
+   "technique": "OP-RAG: order-preserve retrieval-augmented generation",
+   "how": "Split the document into 128-token chunks, score each by cosine similarity (BGE-large-en-v1.5), take the top-k, then order the selected chunks by their original document position rather than by score (OP-RAG). Answer quality follows an inverted U against the amount of retrieved context.",
+   "effect": "En.QA Llama3.1-70B: OP-RAG-16K 44.43 F1; OP-RAG-48K 47.25 F1 vs 34.26 F1 for full 117K context; Vanilla RAG at 128 chunks 38.40 vs OP-RAG 44.43; En.MC: OP-RAG-24K 88.65 vs 71.62 without RAG; vanilla at 192 chunks 81.22; 8B peaks near 16K tokens; 70B peaks at 48K (En.QA) and 32K (En.MC)",
+   "loses": "Long-document QA only; sweet-spot context length varies by model and task; advantage over vanilla RAG is small at around 8 chunks; no limitations section."
+  },
+  {
+   "id": "C:061",
+   "technique": "LiteLLM budget caps, Langfuse, LLMLingua, RouteLLM, GPTCache semantic cache",
+   "how": "Roundup: LiteLLM max_budget per key; LLMLingua prompt compression; RouteLLM routes between two models by threshold; GPTCache semantic caching.",
+   "effect": "RouteLLM 85% cost reduction keeping 95% GPT-4 quality on MT Bench (45% MMLU, 35% GSM8K); LongLLMLingua +21.4% RAG with 1/4 tokens.",
+   "loses": "Vendor blog citing others' numbers; RouteLLM is binary routing only."
+  },
+  {
+   "id": "A:088",
+   "technique": "AttentionRAG attention-focus pruning (next-token reformulation of the query)",
+   "how": "GPT-4o-mini builds an answer-hint prefix in next-token form. Context split into m-token chunks; per chunk one focal token is generated ('none' drops the chunk). Attention to the focal token is summed over layers; top-k tokens select the sentences kept. Training-free, batched.",
+   "effect": "Llama 2WikiMQA: 6.3x (small) and 15x (large) compression, EM 0.42 vs 0.49 original; HotpotQA latency 3.99s + 4.94s vs 19.36s original; Compression only 1.7x-2.0x on TriviaQA",
+   "loses": "Needs attention access; attention aggregated over all layers; no explicit compression-ratio control; low ratio on TriviaQA."
+  },
+  {
+   "id": "A:119",
+   "technique": "RAG vs long-context routing guidance (LaRA benchmark)",
+   "how": "LaRA benchmark comparing RAG (600-token chunks, 5 chunks, 100 overlap, GTE-large + BM25) vs long context.",
+   "effect": "32k: long-context +2.4% over RAG; 128k: RAG +3.68%. 128k RAG gains 6.48% (Llama-3.2-3B), 38.12% (Mistral-Nemo-12B). Comparison favours long-context (+15.22% at 32k). GPT-4o hallucination accuracy 56.34%.",
+   "loses": "GPT-4o-judged, mostly GPT-4o-generated QA, fixed RAG config, no cost measure."
+  },
+  {
+   "id": "A:083",
+   "technique": "Selective Context (self-information pruning)",
+   "how": "A base causal LM (LLaMA-7B; GPT-3 curie for OpenAI models) computes self-information -log2 P(x_t|x_<t) sentence by sentence. Tokens are merged into lexical units (tokens, noun phrases via spaCy, sentences). Units at or above the p-th percentile of self-information are kept.",
+   "effect": "At ratio 0.5: BERTScore-F1 drop .023, unfaithfulness .038. At ratio 0.2: BERTScore-F1 .931 vs .899 random. Phrase-level units best. One vicuna-13b case: 36% memory (77,695 to 61,885 MB), 1.32x speed.",
+   "loses": "Needs phrase-boundary detection (no verb phrases). Best percentile varies by task and context. Quality drops noticeably from ratio 0.5 up. Never tested on code or tool output."
+  },
+  {
+   "id": "A:116",
+   "technique": "Long-context vs RAG comparison (chunk vs summarization-based retrieval)",
+   "how": "Compare long-context (LC) vs RAG with the same LLM (GPT-4o). Filter questions answerable without context; compare 5 retrievers (BM25, Contriever, text-embedding-3-small, Llama-Index Tree/Window, RAPTOR); pick the best; analyse by source and question type.",
+   "effect": "LC 56.3% correct vs RAG (RAPTOR) 49.0%. LC-only correct 2,287 vs RAG-only 1,294 (about 10% only RAG). RAPTOR best retriever at 38.5% on the retriever-comparison sample.",
+   "loses": "Text only; Wikipedia long contexts are synthetic noise-padded (biases against RAG); no cost or token measurements."
+  }
+ ],
+ "38": [
+  {
+   "id": "C:098",
+   "technique": "One chat per coherent outcome with fork, compact, subagents and AGENTS.md",
+   "how": "Plan mode before hard tasks, short AGENTS.md, /fork only when work branches, subagents for bounded work, one chat per outcome.",
+   "effect": "not measured",
+   "loses": "Qualitative guidance only."
+  }
+ ],
+ "39": [
+  {
+   "id": "A:154",
+   "technique": "Copilot CLI background auto-compaction at ~80% (dynamic to 90%) plus /context, /usage, /compact",
+   "how": "Compresses history in background near 80% of token limit, waiting until 90% when static context is 75% or more; /compact manual, /usage and /context for visibility.",
+   "effect": "Threshold behavior only; no savings measured.",
+   "loses": "Compaction reclaims less when static context is large."
+  },
+  {
+   "id": "C:007",
+   "technique": "OpenCode prune-then-summarise; Claude Code three-layer trim, cache-friendly tail trimming, 9-section summary",
+   "how": "OpenCode hides old tool outputs only if it frees over 20,000 tokens and keeps the last 40,000; Claude Code trims the tail to preserve the cache prefix and auto-compacts at window minus 13,000.",
+   "effect": "Worked example on a 15,400-token session; no cost figures.",
+   "loses": "Codex handoff summary is all-or-nothing; source based on reverse engineering."
+  },
+  {
+   "id": "A:250",
+   "technique": "Model natively trained for compaction across multiple context windows",
+   "how": "The model auto-compacts near the window limit and repeats; adds xhigh reasoning effort.",
+   "effect": "30% fewer thinking tokens at medium effort on SWE-bench Verified versus GPT-5.1-Codex.",
+   "loses": "Vendor claim; Codex-specific."
+  },
+  {
+   "id": "C:047",
+   "technique": "Codex compaction backends (default summarization, remote, remote_v2) and two-phase memory consolidation",
+   "how": "Auto-compaction at model_auto_compact_token_limit; memory phase 1 extracts raw memories, phase 2 consolidates into MEMORY.md and summaries.",
+   "effect": "Not measured.",
+   "loses": "Reverse-engineered reading of one Codex version."
+  }
+ ],
+ "44": [
+  {
+   "id": "C:099",
+   "technique": "Layered AGENTS.md discovery with project_doc_max_bytes cap",
+   "how": "Codex concatenates global then root-to-cwd AGENTS.md files, stopping at 32 KiB default.",
+   "effect": "not measured",
+   "loses": "Large files truncated at cap."
+  },
+  {
+   "id": "C:047",
+   "technique": "Codex compaction backends (default summarization, remote, remote_v2) and two-phase memory consolidation",
+   "how": "Auto-compaction at model_auto_compact_token_limit; memory phase 1 extracts raw memories, phase 2 consolidates into MEMORY.md and summaries.",
+   "effect": "Not measured.",
+   "loses": "Reverse-engineered reading of one Codex version."
+  }
+ ],
+ "45": [
+  {
+   "id": "A:055",
+   "technique": "GPT-5-Codex adaptive thinking time per task complexity",
+   "how": "Model spends less reasoning on simple turns and more on complex ones, rather than a fixed effort.",
+   "effect": "For the bottom 10% of user turns by generated tokens, uses 93.7% fewer tokens than GPT-5; top 10% reasons about twice as long. OpenAI-reported.",
+   "loses": "Vendor claim, model-specific; no cost in dollars given."
+  },
+  {
+   "id": "A:096",
+   "technique": "Adaptive Length Penalty (ALP) RL objective",
+   "how": "Adaptive Length Penalty RL. Reward = 1[correct] - beta*N*max(p_solved,1/K), p_solved estimated online from K=16 rollouts per prompt. simple prompts (high p_solved) get strong length penalty, hard prompts weak. Works with GRPO, RLOO, Reinforce++.",
+   "effect": "About 50% fewer tokens; MATH-500 Pass@1 0.81->0.80 with tokens 2326->646. 40% higher Pass@1 at 1024 budget on simple math. Adaptation ratio 5.35x vs 2.41x base. R1 and QwQ-32B use >10,000 tokens on '2+3'.",
+   "loses": "Math only; compared against public checkpoints; mixed-difficulty stress test accuracy fell 0.89->0.52."
+  },
+  {
+   "id": "C:023",
+   "technique": "Empirical token-consumption analysis and self-prediction of cost on SWE-bench Verified",
+   "how": "No new algorithm; empirical study. OpenHands on SWE-bench Verified (500 tasks x 4 runs) across 8 models, phase analysis (Setup, Explore, Fix, Validate, Closeout), round-level cost decomposition with Sonnet 4.5, and agent self-prediction of its own token use.",
+   "effect": "Agentic coding ~1000x more tokens than code reasoning and chat; input/output ratio 153.85 vs 1.33 and 0.16; cost $1.857 vs $0.016 and $0.023; Most expensive run ~2x cheapest on average (abstract says up to 30x); accuracy peaks at intermediate cost; Cache reads dominate tokens and dollars in every phase; output ~80x pricier per token than cache reads; Self-prediction correlation up to 0.39; every model underestimates; Kendall tau-b 0.32 vs difficulty",
+   "loses": "8 models, one framework (OpenHands), one benchmark; self-prediction noisy and underestimates."
+  },
+  {
+   "id": "C:038",
+   "technique": "Edit-format and reasoning-effort cost/accuracy benchmark on polyglot tasks",
+   "how": "Reports pass rate, edit format and total cost per model across 225 Exercism tasks.",
+   "effect": "gpt-5 high 88.0% at $29.08 vs medium 86.7% at $17.69; o3-pro high 84.9% at $146.32.",
+   "loses": "Single benchmark; cost shown at benchmark run time."
+  },
+  {
+   "id": "A:127",
+   "technique": "Reasoning-mode energy measurement (CodeCarbon-based benchmark)",
+   "how": "Benchmarks energy per query across tasks, adding reasoning on versus off for the same models.",
+   "effect": "Reasoning models use about 30x more energy on average than non-reasoning or reasoning-off runs.",
+   "loses": "Energy, not dollars; not agentic coding."
+  },
+  {
+   "id": "A:135",
+   "technique": "CoThink: instruct model drafts outline, thinking model expands",
+   "how": "CoThink: an instruct model (Qwen2.5-32B-Instruct) writes a 2-4 step outline with no numbers; the thinking model then expands it using only those steps. Defines token efficiency tau=Q/C and relative reasoning efficiency eta=(CR/CI)^beta, beta 0.3-0.5.",
+   "effect": "Tokens cut 21.1% on average vs Solo-Thinking, up to 41.8%; Accuracy +1.66% on average; Win rate 37/60 (61.7%): GSM8K 37.5%, MATH500 87.5%, AIME24 60%",
+   "loses": "Weak on GSM8K (DAPO +6.3% tokens, Qwen3 no-think +25.7%); math only; DAPO follows outline inconsistently; scaling law speculative; needs two models."
+  },
+  {
+   "id": "A:030",
+   "technique": "Dynamic value-thresholding abstention (early termination of reasoning)",
+   "how": "Dynamic value-thresholding: add abstention action with reward r_bot; abstain at any token position when estimated value V_t (probability the final answer is correct given the prefix) falls below r_bot. Value estimated by a two-layer MLP probe (~10^4 params) on last-layer hidden states, trained with binary cross-entropy over all non-terminal prefixes of completed traces. Threshold T_alpha is the alpha-quantile on held-out data.",
+   "effect": "OlympiadBench Phi-3 at 90% abstention: 0.64 selective accuracy vs 0.34 best baseline (base 16%); Qwen OlympiadBench at 90% abstention: 0.91 vs 0.75 best fixed-position baseline (base 43%); Retains 63-86% of input-only token savings at 10% abstention, 92-95% at 90%; Threshold hits target abstention rate within 1.2 points MAE; zero-shot probe transfer works across datasets",
+   "loses": "Needs hidden-state access and a trained probe per model; theory assumes oracle value; experiments on math and toxicity only; saves fewer tokens than input-only abstention at low rates."
+  },
+  {
+   "id": "A:090",
+   "technique": "Chain of Unconscious Thought prompt plus token-efficient strategies",
+   "how": "Training-free prompt with two parts. RPI (Reasoning Process Internalization): solve in hidden thinking, output a bare-minimum single-line reasoning. TES (Token-Efficient Strategies): 'TOKEN CONSERVATION MODE ACTIVE', symbols and abbreviations, omit articles, strip greetings, and a point rule: each saved token +1, each accuracy error -100.",
+   "effect": "Ablation averages: 354.46 tokens vs CoT 676.85 (-47.6%), accuracy 91.19 vs 88.40 (-2.79 points); RPI alone -31.1% tokens; TES alone -33.9%; Figure 1 claim: -20.51% tokens vs best baseline, 0.1% accuracy drop; Arithmetic sets: 190.19 tokens, 94.28% vs CoT 93.5%",
+   "loses": "QwQ-32B stays high in tokens whatever the prompt; math benchmarks only; accuracy loss vs CoT in the ablation."
+  },
+  {
+   "id": "A:091",
+   "technique": "NoWait (suppress Wait-like self-reflection tokens at inference)",
+   "how": "Logit processor at inference sets logits of reflection keywords to a large negative value. 15 seed keywords were mined from 32 QwQ-32B runs on AIME 2025 (wait, alternatively, hmm, but, however, check, maybe, verify, again, now) and expanded to all vocabulary tokens containing a keyword as substring. No training or weight change.",
+   "effect": "QwQ-32B AMC23 95.50 (+4.25) at -30% tokens; AIME25 68.00 (+1.33) at -31%; Phi4-R+ AMC23 +6.00 at -28%; Qwen3-32B -13% to -16% tokens; Kimi-VL -40% to -60% tokens on some sets (-7.25 accuracy on EMMA-mini); QwQ-32B-Preview AIME24 42.00 at 5764 tokens vs 8979 baseline; O1-Pruner 33.33",
+   "loses": "Distilled Qwen3-4B/8B/14B degrade (>5 points AIME24, >12 AIME25); suits RL-trained reasoning models; math-heavy benchmarks."
+  },
+  {
+   "id": "A:207",
+   "technique": "Retained reasoning plus native compaction, programmatic tool calling, low reasoning effort, small-tier model (Luna) selection",
+   "how": "Persists reasoning across turns with compaction, runs tool orchestration in code outside context, and uses cheaper tiers or lower effort.",
+   "effect": "ARC-AGI-3 13.3% to 38.3% with about 6x fewer output tokens; BrowseComp 84.04% at $1.33 versus 84.36% at $33.27 for GPT-5.5; PlayerZero cost -64%.",
+   "loses": "Vendor and customer testimonials; harness-specific."
+  },
+  {
+   "id": "A:069",
+   "technique": "Shapley-value cost attribution of thinking tokens and turns; price reversal",
+   "how": "Cost c = p_in*n_in + p_out*n_out (+ cache terms for agents). Shapley-value attribution of the cost gap between two models over eight multilinear factors (turns, input, output, cache, thinking tokens, and three prices), with a closed form. Cost treated as a distribution with quantile-level reversal analysis.",
+   "effect": "106 of 336 pairs (32%) show price reversal; 11% on ArenaHard to 57% on MMLU-Pro; Gemini 3 Flash: 80% lower listed price than GPT-5.4 but 38% higher total cost ($705 vs $509); Single-turn: thinking tokens over 95% of the gap; agentic: turns over 80% (Kimi vs GPT-5.4); Repeat-run cost on the same query varies up to 9.7x",
+   "loses": "Costs only, no quality; one price snapshot (May 2026); cost prediction left open; no limitations section."
+  },
+  {
+   "id": "A:092",
+   "technique": "CGRS: suppress reflection-trigger tokens when certainty is high",
+   "how": "At paragraph breaks, probe a tentative answer by appending a final-answer prefix. Certainty C = 1 - mean token entropy / log|V|. Suppression probability p = max(0,(C-delta)/(1-delta)), delta=0.9. With probability p, trigger-token logits (Wait, But, Alternatively, Hmm and variants) are set negative.",
+   "effect": "18.5-41.9% token reduction, accuracy drop up to about 3 points. Qwen3-14B: 25.4% fewer tokens, accuracy 80.1 to 80.8; NoThinking cuts 77.3% but loses 17.8% accuracy. AMC23 ablation: fixed p=1 gives 76.7 acc at 2373 tokens vs certainty-guided 88.3 at 3406 (vanilla 87.5 at 5861).",
+   "loses": "Needs decoding-time logit access (open models). No overhead analysis found in the text read. Probing runs concurrently with decoding."
+  },
+  {
+   "id": "C:098",
+   "technique": "One chat per coherent outcome with fork, compact, subagents and AGENTS.md",
+   "how": "Plan mode before hard tasks, short AGENTS.md, /fork only when work branches, subagents for bounded work, one chat per outcome.",
+   "effect": "not measured",
+   "loses": "Qualitative guidance only."
+  },
+  {
+   "id": "A:093",
+   "technique": "THINK-Bench efficiency metrics (useful tokens, reflection quality)",
+   "how": "THINK-Bench: 1375 questions; metrics for thinking efficiency, useful tokens and reflection quality over reasoning-model chains.",
+   "effect": "1375 questions.; Efficiency Grok-3-mini 61.69% vs QwQ-plus 44.58%.",
+   "loses": "Benchmark only; no mitigation."
+  },
+  {
+   "id": "A:131",
+   "technique": "Budget forcing (truncate thinking or append Wait)",
+   "how": "Budget forcing: cap thinking by appending the end-of-thinking delimiter (optionally 'Final Answer:'), or lengthen it by suppressing that delimiter and appending 'Wait'. Applied to Qwen2.5-32B-Instruct fine-tuned on s1K (1,000 curated questions from a 59K pool).",
+   "effect": "AIME24 50.0 to 56.7 with budget forcing; MATH500 93.0; beats o1-preview by up to 27% (MATH, AIME24). 59K-full training costs 394 H100 hours vs 7 for s1K with no substantial gain.",
+   "loses": "Scaling flattens after about six forced Waits and can loop. Context window caps scaling. Token-conditional control fails (model cannot count tokens); rejection sampling shows inverse scaling."
+  },
+  {
+   "id": "A:285",
+   "technique": "Per-message effort change without cache invalidation; cache price tiers",
+   "how": "Fable 5.1 supports mid-conversation effort changes (beta) and preserved thinking across model switches; cache read $0.25 vs 5m write $12.50 and 1h write $20 per MTok.",
+   "effect": "Cache read is a quarter of the earlier price; input $10 vs Opus 5.5 $4 per MTok.",
+   "loses": "Forced tool use errors; editing earlier turns invalidates thinking blocks."
+  },
+  {
+   "id": "C:086",
+   "technique": "Fast mode with separate cache and switch cost",
+   "how": "Fast mode is up to 2.5x faster at $8/$40 on Opus 5.5; first enable pays uncached full price and fast and standard keep separate caches.",
+   "effect": "Up to 2.5x speed at higher per-token cost.",
+   "loses": "Each switch rereads context uncached."
+  },
+  {
+   "id": "A:072",
+   "technique": "Explicit cache breakpoints, cache diagnostics (reason: tools_changed), effort change via configuration_update, prewarm",
+   "how": "Stable tool order, allowed_tools and appended developer messages preserve prefix; diagnostics name the miss reason; prewarm at startup; effort change without cache break.",
+   "effect": "Customers: hit rate 83% to 91%, cache writes down about two-thirds, cost down 36%; another 85% to above 90%; 30-minute discount window.",
+   "loses": "Customer-quoted figures, vendor-curated."
+  },
+  {
+   "id": "A:094",
+   "technique": "Compute-optimal test-time scaling by prompt difficulty",
+   "how": "Compute-optimal test-time scaling: estimate prompt difficulty (base pass@1 from 2048 samples, 5 quantile bins, or predicted via verifier scores); per bin and budget choose the best strategy on a validation fold. Strategies: PRM-guided search (best-of-N, beam, lookahead) and sequential revisions mixed with parallel sampling.",
+   "effect": "Up to 4x less test-time compute than best-of-N (16 vs 64 generations search; 64 vs 256 revisions). Beam search better at low budget and hard questions, best-of-N on simple and high budget. About 38% of correct answers flipped to wrong by naive revision. vs about 14x larger model: test-time compute wins on simple/medium or low inference load only.",
+   "loses": "Math only, one model family, needs fine-tuned revision and verifier models, difficulty-estimation cost excluded."
+  },
+  {
+   "id": "A:054",
+   "technique": "Idle-session thinking clearing (clear_thinking_20251015, keep:1) and effort-default / length-limit regression lessons",
+   "how": "Clearing old thinking after 1h idle was meant to shrink the uncached resume; a bug repeated it every turn, causing cache misses; a 25-word between-tool limit cost quality.",
+   "effect": "Prompt ablation showed a 3% eval drop; medium default effort felt less intelligent and was reverted to high/xhigh.",
+   "loses": "Pruning history or verbosity limits can silently hurt quality and cause cache misses; need per-change evals."
+  },
+  {
+   "id": "A:095",
+   "technique": "Length Controlled Policy Optimization (LCPO) for reasoning-length control",
+   "how": "LCPO: prompt adds 'Think for n_gold tokens' with n_gold ~ Uniform(100,4000); GRPO reward. L1-Exact: correctness minus 0.0003*|n_gold - n_y|. L1-Max: correctness times clipped length slack with delta 0.5, trained 120 steps after 700 of Exact.",
+   "effect": "Beats S1 by 20-25% absolute at 512/1024 tokens. L1-Max matches DeepScaleR-4K with up to 2x fewer tokens. Mean length error about 3% on math (20-40% OOD). Short CoT beats GPT-4o by about 2% at equal length.",
+   "loses": "May not generalize to longer requested lengths; 4K training context; 1.5B math model (7B in appendix); little tuning."
+  },
+  {
+   "id": "A:250",
+   "technique": "Model natively trained for compaction across multiple context windows",
+   "how": "The model auto-compacts near the window limit and repeats; adds xhigh reasoning effort.",
+   "effect": "30% fewer thinking tokens at medium effort on SWE-bench Verified versus GPT-5.1-Codex.",
+   "loses": "Vendor claim; Codex-specific."
+  },
+  {
+   "id": "C:073",
+   "technique": "opusplan alias, subagent model setting, effort levels, organization effort caps",
+   "how": "opusplan uses Opus in plan mode and Sonnet in execution; CLAUDE_CODE_SUBAGENT_MODEL sets subagent model; effort sets adaptive reasoning.",
+   "effect": "Not measured.",
+   "loses": "Risk of mismatch with effort after fallback model."
+  }
+ ],
+ "47": [
+  {
+   "id": "A:153",
+   "technique": "Session AI-credit cap (/limits set, --max-ai-credits)",
+   "how": "A soft cap on credits per session (min 30; 1 credit = $0.01) stops the agent cleanly at the limit and lets you raise it.",
+   "effect": "not measured",
+   "loses": "Soft limit: in-progress response completes so spend can exceed it; preview feature."
+  },
+  {
+   "id": "C:082",
+   "technique": "Code Review run-frequency setting (once after creation vs every push vs manual)",
+   "how": "Cost multiplies by pushes under After every push; choose Once or Manual and track Average cost per repo.",
+   "effect": "not measured",
+   "loses": "Default for new repos is the costliest setting."
+  },
+  {
+   "id": "C:117",
+   "technique": "Premium request model multipliers (code review = 13)",
+   "how": "Each prompt uses one premium request times the model's rate; Copilot code review consumes 13 from June 1 2026.",
+   "effect": "not measured",
+   "loses": "Applies to legacy annual plans only."
+  },
+  {
+   "id": "A:054",
+   "technique": "Idle-session thinking clearing (clear_thinking_20251015, keep:1) and effort-default / length-limit regression lessons",
+   "how": "Clearing old thinking after 1h idle was meant to shrink the uncached resume; a bug repeated it every turn, causing cache misses; a 25-word between-tool limit cost quality.",
+   "effect": "Prompt ablation showed a 3% eval drop; medium default effort felt less intelligent and was reverted to high/xhigh.",
+   "loses": "Pruning history or verbosity limits can silently hurt quality and cause cache misses; need per-change evals."
+  }
+ ],
+ "48": [
+  {
+   "id": "A:180",
+   "technique": "Total-cost-of-ownership framing: tokens per task, calls per action, retries, routing",
+   "how": "Argues cost per task depends on tokens consumed, model calls, routing, context size and retries, not token price.",
+   "effect": "Cites Gartner AI spend $2.52 trillion in 2026, +44%.",
+   "loses": "Vendor marketing; no technique numbers."
+  }
+ ],
+ "50": [
+  {
+   "id": "A:191",
+   "technique": "Dollar spend-limit rules scoped by provider, model or metadata, 429 on breach",
+   "how": "Each rule gives a rolling or fixed-window dollar budget, split or filtered by dimension such as agent_id; blocks with 429.",
+   "effect": "not measured",
+   "loses": "Eventually consistent: concurrent bursts can briefly exceed limit."
+  },
+  {
+   "id": "A:242",
+   "technique": "Cost or token budget limits with alert thresholds and periodic reset",
+   "how": "Per-key USD or token caps that expire the key when reached; alert thresholds; weekly or monthly reset.",
+   "effect": "not measured",
+   "loses": "Enterprise plan only; not retroactive; not editable once set."
+  },
+  {
+   "id": "C:061",
+   "technique": "LiteLLM budget caps, Langfuse, LLMLingua, RouteLLM, GPTCache semantic cache",
+   "how": "Roundup: LiteLLM max_budget per key; LLMLingua prompt compression; RouteLLM routes between two models by threshold; GPTCache semantic caching.",
+   "effect": "RouteLLM 85% cost reduction keeping 95% GPT-4 quality on MT Bench (45% MMLU, 35% GSM8K); LongLLMLingua +21.4% RAG with 1/4 tokens.",
+   "loses": "Vendor blog citing others' numbers; RouteLLM is binary routing only."
+  },
+  {
+   "id": "C:076",
+   "technique": "Status line script receiving JSON with context percentage and cost",
+   "how": "Shell script gets JSON on stdin including context_window.used_percentage, cost.total_cost_usd and duration fields.",
+   "effect": "not measured",
+   "loses": "Cost is client-side list-price estimate, may differ from bill."
+  },
+  {
+   "id": "C:136",
+   "technique": "Decoupled controller model approves extra token budget from workspace snapshot",
+   "how": "Worker freezes at a 50,000-token limit; a separate controller model scores approve-vs-deny with expected value p>1/2 using task, files, tests snapshot.",
+   "effect": "Injected budget counter referenced 0 times in 14,000+ messages; request_more_budget used 0 of 5,000 turns; approval 97% default, 79% neutral.",
+   "loses": "Controller models biased to approve (four of six); 100-task evaluation set."
+  },
+  {
+   "id": "A:056",
+   "technique": "Per-developer tier-fit recommendation (upgrade anytime, downgrade only last 5 days of month)",
+   "how": "Ingests daily per-user reports, accumulates month-to-date credits, and recommends the cheapest tier given base plus $0.04/credit overage.",
+   "effect": "Example: a Pro user at 3,000 credits pays $100, so a higher tier saves $80/mo.",
+   "loses": "Kiro-specific seat pricing; downgrade logic waits until month end."
+  },
+  {
+   "id": "A:216",
+   "technique": "Dedupe usage by message ID; cost fields are client-side estimates",
+   "how": "Parallel tool calls share one message ID, so count each once; read output tokens and totals from the result message.",
+   "effect": "not measured",
+   "loses": "Estimates drift from billing; per-step output_tokens is a placeholder; subagent usage unrecoverable after a crash."
+  },
+  {
+   "id": "A:233",
+   "technique": "Four-layer cost management: track, attribute, alert, then optimize",
+   "how": "Compute cost per request from token buckets, attribute by user/session/feature/prompt version, alert, and enforce budgets at a gateway.",
+   "effect": "not measured",
+   "loses": "Names pitfalls: double-recorded calls, overlapping cached-token buckets, unmatched model names."
+  },
+  {
+   "id": "C:094",
+   "technique": "--bare mode and --max-budget-usd cap for claude -p",
+   "how": "--bare skips hooks, skills, plugins, MCP servers, auto memory and CLAUDE.md for faster startup; budget cap stops background work.",
+   "effect": "not measured (startup time claim only)",
+   "loses": "Bare mode drops project context and OAuth; only API-key auth."
+  },
+  {
+   "id": "C:116",
+   "technique": "Premium request multipliers and monthly allowance",
+   "how": "Premium models consume allowance with multipliers; overages billed per request; budgets can be set.",
+   "effect": "Reasoning models may consume 5x or 20x the standard rate.",
+   "loses": "Legacy billing for annual plans only after June 2026."
+  },
+  {
+   "id": "A:193",
+   "technique": "Gateway via ANTHROPIC_BASE_URL with managed allowedProviders lock",
+   "how": "Route Claude Code through an org gateway for credentials, usage attribution, budgets, rate limits and audit logs; lock via managed settings.",
+   "effect": "not measured",
+   "loses": "Gateway must be kept updated to forward new Claude Code features."
+  },
+  {
+   "id": "A:047",
+   "technique": "Application-specific capability profiling testbed (cost-aware model selection per application)",
+   "how": "Eight-step profiling method, Stage 1 built as testbed: sparse versioned model profile where missing never equals zero; comparability only for same attribute, context and dataset; evidence levels L0-L4; Pareto set with evidence counts; plan gate with SHA-256 plan hash and baseline arm; null-agent check; range noise rule with three-state verdict; fail-closed reporting. Constrained model-to-task-part selection (Eq. 11) is planned, not built.",
+   "effect": "Migration fully-correct 98 to 108 of 216 (45.4 to 50.0%, Fisher p=0.39); accepted-but-wrong or unverifiable 9.7% to 21.9% (p=0.023); about 78% of ok verdicts proved nothing. Breadth: agent 91.9% vs cheap 90.5% (p=0.21); agent used 3.0% fewer tokens. Automation: model effect p=0.007, framework p=0.40; tokens 1,953-9,465; CrewAI about 4x. Judge churn 16.2% at T=0; full run $3-4.",
+   "loses": "Stage 1 only; model-vs-framework comparisons are non-causal separate sweeps. Migration inference unpaired, no multiplicity correction. Only P1 and chatbot integrated as probes; Grafana JSON never imported. Adapter-generation hook unevaluated. 15 automation samples unreadable. Caller key crosses a process boundary unprotected. Range rule loses power as repeats grow."
+  },
+  {
+   "id": "A:154",
+   "technique": "Copilot CLI background auto-compaction at ~80% (dynamic to 90%) plus /context, /usage, /compact",
+   "how": "Compresses history in background near 80% of token limit, waiting until 90% when static context is 75% or more; /compact manual, /usage and /context for visibility.",
+   "effect": "Threshold behavior only; no savings measured.",
+   "loses": "Compaction reclaims less when static context is large."
+  },
+  {
+   "id": "A:227",
+   "technique": "OpenRouter provider routing (effective price with real cache hit rate, sort, max_price, :floor/:nitro, fallbacks)",
+   "how": "Picks a provider per request by measured effective price reflecting its cache hit rate, throughput, latency and reliability; supports sort, max_price and fallbacks.",
+   "effect": "Not measured; reacts to provider changes within minutes.",
+   "loses": "Provider choice not model choice; bypassed when order or own keys set."
+  },
+  {
+   "id": "A:245",
+   "technique": "Rule-first classifier plus decision model with probability threshold (0.85) routing fast versus frontier tier, per-tier API key budgets",
+   "how": "Explicit rules first, then a decision model picks tier; fast tier accepted only if probability >= 0.85, else frontier; AI Gateway fallbacks and spend caps per tier.",
+   "effect": "Not measured; threshold 0.85 given as an example.",
+   "loses": "Experimental Decision API; threshold needs tuning."
+  },
+  {
+   "id": "C:053",
+   "technique": "Cache-aware cost comparison with TCO model and hybrid routing counterfactual replay",
+   "how": "Longitudinal case study: Langfuse and vLLM telemetry plus Git mining. Fix Commit Ratio via regex over commit messages; difficulty-stratified Mantel-Haenszel odds ratio; TCO = M x (compute + ops + T_iter x wage); hybrid-routing offline counterfactual replay by difficulty tier.",
+   "effect": "99.3% cache hit cut API cost 88.6% to $0.57/M tokens vs $2.83/M shared on-prem; FCR 74.9% vs 45.9%; Mantel-Haenszel OR 3.61; Shared on-prem saves 40.1% true TCO; dedicated costs 43.8% more; High-to-Claude hybrid saves 26.3%",
+   "loses": "One developer, non-randomized, tasks differ between periods; keyword-classified fixes; Period A fix count inflated by CI work; replay assumes tier exchangeability."
+  },
+  {
+   "id": "A:220",
+   "technique": "Message Batches API and Token Counting API",
+   "how": "Batches run asynchronously at a 50 percent cost reduction; POST /v1/messages/count_tokens estimates tokens before sending.",
+   "effect": "50% batch discount.",
+   "loses": "Page is mainly an index; no usage detail."
+  },
+  {
+   "id": "A:246",
+   "technique": "Gateway failover and caching:'auto' with cache-invalidation warning",
+   "how": "Gateway reissues failed requests to another provider and applies provider-specific cache markers; warns abstraction layers can silently invalidate cache hits.",
+   "effect": "3.5% of requests succeed only through failover, carrying 4.9% of spend; zero token markup.",
+   "loses": "A documented AutoGPT bug put a per-call random token in the cached prefix, voiding the 90% discount."
+  },
+  {
+   "id": "A:263",
+   "technique": "AI-credit billing with user, cost-center and organization budgets and hard stops",
+   "how": "Tokens priced per model convert to AI credits (1 credit = $0.01); budgets cap consumption, with user budgets always a hard stop.",
+   "effect": "Not measured; a $10 budget covers 1,000 credits.",
+   "loses": "Hard stop can block users mid-task."
+  },
+  {
+   "id": "C:054",
+   "technique": "Longitudinal gateway-log cost analysis of nine coding agents",
+   "how": "Computes cost per active user and cached_tokens/input_tokens across a year of gateway traffic.",
+   "effect": "$92/month per active user, Claude Code $108 (P95 $291); 86% cache hit overall, 92% Claude Code; input per call grew 50K to 200K.",
+   "loses": "Single gateway's users; correlational."
+  },
+  {
+   "id": "C:119",
+   "technique": "Cursor Router modes (Cost, Balance, Intelligence) and Cursor Token Rate",
+   "how": "Router picks Cursor or third-party models per request by mode; third-party use is billed at API list price from prepaid credit.",
+   "effect": "Max Mode on legacy plans costs API rate plus 20%.",
+   "loses": "Pricing doc, not measured."
+  },
+  {
+   "id": "A:188",
+   "technique": "system.billing.usage SQL cost queries with tags",
+   "how": "Query billing usage system table by sku_name and custom tags to aggregate DBUs per day.",
+   "effect": "not measured",
+   "loses": "Databricks model serving only."
+  },
+  {
+   "id": "A:221",
+   "technique": "cached_tokens usage field for verifying cache hits",
+   "how": "Read usage.prompt_tokens_details.cached_tokens: 0 is a miss, otherwise tokens reused; multi-turn shows it rising each turn.",
+   "effect": "Example 98 of 125 prompt tokens cached.",
+   "loses": "Verification only; no pricing figure read."
+  },
+  {
+   "id": "A:189",
+   "technique": "Dynamic route flow with conditional, percentage, rate-limit and budget-limit nodes",
+   "how": "Versioned JSON/visual route sends segments to different models and falls back when a key's budget or rate quota is exceeded.",
+   "effect": "not measured",
+   "loses": "Gateway configuration only."
+  },
+  {
+   "id": "A:239",
+   "technique": "Session-id cost attribution, custom property segmentation, graduated budget alerts (50/80/95%), response cache",
+   "how": "Headers tag requests by session and property; alerts at 50%, 80%, 95% of budget; Cache-Control max-age enables response caching.",
+   "effect": "Example dashboard: 73% hit rate saving $1,247 a month (illustrative).",
+   "loses": "Gateway-dependent; example figures."
+  },
+  {
+   "id": "C:121",
+   "technique": "Automatic token caching for API-key and Vertex users; /stats cached-token display",
+   "how": "CLI reuses system instructions and context under API key or Vertex; OAuth users get no caching.",
+   "effect": "not measured",
+   "loses": "Unavailable for OAuth personal accounts; CLI later replaced."
+  },
+  {
+   "id": "A:125",
+   "technique": "Per-use-case token tracking schema with hub-and-spoke AI proxy and per-use-case keys",
+   "how": "Centralized proxy where each use case has its own key and logs input/output tokens to a tracking table, versus decentralized SDK-based tracking.",
+   "effect": "Not measured.",
+   "loses": "Misattributes cost if hub logging is poorly configured; decentralized attribution is harder."
+  },
+  {
+   "id": "A:190",
+   "technique": "cf-aig-custom-cost header for negotiated input/output/cache rates",
+   "how": "Request-level header overrides per-token input, output, cache-read and cache-write prices so gateway cost logs match negotiated rates.",
+   "effect": "Example: 1,000 input with 600 cache-read and 200 cache-write leaves 200 fresh tokens costed separately.",
+   "loses": "Needs token counts in responses; cache hits at the gateway always cost 0."
+  },
+  {
+   "id": "C:092",
+   "technique": "/usage breakdown and ENABLE_PROMPT_CACHING_1H",
+   "how": "/usage shows parallel sessions, subagents, cache misses, long context as percent of last 24 hours; PreCompact hooks can block compaction; env var opts into 1h TTL.",
+   "effect": "Not measured.",
+   "loses": "Release notes only."
+  },
+  {
+   "id": "C:101",
+   "technique": "Credit pool with user limits and workspace overage limits",
+   "how": "Work draws from a shared credit pool; alerts do not stop spending, overage limits do.",
+   "effect": "Not measured.",
+   "loses": "Estimates by role are not fixed prices."
+  }
+ ]
+}

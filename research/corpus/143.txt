@@ -1,0 +1,109 @@
+TITLE: Save costs and decrease latency while using Gemini with Vertex AI context caching
+URL: https://cloud.google.com/blog/products/ai-machine-learning/vertex-ai-context-caching
+ORG: Google Cloud  TYPE: blog  DATE: 2025-10
+
+Vertex AI context caching | Google Cloud Blog
+
+AI & Machine Learning
+
+Save costs and decrease latency while using Gemini with Vertex AI context caching
+October 16, 2025
+
+Anders Brekke
+Product Manager, Vertex AI
+Sampath Kumar
+Developer Relations, Cloud AI
+
+Try Gemini today
+The front door to AI in the workplaceTry now 
+
+As developers build increasingly sophisticated AI applications, they often encounter scenarios where substantial amounts of contextual information — be it a lengthy document, a detailed set of system instructions, a code base — need to be repeatedly sent to the model. While this data provides models with much-needed context for their responses, it often escalates costs and latency due to re-processing of the repeated tokens.
+
+Enter Vertex AI context caching, which Google Cloud first launched in 2024 to tackle this very challenge. Since then, we have continued to improve Gemini serving for improved latency and costs for our customers. Caching works by allowing customers  to save and reuse precomputed input tokens. Some benefits include:
+
+Significant cost reduction: Customers pay only 10% of standard input token cost for cached tokens for all supported Gemini 2.5 and above models. For implicit caching, this cost saving is automatically passed on to you when a cache hit occurs. With explicit caching, this discount is guaranteed, providing predictable savings.
+
+Latency: Caching reduces latency by looking up previously computed content instead of recomputing. 
+
+Let’s dive deeper into context caching and how you can get started. 
+
+What is Vertex AI context caching?
+
+As the name suggests, Vertex AI context caching aims to cache tokens of repeated content, and we offer two types:
+
+Implicit caching: Automatic caching which is enabled by default that provides cost savings when cache hits occur. Without needing to make any changes to your API calls, Vertex AI’s serving infrastructure automatically caches tokens and utilizes the states (KV pairs) from previous requests to speed up subsequent turns and provide cost savings. This continues for ensuing prompts, with retention based on overall load and reuse frequency, with caches always deleted within 24 hours. 
+
+Explicit caching: Users get more control of caching behavior by explicitly declaring the content to cache and then can refer to the cached content in the prompts as needed. Explicit caching discount is guaranteed, providing predictable savings. 
+
+To support prompts and use cases of various sizes, we’ve enabled caching from a minimum of 2,048 tokens to the size of the models context window, which in the case of Gemini 2.5 Pro is over 1 million tokens. Cached content can be any of the modalities (text, pdf, image, audio or video) supported by Gemini multimodal models. For example, you can cache a large amount of text, audio, or video. See list of supported models here. 
+
+To make sure users get the benefit of caching wherever and however they use Gemini, both forms of caching support global and regional endpoints. Further, Implicit caching is integrated with Provisioned Throughput to ensure production grade traffic gets the benefits of caching. To add an additional layer of security and compliance, Explicit caches can be encrypted using Customer Managed Encryption Keys (CMEKs).
+
+$300 in free credit to try Google Cloud AI and ML
+
+Build and test your proof of concept with $300 in free credit for new customers. Plus, all customers get free monthly usage of 20+ products, including AI APIs.
+Start building for free
+
+Ideal use cases for context caching:
+
+Large-scale document processing: Cache lengthy contracts, case files, or (academic/ regulatory / finance / R&D) documents to repeatedly query for specific clauses, precedents, or compliance checks.
+
+For example, a Financial analyst using Gemini might upload dozens of documents such as annual reports that they want to subsequently query/analyze/extract/summarize and more. Instead of reuploading these documents each time they have a new question or want to start a new analysis, Context caching stores this already processed information. Once the analyst is done with their work, they can either manually clear the explicit cache or the implicit cache will automatically clear.
+
+Building customer support chatbots/conversational agents: To consistently follow a detailed persona or numerous rules, a chatbot can cache these instructions. Similarly, caching product information allows a chatbot to provide relevant content.
+
+For example, a customer support chatbot may have very detailed system instructions on how to respond to user questions, what information can be referenced when helping a user, and more. Instead of recomputing this each time a new customer conversation is started, compute it once and allow chatbots to reference this content. This can lead to significantly faster response times for chatbots and reduced overall costs.
+
+Coding: By keeping a cache version of your codebase, improve codebase Q&A, autocomplete, bug fixing, and feature development.
+
+Caching enterprise knowledge bases (Q&A): For large enterprises, cache complex technical documentation, internal wikis, or compliance manuals. This enables employees to get quick answers to questions about internal processes, technical specifications, or regulatory requirements.
+
+Cost implications for implicit and explicit caching
+
+Implicit caching: Enabled by default for all Google Cloud projects, as cache hits occur when repeated content is sent we automatically pass on a discount. The tokens that write to cache are charged as standard input tokens (no additional charge to write to cache).
+
+Explicit caching:
+
+Cached token count: When you create a CachedContent object, you pay a one-time fee for the initial caching of those tokens which is the standard input token cost. Subsequently, each time you use this cached content in a generate_content request, you are billed for the cached tokens at a 90% discount compared to sending them as regular input tokens.
+
+Storage duration (TTL): You are also billed for the duration that the cached content is stored, based on its Time-To-Live (TTL). This is an hourly rate per million tokens stored prorated down to the minute level.
+
+Best practices and how to optimize cache hit rate:
+
+Check the limitations: First, check that you are within the caching limitations, such as min cache size and supported models.
+
+Granularity: Add the cached/repeated portion of your context at the beginning of the prompt. Avoid caching small, frequently changing pieces.
+
+Monitor usage and costs: Regularly check your Google Cloud billing reports to understand the impact of caching on your expenses. To see how many tokens are cached, see cachedContentTokenCount in the UsageMetadata.
+
+Frequency: Implicit caches are cleared in 24 hours or less, a smaller time window of repeated requests will keep the cache available. 
+
+For explicit caching specifically: 
+
+TTL Management: Set the ttl (Time-To-Live) carefully. A longer TTL incurs more storage cost but reduces recreation overhead. Balance this based on how long your context remains relevant and how frequently it's accessed.
+
+Get started:
+
+Context caching is a game-changer for optimizing the performance and cost-efficiency of your AI applications. By intelligently leveraging this feature, you can significantly reduce redundant token processing, achieve faster response times, and ultimately build more scalable and cost-effective generative AI solutions.
+
+Implicit caching is enabled by default for all GCP projects, so you can get started today. 
+
+To get started with explicit caching check out our documentation (here is sample code to create your first cache), and a Colab notebook with common examples and code.Posted in
+AI & Machine Learning
+Related articles
+
+Media & Entertainment
+The Blueprint: Orchestrating 5,000+ AI assets for a World Cup TV spot
+By Iñaki Berenguer • 5-minute read
+
+Data Analytics
+Bringing conversational analytics to Gemini with Agentic Data Cloud connectors
+By Leigha Reid • 5-minute read
+
+AI & Machine Learning
+Gemini Omni 1.2 Flash: Fast, cost-effective, and reliable video generation and editing now generally available
+By John Nack • 4-minute read
+
+Financial Services
+How Nammu21 automates syndicated loans on Google Cloud Universal Ledger
+By Chang Yang Jiao • 5-minute read

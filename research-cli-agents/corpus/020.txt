@@ -1,0 +1,284 @@
+TITLE: MCP Tool Overload: Why More Tools Make Your Agent Worse
+URL: https://dev.to/thedailyagent/mcp-tool-overload-why-more-tools-make-your-agent-worse-5a49
+ORG: dev.to  TYPE: blog  DATE: 2026-03
+
+MCP Tool Overload: Why More Tools Make Your Agent Worse - DEV Community
+
+ Add reaction
+
+ Like
+
+ Unicorn
+
+ Exploding Head
+
+ Raised Hands
+
+ Fire
+
+ Jump to Comments
+
+ Save
+
+ Boost
+
+Pick as gem
+
+ Copy link
+
+Copied to Clipboard
+
+ Share to X
+
+ Share to LinkedIn
+
+ Share to Facebook
+
+ Share to Mastodon
+
+ Share Post via...
+
+ Report Abuse
+
+You gave your agent access to 50 MCP tools. GitHub, Slack, Notion, Linear, Jira, Postgres, Stripe, Google Drive, and 42 other integrations. It should be the most capable agent you've ever built.
+
+Instead, it's the most confused one.
+
+It misses obvious tool choices. It hallucinates parameters that don't exist. It picks the wrong tool for simple tasks. Tasks that worked fine with 10 tools fail with 50. This is the MCP context overload problem — and it's one of the most common ways developers unknowingly destroy their agent's performance in production.
+
+Here's what's happening, why it matters, and exactly how to fix it.
+
+ What MCP Is Actually Doing to Your Context Window
+
+Model Context Protocol (MCP) is a standard for exposing tools to LLMs. When your agent connects to an MCP server, the server advertises its tools — names, descriptions, and JSON schemas for every parameter. The LLM reads all of this before it can decide which tool to call.
+
+The problem: every tool definition takes tokens. Not a few tokens — a lot.
+
+Here's a rough count for some common MCP servers:
+
+MCP Server
+Approx. tool definition tokens
+
+GitHub MCP (official)
+~42,000 tokens
+
+Slack MCP
+~8,000 tokens
+
+Notion MCP
+~6,500 tokens
+
+Postgres MCP
+~3,200 tokens
+
+Linear MCP
+~5,800 tokens
+
+GitHub's official MCP server alone eats 42,000 tokens — just for the tool definitions, before your system prompt, before the conversation history, before the actual task. Stack four or five servers together and you've burned 60,000+ tokens on tool schemas that the agent might never use for a given task.
+
+Most frontier models cap context at 128K–200K tokens. You've just handed 30–50% of that budget to tool definitions.
+
+ Why Token Count Translates to Worse Decisions
+
+This isn't just a cost issue. It directly degrades decision quality in three ways.
+
+1. Attention dilution. Transformer attention is not uniform. When the model has to attend across 200K tokens, signal from the actual task gets diluted by noise from 49 tool definitions it doesn't need for this specific request. Research on "lost in the middle" effects shows LLM accuracy drops significantly when relevant context is buried in a large window.
+
+2. Tool collision. When you have 50 tools, many of them do similar things. search_issues, list_issues, get_issue, find_issues_by_label — they're distinct, but to a model working under a large context load, the semantic boundary between them blurs. The model picks the wrong one or makes up parameters from one schema while calling another.
+
+3. Prompt budget starvation. The system prompt is where you define agent behavior, constraints, output format, and personality. When tool schemas eat half your context, you're forced to write a shorter, weaker system prompt. You're trading agent identity for tool availability — and that's almost always the wrong trade.
+
+ The Benchmark: What Actually Happens When You Add Tools
+
+Let me make this concrete. Here's a test you can run yourself. Take a simple task — "create a GitHub issue for the login bug we discussed" — and benchmark it at different tool counts.
+
+import anthropic
+import json
+import time
+
+def measure_tool_selection_accuracy(tools: list[dict], task: str, runs: int = 10) -> float:
+ client = anthropic.Anthropic()
+ correct = 0
+
+ for _ in range(runs):
+ response = client.messages.create(
+ model="claude-3-5-sonnet-20241022",
+ max_tokens=1024,
+ tools=tools,
+ messages=[{"role": "user", "content": task}]
+ )
+ # Check if the model called the right tool
+ for block in response.content:
+ if block.type == "tool_use" and block.name == "create_issue":
+ correct += 1
+ break
+
+ return correct / runs
+
+# Minimal toolset (only GitHub issue tools)
+minimal_tools = load_tools("github_issues_only") # ~4 tools, ~1,200 tokens
+
+# Full toolset (all GitHub MCP tools)
+full_tools = load_tools("github_mcp_full") # ~46 tools, ~42,000 tokens
+
+task = "Create a GitHub issue titled 'Login bug: session expires prematurely' in the auth repo"
+
+minimal_accuracy = measure_tool_selection_accuracy(minimal_tools, task)
+full_accuracy = measure_tool_selection_accuracy(full_tools, task)
+
+print(f"Minimal toolset accuracy: {minimal_accuracy:.0%}") # ~95%
+print(f"Full MCP toolset accuracy: {full_accuracy:.0%}") # ~71%
+
+When I ran this with a representative task set, accuracy on correct tool selection dropped from ~95% with a focused toolset to ~71% with the full GitHub MCP server loaded. That's a 24-point accuracy gap caused purely by context bloat — no change to the model, the task, or the system prompt.
+
+ Four Strategies to Fix MCP Context Overload
+
+There's no single fix. You need a layered approach based on how your agent is structured.
+
+ Strategy 1: Dynamic Tool Loading
+
+Don't load all MCP tools at startup. Load only what the current task requires.
+
+TOOL_GROUPS = {
+ "github_read": ["get_repo", "list_issues", "get_issue", "search_code"],
+ "github_write": ["create_issue", "create_pr", "merge_pr", "comment_on_issue"],
+ "slack_notify": ["send_message", "create_channel"],
+ "notion_read": ["get_page", "query_database", "search"],
+ "notion_write": ["create_page", "update_page", "append_block"],
+}
+
+def get_tools_for_intent(user_message: str) -> list[str]:
+ """Use a fast classifier to determine which tool groups are needed."""
+ # A small, cheap model call to classify intent — far cheaper than
+ # loading 50 tool schemas into every context window
+ classifier_response = classify_intent(user_message)
+ groups = classifier_response.required_groups # e.g. ["github_write", "slack_notify"]
+
+ tools = []
+ for group in groups:
+ tools.extend(TOOL_GROUPS[group])
+ return tools
+
+This approach adds one small classification call but saves 30,000–60,000 tokens on every subsequent agent call. At scale, it pays for itself within 2-3 turns.
+
+ Strategy 2: Write Tighter Tool Descriptions
+
+MCP server descriptions are written for completeness, not brevity. Most are 3–5x longer than they need to be. If you control the MCP server (or can wrap it), trim descriptions aggressively.
+
+Before (GitHub create_issue — 340 tokens):
+
+{
+ "name": "create_issue",
+ "description": "Creates a new issue in a GitHub repository. This tool allows you to create GitHub issues with a title, body, labels, assignees, and milestone. Issues are used to track bugs, feature requests, and tasks. You can also associate an issue with a project. The tool returns the created issue object including its number, URL, and state..."
+}
+
+After (47 tokens):
+
+{
+ "name": "create_issue",
+ "description": "Create a GitHub issue. Required: owner, repo, title. Optional: body, labels, assignees."
+}
+
+The model doesn't need the tutorial. It needs the interface. Cut everything that isn't a parameter name, type, or hard constraint.
+
+ Strategy 3: Tool Namespacing for Clarity
+
+When you must load many tools simultaneously, namespace them clearly so the model can rule out irrelevant clusters without reading every schema.
+
+Instead of: search, create, update, delete, list
+
+Use: github__search_issues, github__create_issue, notion__search_pages, notion__create_page
+
+The double-underscore namespace pattern lets the model skip entire clusters ("I don't need any notion__ tools for this GitHub task") without reasoning through each one individually. This is a cheap trick that measurably reduces collision errors.
+
+ Strategy 4: Build Task-Specific Sub-Agents
+
+For complex workflows, the right architectural answer is not "one agent with all the tools" — it's multiple focused agents, each with a minimal toolset, coordinated by an orchestrator.
+
+Orchestrator Agent
+ (no tools — only delegates)
+ |
+ +-- GitHub Agent (8 GitHub tools only)
+ |
+ +-- Slack Agent (4 Slack tools only)
+ |
+ +-- Notion Agent (6 Notion tools only)
+
+Each sub-agent operates with a lean context budget. The orchestrator routes the task to the right agent. Total token cost per operation actually goes down because you're never loading the full combined toolset into a single context window.
+
+This is the pattern that production multi-agent systems converge on. It's not more complex to build — it's just a different mental model: agents as services, not as Swiss Army knives.
+
+ How to Audit Your Current Agent's Tool Bloat
+
+Before you refactor, measure the actual problem. Run this quick audit:
+
+def audit_tool_context_cost(tools: list[dict]) -> None:
+ import tiktoken
+ enc = tiktoken.get_encoding("cl100k_base")
+
+ total_tokens = 0
+ print(f"{'Tool Name':<40} {'Tokens':>8}")
+ print("-" * 50)
+
+ for tool in sorted(tools, key=lambda t: len(json.dumps(t)), reverse=True):
+ tool_json = json.dumps(tool)
+ token_count = len(enc.encode(tool_json))
+ total_tokens += token_count
+ print(f"{tool['name']:<40} {token_count:>8,}")
+
+ print("-" * 50)
+ print(f"{'TOTAL':<40} {total_tokens:>8,}")
+ print(f"\nContext budget used (128K model): {total_tokens/128000:.1%}")
+ print(f"Context budget used (200K model): {total_tokens/200000:.1%}")
+
+audit_tool_context_cost(your_agent_tools)
+
+Run this on your production agent. If tools are consuming more than 20% of your context budget, you have a bloat problem worth fixing. Most developers I talk to are shocked — they're running at 40–60% before a single message is processed.
+
+ The Mental Model Shift
+
+The instinct to add more tools makes sense. More capabilities = more powerful agent, right? But LLMs aren't code — they're probabilistic reasoners working under resource constraints. Every tool you add is a distraction the model has to actively ignore.
+
+A well-scoped agent with 8 tools that all apply to its task will outperform a general agent with 80 tools in almost every benchmark that matters: accuracy, latency, cost, and reliability.
+
+The best agent isn't the one with the most integrations. It's the one that knows exactly what it needs and has nothing else in the way.
+
+If you're building production agents and want to skip the context management plumbing, Nebula handles dynamic tool scoping and multi-agent delegation out of the box — so you can focus on what your agents actually do, not how much context they're burning.
+
+What's the worst MCP tool bloat you've hit in production? Drop it in the comments.
+
+ Some comments may only be visible to logged-in visitors. Sign in to view all comments.
+
+ The Daily Agent
+
+ Follow
+
+ Create your team of AI Agents that run 24/7 on your goals, no Mac Mini required.
+
+ Location
+
+ San Francisco, CA
+
+ Joined
+
+ Mar 5, 2026
+
+ Python vs Go vs Rust for AI Agents in 2026: A Pragmatic Field Guide
+
+ #ai
+ #go
+ #python
+ #agents
+
+ JavaScript Bundlers in 2026: Vite, Rspack, Turbopack, and the End of an Era
+
+ #javascript
+ #webdev
+ #react
+ #frontend
+
+ We're a place where coders share, stay up-to-date and grow their careers.
+
+ Log in
+
+ Create account

@@ -1,0 +1,1746 @@
+TITLE: Bayesian Orchestration of Multi-LLM Agents for Cost-Aware Sequential Decision-Making
+URL: https://arxiv.org/abs/2601.01522
+ORG: arXiv  TYPE: paper  DATE: 2026-01
+
+BAYESIAN O RCHESTRATION OF M ULTI -LLM AGENTS FOR
+C OST-AWARE S EQUENTIAL D ECISION -M AKING
+
+arXiv:2601.01522v1 [cs.AI] 4 Jan 2026
+
+Danial Amin
+Independent Researcher
+writetodanialamin@gmail.com
+danial-amin.github.io
+
+January 6, 2026
+
+A BSTRACT
+Large language models increasingly serve as autonomous decision-making agents in domains where
+errors have measurable costs: hiring (missed qualified candidates versus wasted interviews), medical triage (missed emergencies versus unnecessary escalations), and fraud detection (approved fraud
+versus declined legitimate transactions). Current architectures are built on a flawed foundation: they
+query LLMs for discriminative probabilities p(state|evidence), apply arbitrary confidence thresholds, and execute actions without considering cost asymmetries or uncertainty quantification. We
+prove this approach is formally inadequate for sequential decision-making and propose a mathematically principled alternative.
+We propose a mathematically principled alternative that treats multiple LLMs as approximate likelihood functions rather than classifiers. For each possible state, we elicit p(evidence|state) through
+contrastive prompting, aggregate across diverse models via robust statistics, and apply Bayes’ rule
+with explicit priors. This generative modeling perspective enables four critical capabilities: (1)
+proper sequential belief updating as evidence accumulates, (2) cost-aware action selection through
+expected utility maximization, (3) principled information gathering via value-of-information calculations, and (4) improved fairness through ensemble bias mitigation.
+We instantiate this framework in resume screening, where hiring mistakes cost $40,000, wasted
+interviews cost $2,500, and phone screens cost $150. Experiments across 1,000 resumes evaluated
+by five diverse LLMs (GPT-4o, Claude 3.5 Sonnet, Gemini Pro, Grok, DeepSeek) demonstrate that
+our approach reduces total costs by $294,000 (34% improvement) compared to the best single-LLM
+baseline while improving demographic parity by 45% (reducing maximum group difference from
+22 to 5 percentage points). Ablation studies reveal that multi-LLM aggregation contributes 51%
+of cost savings, sequential updating 43%, and disagreement-triggered information gathering 20%.
+Critically, we prove these gains are not merely empirical accidents but necessary consequences of
+correcting the mathematical foundations of LLM-based decision-making.
+
+1
+
+Introduction
+
+1.1
+
+The Stakes: Why Decision-Theoretic Rigor Matters
+
+The deployment of large language models as autonomous decision-making agents has accelerated dramatically across
+domains where errors carry substantial and asymmetric consequences [13, 119]. Organizations now routinely delegate
+high-stakes judgments to LLM-based systems: hiring platforms screen tens of thousands of resumes annually, medical
+triage systems route patients between care pathways with vastly different resource intensities and clinical outcomes,
+and fraud detection systems make split-second decisions that can freeze accounts or approve high-value transactions
+[70, 96, 3]. The economic and social implications of these deployments are profound. A hiring system processing
+10,000 applications annually makes decisions that aggregate to millions of dollars in personnel costs, not to mention the human impact of employment opportunities granted or denied [104]. Medical triage systems handle patient
+
+A PREPRINT - JANUARY 6, 2026
+
+volumes exceeding 50,000 monthly interactions, where routing errors can result in preventable deaths or wasteful
+consumption of scarce emergency resources [108]. Financial fraud systems adjudicate over 365 million transactions
+annually per major institution, with error rates of even 0.1% translating to hundreds of thousands of incorrect decisions
+[3].
+What unites these superficially disparate applications is a common underlying structure that makes them amenable to
+formal analysis through the lens of statistical decision theory [7, 91]. In each case, the agent observes high-dimensional
+evidence—resume text encoding education, experience, and skills; patient symptom descriptions spanning medical
+history and current complaints; transaction metadata including location, amount, merchant, and behavioral patterns—
+but cannot directly observe the hidden state variable that determines optimal action. The hiring agent cannot directly
+measure candidate quality; it must infer it from resume signals that correlate imperfectly with job performance [61].
+The triage agent cannot directly diagnose disease severity; it must estimate urgency from symptoms that exhibit high
+within-diagnosis variance [38]. The fraud agent cannot directly observe criminal intent; it must predict it from patterns
+that legitimate and illegitimate users partially share [30].
+This epistemic gap between observable evidence and latent states creates irreducible uncertainty that cannot be eliminated through better feature engineering or larger training sets. It is fundamental to the problem structure. Moreover,
+the cost landscape facing these agents exhibits severe asymmetries that render accuracy-based evaluation frameworks
+deeply inadequate. Consider the hiring domain: rejecting a qualified candidate who would have been a productive
+employee represents a lost hiring opportunity with quantifiable costs. Industry estimates place the cost of a mis-hire
+(hiring someone who fails to perform and must be replaced) at 30% of first-year salary [104]. For a mid-level software
+engineer earning $130,000 annually, this amounts to approximately $40,000 in recruiting costs, onboarding expenses,
+lost productivity, and team disruption. Conversely, advancing an unqualified candidate to an onsite interview consumes
+engineering time for interviews and coordination, typically costing $2,500–$3,000 per candidate [18]. This represents
+a 16-fold cost asymmetry between false negatives and false positives.
+In medical triage, cost asymmetries are even more extreme and carry life-or-death implications. Discharging a patient
+who subsequently experiences cardiac arrest or stroke represents catastrophic failure, with costs measured not merely
+in dollars but in preventable mortality and morbidity [85]. The estimated cost of a missed myocardial infarction diagnosis exceeds $1 million when accounting for medical liability, lost life-years, and treatment costs [72]. Conversely,
+admitting a low-acuity patient to the intensive care unit wastes approximately $5,000 per day in critical care resources
+that could be allocated to genuinely acute cases [108]. This creates a cost ratio exceeding 200:1 for certain triage
+decisions. In fraud detection, freezing a legitimate customer’s account due to a false positive fraud alert costs the
+institution approximately $50 in customer service overhead and potential churn risk, while approving a fraudulent
+transaction averaging $2,500 represents a 50-fold asymmetry [2].
+These domains share three structural features that simultaneously make them attractive targets for automation and
+demanding contexts for theoretical rigor:
+1. Discrete latent states with measurable consequences. Each decision context involves uncertainty over a
+finite set of underlying states that determine appropriate action. In hiring, candidates fall into discrete quality
+categories: clearly unqualified individuals who lack basic requirements; borderline candidates who merit additional screening; qualified individuals who should proceed to interviews; and exceptional candidates who
+warrant expedited processing [112]. These states are not directly observable from resumes but have measurable post-hoc consequences. Hiring an unqualified candidate results in documented costs: recruiting expenses to replace them, lost team productivity, and opportunity cost of the foregone alternative hire. Medical
+triage similarly involves discrete urgency levels—stable conditions appropriate for scheduled appointments,
+acute conditions requiring same-day urgent care, and emergencies demanding immediate intervention—each
+with associated mortality risks and resource requirements that can be quantified through health economics
+frameworks [34]. Transaction fraud involves a binary state (legitimate versus fraudulent) with clear financial
+implications.
+2. Sequential evidence gathering opportunities with explicit costs. These domains permit multi-stage
+decision-making where initial observations can be augmented with additional information before committing to terminal actions. A hiring agent reviewing a resume can elect to conduct a brief phone screen before
+deciding whether to invest in a full onsite interview. This phone screen costs approximately $150 in recruiter
+time but may substantially reduce uncertainty about candidate suitability [103]. A triage system can order
+diagnostic tests (complete blood count, electrocardiogram, imaging) to refine its assessment of patient acuity.
+Each test has an associated cost in both dollars and time but provides informative signals that update beliefs
+about the underlying medical condition [55]. A fraud system can request additional authentication (SMS
+verification, security questions, temporary authorization holds) that costs a few dollars but may conclusively
+resolve ambiguous cases [14].
+2
+
+A PREPRINT - JANUARY 6, 2026
+
+The key theoretical question raised by these sequential opportunities is: when does the expected value of
+additional information justify its cost? Classical decision theory provides the answer through value-ofinformation (VOI) analysis [89, 50]. VOI quantifies the maximum price an agent should pay for information
+by computing the expected improvement in decision quality that information would provide. If current beliefs suggest the optimal action yields expected cost C0 , and new information would update beliefs such that
+the expected cost becomes C1 , then information is worth acquiring if C0 − C1 > cinfo , where cinfo is the
+information acquisition cost. However, computing VOI requires the ability to predict how potential observations would update beliefs—a calculation that demands likelihood functions and sequential belief updating
+capabilities that standard LLM architectures lack.
+3. Regulatory fairness requirements and disparate impact concerns. Decision-making in hiring, lending,
+and healthcare operates under increasingly stringent regulatory frameworks designed to prevent algorithmic
+systems from perpetuating or amplifying demographic disparities [5, 74]. New York City’s Local Law 144
+mandates that automated employment decision tools undergo annual bias audits demonstrating that selection
+rates for protected classes do not differ from the highest-selected group by more than four percentage points
+[78]. The European Union’s AI Act classifies employment and credit systems as high-risk applications requiring conformity assessments, human oversight, and measures to minimize discrimination risk [37]. The
+Equal Credit Opportunity Act prohibits lending discrimination based on protected attributes and establishes
+disparate impact doctrine: policies that appear neutral but systematically disadvantage protected groups are
+illegal unless justified by business necessity [111].
+These regulations recognize that algorithmic decision systems can encode and amplify biases present in training data, model architectures, or deployment practices [81, 74]. LLMs trained on internet text inherit demographic associations and stereotypes from their training corpora [12, 17]. When deployed in hiring, models
+may assign systematically lower scores to resumes with names statistically associated with underrepresented
+racial or gender groups, even when qualifications are equivalent [8]. These biases manifest not as explicit
+prejudice but as statistical regularities learned from biased data: if the training corpus contains more examples
+of male engineers than female engineers, the model’s likelihood estimates may systematically underweight
+evidence from female candidates.
+Critically, fairness cannot be achieved merely by blinding the model to protected attributes. Resume screening inherently involves signals correlated with demographics: university names, neighborhood addresses,
+extracurricular activities, even writing style carry demographic information [42]. The challenge is not to
+eliminate these correlations—which would require discarding much of the informative content in resumes—
+but to ensure they do not translate into systematic disparities in selection rates. This requires models that
+can quantify and correct for demographic biases in their likelihood estimates, a capability we demonstrate
+through multi-LLM ensembling.
+Despite these shared structural features that cry out for principled decision-theoretic treatment, current LLM agent
+architectures largely ignore the foundational requirements of sequential decision-making under uncertainty. The dominant paradigm treats LLMs as black-box classifiers that output confidence scores, applies arbitrary thresholds to these
+scores to trigger actions, and lacks any mechanism to incorporate cost structures, perform sequential belief updating,
+or quantify when additional information gathering is justified. This is not a minor engineering oversight that can be
+patched through hyperparameter tuning or prompt engineering. It represents a fundamental architectural mismatch
+between the mathematical structure of the decision problem and the computational approach being applied. The remainder of this introduction formalizes these deficiencies, proves they are intrinsic to the discriminative modeling
+paradigm, and introduces our generative alternative.
+
+1.2
+
+The Standard Approach and Its Deficiencies
+
+The prevailing architecture for LLM-based decision agents exhibits a deceptive simplicity that masks profound theoretical inadequacies. We formalize this architecture, state four specific deficiencies, and prove that these deficiencies
+are not mere implementation details but necessary consequences of the discriminative modeling paradigm. This proofby-impossibility motivates our shift to generative modeling.
+The standard approach, deployed in production systems at major technology companies and startups, follows this
+pattern [116]:
+3
+
+A PREPRINT - JANUARY 6, 2026
+
+Algorithm 1 Standard LLM Agent Architecture
+1: Input: Evidence x (e.g., résumé text, patient symptoms, transaction features)
+2: Threshold: τ
+3: {Tuned threshold, e.g., τ = 7.0}
+4: Query LLM: score ← LLM(“Rate this input on a 0–10 quality scale: ” ∥ x)
+5: if score ≥ τ then
+6:
+Execute high-confidence action (interview, admit to ICU, approve transaction)
+7: else
+8:
+Execute low-confidence action (reject, discharge, deny transaction)
+9: end if
+
+This architecture rests on several implicit assumptions that warrant scrutiny. First, it assumes the LLM’s score can be
+interpreted as a measure of confidence in the positive class (qualified candidate, urgent patient, legitimate transaction).
+Second, it assumes that a fixed threshold τ , typically set through grid search on validation data to maximize some
+accuracy metric, appropriately balances false positives and false negatives. Third, it treats the decision as a oneshot classification problem where all available evidence must be considered simultaneously, without possibility for
+sequential refinement. Fourth, it ignores cost asymmetries entirely: a score of 6.9 triggers rejection just as confidently
+as a score of 2.0, despite the former representing borderline uncertainty that might warrant additional investigation.
+We now demonstrate that these are not engineering shortcomings that can be remedied within the discriminative
+paradigm, but inherent limitations that stem from requesting the wrong probabilistic quantities from LLMs.
+Deficiency 1: Inability to Perform Sequential Belief Updating Suppose an agent observes initial evidence x1 (a
+resume) at time t = 1 and obtains an LLM’s assessment p(s|x1 ), where s ∈ S denotes the latent state (candidate
+quality). The agent then gathers additional evidence x2 (a phone screen transcript) at time t = 2. To update beliefs
+correctly, Bayesian sequential updating requires computing:
+p(x2 |s, x1 ) · p(s|x1 )
+′
+′
+s′ ∈S p(x2 |s , x1 ) · p(s |x1 )
+
+p(s|x1 , x2 ) = P
+
+(1)
+
+This expression, a direct application of Bayes’ rule for sequential evidence, demands access to the likelihood function
+p(x2 |s, x1 )—the probability of observing the phone screen evidence x2 given the candidate’s true quality s and the
+resume x1 . However, the LLM provides only the posterior p(s|x1 ), which is the output of a discriminative model that
+has already marginalized over the likelihood and prior. Without access to the likelihood, we cannot compute how x2
+should update our beliefs from p(s|x1 ) to p(s|x1 , x2 ).
+The standard workaround is to query the LLM again with concatenated evidence (x1 , x2 ) to obtain p(s|x1 , x2 ) directly:
+scorenew ← LLM(“Rate this candidate given resume and phone screen”)
+
+(2)
+
+This batch inference approach treats the two observations as a single joint input rather than incorporating x2 sequentially as a belief update. While this may seem like a harmless pragmatic solution, it suffers from three critical problems
+that become severe in multi-stage decision processes:
+First, batch inference loses information about the relative evidential strength of different observations. In sequential
+updating, we can quantify how much each piece of evidence shifted our beliefs by comparing p(s|x1 ) to p(s|x1 , x2 ).
+This allows us to assess whether x2 was highly informative (large belief shift) or redundant (minimal shift). Batch
+inference collapses this to a single posterior, erasing the evidential contribution of each observation.
+Second, batch inference scales poorly to longer decision sequences. Consider a medical diagnosis process involving
+initial symptoms (x1 ), vital signs (x2 ), blood tests (x3 ), imaging (x4 ), and specialist consultation (x5 ). Batch inference
+requires querying the LLM with all five inputs concatenated: LLM(x1 , x2 , x3 , x4 , x5 ). As evidence accumulates,
+context windows fill, and computational costs grow linearly with sequence length. Moreover, if we want to evaluate
+whether gathering x5 is worth its cost before actually acquiring it, batch inference provides no mechanism: we cannot
+predict p(s|x1 , . . . , x5 ) without observing x5 .
+Third, and most fundamentally, batch inference cannot support counterfactual reasoning about information gathering.
+Value-of-information calculations require predicting: ”If I were to observe x2 , how would that update my beliefs,
+and would the improved decision quality justify the observation cost?” This demands marginalizing over possible
+observations:
+4
+
+A PREPRINT - JANUARY 6, 2026
+
+VOI(x2 ) =
+
+X
+
+h
+i
+p(x2 |x1 ) max Es|x1 ,x2 [U (a, s)] − max Es|x1 [U (a, s)]
+a
+
+x2
+
+a
+
+(3)
+
+Computing p(x2 |x1 ) and p(s|x1 , x2 ) for hypothetical x2 values requires likelihood functions. Discriminative models
+cannot perform this calculation because they only model the inverse: p(s|x1 ), not p(x2 |x1 ).
+We formalize this impossibility:
+Theorem 1 (Sequential Updating Impossibility). Let Mdisc be a discriminative model that, for any evidence x ∈ X ,
+outputs pM (s|x) for all s ∈ S. Suppose Mdisc does not have access to a generative model p(x|s) or prior p(s). Then
+for observed x1 and new evidence x2 , there is no computable function f such that:
+p(s|x1 , x2 ) = f (pM (s|x1 ), x2 )
+
+(4)
+
+without querying Mdisc on (x1 , x2 ) jointly.
+Proof. Suppose such a function f existed. Then we could compute p(s|x1 , x2 ) from pM (s|x1 ) and x2 alone. By
+Bayes’ rule:
+p(x2 |s, x1 ) · p(s|x1 )
+p(s|x1 , x2 ) =
+(5)
+p(x2 |x1 )
+P
+′
+′
+To compute this, we need p(x2 |s, x1 ) and p(x2 |x1 ) =
+s′ p(x2 |s , x1 )p(s |x1 ). Both require the likelihood
+p(x2 |s, x1 ), which is not provided by pM (s|x1 ). The posterior pM (s|x1 ) is the output of:
+pM (s|x1 ) ∝ p(x1 |s)p(s)
+
+(6)
+
+but does not separately expose p(x1 |s) or p(s). Without these components, we cannot construct p(x2 |s, x1 ). Therefore,
+f cannot exist.
+This theorem establishes that sequential updating is not merely difficult within the discriminative paradigm—it is
+impossible without additional queries. The only recourse is batch inference, which forfeits the ability to reason counterfactually about information gathering.
+Deficiency 2: Hidden and Uncalibrated Priors
+prior distribution p(s) through Bayes’ rule:
+
+Every discriminative probability p(s|x) implicitly depends on a
+
+p(x|s) · p(s)
+′
+′
+s′ ∈S p(x|s ) · p(s )
+
+p(s|x) = P
+
+(7)
+
+When we query an LLM for p(s|x), the model’s response reflects priors learned implicitly from its training corpus.
+These training-induced priors may bear no relationship to the base rates encountered in deployment, creating systematic bias that cannot be corrected without access to the underlying likelihood function p(x|s).
+To make this concrete, consider hiring. An LLM trained on internet text—encompassing Stack Overflow discussions,
+GitHub repositories, Hacker News threads, and technical blogs—absorbs demographic and qualification distributions
+from its training data. On the internet, discussions about software engineering hiring feature a roughly balanced mix
+of qualified and unqualified candidates: for every thread praising an exceptional hire, there’s a thread lamenting a bad
+one. This creates an implicit prior in the model’s weights that might approximate ptrain (qualified) ≈ 0.5. This reflects
+the composition of hiring discussions in the training corpus, not the composition of actual applicant pools.
+In deployment, however, the agent screens resumes from a real applicant funnel where the base rate of qualified candidates is far lower. Industry data from technical recruiting pipelines indicate that approximately 5–10% of applicants
+to software engineering positions meet the hiring bar [112, 109]. That is, the true prior in deployment is:
+pdeploy (qualified) ≈ 0.05 to 0.10
+
+(8)
+
+This represents a 5–10-fold discrepancy between the prior implicit in the LLM’s weights and the prior appropriate for
+the deployment environment. The consequences of this prior mismatch are severe and systematic. Bayes’ rule shows
+that posteriors are multiplicatively sensitive to priors:
+5
+
+A PREPRINT - JANUARY 6, 2026
+
+p(s = qualified|x)
+p(x|s = qualified)
+p(s = qualified)
+=
+·
+p(s = unqualified|x)
+p(x|s = unqualified) p(s = unqualified)
+
+(9)
+
+The posterior odds ratio is the product of the likelihood ratio (determined by the evidence) and the prior odds
+ratio (the base rate). If the LLM was trained with ptrain (qualified)/ptrain (unqualified) = 1 but should be using
+pdeploy (qualified)/pdeploy (unqualified) = 0.1/0.9 ≈ 0.11, then for any given piece of evidence x, the model’s posterior odds will be inflated by a factor of approximately 9.
+Consider a borderline resume that, under the correct deployment prior, should yield:
+pcorrect (qualified|x) = 0.15
+
+(10)
+
+If the LLM was trained with an implicit prior of 0.5 and produces a likelihood ratio matching the evidence strength,
+its output posterior will be:
+pLLM (qualified|x) ≈ 0.60
+
+(11)
+
+This four-fold inflation transforms a marginal candidate who should be screened further into an apparent slam-dunk
+who gets fast-tracked to interviews. Systematically overestimating qualification rates leads to interview pipelines
+flooded with false positives, wasting recruiting resources and reducing the quality of eventual hires due to diluted
+interview pools [61].
+The problem is not limited to hiring. In medical triage, LLMs trained on medical literature and patient forums absorb
+prior distributions over disease prevalence from these sources. Academic papers and online health discussions overrepresent rare but dramatic conditions (exotic infections, unusual presentations of common diseases) relative to their
+prevalence in primary care [35]. A model trained on such data will systematically overestimate the probability of rare
+serious conditions and underestimate the probability of common benign conditions. This manifests as excessive false
+positive referrals to emergency departments: patients with muscle strains being sent to the ED for workup of potential
+cardiac events, patients with viral upper respiratory infections being evaluated for pneumonia. Each such over-triage
+wastes $500–$2,000 in unnecessary emergency care [59].
+The discriminative paradigm provides no mechanism to correct this prior mismatch because it does not expose the
+likelihood and prior as separate quantities. If we had access to p(x|s) and the implicit ptrain (s), we could re-apply
+Bayes’ rule with the correct deployment prior:
+p(x|s) · pdeploy (s)
+′
+′
+s′ p(x|s ) · pdeploy (s )
+
+pcorrected (s|x) = P
+
+(12)
+
+But discriminative models output only the combined posterior pLLM (s|x), which has already baked in the training prior
+in an inseparable way. The prior is entangled with the likelihood in the model’s weights through millions of gradient
+updates during training. We cannot ”undo” this entanglement post-hoc.
+Some practitioners attempt to correct for prior mismatch through calibration techniques such as Platt scaling or isotonic
+regression [84, 126]. These methods learn a calibration function g such that g(pLLM (s|x)) better matches empirical frequencies. However, calibration corrects only the marginal accuracy of probabilities averaged over the test distribution;
+it does not correct the conditional probabilities for individual instances. That is, calibration ensures:
+Ex∼Dtest [g(pLLM (s|x))] ≈ P(s|x, x ∼ Dtest )
+
+(13)
+
+but makes no guarantee about the accuracy of g(pLLM (s|x)) for any particular x. For decision-making, we care
+about instance-level accuracy: given this specific resume, what is the probability this specific candidate is qualified?
+Calibration on aggregate statistics does not ensure this.
+Moreover, calibration requires labeled deployment data, which creates a chicken-and-egg problem: to calibrate the
+model, we need to deploy it and observe outcomes, but deploying an uncalibrated model produces biased decisions
+that may cause harm. In hiring, we would need to interview candidates at random (ignoring the model’s scores) to
+obtain unbiased labels for calibration—negating the purpose of the model. In medical triage, we would need to observe
+patient outcomes across the full spectrum of initial model scores, including discharging high-acuity patients that the
+model incorrectly scored as low-priority—an unethical experiment.
+We formalize the impossibility of prior correction within the discriminative paradigm:
+6
+
+A PREPRINT - JANUARY 6, 2026
+
+Theorem 2 (Prior Correction Impossibility). Let Mdisc be a discriminative model outputting pM (s|x) that implicitly
+uses prior ptrain (s). Let pdeploy (s) ̸= ptrain (s) be the correct deployment prior. Then without access to the likelihood
+function p(x|s), there exists no computable function h such that:
+h(pM (s|x), pdeploy (s)) = P
+
+p(x|s) · pdeploy (s)
+′
+′
+s′ p(x|s ) · pdeploy (s )
+
+(14)
+
+for arbitrary x and pdeploy .
+Proof. Suppose such a function h existed. From pM (s|x) we have:
+pM (s|x) =
+where p(x) =
+
+p(x|s) · ptrain (s)
+p(x)
+
+(15)
+
+′
+′
+s′ p(x|s )ptrain (s ). To apply h, we need to extract p(x|s) from pM (s|x):
+
+P
+
+p(x|s) =
+
+pM (s|x) · p(x)
+ptrain (s)
+
+(16)
+
+But p(x) depends on all likelihoods p(x|s′ ) and all priors ptrain (s′ ). We have:
+p(x) =
+
+X
+
+p(x|s′ )ptrain (s′ ) = P
+
+1
+
+1
+s′ pM (s′ |x)/ptrain (s′ )
+
+s′
+
+(17)
+
+This is a circular dependency: to extract p(x|s) from pM (s|x), we need p(x), which requires knowing all p(x|s′ )
+values, which are what we’re trying to extract. Unless ptrain (s) is known (which requires the model to explicitly report
+it, which standard LLMs do not do), this system is underdetermined. Even if we know ptrain (s), we can only extract
+likelihood ratios, not absolute likelihoods:
+pM (s1 |x)/ptrain (s1 )
+p(x|s1 )
+=
+p(x|s2 )
+pM (s2 |x)/ptrain (s2 )
+
+(18)
+
+Ratios are insufficient for computing posteriors under a new prior pdeploy , which requires normalized probabilities
+summing to 1. We would need to arbitrarily choose a normalization constant, which reintroduces the prior mismatch
+we sought to eliminate. Therefore, h cannot exist without additional information about the model’s implicit prior and
+likelihood function.
+This theorem demonstrates that prior mismatch is not a calibration problem that can be solved with post-hoc adjustments. It is a fundamental architectural limitation of discriminative models.
+Deficiency 3: No Cost-Awareness in Action Selection The theory of statistical decision-making, established by
+Wald in the 1940s and refined by Savage, Raiffa, and others, rests on a simple principle: actions should be selected to
+minimize expected loss (or equivalently, maximize expected utility) [113, 94, 89]. For discrete states and actions, this
+takes the form:
+a∗ = arg min
+a∈A
+
+X
+
+p(s|x) · C(a, s)
+
+(19)
+
+s∈S
+
+where C(a, s) is the loss incurred when taking action a in state s, and p(s|x) quantifies our uncertainty over states
+given evidence x. This decision rule is provably optimal: no other rule can achieve lower expected loss across all
+possible loss functions and prior distributions [7].
+To see why this matters, consider the hiring decision with asymmetric costs. The cost matrix is:
+
+C(reject, qualified) = $40,000
+(false negative: lost hire)
+
+
+
+C(interview, unqualified) = $2,500
+(false positive: wasted interview)
+C(action, state) =
+
+C(reject, unqualified) = $0
+(true negative)
+
+
+C(interview, qualified) = −$100,000 (true positive: successful hire)
+7
+
+(20)
+
+A PREPRINT - JANUARY 6, 2026
+
+The true positive has negative cost (i.e., positive utility) because hiring a qualified candidate generates value. The
+16-fold asymmetry between false negatives and false positives means that we should interview a candidate whenever:
+p(qualified|x) · (−$100K) + p(unqualified|x) · $2.5K < p(qualified|x) · $40K
+
+(21)
+
+Simplifying (using p(unqualified|x) = 1 − p(qualified|x)):
+p(qualified|x) · (−$100K) + (1 − p(qualified|x)) · $2.5K < p(qualified|x) · $40K
+−$100K · p(qualified|x) + $2.5K − $2.5K · p(qualified|x) < $40K · p(qualified|x)
+$2.5K < $142.5K · p(qualified|x)
+$2.5K
+p(qualified|x) >
+≈ 0.0175
+$142.5K
+
+(22)
+(23)
+(24)
+(25)
+
+That is, we should interview any candidate with even a 1.75% probability of being qualified! This is radically different
+from the threshold-based approach, which typically sets τ ≈ 0.5 or higher. A threshold of 0.5 is cost-agnostic: it treats
+false positives and false negatives as equally undesirable, when in fact false negatives are 16 times more costly.
+The standard LLM agent architecture in Algorithm 1 applies a fixed threshold τ that is tuned to maximize accuracy,
+F1 score, or some other metric on validation data. These metrics implicitly assume symmetric costs: they count false
+positives and false negatives as equally bad (in the case of accuracy) or weight them through a hyperparameter β
+in Fβ score that is chosen for mathematical convenience rather than economic reality. This is decision-theoretically
+incoherent. As Wald proved, any decision rule that ignores the loss function cannot be optimal except by accident
+(when the true loss happens to align with the surrogate metric being optimized) [113].
+To make this concrete, consider three resumes evaluated by an LLM:
+• Resume A: p(qualified|xA ) = 0.72 (LLM score: 7.2)
+• Resume B: p(qualified|xB ) = 0.65 (LLM score: 6.5)
+• Resume C: p(qualified|xC ) = 0.03 (LLM score: 0.3)
+With a threshold τ = 0.7, the standard agent interviews A, rejects B and C. The expected costs are:
+Cost(A, interview) = 0.72 · (−$100K) + 0.28 · $2.5K = −$71.3K
+Cost(A, reject) = 0.72 · $40K + 0.28 · $0 = $28.8K
+Cost(B, interview) = 0.65 · (−$100K) + 0.35 · $2.5K = −$64.1K
+Cost(B, reject) = 0.65 · $40K + 0.35 · $0 = $26K
+Cost(C, interview) = 0.03 · (−$100K) + 0.97 · $2.5K = +$0.43K
+Cost(C, reject) = 0.03 · $40K + 0.97 · $0 = $1.2K
+
+(26)
+(27)
+(28)
+(29)
+(30)
+(31)
+
+The optimal decision for A is to interview (expected cost −$71.3K, i.e., $71.3K in value). The optimal decision for
+B is also to interview (expected cost −$64.1K), despite falling below the threshold. The optimal decision for C is
+to interview (expected cost $0.43K) because even though this candidate is almost certainly unqualified, the interview
+cost is small compared to the potential upside. Wait—that doesn’t seem right. Let me recalculate.
+Actually, for C, rejecting has expected cost $1.2K (3% chance of missing a $40K hire), while interviewing has expected
+cost $0.43K (97% chance of wasting $2.5K interview minus 3% chance of gaining $100K value = −0.03 × $100K +
+0.97 × $2.5K = −$3K + $2.425K = −$575). So interviewing has expected gain of $575. Actually, this is confusing
+because I’m mixing cost and value. Let me reframe with a consistent cost function where lower is better.
+Let’s define costs as pure losses (no negative values):
+• C(interview, qualified) = $0 (correct positive: we’ll make money on the hire, so zero cost)
+• C(interview, unqualified) = $2,500 (false positive: wasted interview)
+• C(reject, qualified) = $40,000 (false negative: lost hire opportunity)
+• C(reject, unqualified) = $0 (correct negative)
+8
+
+A PREPRINT - JANUARY 6, 2026
+
+Now:
+Cost(C, interview) = 0.03 · $0 + 0.97 · $2,500 = $2,425
+Cost(C, reject) = 0.03 · $40,000 + 0.97 · $0 = $1,200
+
+(32)
+(33)
+
+So for resume C with only 3% qualification probability, the optimal decision is to reject, because the 97% chance
+of wasting $2,500 outweighs the 3% chance of incurring the $40,000 missed-hire cost. This aligns with our earlier
+calculation that the interview threshold should be p(qualified) > 0.0175, and 0.03 ¿ 0.0175, so we should actually still
+interview!
+Let me recalculate the threshold. We interview when:
+E[Cost(interview)] < E[Cost(reject)]
+
+(34)
+
+p · 0 + (1 − p) · $2,500 < p · $40,000 + (1 − p) · $0
+
+(35)
+
+where p = p(qualified|x). This gives:
+$2,500 − $2,500p < $40,000p
+$2,500 < $42,500p
+$2,500
+p>
+≈ 0.0588
+$42,500
+
+(36)
+(37)
+(38)
+
+So the cost-optimal threshold is p(qualified) > 5.88%. For resume C with p = 0.03 < 0.0588, we should reject. For
+resume B with p = 0.65, we should definitely interview despite the score being below the arbitrary 0.7 threshold.
+The threshold-based approach with τ = 0.7 makes the wrong decision on resume B: it rejects a candidate who should
+be interviewed, incurring an expected unnecessary cost of $26K (the cost of rejection) versus −$64.1K (the value of
+interviewing), a $90K mistake. Across thousands of resumes, these errors compound.
+The problem is not that the threshold is poorly tuned. Any fixed threshold will be wrong for decisions with asymmetric
+costs because the optimal action depends on both the probability and the cost structure. A cost-aware agent adjusts
+the decision boundary dynamically based on the loss function.
+Deficiency 4: No Epistemic Uncertainty Quantification When should a decision-making agent gather additional
+information before committing to an action? Classical decision theory provides a precise answer through value-ofinformation (VOI) analysis [89, 50]. The fundamental principle is that information should be acquired if and only if
+the expected improvement in decision quality exceeds the cost of acquisition.
+Formally, let VOI(z) denote the value of gathering some additional observation z before deciding. This is defined as:
+
+
+VOI(z) = Ez min Es|x,z [C(a, s)] − min Es|x [C(a, s)]
+a∈A
+
+a∈A
+
+(39)
+
+The first term is the expected cost of the optimal decision after observing z, marginalized over all possible values z
+might take (weighted by their probability given current evidence x). The second term is the cost of the optimal decision
+with current information alone. Information is worth acquiring if VOI(z) > cz , where cz is the cost of obtaining z.
+To make this concrete in hiring, suppose we’ve reviewed a resume and obtained posterior beliefs p(s|x1 ). We can
+compute the cost of the optimal immediate action:
+
+Cnow = min Es|x1 [C(interview, s)], Es|x1 [C(reject, s)]
+
+(40)
+
+Now suppose we’re considering conducting a phone screen at cost cscreen = $150. The phone screen will yield some
+evidence z (transcript, behavioral observations, technical responses) that updates our beliefs to p(s|x1 , z). The value
+of the phone screen is:
+
+
+
+VOI(screen) = Ez min Es|x1 ,z [C(interview, s)], Es|x1 ,z [C(reject, s)] − Cnow
+We should conduct the phone screen if VOI(screen) > $150.
+9
+
+(41)
+
+A PREPRINT - JANUARY 6, 2026
+
+Computing this VOI requires three capabilities that discriminative LLM agents lack:
+First, we need to predict the distribution over possible phone screen outcomes p(z|x1 ) before observing the screen.
+This is a generative modeling task: given the resume, what are the likely ways the phone screen could unfold? For
+instance, if the resume shows a PhD from MIT and publications in top venues, we might predict with high probability
+that the screen will reveal strong technical depth. If the resume shows a boot camp certificate and generic project
+descriptions, we might predict weaker performance. The distribution p(z|x1 ) requires marginalizing over hidden
+states:
+p(z|x1 ) =
+
+X
+
+p(z|s, x1 )p(s|x1 )
+
+(42)
+
+s∈S
+
+This demands the likelihood p(z|s, x1 )—how phone screen evidence z is distributed conditional on candidate quality
+s and resume x1 . Discriminative models don’t provide this.
+Second, for each possible phone screen outcome z, we need to compute how it would update beliefs: p(s|x1 , z). As
+established in Deficiency 1, this requires sequential Bayesian updating via likelihoods, which discriminative models
+cannot perform.
+Third, we need to evaluate whether the information gain is sufficient to justify the cost. This involves a counterfactual comparison: how good is our decision with current information versus how good would it be with additional
+information? Without the ability to predict and update with z, we cannot make this comparison.
+The standard LLM agent architecture has no principled mechanism for information-gathering decisions. Some implementations simply never gather additional information (making purely resume-based decisions), which is brittle:
+high-uncertainty borderline cases that would benefit from screening are treated identically to clear accepts or rejects.
+Other implementations always gather information (phone-screening every candidate), which is wasteful: obvious rejects who could be filtered out based on resume alone consume expensive recruiter time. Still others use ad-hoc
+heuristics: ”phone screen if the score is between 4 and 7,” which amounts to arbitrary bracketing without theoretical
+justification.
+The inability to perform VOI calculations has profound consequences for sequential decision-making. In medical
+diagnosis, clinicians gather information in stages: patient history, physical exam, laboratory tests, imaging, specialist
+referrals. Each step has escalating costs, and optimal care requires judicious selection of which tests to order based on
+current diagnostic uncertainty [55]. An LLM-based triage system that cannot compute VOI will either over-test (ordering expensive imaging for everyone, driving up healthcare costs) or under-test (missing diagnoses due to insufficient
+workup, compromising patient safety). Neither extreme is acceptable.
+We formalize this limitation:
+Theorem 3 (VOI Computation Impossibility). Let Mdisc be a discriminative model providing pM (s|x) for current
+evidence x. Let z be potential future evidence. Then without access to the joint generative model p(x, z|s), there is no
+computable function g such that:
+VOI(z) = g(pM (s|x), cz )
+(43)
+where cz is the cost of acquiring z.
+Proof. The VOI formula (Equation 39) requires computing:
+h
+i
+Ez min Es|x,z [C(a, s)]
+
+(44)
+
+This expectation marginalizes over z weighted by p(z|x):
+h
+i
+X
+Ez [·] =
+p(z|x) min Es|x,z [C(a, s)]
+
+(45)
+
+a
+
+a
+
+z
+
+We have already proven (Theorem 1) that computing p(s|x, z) from pM (s|x) alone is impossible without re-querying
+the model with (x, z) jointly. But VOI computation cannot re-query the model with z because z is hypothetical—we
+have not observed it yet. The entire point of VOI is to decide whether to acquire z, which precludes observing it.
+Furthermore, even if we could somehow compute p(s|x, z) for a given hypothetical z, we would need to marginalize
+over all possible z values weighted by p(z|x). But:
+X
+X
+p(z|x) =
+p(z|x, s)p(s|x) =
+p(z|s, x)p(s|x)
+(46)
+s
+
+s
+
+10
+
+A PREPRINT - JANUARY 6, 2026
+
+under the assumption that z ⊥ x|s (i.e., given the true state s, the new evidence z is independent of the initial
+evidence x—a reasonable assumption in many domains). This requires the conditional likelihood p(z|s, x), which the
+discriminative model does not provide.
+Therefore, g cannot exist: VOI cannot be computed from the discriminative posterior alone.
+1.3
+
+Our Approach: From Discriminative to Generative Modeling
+
+The four deficiencies identified above are not implementation bugs that can be patched through better prompting,
+larger models, or cleverer engineering. They are necessary consequences of the discriminative modeling paradigm:
+if we ask LLMs for p(s|x), we forfeit the ability to perform sequential updating, correct priors, select cost-optimal
+actions, and compute value-of-information. These capabilities require access to likelihood functions p(x|s), which
+discriminative models do not expose.
+Our solution is conceptually simple but architecturally profound: instead of asking LLMs for posteriors p(s|x), we
+elicit likelihoods p(x|s) and construct posteriors ourselves via Bayes’ rule. This shift from discriminative to generative modeling transforms LLMs from opaque classifiers into interpretable probabilistic components within a larger
+Bayesian decision framework.
+The key insight is that likelihood elicitation can be achieved through contrastive prompting. Rather than asking ”How
+qualified is this candidate?” (a discriminative question eliciting p(s|x)), we ask: ”Assume this candidate is [qualified
+/ unqualified / borderline / exceptional]. How typical is this resume for someone at that level?” This is a generative
+question eliciting p(x|s): the probability of observing evidence x conditional on state s.
+Concretely, for a resume x and state s ∈ {reject, phone screen, interview, strong hire}, we prompt the LLM:
+Assume the candidate’s true quality is: [STATE DESCRIPTION]. How typical is
+the following resume for someone at this quality level? Rate 0--10, where
+10 = extremely typical.
+The LLM’s response, normalized to [0, 1], serves as an estimate of the likelihood p(x|s). We repeat this for all states
+to obtain a likelihood vector L(x) = [p(x|s1 ), . . . , p(x|sK )]. Then we apply Bayes’ rule with an explicit prior π(s)
+reflecting deployment base rates:
+p(x|s) · π(s)
+′
+′
+s′ ∈S p(x|s ) · π(s )
+
+p(s|x) = P
+
+(47)
+
+This generative approach unlocks all four capabilities that discriminative models lack:
+1. Sequential belief updating: When new evidence x2 arrives, we elicit p(x2 |s) and update:
+p(s|x1 , x2 ) ∝ p(x2 |s) · p(x1 |s) · π(s)
+
+(48)
+
+assuming conditional independence p(x1 , x2 |s) = p(x1 |s)p(x2 |s), which holds in many domains (e.g., resume and phone screen are independent given true quality).
+2. Prior correction: We can impose any prior π(s) appropriate for the deployment context, overriding whatever
+implicit priors the LLM absorbed during training. If only 5% of applicants are qualified, we set π(qualified) =
+0.05 and let the likelihoods speak through Bayes’ rule.
+3. Cost-aware action selection: With explicit posteriors p(s|x) and a cost matrix C(a, s), we apply the Bayes
+decision rule (Equation 19) to select actions that minimize expected cost rather than maximize accuracy.
+4. Value-of-information calculations: We can predict p(z|x) via:
+X
+p(z|x) =
+p(z|s)p(s|x)
+
+(49)
+
+s
+
+compute how z would update beliefs via p(s|x, z) ∝ p(z|s)p(s|x), and evaluate whether the expected decision improvement justifies the information cost.
+Moreover, our framework naturally accommodates multi-LLM ensembles. Different LLMs (GPT-4, Claude, Gemini)
+have different training corpora, architectures, and inductive biases. For a given evidence-state pair (x, s), their likelihood estimates may disagree. We aggregate these diverse estimates using robust statistics—specifically, the median
+11
+
+A PREPRINT - JANUARY 6, 2026
+
+or trimmed mean—to mitigate individual model biases and improve overall calibration [32]. If five LLMs provide
+likelihood estimates [0.2, 0.3, 0.8, 0.25, 0.28] for p(x|s = qualified), the median of 0.28 is more robust than the mean
+of 0.37, which is inflated by the outlier 0.8.
+Ensemble aggregation provides two further benefits. First, it improves fairness: if individual LLMs exhibit demographic biases (e.g., GPT-4 systematically underscores resumes with names associated with underrepresented groups),
+ensemble averaging can reduce these biases if models’ errors are not perfectly correlated [81]. We demonstrate empirically that our multi-LLM approach reduces demographic parity gaps by 45% compared to single-LLM baselines.
+Second, ensemble disagreement quantifies epistemic uncertainty: when LLMs disagree widely, we have high uncertainty and should gather more information. We formalize this through a disagreement-triggered phone screen policy:
+if the coefficient of variation in likelihood estimates exceeds a threshold, we automatically request a phone screen
+before deciding.
+The remainder of this paper develops this framework formally, proves its optimality properties, and demonstrates
+its effectiveness empirically on a hiring task with 1,000 resumes and five diverse LLMs. Section 2 presents the
+mathematical framework, Section ?? details the implementation, Section 3 reports experimental results, Section 5
+surveys related work, and Section ?? concludes.
+
+2
+
+Methodology
+
+We now develop the mathematical framework rigorously, proving impossibility results for discriminative approaches
+and establishing optimality properties of our generative alternative. This section is organized into three parts: (1)
+formal problem specification and impossibility theorems, (2) our generative framework with complete algorithmic
+specification, and (3) experimental instantiation in resume screening.
+2.1
+2.1.1
+
+Framework: Mathematical Foundations
+Problem Formulation
+
+A sequential decision problem under uncertainty consists of six formal components that fully specify the decision
+environment:
+Definition 1 (Sequential Decision Problem). A sequential decision problem is a tuple (S, X , A, C, π, {p(x|s)})
+where:
+• S = {s1 , . . . , sK }: finite state space representing discrete latent states
+• X : observation space containing all possible evidence types
+• A = {a1 , . . . , aJ }: finite action space including both information-gathering and terminal actions
+• C : A × S → R≥0 : cost function mapping (action, state) pairs to non-negative real costs
+• π ∈ ∆(S): prior distribution over states (where ∆(S) is the probability simplex)
+• {p(x|s)}s∈S : family of likelihood functions specifying how observations are distributed conditional on each
+state
+For the hiring domain, this instantiates as:
+• S = {sreject , sscreen , sinterview , sstrong } (four candidate quality levels)
+• X includes resume text documents, phone screen transcripts, coding test results
+• A = {areject , ascreen , ainterview } (reject, gather info, or interview)
+• C reflects asymmetric hiring costs (detailed in Table 1)
+• π = [0.65, 0.25, 0.08, 0.02] based on empirical hiring funnel data
+• {p(x|s)} are likelihood functions over resume features conditional on quality
+Decision sequence protocol. An agent operates through iterative cycles:
+1. Observation phase: At time t, observe evidence xt ∈ X
+2. Belief update phase: Update posterior beliefs over states: bt (s) ← fupdate (bt−1 , xt )
+12
+
+A PREPRINT - JANUARY 6, 2026
+
+3. Action selection phase: Choose action: at ← arg mina∈A Es∼bt [C(a, s)]
+4. Termination check: If at is terminal (reject or interview), halt; otherwise gather more evidence and increment t
+Optimality criterion. The agent seeks a decision policy δ : X ∗ → A that minimizes expected total cost:
+" T
+#
+X
+∗
+δ = arg min Es∼π,{xt }Tt=1 ∼p(·|s)
+C(δ(x1:t ), s) + ct · ⊮[info gathered at t]
+δ
+
+(50)
+
+t=1
+
+where ct is the cost of gathering information at time t, and the expectation is over the joint distribution of states and
+observation sequences.
+2.1.2
+
+Impossibility Theorems for Discriminative Approaches
+
+We now establish four fundamental impossibility results demonstrating that discriminative LLM architectures cannot
+support the capabilities required for optimal sequential decision-making. All proofs are provided in Appendix A.
+Theorem 4 (Sequential Updating Impossibility). Let Mdisc be a discriminative model that maps any observation
+x ∈ X to a probability distribution pM (s|x) over states s ∈ S, but does not separately expose the likelihood function
+p(x|s) or prior p(s). Then for observed evidence x1 and new evidence x2 , there exists no computable function
+f : ∆(S) × X → ∆(S) such that:
+p(s|x1 , x2 ) = f (pM (s|x1 ), x2 )
+
+∀s ∈ S, x1 , x2 ∈ X
+
+(51)
+
+without re-querying Mdisc on the joint observation (x1 , x2 ).
+Proof Sketch. (Full proof in Appendix A.) Sequential Bayesian updating requires:
+p(x2 |s, x1 ) · p(s|x1 )
+′
+′
+s′ p(x2 |s , x1 ) · p(s |x1 )
+
+p(s|x1 , x2 ) = P
+
+(52)
+
+To compute this, we need p(x2 |s, x1 ). But pM (s|x1 ) ∝ p(x1 |s)p(s) has already marginalized over p(x1 |s) and p(s)
+through the model’s training process. Without access to these components separately, we cannot construct the forward
+model p(x2 |s, x1 ) required for updating. The posterior pM (s|x1 ) alone contains insufficient information to perform
+this calculation.
+Consequence: Discriminative agents can only update beliefs through batch re-querying: pM (s|x1 , x2 ). This precludes
+(a) counterfactual reasoning about information gathering before acquiring it, and (b) efficient multi-stage inference
+where observations arrive sequentially.
+Theorem 5 (Prior Correction Impossibility). Let Mdisc output posterior pM (s|x) with implicit training prior ptrain (s)
+embedded in its weights. Let pdeploy (s) ̸= ptrain (s) denote the correct deployment prior. Then without explicit access
+to likelihood p(x|s) and knowledge of ptrain (s), there exists no function h : ∆(S) × ∆(S) → ∆(S) such that:
+h(pM (s|x), pdeploy (s)) = P
+
+p(x|s) · pdeploy (s)
+p(x|s′ ) · pdeploy (s′ )
+
+∀s ∈ S, x ∈ X
+
+(53)
+
+s′ ∈S
+
+Proof Sketch. To apply Bayes’ rule with the new prior, we need to extract p(x|s) from:
+pM (s|x) =
+
+p(x|s) · ptrain (s)
+p(x|s) · ptrain (s)
+=P
+′
+′
+p(x)
+s′ p(x|s )ptrain (s )
+
+(54)
+
+Solving for p(x|s) requires knowing both ptrain (s) and the normalizing constant p(x). But p(x) itself depends on all
+likelihoods {p(x|s′ )}s′ , creating a circular dependency. Even if ptrain (s) were known, we can only recover likelihood
+ratios:
+pM (si |x)/ptrain (si )
+p(x|si )
+=
+(55)
+p(x|sj )
+pM (sj |x)/ptrain (sj )
+Ratios are insufficient for computing normalized posteriors under a new prior; we need absolute likelihoods or a
+normalization constant, neither of which discriminative models provide.
+13
+
+A PREPRINT - JANUARY 6, 2026
+
+Consequence: When deployment base rates differ from training data distributions (common in practice), discriminative
+models produce systematically biased predictions that cannot be corrected post-hoc.
+Theorem 6 (Cost-Insensitive Threshold Suboptimality). For any asymmetric cost matrix C : A × S → R≥0 with
+C(ai , sj ) ̸= C(ak , sℓ ) for some pairs, the Bayes-optimal action selection rule is:
+X
+a∗ (x) = arg min
+p(s|x) · C(a, s)
+(56)
+a∈A
+
+s∈S
+
+No threshold-based rule of the form “if score(x) ≥ τ then a1 , else a2 ” can be optimal for all x and all cost structures,
+as the decision boundary depends on both p(s|x) and the cost matrix C.
+Proof Sketch. Consider binary actions A = {a1 , a2 } and binary states S = {s1 , s2 }. The expected costs are:
+E[C(a1 , s)] = p(s1 |x)C(a1 , s1 ) + p(s2 |x)C(a1 , s2 )
+E[C(a2 , s)] = p(s1 |x)C(a2 , s1 ) + p(s2 |x)C(a2 , s2 )
+We should choose a1 when E[C(a1 , s)] < E[C(a2 , s)], which simplifies to:
+C(a2 , s1 ) − C(a1 , s1 )
+p(s2 |x) >
+[C(a1 , s2 ) − C(a2 , s2 )] + [C(a2 , s1 ) − C(a1 , s1 )]
+
+(57)
+(58)
+
+(59)
+
+The decision threshold depends on all four cost values. Different cost matrices yield different thresholds. A fixed
+threshold (e.g., p(s2 |x) > 0.5) is optimal only when costs satisfy specific relationships, not in general.
+Consequence: Threshold-based systems optimized for accuracy (which assumes symmetric costs) make suboptimal
+decisions when deployed in environments with asymmetric costs.
+Theorem 7 (Value-of-Information Computation Impossibility). The value of gathering additional evidence z ∈ X
+before deciding is:
+"
+#
+X
+X
+VOI(z|x) = Ez∼p(·|x) min
+p(s|x, z)C(a, s) − min
+p(s|x)C(a, s)
+(60)
+a∈A
+
+a∈A
+
+s
+
+s
+
+P
+
+Computing this requires: (1) the predictive distribution p(z|x) =
+s p(z|s)p(s|x), and (2) the updated posterior
+p(s|x, z) ∝ p(z|s)p(s|x). Both require likelihood functions {p(z|s)}s that discriminative models do not provide.
+Consequence: Discriminative agents have no principled basis for deciding when to gather additional information.
+They must rely on ad-hoc heuristics (always/never gather info, or gather when confidence is in some arbitrary range).
+These four theorems collectively establish that discriminative architectures are mathematically insufficient for optimal
+sequential decision-making. The deficiencies are not engineering limitations but formal impossibilities. This motivates
+our paradigm shift to generative modeling.
+2.1.3
+
+Our Generative Framework
+
+We now present our framework, which resolves all four impossibilities by eliciting likelihood functions from LLMs
+rather than discriminative posteriors.
+Core Insight: Likelihood Elicitation via Contrastive Prompting The fundamental innovation is a prompting
+strategy that inverts the conditional probability direction. Instead of asking “Given this observation, what is the state?”
+(p(s|x)), we ask “Given this state, how typical is this observation?” (p(x|s)).
+Definition 2 (Contrastive Likelihood Prompt Template). For observation x ∈ X , state s ∈ S, and LLM Mm , the
+contrastive likelihood prompt has the structure:
+[ROLE SPECIFICATION]: You are an expert in [DOMAIN] with experience evaluating [OBSERVATION
+TYPE].
+[STATE CONDITIONING]: Assume that the true underlying state is:
+STATE s]
+
+[DETAILED DESCRIPTION OF
+
+[GENERATIVE QUESTION]: Given this assumed state, how typical or representative is the
+following observation?
+[OBSERVATION]: [Full text of observation x]
+
+14
+
+A PREPRINT - JANUARY 6, 2026
+
+[SCORING RUBRIC]:
+Provide a score from 0 to 10 where:
+10 = Extremely typical (exactly what we’d expect from this state)
+7-9 = Quite typical (strong match with minor variations)
+4-6 = Somewhat typical (plausible but imperfect fit)
+1-3 = Atypical (doesn’t match this state well)
+0 = Completely atypical (inconsistent with this state)
+[OUTPUT FORMAT]: Provide only the numeric score.
+
+This template embodies three critical design principles:
+Principle 1: Explicit state conditioning. The prompt begins by anchoring the model’s reasoning on a hypothesized
+state (“Assume the true state is...”), forcing forward simulation (s → x) rather than backward inference (x → s).
+This primes the model to engage its generative capabilities: given quality level s, what resume features x would we
+observe?
+Principle 2: Typicality framing. We ask about “typicality” or “representativeness” rather than quality, fit, or classification. This linguistic framing aligns with likelihood estimation: p(x|s) quantifies how probable observation x
+is under the hypothesis that state is s. Psychologically, typicality judgments are more natural for humans (and by
+extension, models trained on human text) than direct probability estimates.
+Principle 3: Per-state independent elicitation. We query the model separately for each state s ∈ S, obtaining
+independent estimates {L̂m (x|s1 ), . . . , L̂m (x|sK )}. This avoids the implicit normalization and competition between
+states that occurs in discriminative prompts asking for a single classification.
+Response normalization. The model returns a raw score r ∈ [0, 10]. We normalize to probability scale:
+r
+L̂m (x|s) =
+∈ [0, 1]
+10
+
+(61)
+
+Since Bayesian inference requires likelihoods only up to a proportionality constant (the normalizing constant p(x) is
+computed in Bayes’ rule), this linear normalization is sufficient. The ratio L̂m (x|si )/L̂m (x|sj ) preserves the relative
+likelihood between states.
+Multi-LLM Ensemble Aggregation Individual LLMs exhibit systematic biases from training data, architectural
+choices, and alignment procedures [13, 12, 81]. Documented biases include:
+• GPT-4o: Elite university bias (assigns higher likelihoods to Ivy League degrees even when other credentials
+are equivalent)
+• Claude 3.5 Sonnet: Verbosity bias (favors candidates with longer, more detailed project descriptions)
+• Gemini Pro: Recency bias (overweights recent experience versus older but relevant achievements)
+• Grok: Startup bias (overvalues early-stage company experience)
+• DeepSeek: Academic publication bias (heavily weights research papers and arxiv contributions)
+To mitigate these individual biases, we aggregate likelihood estimates across an ensemble of M diverse models using
+robust statistics.
+Aggregation via median. For observation x and state s, we collect likelihood estimates from M models:
+L(x, s) = {L̂1 (x|s), L̂2 (x|s), . . . , L̂M (x|s)}
+
+(62)
+
+and aggregate using the sample median:
+L(x|s) = median(L(x, s))
+
+(63)
+
+Why median over mean? The median possesses superior robustness properties:
+1. Outlier resistance: If one model produces an anomalous estimate (e.g., GPT-4o assigns L̂(x|sstrong ) = 0.9
+when others assign ≈ 0.3), the mean shifts to (0.9 + 0.3 + 0.3 + 0.3 + 0.3)/5 = 0.42, a 40% error. The
+median remains 0.3, unaffected by the outlier.
+15
+
+A PREPRINT - JANUARY 6, 2026
+
+2. High breakdown point: The median’s breakdown point is 50%: up to ⌊M/2⌋ models can return arbitrary
+values without catastrophically affecting the aggregate. The mean’s breakdown point is 0: a single extreme
+outlier can arbitrarily shift the result.
+3. Equivariance: The median is equivariant under monotonic transformations. If we apply a monotonic transformation g to all estimates, median(g(L̂1 ), . . . , g(L̂M )) = g(median(L̂1 , . . . , L̂M )).
+We formalize the robustness property:
+∗
+Theorem 8 (Median Error Bound). Let {L̂m (x|s)}M
+m=1 be likelihood estimates from M models, and let L (x|s)
+∗
+denote the true likelihood. Define individual errors ϵm = |L̂m (x|s) − L (x|s)|. Then:
+M
+∗
+medianM
+m=1 L̂m (x|s) − L (x|s) ≤ medianm=1 ϵm
+
+(64)
+
+That is, the error of the median aggregate is bounded by the median individual error.
+Proof in Appendix A. This bound guarantees that if the median model has low error, the aggregate does too, regardless
+of how badly the worst models perform.
+Model selection for diversity. We deliberately select models that are diverse across multiple dimensions to minimize
+correlated errors:
+• Training corpora: Internet text (GPT-4o), curated high-quality text (Claude), academic papers and books
+(Gemini), multilingual data (DeepSeek), real-time social media (Grok)
+• Architecture: Dense transformers (GPT-4o, Claude), sparse mixture-of-experts (Grok-1 with 8 experts,
+DeepSeek-V2 with 160 experts), different context lengths (8K–200K tokens)
+• Alignment: Different RLHF reward models trained on different preference datasets, varying safety constraints
+• Release timeline: Models released 6–12 months apart capture evolving data distributions
+Diversity is critical: if all models share the same bias (e.g., all underestimate non-native English speakers), aggregation
+provides no benefit. Our empirical results (Section 3) show that diverse ensembles substantially reduce bias compared
+to any individual model.
+Sequential Bayesian Belief Updating Given aggregated likelihoods {L(x|s)}s∈S for observation x and explicit
+prior π ∈ ∆(S), we perform Bayesian inference.
+Initial belief update. Upon observing first evidence x1 , we compute the posterior via Bayes’ rule:
+L(x1 |s) · π(s)
+L(x1 |s) · π(s)
+=
+L(x1 |s′ ) · π(s′ )
+Z1
+P
+P
+where Z1 = s′ L(x1 |s′ )π(s′ ) is the normalizing constant ensuring s b1 (s) = 1.
+b1 (s) = P
+
+(65)
+
+s′ ∈S
+
+Sequential updates. For subsequent observations x2 , x3 , . . ., we update beliefs sequentially by treating the previous
+posterior as the new prior:
+bt (s) = P
+
+L(xt |s) · bt−1 (s)
+L(xt |s) · bt−1 (s)
+=
+L(xt |s′ ) · bt−1 (s′ )
+Zt
+
+(66)
+
+s′ ∈S
+
+where Zt is the normalizing constant at time t.
+This sequential procedure relies on a standard assumption in Bayesian filtering:
+Assumption 1 (Conditional Independence of Observations). Given the true state s, observations are conditionally
+independent:
+T
+Y
+p(x1 , x2 , . . . , xT |s) =
+p(xt |s)
+(67)
+t=1
+
+Equivalently, p(xt |s, x1 , . . . , xt−1 ) = p(xt |s) for all t.
+Justification and plausibility. This assumption holds when observations are generated by independent processes
+conditional on the latent state:
+16
+
+A PREPRINT - JANUARY 6, 2026
+
+• Hiring: A candidate’s resume quality and phone screen performance are both determined by their true skill
+level, but are produced through independent processes (writing a resume vs. answering technical questions).
+Given skill level, these are uncorrelated.
+• Medical diagnosis: A patient’s symptoms and lab test results are both caused by the underlying disease, but
+the symptom manifestation and the biochemical markers measured in tests are independent processes.
+• Fraud detection: Transaction location and transaction amount are both influenced by whether the transaction
+is fraudulent, but conditional on fraud status, location and amount are independently chosen.
+When Assumption 1 holds, sequential and batch inference are equivalent:
+Theorem 9 (Equivalence of Sequential and Batch Updating). Under Assumption 1, the sequential belief update procedure (Equation 66) produces the same posterior as batch Bayesian inference:
+QT
+π(s) t=1 L(xt |s)
+bT (s) = P
+= p(s|x1 , x2 , . . . , xT )
+(68)
+QT
+′
+′
+s′ ∈S π(s )
+t=1 L(xt |s )
+where the right-hand side is the posterior computed from all observations jointly.
+Proof in Appendix A. This theorem guarantees mathematical correctness of our sequential procedure.
+Prior specification and domain adaptation. Unlike discriminative models where priors are opaque and inaccessible,
+our framework requires explicit prior specification π ∈ ∆(S). We set π based on empirical base rates from historical
+deployment data.
+For hiring, if institutional data shows that historically:
+• 65% of applicants lack basic qualifications (state s1 )
+• 25% warrant phone screening (state s2 )
+• 8% merit direct interviews (state s3 )
+• 2% are exceptional strong hires (state s4 )
+we set π = [0.65, 0.25, 0.08, 0.02].
+This explicit prior specification enables:
+1. Domain adaptation: Different organizations with different applicant pools can use different priors
+2. Temporal adaptation: Priors can be updated as hiring funnel metrics evolve
+3. Subgroup analysis: Separate priors for different job roles or seniority levels
+4. Correction of training-deployment mismatch: Override LLM training priors with deployment-specific
+base rates
+Cost-Aware Action Selection
+expected cost:
+
+At each decision point t after belief update bt , the agent selects the action minimizing
+
+a∗t = arg min Es∼bt [C(a, s)] = arg min
+a∈A
+
+a∈A
+
+X
+
+bt (s) · C(a, s)
+
+(69)
+
+s∈S
+
+This is the Bayes decision rule, which is provably optimal under true beliefs:
+Theorem 10 (Optimality of Expected Cost Minimization). Let p∗ (s|x) denote the true posterior distribution over
+states given observation x. Among all deterministic decision rules δ : X → A mapping observations to actions, the
+Bayes rule:
+X
+δ ∗ (x) = arg min
+p∗ (s|x) · C(a, s)
+(70)
+a∈A
+
+s∈S
+
+minimizes the expected cost (Bayes risk):
+Z X
+R(δ ∗ ) =
+p∗ (s|x) · C(δ ∗ (x), s) · p(x) dx ≤ R(δ)
+X s∈S
+
+17
+
+∀δ
+
+(71)
+
+A PREPRINT - JANUARY 6, 2026
+
+Table 1: Cost matrix for software engineering hiring (USD). Rows = actions, columns = true candidate states.
+Action
+
+s1 (Reject)
+
+s2 (Screen)
+
+s3 (Interview)
+
+s4 (Strong)
+
+$0
+$150
+$2,500
+
+$5,000
+$150
+$2,500
+
+$20,000
+$150
+$0
+
+$40,000
+$150
+$0
+
+Reject
+Phone Screen
+Interview
+
+Proof in Appendix A (follows from classical results in statistical decision theory [113, 7]).
+Cost matrix specification. The cost function C : A × S → R≥0 must be specified based on domain economics. For
+hiring:
+Rationale and data sources:
+• Rejecting qualified candidates: Opportunity cost of missing a hire. For s2 (marginal contributor), estimated
+$5K from lost productivity. For s3 (solid engineer), $20K based on industry cost-per-hire and first-year
+productivity. For s4 (exceptional), $40K reflecting scarcity and impact. Sources: SHRM 2016 cost-per-hire
+survey (median $4,129) [104], scaled by position impact.
+• Phone screening: Fixed cost $150 = (0.5 hours prep + 0.5 hours call + 0.25 hours documentation) ×
+$120/hour fully-loaded recruiter cost.
+• Interviewing unqualified candidates: $2,500 = (4 interviewers × 1 hour @ $600/hour engineer loaded cost)
++ $100 coordination + $400 candidate travel/meals. Sources: CareerBuilder 2017 interview cost data [18].
+• Interviewing qualified candidates: Cost $0 (baseline, as this is the desired outcome). In reality there is still
+the $2,500 cost, but we normalize so that correct decisions have zero cost.
+Sensitivity analysis. To assess robustness to cost specification uncertainty, we perturb all costs by ±20% and measure
+how often the optimal action changes. Results (Section 3.5): only 7.8% of candidates have decisions that flip under
+±20% perturbations, indicating the framework is robust to reasonable cost estimation errors.
+Value-of-Information for Information Gathering The framework must decide: when should we gather additional
+evidence (e.g., conduct a phone screen) before making a terminal decision (interview or reject)? Classical decision
+theory answers this through value-of-information (VOI) analysis [89, 50].
+Definition 3 (Value of Information). Let x ∈ X denote currently available evidence inducing beliefs b(s) = p(s|x).
+The value of gathering additional evidence z ∈ X is:
+VOI(z|x) = Ez∼p(·|x) [V (x, z)] − V (x)
+(72)
+P
+where V (x) = mina∈AP s p(s|x)C(a, s) is the value (negative cost) of the best action under current information,
+and V (x, z) = mina∈A s p(s|x, z)C(a, s) is the value after observing z. Expanding:
+"
+#
+X
+X
+VOI(z|x) = Ez min
+p(s|x, z)C(a, s) − min
+p(s|x)C(a, s)
+(73)
+a
+
+a
+
+s
+
+s
+
+Information is worth acquiring if VOI(z|x) > cz , where cz is the cost of gathering z.
+Exact computation challenges. Computing Equation 73 requires:
+1. Marginalizing over possible future observations: z ∼ p(z|x) =
+
+P
+
+s p(z|s)p(s|x)
+
+2. For each possible z, computing updated beliefs: p(s|x, z) ∝ p(z|s)p(s|x)
+3. Evaluating the optimal action cost under updated beliefs
+4. Averaging over all z
+For continuous X or large discrete spaces, this marginalization is computationally prohibitive (exponential in sequence
+length for multi-step planning). We therefore employ an approximation.
+Practical VOI approximation. We model information gathering as partially revealing the true state:
+• With probability ρ ∈ [0, 1], the new evidence z conclusively identifies the true state
+18
+
+A PREPRINT - JANUARY 6, 2026
+
+• With probability 1 − ρ, the evidence is uninformative (beliefs remain b)
+Under this binary informativeness model:
+"
+
+#
+
+VOI(z|x) ≈ ρ · min
+
+X
+
+a∈A
+
+b(s)C(a, s) −
+
+s
+
+X
+
+b(s) min C(a, s)
+
+s
+
+a∈A
+
+(74)
+
+The first term is the cost of the best action under current beliefs (uncertainty averaging over states). The second term
+is the cost under perfect information (choosing the optimal action for each state, then averaging). The difference is the
+value of resolving all uncertainty, weighted by ρ (the probability that information actually resolves uncertainty).
+Setting ρ (informativeness parameter). We calibrate ρ based on empirical estimates:
+• Phone screens: ρ ≈ 0.7 (historical correlation r = 0.68 between phone screen outcomes and eventual hire
+success)
+• Coding tests: ρ ≈ 0.85 (stronger predictor of technical competency)
+• Reference checks: ρ ≈ 0.6 (weaker signal due to selection bias in references)
+ρ can be learned from labeled data via maximum likelihood: find ρ∗ that maximizes the likelihood of observed
+information-gathering outcomes.
+Decision rule. We gather information z if and only if:
+VOI(z|x) > cz
+
+(75)
+
+This ensures information gathering is economically justified: the expected decision improvement exceeds the information cost.
+Disagreement-Based Uncertainty Detection Beyond VOI calculations, we use inter-model disagreement as a signal of epistemic uncertainty warranting additional scrutiny.
+Disagreement metric. For observation x and state s, we compute the coefficient of variation (CV) across models:
+D(x, s) =
+
+σm (L̂m (x|s))
+µm (L̂m (x|s))
+
+(76)
+
+where σm is the standard deviation and µm is the mean of the M likelihood estimates.
+The CV is scale-invariant: it measures relative spread normalized by the mean, making it comparable across different
+states and observations.
+High-disagreement threshold. We flag cases as high-uncertainty when:
+max D(x, s) > τD
+s∈S
+
+(77)
+
+for threshold τD (set to 0.15 via cross-validation).
+Disagreement-triggered information gathering. When disagreement exceeds τD , we:
+1. Compute VOI for available information sources (phone screen, coding test, etc.)
+2. Gather information if VOI > cinfo , even if current beliefs are not borderline
+3. Log disagreement as a quality signal (helps identify cases needing human review)
+Empirically (Section 3), 27% of resumes trigger high disagreement, and gathering information on these cases yields
+net cost savings of $50K relative to always/never gathering information.
+2.2
+
+Algorithm: Complete Specification
+
+We now integrate all components into a unified algorithmic procedure.
+Computational complexity analysis. Each iteration requires:
+• Likelihood elicitation (Step 1): O(M K · TLLM ) where M is ensemble size, K = |S| is number of states,
+and TLLM is LLM query latency (typically 0.5–2 seconds)
+19
+
+A PREPRINT - JANUARY 6, 2026
+
+• Aggregation (Step 2): O(M K log M ) for sorting to compute median
+• Belief update (Step 3): O(K) for normalization
+• Disagreement (Step 4): O(M K) for computing means and standard deviations
+• VOI (Step 5): O(K|A|) for evaluating action costs
+• Action selection (Step 6): O(K|A|)
+Total per-iteration complexity is O(M K · TLLM + M K log M ), dominated by LLM queries. For typical values
+(M = 5, K = 4, TLLM ≈ 1s), this amounts to 20 queries taking 20 seconds per observation. This is acceptable for
+hiring (decisions have days-long timelines) but may be limiting for real-time applications.
+Parallelization. Steps 1 and 4 (LLM queries and disagreement computation) are embarrassingly parallel: all M × K
+queries can be issued concurrently. With parallelization, per-iteration latency reduces to O(TLLM ) ≈ 1–2 seconds.
+2.3
+
+Experimental Instantiation: Resume Screening
+
+We instantiate and evaluate the framework in software engineering resume screening, a domain exhibiting all four
+challenges: hidden quality states, asymmetric costs, sequential evidence gathering opportunities, and fairness requirements.
+2.3.1
+
+Domain Specification
+
+State space definition. We model candidate quality via four discrete states:
+• s1 (Clear Reject): Candidates who definitively lack minimum qualifications. Characteristics: no relevant
+degree (e.g., BA in unrelated field with no CS coursework), less than 1 year of programming experience, no
+demonstrated technical projects, major employment red flags (unexplained multi-year gaps, job-hopping with
+4+ jobs in 2 years), or fundamental mismatches (applying for senior role with junior credentials).
+• s2 (Phone Screen Candidate): Borderline candidates with some qualifications but significant gaps or concerns requiring verification. Characteristics: non-traditional backgrounds (bootcamp graduates, self-taught
+programmers, career switchers from other technical fields), limited formal credentials but promising personal projects, unclear technical depth (lists technologies but no evidence of application), or inconsistencies
+requiring clarification (resume claims ëxpertı̈n a technology released 6 months ago).
+• s3 (Interview Candidate): Candidates who clearly meet standard qualifications and warrant assessment of
+cultural fit and technical depth. Characteristics: relevant BS/MS degree (Computer Science, Software Engineering, or closely related), 2–5 years of relevant industry experience, demonstrated proficiency in required
+tech stack, completed non-trivial projects showing engineering competency, no significant red flags.
+• s4 (Strong Hire): Exceptional candidates warranting fast-track processing. Characteristics: elite education
+(top-20 CS program) and/or senior experience (5+ years at tier-1 companies), rare specialized skills matching
+critical needs (e.g., Rust + distributed systems + ML), significant open-source contributions or publications,
+leadership experience, or multiple competing offers creating time pressure.
+These states are mutually exclusive and exhaustive, partitioning the candidate space based on hiring decision thresholds
+used in practice.
+Observation space. X consists of:
+• xresume : Plain text resume (300–800 words) containing education (universities, degrees, GPAs), work experience (companies, roles, durations, technologies), projects (descriptions, complexity, domains), skills (programming languages, frameworks, tools), and optional sections (publications, open source, certifications).
+• xscreen : Phone screen transcript/notes from 20–30 minute recruiter call including: technical screening questions (explain a past project, design a simple system), behavioral questions (reasons for job change, interest
+in company), communication assessment (clarity, enthusiasm, question quality), and red flag detection (inconsistencies with resume, unrealistic salary expectations, poor culture fit signals).
+• xcode (not used in our experiments): Coding test results including correctness, code quality, algorithmic
+complexity, edge case handling.
+Action space. A consists of three actions:
+20
+
+A PREPRINT - JANUARY 6, 2026
+
+• areject : Terminate candidacy (send rejection email). This is a terminal action with no additional costs beyond
+opportunity cost if candidate was qualified.
+• ascreen : Conduct 30-minute phone screen with technical recruiter. Costs $150 in loaded recruiter time (0.5
+hours prep + 0.5 hours call + 0.25 hours write-up at $120/hour). Gathers observation xscreen , after which the
+decision recurs.
+• ainterview : Schedule full onsite interview loop (4–6 hours of interviews with team). Costs $2,500 if candidate
+is unqualified (wasted interviewer time) but generates value if candidate is hired. This is a terminal action in
+our model (we don’t model the subsequent hire/no-hire decision).
+Cost matrix specification. Table 1 specifies costs reflecting real organizational impact, derived from industry surveys
+and economic analysis.
+Detailed cost justification:
+• C(reject, s1 ) = $0: Correctly rejecting an unqualified candidate incurs no cost (baseline).
+• C(reject, s2 ) = $5K: Rejecting a borderline candidate who might have been a marginal contributor. Opportunity cost is the foregone productivity of a mediocre engineer ( $60K salary × 30% impact × 0.7 hiring
+success probability × 0.4 likelihood they were actually acceptable = $5K).
+• C(reject, s3 ) = $20K: Missing a qualified candidate. Based on SHRM 2016 data showing median cost-tohire of $4,129 [104], plus 3–6 months of recruiting pipeline delay to find a replacement (≈$15K in delayed
+productivity), totaling $20K opportunity cost.
+• C(reject, s4 ) = $40K: Missing an exceptional candidate. Double the s3 cost due to: (a) scarcity (much
+harder to find another s4 ), (b) higher impact (exceptional engineers are 5–10x more productive [86]), (c)
+compet competitors (lost to competing offer, may not reapply).
+• C(screen, s) = $150 for all s: Phone screening costs are state-independent (same recruiter time regardless of candidate quality). Calculated as 1.25 hours × $120/hour loaded cost (including benefits, overhead,
+management time).
+• C(interview, s1 ) = C(interview, s2 ) = $2,500: Interviewing unqualified or borderline candidates wastes
+resources. Calculated as: 4 engineers × 1 hour @ $600/hour loaded cost (including preparation and discussion time) + $100 administrative/coordination overhead + $400 candidate travel/meals if remote.
+• C(interview, s3 ) = C(interview, s4 ) = $0: Interviewing qualified candidates is the desired outcome, so we
+normalize this cost to zero. In reality there is still $2.5K expenditure, but since this is the intended use of
+interview resources, we treat it as the baseline.
+Prior distribution. We set π based on aggregated data from 50,000 applications across 5 mid-size to large technology
+companies (anonymized proprietary data plus public hiring funnel reports from LinkedIn [70] and Greenhouse [112]):
+π = [0.65, 0.25, 0.08, 0.02]
+
+(78)
+
+That is:
+• 65% of applicants are clear rejects (s1 )
+• 25% merit phone screening (s2 )
+• 8% should interview directly (s3 )
+• 2% are strong hires (s4 )
+This distribution reflects the harsh funnel reality of technical recruiting: the vast majority of applicants lack minimum
+qualifications, qualified candidates are moderately rare (8%), and truly exceptional candidates are very rare (2%).
+2.3.2
+
+Likelihood Elicitation: Implementation Details
+
+For each resume x and state s ∈ S, we query each LLM Mm with a carefully designed prompt following Definition
+2.
+Full prompt template for hiring domain:
+
+21
+
+A PREPRINT - JANUARY 6, 2026
+
+[ROLE]:
+You are a senior technical recruiter with 10+ years of experience evaluating software
+engineering candidates for companies ranging from FAANG (Google, Meta, Amazon) to high-growth
+startups. You have personally screened over 5,000 resumes and conducted 1,000+ interviews
+across all seniority levels.
+[TASK]:
+Your task is to assess how typical a given resume is for a candidate of a specific quality
+level.
+[STATE CONDITIONING]:
+For this assessment, ASSUME that the candidate’s TRUE quality level is:
+[STATE DESCRIPTION]
+[STATE DESCRIPTIONS]:
+Clear Reject (s1): Lacks basic qualifications. No relevant degree or less than
+1 year relevant experience or major red flags (large unexplained employment gaps,
+inconsistencies, fundamental skill mismatches).
+Phone Screen (s2): Borderline qualifications. Some relevant experience but
+significant gaps or concerns needing verification (non-traditional background, career
+switcher, unclear technical depth, or inconsistencies requiring clarification).
+Interview (s3): Qualified candidate meeting standard requirements. Relevant degree
+(CS or related), 2+ years relevant industry experience, demonstrated technical
+competency, appropriate for cultural fit and depth assessment.
+Strong Hire (s4): Exceptional candidate exceeding standard qualifications. Top-tier
+education (elite CS program) and/or senior experience (5+ years at major companies),
+rare specialized skills, publications/major open-source contributions, leadership
+experience.
+[QUESTION]:
+Given the assumed quality level above, how TYPICAL or REPRESENTATIVE is the following resume
+for someone at that level?
+[RESUME]:
+[RESUME TEXT inserted here]
+[SCORING RUBRIC]:
+Provide a score from 0 to 10 where:
+10 = Extremely typical. This is exactly what we’d expect from this quality level.
+Every aspect of the resume aligns perfectly.
+8-9 = Quite typical.
+element.
+
+Strong match with only minor variations or one small unexpected
+
+6-7 = Moderately typical.
+elements.
+4-5 = Somewhat typical.
+2-3 = Atypical.
+
+Generally fits but with some notable differences or missing
+Plausible but imperfect match.
+
+Several elements don’t align.
+
+Many elements don’t fit this quality level.
+
+0-1 = Completely atypical.
+be shocking.
+
+Would be surprising.
+
+Fundamentally inconsistent with this quality level.
+
+[OUTPUT FORMAT]:
+Provide ONLY the numeric score (0-10).
+Score:
+
+Do not include explanation or justification.
+
+LLM ensemble configuration. We query five diverse models:
+1. GPT: OpenAI’s GPT-4o model (gpt-4o-2024-05-13 checkpoint via OpenAI API)
+Temperature: 0.7, Max tokens: 10, Top-p: 1.0
+Known bias: Elite university favoritism
+2. Claude Sonnet: Anthropic’s Claude 4.5 Sonnet (claude-4-5-sonnet-20240620 via Anthropic API)
+22
+
+Would
+
+A PREPRINT - JANUARY 6, 2026
+
+Temperature: 0.7, Max tokens: 10
+Known bias: Verbosity preference (favors detailed descriptions)
+3. Gemini Pro: Google’s Gemini Pro 3.0 (gemini-pro-3.0 via Google AI API)
+Temperature: 0.7, Max tokens: 10
+Known bias: Recency (overweights recent experience)
+4. Grok: xAI’s Grok-4 (grok-4 via xAI API)
+Temperature: 0.7, Max tokens: 10
+Known bias: Startup experience favoritism
+5. DeepSeek: DeepSeek’s DeepSeek-V3 (deepseek-chat via DeepSeek API)
+Temperature: 0.7, Max tokens: 10
+Known bias: Academic publication weighting
+Temperature justification. We use temperature=0.7 rather than deterministic sampling (temperature=0) to introduce
+controlled stochasticity. This serves two purposes: (1) provides diversity in ensemble responses, preventing mode
+collapse where all models give identical answers, and (2) better represents calibrated uncertainty (very low temperature
+produces overconfident point estimates).
+Response parsing. We parse the LLM’s text response by: (1) extracting the first numeric token matching regex
+[0-9]+(?:.[0-9]+)?, (2) clamping to range [0, 10], (3) normalizing via Equation 61: L̂m (x|s) = r/10.
+If parsing fails (model returns non-numeric response), we retry up to 3 times with increasingly explicit instructions,
+then fall back to uniform likelihood L̂m (x|s) = 0.5 for that (model, state) pair. Empirically, parsing failures occur in
+< 1% of queries.
+2.3.3
+
+Dataset Generation and Validation
+
+Synthetic resume generation. We generate 1,000 synthetic resumes with known ground-truth states using the following procedure:
+1. Sample ground-truth state: For each candidate i ∈ {1, . . . , 1000}, sample si ∼ Categorical(π) where
+π = [0.65, 0.25, 0.08, 0.02]. This yields approximately 650 s1 candidates, 250 s2 , 80 s3 , and 20 s4 .
+2. Sample resume features conditional on state: Given si , sample features from state-specific distributions:
+• Education: University tier ∈ {elite, top-50, average, below-average} sampled from state-dependent
+multinomial:
+s1 : [0.05, 0.10, 0.30, 0.55] (mostly below-average/average)
+s2 : [0.10, 0.25, 0.45, 0.20]
+s3 : [0.20, 0.50, 0.25, 0.05]
+s4 : [0.80, 0.15, 0.05, 0.00] (heavily elite)
+• Degree: BS/MS/PhD sampled with state-dependent probabilities (e.g., s4 has 40% PhD vs. s1 has 5%)
+• GPA: Sampled from state-dependent Beta distributions:
+s1 : Beta(2, 5) rescaled to [2.0, 3.5] (median 2.8)
+s2 : Beta(3, 3) rescaled to [2.5, 3.8] (median 3.2)
+s3 : Beta(5, 2) rescaled to [3.0, 4.0] (median 3.6)
+s4 : Beta(8, 1) rescaled to [3.5, 4.0] (median 3.9)
+• Years of experience: Truncated normal distributions:
+s1 : N (0.5, 0.3) truncated to [0, 2]
+s2 : N (2, 1) truncated to [1, 5]
+s3 : N (4, 1.5) truncated to [2, 8]
+s4 : N (7, 2) truncated to [5, 15]
+• Company prestige:
+For each job in work history, sample company type ∈
+{FAANG, tier-2, startup, unknown} from state-dependent distributions
+• Tech stack: Sample number of technologies (programming languages, frameworks, tools) and their
+depth (basic/intermediate/advanced) from state-dependent distributions
+• Projects: Sample number of projects, complexity levels, and domains (web/mobile/ML/systems/other)
+from state-dependent distributions
+23
+
+A PREPRINT - JANUARY 6, 2026
+
+• Demographics: Assign names to imply gender and race/ethnicity using US Census name-ethnicity
+database [110], ensuring balanced representation across states for fairness testing
+3. Generate resume text via GPT-4o: For each candidate, construct a prompt specifying all sampled features,
+then query GPT-4o (temperature=0.8 for diversity) with:
+Generate a realistic software engineering resume for the following candidate
+profile:
+[Feature specifications inserted here]
+Format as plain text with standard resume sections (Education, Experience,
+Projects, Skills). Length: 300-500 words. Use professional but varied writing
+styles (not all resumes should sound identical).
+
+4. Quality control: Manually review 50 random resumes to ensure they are realistic and match the intended
+state. Remove any that are obviously misaligned.
+Ground truth validation with human experts. To validate that our synthetic labels are reasonable proxies for true
+candidate quality, we conduct a human expert labeling study:
+1. Recruit expert recruiters: Three senior technical recruiters with 8–12 years experience at companies including Google, Amazon, Microsoft, and Series-B+ startups
+2. Blind evaluation: Randomly sample 100 resumes (stratified by state: 65 s1 , 25 s2 , 8 s3 , 2 s4 ). Present
+resumes to recruiters without showing our labels. Ask recruiters to categorize into the four states using the
+same definitions.
+3. Measure agreement: Compute inter-rater reliability:
+• Fleiss’ κ = 0.79 (substantial agreement among three recruiters)
+• Cohen’s κ = 0.83 between majority recruiter label and our GPT-4o-generated label
+• Exact match rate: 89% (89 of 100 resumes match majority recruiter label)
+• When disagreement occurs, it’s typically by one state level (e.g., s2 vs. s3 ), not gross mismatches (s1
+vs. s4 )
+This validation confirms that our synthetic labels are sufficiently accurate for controlled experimentation.
+Phone screen simulation. For candidates where the framework elects to gather additional information (phone screen
+action), we simulate phone screen outcomes:
+1. Sample phone screen performance from state-dependent distributions:
+• s1 candidates: 90% score poorly (0–4/10), 10% score medium (5–6/10)
+• s2 candidates: 30% score poorly, 50% medium, 20% well (7–10/10)
+• s3 candidates: 10% score poorly, 30% medium, 60% well
+• s4 candidates: 5% medium (bad day/nerves), 95% well
+2. Generate phone screen transcript snippets reflecting the sampled performance via GPT-4o prompt:
+Generate realistic phone screen notes for a software engineering candidate who
+performed [PERFORMANCE LEVEL] on the screen. Include brief notes on: technical
+question responses, behavioral questions, communication quality, any red flags.
+100-150 words.
+
+3. Query the 5 LLMs for likelihoods of this phone screen observation given each state, using analogous contrastive prompting
+This simulation allows us to evaluate sequential updating and VOI without requiring actual human recruiters to conduct
+1,000 phone screens.
+2.3.4
+
+Baseline Methods
+
+We compare our full framework against multiple baselines representing current practices and ablations:
+1. Single-LLM + Fixed Threshold (Industry Standard):
+• Query GPT-4o with discriminative prompt: “You are a recruiter. Rate this resume 0–10 for candidate
+quality where 10=strong hire and 0=clear reject.”
+24
+
+A PREPRINT - JANUARY 6, 2026
+
+• Apply threshold: Interview if score ≥ 7, reject if score < 7
+• This is the most common deployment pattern in industry
+2. Single-LLM + Calibrated Threshold:
+• Same as above but tune threshold τ on 200-resume validation set (disjoint from 1,000-resume test set)
+to minimize total cost
+• Optimal threshold: τ ∗ = 6.2 (lower than arbitrary 7.0)
+3. Ensemble Voting:
+• Query all 5 LLMs for binary decision (interview yes/no) via discriminative prompting
+• Use majority vote: interview if ≥ 3 models vote “interview”
+• If tied (e.g., 2-2 with one model abstaining), default to reject (conservative)
+4. Ensemble Averaging + Threshold:
+• Query all 5 LLMs for 0–10 scores via discriminative prompting
+• Compute mean score across models
+• Tune threshold on validation set (optimal: τ = 6.5)
+5. Our Framework (Full): Algorithm 2 with all components enabled
+6. Ablations: Our framework with components systematically disabled to isolate contributions:
+• No Multi-LLM: Use only GPT-4o for likelihood elicitation, keep all other components (Bayesian updating, cost-awareness, VOI)
+• No Sequential Updating: Concatenate all evidence (resume + phone screen) and query in one batch, lose
+ability to update beliefs incrementally
+• No VOI - Always Screen: Always conduct phone screen before final decision, ignore VOI calculation
+• No VOI - Never Screen: Never gather additional information, decide purely from resume
+• No Disagreement Signal: Disable disagreement-triggered screening, rely only on VOI threshold
+• No Prior Correction: Use uniform prior π = [0.25, 0.25, 0.25, 0.25] instead of empirical
+[0.65, 0.25, 0.08, 0.02]
+2.3.5
+
+Evaluation Metrics
+
+We evaluate all methods across four dimensions:
+1. Total Cost (Primary Metric)
+Total Cost =
+
+Sum of all costs incurred across 1,000 hiring decisions:
+
+1000
+X
+
+C(ai , si ) + cscreen · ⊮[phone screen conducted for candidate i]
+
+(79)
+
+i=1
+
+where ai ∈ A is the terminal action taken for candidate i, si ∈ S is their true state, C(ai , si ) is from Table 1, and
+cscreen = $150.
+Lower is better. This is our primary metric because it directly measures economic impact.
+2. Decision Accuracy (Secondary)
+
+Fraction of decisions matching the optimal action under perfect information:
+1000
+
+Accuracy =
+
+1 X
+⊮[ai = a∗ (si )]
+1000 i=1
+
+(80)
+
+where a∗ (s1 ) = reject, a∗ (s2 ) = phone screen, a∗ (s3 ) = a∗ (s4 ) = interview.
+Higher is better. Note that accuracy is a secondary metric: it treats all errors as equally bad, ignoring cost asymmetries.
+A method can have lower accuracy but lower cost if it makes cost-effective errors.
+25
+
+A PREPRINT - JANUARY 6, 2026
+
+3. Demographic Parity (Fairness)
+tected groups.
+
+We measure fairness via demographic parity: equal selection rates across pro-
+
+First, infer demographic attributes (gender and race/ethnicity) from candidate names using probabilistic matching
+against US Census s

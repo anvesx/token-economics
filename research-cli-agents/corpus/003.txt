@@ -1,0 +1,394 @@
+TITLE: How to Track Claude Code Usage in 2026: Built-in Commands, ccusage, and Desktop Dashboards Compared
+URL: https://dev.to/pederaa/how-to-track-claude-code-usage-in-2026-built-in-commands-ccusage-and-desktop-dashboards-compared-1kk1
+ORG: dev.to  TYPE: blog  DATE: 2026-08
+
+How to Track Claude Code Usage in 2026: Built-in Commands, ccusage, and Desktop Dashboards Compared - DEV Community
+
+ Add reaction
+
+ Like
+
+ Unicorn
+
+ Exploding Head
+
+ Raised Hands
+
+ Fire
+
+ Jump to Comments
+
+ Save
+
+ Boost
+
+Pick as gem
+
+ Copy link
+
+Copied to Clipboard
+
+ Share to X
+
+ Share to LinkedIn
+
+ Share to Facebook
+
+ Share to Mastodon
+
+ Share Post via...
+
+ Report Abuse
+
+If you use Claude Code on a Pro or Max plan, you have probably hit the wall mid-session: the 5-hour window runs out, or the weekly cap kicks in, usually right when the agent was in the middle of something important. The fix is not to code less. It is to see your usage before it becomes a problem.
+
+This post covers every practical way to track Claude Code usage in 2026, from built-in commands to community CLIs to desktop dashboards, and when each one makes sense.
+
+Disclosure: I work on Blume, one of the tools covered below. I have tried to keep the comparison factual so you can pick what fits.
+
+ The quick answer
+
+Fastest check: run /usage inside Claude Code for your current session and weekly limits
+
+API billing: run /cost to see running spend in the current session
+
+Historical reports in the terminal: npx ccusage@latest
+
+Real-time burn rate and predictions: Claude Code Usage Monitor (claude-monitor)
+
+A desktop app that watches all your agents, not just usage: Blume
+
+Now the details.
+
+ Understanding what you are actually limited by
+
+Claude Code subscriptions enforce two overlapping limits:
+
+A 5-hour rolling window. Your usage inside the current window counts against a session budget. When it resets, you get a fresh budget.
+
+A weekly cap. Heavy use across many sessions draws down a weekly allowance, shared across Claude Code, claude.ai chat, and Cowork.
+
+This matters because the two limits fail differently. The 5-hour window surprises you in the afternoon. The weekly cap surprises you on a Thursday. A good tracking setup makes both visible.
+
+ Option 1: The built-in commands
+
+Claude Code ships with everything you need for a point-in-time check:
+
+/usage shows your current 5-hour window and weekly usage with reset times (subscription plans)
+
+/cost shows running API spend for the session (API key users)
+
+/status shows account and model details
+
+/context shows how full your context window is
+
+There is also the Usage dashboard on claude.ai under Settings, which shows the session bar and weekly usage in a browser.
+
+Good for: quick checks before starting a long session.
+
+The gap: no history, no trends, no warning before you hit a limit, and nothing at all about what your agents are doing while you are away from the terminal.
+
+ Option 2: ccusage, the standard CLI report
+
+ccusage is the most widely used community tool. It reads the local JSONL logs that coding agents already write to disk and turns them into cost reports. No account, no telemetry, runs with a single command:
+
+npx ccusage@latest
+
+What you get:
+
+Daily, weekly, monthly, and per-session reports with USD cost estimates
+
+A 5-hour blocks report that maps directly onto Claude's billing windows
+
+Per-model breakdowns, cache token tracking, and date range filters
+
+Support for 15+ agent CLIs beyond Claude Code, including Codex, Gemini CLI, and Copilot CLI
+
+JSON export for piping into your own scripts
+
+Good for: understanding where your tokens went, especially across weeks or months.
+
+The gap: it is a report, not a monitor. You run it, read it, and close it. It will not tell you that your current session is on pace to hit the limit in 40 minutes.
+
+ Option 3: Claude Code Usage Monitor, the real-time view
+
+Claude Code Usage Monitor fills exactly that gap. Install it with uv tool install claude-monitor (or pip/pipx), run claude-monitor, and you get a live terminal dashboard with progress bars, burn-rate analysis, and predictions about when you will hit your limit.
+
+Notable features:
+
+Plan-aware budgets for Pro, Max5, and Max20, plus a P90 auto-detection mode
+
+Predictive warnings before you run out, based on your current burn rate
+
+Optional local history warehouse that keeps data beyond Claude's 30-day retention
+
+JSON/CSV export and a compact single-line mode for status bars
+
+Good for: heavy users who live inside the 5-hour window and want to pace themselves.
+
+The gap: it monitors Claude Code subscriptions only, and it monitors usage only. If you also run Codex or Cursor, or you care about what the agents are doing rather than just what they are spending, you need something broader.
+
+ Option 4: Blume, the desktop app for the whole agent setup
+
+Blume approaches the problem from a different angle. Usage tracking is one part of it, but the premise is that usage is a symptom. The underlying question is whether your coding agents are set up correctly at all.
+
+Blume is a desktop app that sits alongside Claude Code, Codex, and Cursor and gives you:
+
+Automatic improvement suggestions. Blume watches how your agents actually behave, detects inconsistencies between your setup and your instructions (a CLAUDE.md rule your agent keeps ignoring, a hook that never fires, skills that overlap), and proposes concrete fixes you approve or reject. This is the part the CLI tools do not attempt: it does not just show you the damage, it suggests the repair.
+
+Agent monitoring. See at a glance which agents are running, which are working, and which are stuck waiting for your approval, without cycling through terminal tabs.
+
+Usage tracking for Claude Code and Codex plans, so the 5-hour window and weekly cap are visible in one place across tools.
+
+Config management. Rules, skills, hooks, and the growing pile of dotfiles that agents depend on, managed centrally instead of drifting per-project.
+
+Local storage. Conversation history stays on your device.
+
+Good for: anyone running more than one agent, or anyone whose CLAUDE.md and hooks have grown past the point where they can eyeball whether the setup still makes sense.
+
+The gap: it is a desktop app, so if you want something scriptable in CI, ccusage's JSON export is the better fit.
+
+ Comparison table
+
+Built-in commands
+ccusage
+Usage Monitor
+Blume
+
+Interface
+In-session
+CLI report
+Live terminal UI
+Desktop app
+
+Real-time warnings
+No
+No
+Yes
+Yes
+
+Historical reports
+No
+Yes
+Yes (opt-in)
+Yes
+
+Tools covered
+Claude Code
+15+ agent CLIs
+Claude Code
+Claude Code, Codex, Cursor
+
+Shows what agents are doing
+No
+No
+No
+Yes
+
+Suggests setup fixes
+No
+No
+No
+Yes
+
+Scriptable output
+No
+JSON
+JSON/CSV
+No
+
+Price
+Included
+Free, OSS
+Free, OSS
+Free to start
+
+ Which one should you use?
+
+You hit limits occasionally: the built-in /usage command is enough.
+
+You want to understand a month of spending: ccusage.
+
+You are rationing a Max plan hour by hour: Claude Code Usage Monitor.
+
+You run multiple agents, or you suspect your agent config is quietly working against you: Blume.
+
+These are not mutually exclusive. A common stack is /usage for quick checks, ccusage in a monthly review, and a desktop app running in the background for everything else.
+
+ FAQ
+
+Does Claude Code share limits with claude.ai chat?
+
+Yes. Subscription usage draws from one pool across Claude Code, claude.ai, and Cowork. A heavy chat session eats into your coding budget.
+
+How do I see when my limit resets?
+
+Run /usage in Claude Code, or check Settings > Usage on claude.ai. Both show reset times for the 5-hour window and the weekly cap.
+
+Do these tools send my data anywhere?
+
+ccusage and Claude Code Usage Monitor read local log files and run entirely on your machine. Blume stores conversation history locally on your device.
+
+What about tracking Codex or Cursor usage too?
+
+ccusage covers many agent CLIs for cost reports. Blume tracks Claude Code and Codex plan usage and monitors agent activity across Claude Code, Codex, and Cursor.
+
+If you have a tracking setup that works well for you, I would genuinely like to hear about it in the comments, especially if you are juggling more than one agent.
+
+ Alex Shev
+
+ Alex Shev
+
+ Alex Shev
+
+ Follow
+
+ Creator of Terminal Skills — curated terminal skills, CLI tools, and practical workflows for modern developers.
+
+ Location
+
+ Dallas-Fort Worth, Texas
+
+ Work
+
+ Founder at SEOG & Terminal Skills
+
+ Joined
+
+ Mar 7, 2026
+
+ •
+
+ Aug 5
+
+Copy link
+
+ Hide
+
+Usage tracking gets useful when it changes behavior, not just when it produces a graph. The metric I care about is where tokens are going: exploration, repeated failures, context reloads, or actual implementation work.
+
+ Alex Shev
+
+ Alex Shev
+
+ Alex Shev
+
+ Follow
+
+ Creator of Terminal Skills — curated terminal skills, CLI tools, and practical workflows for modern developers.
+
+ Location
+
+ Dallas-Fort Worth, Texas
+
+ Work
+
+ Founder at SEOG & Terminal Skills
+
+ Joined
+
+ Mar 7, 2026
+
+ •
+
+ Aug 7
+
+Copy link
+
+ Hide
+
+The useful cost view is not only total spend. I want cost by workflow shape: exploration, implementation, review, failed attempts, and rework. Otherwise teams optimize the visible number and miss the expensive pattern that created it.
+
+ Martín Sadofschi
+
+ Martín Sadofschi
+
+ Martín Sadofschi
+
+ Follow
+
+ Building Claude Monitor, a free, open-source browser extension that shows your Claude usage limits live. Not affiliated with Anthropic.
+
+ Work
+
+ Founder at UsagePeek
+
+ Joined
+
+ Jan 6, 2025
+
+ •
+
+ Oct 6
+
+Copy link
+
+ Hide
+
+Good comparison. One more option for people on Pro or Max: Claude Code shares the 5-hour and weekly limits with claude.ai, so a browser extension can keep the same numbers in view outside the terminal. Disclosure, I maintain one: Claude Monitor (free, MIT) puts them in the toolbar with reset countdowns, alerts at 80%/95% and 30 days of history. claude-monitor.com/
+
+ Henry Godnick
+
+ Henry Godnick
+
+ Henry Godnick
+
+ Follow
+
+ the tech that is being creating is a double sided coin.
+
+ Education
+
+ https://www.tokenbar.site/
+
+ Pronouns
+
+ https://www.tokenbar.site/
+
+ Work
+
+ https://www.tokenbar.site/
+
+ Joined
+
+ Mar 11, 2026
+
+ •
+
+ Oct 14
+
+Copy link
+
+ Hide
+
+Useful breakdown. One more Mac option for ambient visibility without living in the terminal: I built TokenBar (tokenbar.site). Menu bar app for Claude, Codex, Cursor, and OpenAI usage and costs, $15 lifetime. Pairs well with /usage for a quick check and ccusage for a monthly review.
+
+ Peder Aaby
+
+ Follow
+
+ Founder of blume.codes
+
+ Joined
+
+ Aug 5, 2026
+
+ I built Blume: it turns your coding-agent corrections into rules
+
+ #showdev
+ #claudecode
+ #ai
+ #devtools
+
+ Claude Code's Weekly Limit, Explained (and How to See It Coming)
+
+ #claudecode
+ #ai
+ #devtools
+ #productivity
+
+ We're a place where coders share, stay up-to-date and grow their careers.
+
+ Log in
+
+ Create account

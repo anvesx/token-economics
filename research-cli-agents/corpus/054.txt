@@ -1,0 +1,554 @@
+TITLE: The Coding Agent Economy
+URL: https://www.requesty.ai/coding-agent-economy
+ORG: Requesty  TYPE: blog  DATE: 2026-04
+
+The Coding Agent Economy | Requesty
+
+Abstract
+
+The Coding Agent Economy
+The Economics of Coding Agents: Cost, Usage, and Model Preferences Across AI-Native IDEs
+Thibault JaiguRequestyMay 2026
+
+$92
+Avg cost / active user / mo
+
+4x
+Avg context size YoY
+
+86%
+Cache hit rate
+
+9
+Agents analyzed
+
+Abstract
+
+We analyze twelve months of production LLM gateway data covering nine coding agents (Claude Code[1], Roo Code[2], Cline[3], Kilo Code[4], OpenCode[5], Zed[6], Cursor[7], GitHub Copilot[8], and Codex CLI[9]) from May 2025 through April 2026. We find that: (1) average cost per active user (those with at least two active days per month) is $92/month, rising to $108/month for Claude Code, with P95 users spending $291/month; (2) Claude models power 92% of all coding agent spend, up from 68% twelve months prior, representing a near-complete consolidation of model choice; and (3) prompt caching has transformed cost economics, with platform-wide cache hit rates rising from 52% to 86%, effectively compressing per-call costs even as context windows grew 4x. These findings have implications for model providers, agent developers, and infrastructure operators navigating the emerging economics of autonomous coding workflows.
+
+Introduction
+AI coding agents have evolved from simple autocomplete systems into autonomous software engineering tools capable of planning, executing, and iterating on complex multi-step tasks[14]. This evolution carries significant economic implications. Where a single code completion required one API call, an agentic coding session may involve hundreds of calls as the agent reads files, plans changes, writes code, runs tests, and iterates on failures.
+Despite the rapid growth of this category, empirical data on the economics of coding agents remains limited. Prior work has examined neural code completion productivity[16] and agent architectures for software engineering[14], but no longitudinal study has focused specifically on the cost structures, model preferences, and usage intensities of AI coding tools in production.
+We present what we believe to be the first twelve-month longitudinal analysis of coding agent economics. Our data covers nine agents spanning the full spectrum from first-party tools (Claude Code[1], Codex CLI[9]) to open-source IDE extensions (Roo Code[2], Cline[3], Kilo Code[4], OpenCode[5]) to integrated editors (Zed[6], Cursor[7]). By observing these agents through a shared gateway, we can make direct comparisons of cost, efficiency, and model preference that are not available from any single provider's telemetry.
+
+Cost per User Over Time
+
+Cost per user grew 3.8x in 12 months, from $14 to $54/month ($92 for active users). Claude Code active users average $108/month, with P95 at $291.
+
+Average cost per user per month by coding agent
+Weighted average across all users of each agent. May 2025 to April 2026.
+
+Claude CodeRoo CodeKilo CodeClineOpenCode
+
+Claude Code leads at $78/month in April 2026. Roo Code grew steadily from $17 to $46 over twelve months.
+
+We observe a clear upward trend. The overall 3.8x increase reflects several converging factors:
+Reasoning models. The introduction of Claude 3.5 Sonnet, o3, and Gemini 2.5 Pro with extended thinking increased per-token costs while enabling more capable agentic behavior.
+Growing context windows. Average input tokens per call rose from approximately 50,000 (May 2025) to nearly 200,000 (April 2026), a 4x increase as agents pass entire project contexts into ever larger windows. Frontier models now support up to 1M tokens[17].
+Longer sessions. Claude Code users averaged 1,549 API calls per month by April 2026, consistent with extended multi-step agentic workflows.
+Composition shift. The growing share of higher-spending agents (Claude Code, OpenCode) in the platform mix pulled the weighted average upward.
+Cost by Agent
+By April 2026, Claude Code users spend the most at $78/month on average, followed by Kilo Code ($65), OpenCode ($58), and Roo Code ($46). Cline users spend the least among major agents at $25/month. The variation across agents reflects different usage patterns. Claude Code's high average is consistent with its intensive agentic loop (1,549 calls/month), while Cline's lower cost aligns with fewer but longer individual calls (214 calls/month at higher per-call cost).
+Active User Economics
+The averages above include all users, many of whom represent one-time trial accounts that made a single day of requests. Filtering to active users (those with at least two distinct active days in a given month) removes this trial-user noise and reveals what regular users actually spend.
+
+Cost per user by agent, April 2026: all users vs. active users (≥2 active days)
+AgentAll MeanActive MeanActive MedianActive P95
+Claude Code$78$108$23$291
+Roo Code$46$79$25$333
+Kilo Code$65$107$5$268
+Cline$25$50$17$205
+OpenCode$58$104$15$473
+Filtering to active users raises the weighted average across all agents from $54 to approximately $92/month. Claude Code active users average $108/month, with a P95 of $291. The median-to-mean gap remains large across all agents (e.g. $23 median vs. $108 mean for Claude Code), confirming that a small number of power users drive the majority of spend.
+The P95 figures reveal the ceiling for heavy users. At $291/month for Claude Code and $473/month for OpenCode, these represent developers running extended agentic sessions daily. Roo Code P95 users spend $333/month, similar to Claude Code despite lower average usage intensity, suggesting a subset of Roo Code users who have adopted comparably deep workflows.
+
+The Caching Revolution
+Prompt caching[11] has been the single most impactful economic shift in the coding agent space over this twelve-month period.
+
+Cache hit rate by coding agent, April 2026
+cached_tokens / input_tokens. Higher cache hit = lower effective input cost.
+
+Claude Code
+
+92%
+
+Claude Code
+Cache hit: 92%
+Avg input: 84K tokens/call
+Avg cost: $0.050/call
+OpenCode
+
+89%
+
+OpenCode
+Cache hit: 89%
+Avg input: 95K tokens/call
+Avg cost: $0.061/call
+Aider
+
+84%
+
+Aider
+Cache hit: 84%
+Avg input: 16K tokens/call
+Avg cost: $0.009/call
+Zed
+
+80%
+
+Zed
+Cache hit: 80%
+Avg input: 89K tokens/call
+Avg cost: $0.083/call
+Roo Code
+
+74%
+
+Roo Code
+Cache hit: 74%
+Avg input: 76K tokens/call
+Avg cost: $0.105/call
+Forge
+
+64%
+
+Forge
+Cache hit: 64%
+Avg input: 65K tokens/call
+Avg cost: $0.107/call
+Cline
+
+61%
+
+Cline
+Cache hit: 61%
+Avg input: 77K tokens/call
+Avg cost: $0.121/call
+Kilo Code
+
+46%
+
+Kilo Code
+Cache hit: 46%
+Avg input: 62K tokens/call
+Avg cost: $0.065/call
+Claude Code (92%) achieves the highest cache efficiency. Kilo Code (46%) trails, reflecting different prompt construction patterns.
+
+Platform-wide cache hit rates rose from 52% to 86%, making input tokens ~7x cheaper than list price.
+The cache hit rate measures the fraction of input tokens served from prompt cache rather than reprocessed. An 86% cache hit rate means that the effective cost of input tokens is roughly 7x lower than list price, fundamentally altering the economics of large-context agentic workflows.
+Cache Efficiency by Agent
+Claude Code achieves a 92% cache hit rate, meaning only 8% of its input tokens require fresh processing. This is extraordinary given that its average prompt exceeds 200,000 tokens. The implication is that Claude Code's architecture is specifically optimized to maintain consistent context prefixes across sequential calls, maximizing cache reuse.
+At the other end of the spectrum, Kilo Code caches 46% of input tokens, with smaller average context windows (62K vs 200K for Claude Code). This lower cache rate likely reflects different prompt construction patterns that reduce prefix reuse across sequential calls.
+The economic impact is direct: Claude Code users can afford to make 1,549 API calls per month at a reasonable average spend ($78) precisely because 92% of every call's input tokens cost approximately 90% less than list price. Without caching, the same usage pattern would cost roughly 7x more.
+
+Model Provider Preferences
+The Claude Consolidation
+The Claude model family (Sonnet, Opus, Haiku) has achieved near-total dominance of the coding agent category. In May 2025, Claude powered 68% of coding agent spend through our gateway. By December 2025, this had risen to 95%, and it has stabilized around 92% through April 2026.
+
+Claude models power 92% of all coding agent spend. When developers can pick any model, they choose Claude.
+This consolidation occurred organically across agents whose users freely choose their backend model. It reflects a revealed preference: when developers can pick any model for coding tasks, they overwhelmingly choose Claude.
+
+Claude model share by coding agent, April 2026
+Percentage of total spend allocated to Claude models (Sonnet, Opus, Haiku) per agent.
+
+Claude share
+
+Claude Code
+
+100%
+
+Claude Code
+Claude: 100%
+OpenAI: 0.20%
+Gemini: 0.01%
+Forge
+
+100%
+
+Forge
+Claude: 100%
+OpenAI: 0.00%
+Gemini: 0.00%
+Kilo Code
+
+94%
+
+Kilo Code
+Claude: 94%
+OpenAI: 0.20%
+Gemini: 3.4%
+DeepSeek: 0.20%
+Other: 2.5%
+Roo Code
+
+92%
+
+Roo Code
+Claude: 92%
+OpenAI: 4.1%
+Gemini: 1.8%
+Other: 2.3%
+Cline
+
+89%
+
+Cline
+Claude: 89%
+OpenAI: 1.6%
+Gemini: 5.6%
+DeepSeek: 0.40%
+Other: 3.4%
+OpenCode
+
+79%
+
+OpenCode
+Claude: 79%
+OpenAI: 13%
+Gemini: 2.0%
+DeepSeek: 0.50%
+Other: 5.4%
+Aider
+
+78%
+
+Aider
+Claude: 78%
+OpenAI: 11%
+Gemini: 11%
+Zed
+
+59%
+
+Zed
+Claude: 59%
+OpenAI: 41%
+Gemini: 0.01%
+Claude powers 79% to 100% of spend across all coding agents. Zed is the most model-diverse at 59% Claude / 41% OpenAI.
+
+Several patterns emerge from the per-agent breakdown:
+Claude Code is nearly 100% locked to Claude models. This is expected given it is Anthropic's own product.
+Zed is the most model-diverse agent at 59% Claude and 41% OpenAI. This makes Zed a useful bellwether for multi-model strategies in integrated editors.
+OpenCode has the highest non-Claude adoption among open-source agents at 13% OpenAI and 5% Other, suggesting its users actively experiment with alternative models.
+Gemini's share is minimal across all agents (0 to 6%), despite competitive pricing from Google. This suggests that price is not the primary decision factor for coding agent users.
+
+Provider Latency and Routing
+Coding agents that route through Requesty can reach the same model via multiple upstream providers: Anthropic direct, AWS Bedrock, and Google Vertex. This creates a natural experiment for comparing provider performance on identical workloads.
+
+Claude Code median latency by provider and model, April 2026
+Median provider_latency in seconds for Claude Code traffic routed through Anthropic, Bedrock, and Vertex.
+
+Anthropic (Haiku)
+
+1.8s
+
+Anthropic (Haiku)
+Median latency: 1.8s
+P95 latency: 8.1s
+Median TTFT: 0.8s
+Success: 96.0%
+Cache hit: 90.3%
+Vertex (Haiku)
+
+2.1s
+
+Vertex (Haiku)
+Median latency: 2.1s
+P95 latency: 9.3s
+Median TTFT: 0.9s
+Success: 92.8%
+Cache hit: 94.8%
+Bedrock (Haiku)
+
+2.6s
+
+Bedrock (Haiku)
+Median latency: 2.6s
+P95 latency: 17.1s
+Median TTFT: 1.4s
+Success: 83.4%
+Cache hit: 84.4%
+Anthropic (Sonnet)
+
+4.4s
+
+Anthropic (Sonnet)
+Median latency: 4.4s
+P95 latency: 24.3s
+Median TTFT: 1.9s
+Success: 97.0%
+Cache hit: 91.7%
+Vertex (Opus)
+
+4.5s
+
+Vertex (Opus)
+Median latency: 4.5s
+P95 latency: 15.8s
+Median TTFT: 1.9s
+Success: 96.5%
+Cache hit: 95.6%
+Bedrock (Sonnet)
+
+4.8s
+
+Bedrock (Sonnet)
+Median latency: 4.8s
+P95 latency: 24.7s
+Median TTFT: 2.1s
+Success: 97.6%
+Cache hit: 94.1%
+Bedrock (Opus)
+
+4.9s
+
+Bedrock (Opus)
+Median latency: 4.9s
+P95 latency: 27.4s
+Median TTFT: 2.3s
+Success: 96.0%
+Cache hit: 94.6%
+Anthropic (Opus)
+
+4.9s
+
+Anthropic (Opus)
+Median latency: 4.9s
+P95 latency: 27.1s
+Median TTFT: 2.5s
+Success: 98.7%
+Cache hit: 92.5%
+Vertex (Sonnet)
+
+6.2s
+
+Vertex (Sonnet)
+Median latency: 6.2s
+P95 latency: 32.1s
+Median TTFT: 1.4s
+Success: 97.1%
+Cache hit: 85.9%
+Anthropic Haiku is fastest at 1.8s median. Vertex Sonnet is slowest at 6.2s. Opus latency is similar across all three providers (4.5-4.9s).
+
+For Claude Code in April 2026, we observe:
+Anthropic direct: 4.6s median provider latency, 2.2s median TTFT, 98.5% success rate
+AWS Bedrock: 4.9s median provider latency, 2.3s median TTFT, 96.0% success rate
+Google Vertex: 4.0s median provider latency, 1.7s median TTFT, 92.8% success rate
+Vertex offers the fastest time to first token (1.7s vs 2.2s for Anthropic) but has the lowest success rate (92.8% vs 98.5%). This speed-reliability trade-off creates meaningful routing decisions for latency-sensitive workloads, particularly given that a typical Claude Code session involves 50 to 200 API calls.
+
+Error Rates and Reliability
+
+Error rate by coding agent, April 2026
+Percentage of API calls that returned an error (non-200 status). Lower is better.
+
+Aider
+
+0.90%
+
+Aider
+Error rate: 0.90%
+Success rate: 99%
+1.7K calls
+Roo Code
+
+2.5%
+
+Roo Code
+Error rate: 2.5%
+Success rate: 98%
+147K calls
+OpenCode
+
+3.1%
+
+OpenCode
+Error rate: 3.1%
+Success rate: 97%
+173K calls
+Zed
+
+3.7%
+
+Zed
+Error rate: 3.7%
+Success rate: 96%
+4.5K calls
+Cline
+
+4.9%
+
+Cline
+Error rate: 4.9%
+Success rate: 95%
+28K calls
+Claude Code
+
+7.0%
+
+Claude Code
+Error rate: 7.0%
+Success rate: 93%
+494K calls
+Kilo Code
+
+10%
+
+Kilo Code
+Error rate: 10%
+Success rate: 90%
+23K calls
+Forge
+
+11%
+
+Forge
+Error rate: 11%
+Success rate: 89%
+1.1K calls
+Roo Code is the most reliable at 2.5% error rate. Forge trails at 11.2%. Kilo Code sits at 10.0%.
+
+Error rates vary dramatically across agents. Roo Code is the most reliable agent, maintaining 2 to 5% error rates consistently over twelve months. Claude Code spiked to 30% in August 2025 (its first month, likely integration issues) but stabilized to 5 to 7% by April 2026.
+Finish Reason Distribution
+
+Tool-call finish rate by coding agent, April 2026
+Share of API calls that end with a tool_calls finish reason (the primary agentic pattern).
+
+tool_calls share
+
+Roo Code
+
+91%
+
+Roo Code
+tool_calls: 91%
+stop: 6.2%
+empty/failed: 2.3%
+length: 0.40%
+OpenCode
+
+87%
+
+OpenCode
+tool_calls: 87%
+stop: 10%
+empty/failed: 2.5%
+length: 0.02%
+Forge
+
+79%
+
+Forge
+tool_calls: 79%
+stop: 10%
+empty/failed: 10%
+length: 0.50%
+Claude Code
+
+73%
+
+Claude Code
+tool_calls: 73%
+stop: 20%
+empty/failed: 6.4%
+length: 0.80%
+Zed
+
+67%
+
+Zed
+tool_calls: 67%
+stop: 31%
+empty/failed: 2.4%
+length: 0.00%
+Kilo Code
+
+63%
+
+Kilo Code
+tool_calls: 63%
+stop: 28%
+empty/failed: 10%
+length: 0.30%
+Cline
+
+16%
+
+Cline
+tool_calls: 16%
+stop: 81%
+empty/failed: 2.8%
+length: 0.40%
+Aider
+
+12%
+
+Aider
+tool_calls: 12%
+stop: 87%
+empty/failed: 0.90%
+length: 0.00%
+Roo Code leads at 91% tool-call rate. Cline and Aider favor stop-based single-turn completions. Kilo Code shows 63% tool_calls.
+
+How API calls terminate reveals fundamental differences in agent architecture:
+Tool-call dominant agents: Claude Code (73% tool_calls), Roo Code (91%), and OpenCode (87%) complete most requests by invoking a tool, consistent with the agentic read-plan-execute loop.
+Stop-dominant agents: Cline ends 81% of calls with a natural stop, suggesting a single-turn generation pattern rather than iterative tool use.
+Mixed-pattern agents: Kilo Code shows 63% tool_calls and 28% stop, a balanced approach between agentic tool use and single-turn completions.
+
+Cache-Cost Correlation
+
+Every agent with a cache hit rate above 80% has a per-call cost below $0.10. Caching is the defining economic lever.
+The relationship between caching efficiency and per-call cost is strong and directional. Every agent with a cache hit rate above 80% has a per-call cost below $0.10. This is not simply because cheaper calls happen to be cached; rather, caching reduces the effective input cost by 90% for cached tokens, making the total call cost a fraction of what it would be at list price.
+The economic implications are significant. At 92% cache hit, Claude Code pays approximately $0.30 per million input tokens effective rate (vs. $3.00 list price for Sonnet). At 46%, Kilo Code pays approximately $1.62 per million input tokens. This 5.4x cost difference compounds across every call in every session.
+
+Discussion
+The Caching Moat
+Our data reveals that caching architecture is the primary determinant of coding agent economics. The difference between 92% cache hit rate (Claude Code) and 46% (Kilo Code) translates to roughly 5.4x difference in effective input token cost. Agents that invest in maintaining consistent context prefixes across sequential calls achieve a compounding advantage: lower per-call costs enable more frequent calls, which in turn enable more sophisticated multi-step workflows, which justify higher per-user prices.
+Why Claude Won the Coding Market
+The near-total consolidation to Claude models (92% of spend) across tools whose users freely choose their backend model is striking. We hypothesize several contributing factors:
+Prompt caching alignment. Claude's caching implementation appears particularly well-suited to the agentic coding pattern of repeated large contexts with small deltas.
+Tool use capabilities. Claude's structured tool use enables the read-plan-edit-test loop that defines modern coding agents.
+Context window size. Claude now offers up to 1M tokens of context, accommodating entire codebases without requiring context management heuristics.
+Network effects. As open-source agents optimize their prompts and workflows for Claude, switching costs increase for users of those agents.
+Notably, price does not appear to be the primary factor. Gemini models are often cheaper per token, yet their share has declined from 34% (May 2025 via Cline) to under 6% across all agents.
+The Cost Paradox
+Per-user costs have nearly quadrupled while per-call costs remained stable. This apparent paradox resolves cleanly: users are making more calls, not more expensive calls. The 3.8x increase in per-user spend closely tracks the growth in average calls per user over the same period, while caching improvements have kept individual call costs flat despite 4x larger contexts.
+The Reliability Gap
+The divergence in error rates across agents suggests that API integration quality varies significantly across tooling. Roo Code maintains the lowest error rates at 2.5%, while several agents exceed 10%. Agents that carefully handle retries, timeouts, and model version migrations maintain high reliability even through periods of rapid upstream change.
+Provider Diversification
+The growth of Bedrock as an alternative to Anthropic direct for Claude models points toward a maturing market where enterprises prefer to route through their existing cloud provider relationships. With cache hit rates on Bedrock (94.6%) now exceeding Anthropic direct (92.5%), the performance penalty for indirect routing has largely disappeared.
+
+Conclusion
+The coding agent market has undergone rapid structural evolution over twelve months. Average per-user costs have nearly quadrupled, yet per-call costs have remained stable due to caching improvements. The per-user increase is driven primarily by longer, more intensive agentic sessions. Model choice has converged overwhelmingly toward Claude, not through lock-in but through revealed preference across open-source tools. Caching has emerged as the defining economic lever, creating up to 5.4x cost advantages for agents that optimize context reuse.
+Provider latency analysis reveals that Bedrock and Vertex offer competitive alternatives to Anthropic direct, with Vertex leading on TTFT and Bedrock matching on cache efficiency. The error rate analysis exposes a reliability gap across agents, with the most reliable agents maintaining error rates below 5%. Finish reason data confirms the industry's shift toward tool-call-dominant agentic patterns, with Roo Code completing the transition from 100% stop-based to 91% tool-call-based completions over twelve months.
+These findings suggest that the coding agent market is still in an early expansion phase where usage intensity continues to grow as agents become more capable. The interplay between rising usage intensity, improving cache efficiency, and provider diversification will determine whether per-user costs stabilize or continue their upward trajectory.
+
+Data and Methodology
+Data Source
+Our dataset comprises anonymized, aggregated monthly metrics from the Requesty production gateway. Requesty is an LLM routing platform that sits between coding agents and upstream model providers (Anthropic, OpenAI, Google, DeepSeek, and others), recording per-request metadata including cost, token counts, latency, and model selection.
+Scope
+The dataset covers twelve complete calendar months from May 1, 2025 through April 30, 2026. Nine coding agents are identified via request headers and origin metadata. Not all agents were present for the full period; Claude Code first appeared in August 2025, OpenCode in November 2025, and Codex CLI in March 2026.
+Unit of Analysis
+The unit of analysis throughout this paper is a user, identified by a unique API routing key. We report only averages, medians, percentiles, and ratios. We do not report absolute user counts, total token volumes, or total spend.
+Agent Identification
+Agents were identified using two methods depending on data availability. From May 2025 through January 2026, identification relied on request origin identifiers and referral metadata. From February 2026 onward, structured client identifiers in request headers supplemented these fields for improved coverage.
+Limitations
+Our sample reflects users who route through Requesty and is subject to selection bias. Several agents in our dataset (notably Cursor and GitHub Copilot) primarily connect directly to model providers rather than through third-party gateways, so their representation here is minimal and not indicative of their actual market position. Additionally, Anthropic reports zero reasoning tokens for Claude models even when extended thinking is enabled, so reasoning token comparisons across providers should be interpreted with caution.
+
+References
+[1]Anthropic. Claude Code: Agentic Coding Tool. 2026. https://code.claude.com
+[2]Roo Code. Roo Code: AI Coding Agent for VS Code. 2025. https://github.com/RooVetGit/Roo-Code
+[3]Cline Bot Inc. Cline: Autonomous Coding Agent SDK, IDE Extension, and CLI. 2026. https://github.com/cline/cline
+[4]Kilo Code, Inc. Kilo Code: Open Source AI Coding Agent for VS Code, JetBrains, and CLI. 2026. https://kilo.ai
+[5]OpenCode. OpenCode: Terminal-based AI Coding Agent. 2025. https://github.com/opencode-ai/opencode
+[6]Zed Industries. Zed: A High-Performance Code Editor with AI Integration. 2026. https://zed.dev
+[7]Anysphere. Cursor: The AI Code Editor. 2026. https://cursor.com
+[8]GitHub. GitHub Copilot. 2026. https://github.com/features/copilot
+[9]OpenAI. Codex CLI: Lightweight Coding Agent. 2026. https://github.com/openai/codex
+[10]Gauthier, P. Aider: AI Pair Programming in Your Terminal. 2025. https://github.com/Aider-AI/aider
+[11]Anthropic. Prompt Caching with Claude. 2025. https://claude.com/blog/prompt-caching
+[12]Anthropic. Claude Sonnet 4.6. 2026. https://claude.com/product/overview
+[13]OpenAI. Introducing o3 and o4-mini. 2025. https://openai.com/index/introducing-o3-and-o4-mini/
+[14]Yang, J. et al. "SWE-agent: Agent-Computer Interfaces Enable Automated Software Engineering." arXiv:2405.15793, 2024.
+[15]Cognition. Devin: AI Software Engineer. 2024. https://www.cognition.ai/blog/introducing-devin
+[16]Ziegler, A. et al. "Productivity Assessment of Neural Code Completion." Proc. 6th ACM SIGPLAN Int. Symp. Machine Programming, 2022.
+[17]Epoch AI. "LLMs now accept longer inputs, and the best models can use them more effectively." Data Insights, 2025. https://epoch.ai/data-insights/context-windows

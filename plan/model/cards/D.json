@@ -1,0 +1,3389 @@
+{
+ "schema": {
+  "inn": "Request tools array, tool count, schema tokens, context window size, session turn index.",
+  "out": "Original tools array, or stub entries plus get_tool_schema and invoke_tool wrapper tools.",
+  "store": "Reads policy thresholds and session tool-set hash. Writes tool-set hash per session and one decision row to the metadata store.",
+  "fail": "Fail open. Send the original tool set unchanged. A missing tool breaks the task, while an extra schema only costs tokens.",
+  "req": "RQ-D-001, RQ-D-002, RQ-D-003",
+  "src": [
+   "C:019",
+   "C:021",
+   "C:022",
+   "C:055",
+   "C:111",
+   "C:104",
+   "C:028",
+   "C:020",
+   "C:026",
+   "C:060",
+   "A:199"
+  ],
+  "prop": "Session-start pinning, the keep-set size of 3 and the wrapper tool names follow cited sources. The combined design is a DevX proposal. The billed saving is not in corpus.",
+  "hard": "Quoted overhead for one 93-tool server ranges 8,000 [C:019], about 17,600 [C:022], about 42,000 [C:020], about 55,000 [C:107] tokens per turn. Chosen: use the measured prefix of each tenant, not a quote. Quality effect of deferral has no numbers [C:022].",
+  "line": "tools=24 (17,600 tok) -> stubs + 2 wrappers\nsent 3,900 tok; lookup path kept",
+  "dumb": "Big tool lists are sent on every turn and cost money each time. Token Economics replaces rarely used tool descriptions with short stubs. The model asks for the full text when it needs it.",
+  "deep": {
+   "purpose": "Cut the fixed per-turn tool overhead. Tool definitions are part of the 74.7 percent harness base [C:024]. Every tool stays reachable. The Model Context Protocol (MCP) servers add the largest schemas.",
+   "expected": [
+    "Fires only at turn 0 of a session. Trigger: more than 20 tools, or schema tokens above 10 percent of the window.",
+    "Keeps the 3 most-used tools fully defined, based on per-tenant call history (3 tools gave 98 percent of calls [C:028]).",
+    "Adds get_tool_schema and invoke_tool so every deferred tool stays callable [C:022].",
+    "Leaves the tool set byte-identical for the rest of the session."
+   ],
+   "not_expected": [
+    "Does not prune tools with no recovery path [C:021].",
+    "Does not change the tool list mid-session [C:055].",
+    "Does not double-defer when the client already runs its own tool search (auto-on above 10 percent [C:019])."
+   ],
+   "algorithm": {
+    "name": "Session-start schema deferral",
+    "formula": "defer = (N_tools > 20) or (T_schema / window > 0.10); keep K most-called tools",
+    "steps": [
+     "On the first request of a session, read tools[] and compute N_tools and T_schema with the tenant tokenizer estimate.",
+     "If the client already sends a tool-search or stub pattern, record decision skip_client_defers and stop.",
+     "If defer is true, keep the top K tools by 30-day call count for this tenant and agent. Replace the rest with stubs (name plus one-line description).",
+     "Append the two wrapper tools. Hash the final tools array and pin the hash for the session.",
+     "On later turns, compare the tools hash with the pinned hash. If it differs, pass the request through and emit a drift event."
+    ],
+    "params": {
+     "tool_count_threshold": "20 [C:019]",
+     "context_share_threshold": "0.10 [C:019]",
+     "min_session_turns_for_payback": "10 to 15 [C:019]",
+     "keep_set_K": "3 (DevX proposal, from C:028 98 percent of calls)",
+     "codex_tool_input_schema_max_bytes": "5,000 [C:104]"
+    }
+   },
+   "math": {
+    "definitions": [
+     "dT = schema tokens removed per turn (T_before minus T_after).",
+     "r = cache-read price per token; w = cache-write price per token (5-minute).",
+     "n = turns in the session; L = lookup calls; c_L = cost of one lookup turn."
+    ],
+    "formula_full": "net = dT*w + n*dT*r - L*c_L  (cached case); pays when net > 0 and n >= 10",
+    "derivation": "Deferred schemas are written once to the cache, saving dT*w on the first turn. They are read on every later turn, saving dT*r. Each lookup adds a turn that costs a prefix read plus output. Net saving is the sum of the first two terms minus lookup cost.",
+    "worked_example": "dT = 17,600 - 3,900 = 13,700 tokens [C:022]. Sonnet 5.5: write $2.50, read $0.10, output $10 per MTok [A:199]. First turn 13,700*2.50/1e6 = $0.03425. 100 turns 100*13,700*0.10/1e6 = $0.137. Assume L=10 lookups. Each is a 20,000-token prefix read ($0.002) plus 500 output tokens ($0.005), so c_L = $0.007. The prefix size is from C:026. The output length is a DevX assumption. Net = 0.03425 + 0.137 - 0.07 = $0.101 per 100-turn session.",
+    "complexity": "O(N_tools) per session start, O(1) per later turn (hash compare).",
+    "failure_modes": [
+     "Lookup turns outnumber saved turns when most stubbed tools are called.",
+     "Client changes tools mid-session and breaks the pinned hash.",
+     "The stub is too short and the model picks the wrong tool. A 95 vs 71 percent accuracy claim is a product pitch [C:020]."
+    ],
+    "calibration": "Replay each tenant tool-call log; choose K to cover 95 percent of calls. Run the 20, 50, 90 tool A/B from R3 section 6 and compare billed cost per successful task."
+   },
+   "security": [
+    "Stubs and wrapper calls use the same tenant authorisation as the original tools. invoke_tool must not reach a tool the key may not use.",
+    "Tool descriptions are untrusted input; the guard must not execute or follow instructions inside them.",
+    "Decision rows hold counts and hashes only, never schema text."
+   ],
+   "performance": {
+    "slo": "Added gateway latency under 5 ms p95 at turn 0, under 1 ms later (DevX proposal).",
+    "complexity": "Linear in tool count at session start.",
+    "scaling": "State is one hash per session; stateless otherwise."
+   },
+   "edge_cases": [
+    "Tool count is exactly 20: no defer (threshold is strictly above).",
+    "Session resumes with a different tool set: treat as a new session and re-decide.",
+    "Client sends a tool-search stub already: record skip_client_defers.",
+    "Tool schema bytes exceed 5,000 on Codex: let the client truncate; do not double-edit."
+   ],
+   "tests": [
+    {
+     "name": "above_count",
+     "given": "24 tools, 17,600 tokens, window 200,000",
+     "expect": "defer true, K=3 kept, 2 wrappers added"
+    },
+    {
+     "name": "share_trigger",
+     "given": "8 tools, 25,000 schema tokens, window 200,000",
+     "expect": "share 0.125 above 0.10, defer true"
+    },
+    {
+     "name": "below_both",
+     "given": "12 tools, 9,000 tokens, window 200,000",
+     "expect": "pass through unchanged"
+    },
+    {
+     "name": "mid_session_drift",
+     "given": "pinned hash H1, turn 7 sends hash H2",
+     "expect": "request unmodified, event token_economics.schema.drift"
+    },
+    {
+     "name": "client_defers",
+     "given": "request already contains tool-search stub",
+     "expect": "skip_client_defers, no edit"
+    }
+   ],
+   "cost_levers": [
+    "Lower fixed prefix tokens per turn.",
+    "Higher cache hit by holding a stable tools array."
+   ],
+   "feedback_events": [
+    "Lookup rate per deferred tool.",
+    "Wrong-tool-call rate before and after.",
+    "Billed cost per successful task A/B."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.schema.decision",
+     "fields": [
+      "session_id",
+      "n_tools",
+      "t_schema",
+      "decision",
+      "k_kept"
+     ],
+     "when": "turn 0 of each session"
+    },
+    {
+     "name": "token_economics.schema.lookup",
+     "fields": [
+      "session_id",
+      "tool_name",
+      "turn"
+     ],
+     "when": "each get_tool_schema call"
+    },
+    {
+     "name": "token_economics.schema.drift",
+     "fields": [
+      "session_id",
+      "pinned_hash",
+      "new_hash"
+     ],
+     "when": "tool hash change mid-session"
+    }
+   ],
+   "papers": [
+    {
+     "ref": "C:022",
+     "key_idea": "Wrapper tools cut 17,600 tokens to 3,900 or fewer; self-reported.",
+     "how": "Wrapper design and token ladder."
+    },
+    {
+     "ref": "C:021",
+     "key_idea": "Static pruning without recovery hurt success; simulation only.",
+     "how": "Rule: always keep a recovery path."
+    }
+   ],
+   "repos": [
+    {
+     "ref": "C:022",
+     "name": "mcp-compressor",
+     "take": "get_tool_schema and invoke_tool wrapper pattern."
+    },
+    {
+     "ref": "C:060",
+     "name": "LiteLLM",
+     "take": "mcp_tool_search_enabled option as a reference for gateway-side deferral."
+    }
+   ],
+   "industry": "Codex defers tools by default since v0.142.2 [C:111]. Claude Code turns tool search on above 10 percent of context [C:019]. Gateways add the same wrapper idea for clients without it."
+  }
+ },
+ "ocap": {
+  "inn": "Tool result block, tool name, route class (interactive or batch), token estimate.",
+  "out": "Same block, or a capped block with head, tail and preserved failure anchors plus a pagination hint.",
+  "store": "Reads cap values from policy. Writes one metadata row per capped result (tokens before and after).",
+  "fail": "Fail open. Forward the result unchanged. Cap errors must never drop a traceback or break the tool-result pairing.",
+  "req": "RQ-D-004, RQ-D-005, RQ-D-006, RQ-D-007",
+  "src": [
+   "A:284",
+   "C:106",
+   "C:036",
+   "C:024",
+   "C:128",
+   "C:028",
+   "C:090",
+   "C:074"
+  ],
+  "prop": "Head, tail and anchor-preserving split is a DevX design. Cap values are sourced.",
+  "hard": "Conflict: tool outputs are 3.3 percent of billed cost [C:024] versus observations 84 percent of a turn in raw tokens [C:130]. Chosen: billed cost, so expected saving is small (ceiling about 5 percent [C:024]). Cap for batch is a range 6,000 to 12,000.",
+  "line": "npm test result 15,000 tok -> cap 6,000\nkept: 40 head, 40 tail, 3 failure frames",
+  "dumb": "Some tool results are huge, like a full test log. Token Economics trims them to a safe size and always keeps the error lines.",
+  "deep": {
+   "purpose": "Stop outlier tool results from entering and staying in context. The payoff is on outliers, such as a 610 KB spec reread [C:036]. The average share is low (3.3 percent of billed cost [C:024]).",
+   "expected": [
+    "Caps interactive results at 25,000 tokens and batch results at 6,000 to 12,000 [A:284, C:106].",
+    "Keeps tracebacks, failing test names and edit anchors in full.",
+    "Adds a pagination hint so the agent can fetch the next page.",
+    "Never filters or reformats content inside the cap."
+   ],
+   "not_expected": [
+    "No default output compressor [C:024].",
+    "No rewriting of search or count output piped to a shell.",
+    "No cap applied to results below the limit."
+   ],
+   "algorithm": {
+    "name": "Cap with anchors",
+    "formula": "if tokens > cap: keep head H, tail Tl, all anchor spans; drop middle",
+    "steps": [
+     "Estimate tokens of the result block.",
+     "If at or below cap for the route class, forward unchanged.",
+     "Find anchors: lines matching traceback frames, failure markers, and edit-anchor lines referenced in the last 5 tool calls.",
+     "Keep head and tail windows plus anchors until cap minus 200 tokens. Then insert a marker: \"[N tokens omitted, page 2 at offset X]\".",
+     "Emit the capped block and a metadata row."
+    ],
+    "params": {
+     "interactive_cap_tokens": "25,000 [A:284]",
+     "batch_cap_tokens": "6,000 to 12,000 [C:106]",
+     "codex_tool_output_token_limit_default": "12,000 [C:106]",
+     "hook_output_char_cap": "10,000 [C:090]",
+     "anchor_marker_recall_floor": "0.99 [C:024]"
+    }
+   },
+   "math": {
+    "definitions": [
+     "s_out = share of billed cost from tool outputs (0.033 [C:024]).",
+     "q = fraction of that share removed by the cap.",
+     "R = marker recall of the cap on a labelled set."
+    ],
+    "formula_full": "saving_max = s_out * q;  ship only if R >= 0.99 and billed cost per successful task (CPS) does not rise",
+    "derivation": "Tool outputs are 3.3 percent of billed cost. Even removing all of them saves 3.3 percent. Tool-call arguments add 1.4 percent. Realistic saving is the share times the removed fraction.",
+    "worked_example": "q = 0.5: 0.033 * 0.5 = 1.65 percent of the bill. One failing npm test log is about 15,000 tokens, and about 50 are needed [C:128]. A cap at 6,000 removes 9,000 tokens. Sonnet 5.5 cache write: 9,000*2.50/1e6 = $0.0225 once. Cache read: 9,000*0.10/1e6 = $0.0009 per turn [A:199].",
+    "complexity": "O(L) in result length.",
+    "failure_modes": [
+     "Cap cuts a traceback: recall drops (pytest filter 56.1 percent recall at 31.9 percent savings [C:024]).",
+     "Cap pushes the agent into repeated searches (compression delayed first edit 0.94 turns [C:024]).",
+     "Anchor list misses a needed line."
+    ],
+    "calibration": "Sweep 6k, 12k, 25k per R3 experiment 6; measure re-read loops, first-edit turn and recall on a labelled failure set."
+   },
+   "security": [
+    "Never log result content; the metadata row has token counts only.",
+    "A marker string is generated by Token Economics; untrusted result text must not be able to forge a marker that hides content."
+   ],
+   "performance": {
+    "slo": "Under 3 ms p95 for results up to 100,000 tokens (DevX proposal).",
+    "complexity": "Linear in result length.",
+    "scaling": "Stateless; scales with gateway replicas."
+   },
+   "edge_cases": [
+    "Result is exactly at the cap: forward unchanged.",
+    "Result is binary or base64: cap by bytes and mark as binary.",
+    "Result contains no anchors and exceeds the cap: head and tail only.",
+    "Result arrives in a streamed tool call: cap on the completed block only."
+   ],
+   "tests": [
+    {
+     "name": "under_cap",
+     "given": "interactive result of 24,999 tokens",
+     "expect": "forwarded unchanged"
+    },
+    {
+     "name": "over_cap_anchor",
+     "given": "30,000-token result with traceback at line 29,000",
+     "expect": "traceback kept in full, marker inserted"
+    },
+    {
+     "name": "batch_cap",
+     "given": "batch route, 9,000-token result, cap 6,000",
+     "expect": "capped, hint present"
+    },
+    {
+     "name": "shell_pipe",
+     "given": "result flagged as input to a count command",
+     "expect": "no rewrite, event skip_shell_pipe"
+    },
+    {
+     "name": "recall_gate",
+     "given": "labelled set recall 0.97",
+     "expect": "policy refuses to enable, reason recall_below_0.99"
+    }
+   ],
+   "cost_levers": [
+    "Fewer tokens re-read on every later turn.",
+    "Fewer outlier rereads of the same large file."
+   ],
+   "feedback_events": [
+    "Re-read rate after a cap.",
+    "First-edit turn.",
+    "Marker recall on labelled failures."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.ocap.applied",
+     "fields": [
+      "session_id",
+      "tool",
+      "tokens_in",
+      "tokens_out",
+      "anchors_kept"
+     ],
+     "when": "each capped result"
+    },
+    {
+     "name": "token_economics.ocap.skip",
+     "fields": [
+      "session_id",
+      "reason"
+     ],
+     "when": "result skipped"
+    },
+    {
+     "name": "token_economics.ocap.reread",
+     "fields": [
+      "session_id",
+      "tool",
+      "offset"
+     ],
+     "when": "agent requests another page"
+    }
+   ],
+   "papers": [
+    {
+     "ref": "C:024",
+     "key_idea": "2,848-run study: compressors gave -2.7 percent to +48.4 percent cost; sign flips by harness.",
+     "how": "Justifies cap-only default and the 99 percent recall gate."
+    }
+   ],
+   "repos": [],
+   "industry": "Claude Code caps tool responses at 25,000 tokens and Codex ships a tool_output_token_limit. Vendor compressors claim 60 to 95 percent savings without a method [C:060]."
+  }
+ },
+ "mask": {
+  "inn": "Message history, event count since task start, observation blocks with token sizes, trigger state.",
+  "out": "History with older observation bodies replaced by a short placeholder, or unchanged.",
+  "store": "Reads policy (window M, trigger). Writes last-applied event index per session and a metadata row.",
+  "fail": "Fail open. Send the history unchanged. A skipped mask costs tokens only.",
+  "req": "RQ-D-008, RQ-D-009, RQ-D-010",
+  "src": [
+   "C:130",
+   "C:133",
+   "C:122",
+   "C:055",
+   "C:066"
+  ],
+  "prop": "Gateway-side masking and the batch-slide step are DevX proposals. The published results come from agent scaffolds with their own history control [C:130, C:133].",
+  "hard": "Masking vs summaries: C:130 and C:133 (masking wins) versus C:122 (condensation up to 2x lower per-turn cost, no threshold). Chosen: masking. Window needs re-tuning per scaffold [C:130]. Software-engineering tasks only; other tasks not in corpus.",
+  "line": "events=23, window M=10 -> mask events 1..13\nplaceholder: [obs omitted: grep, 1,840 tok]",
+  "dumb": "Old tool results pile up in the conversation. Token Economics swaps the oldest ones for a one-line note but only once the conversation is long enough.",
+  "deep": {
+   "purpose": "Cut the cost of carried-over tool observations on long runs. Masking was the only condenser that saved cost in the DiscoveryBench study [C:133].",
+   "expected": [
+    "Fires only above about 10 events.",
+    "Keeps the newest M=10 observations in full.",
+    "Replaces older observation bodies with a placeholder that names the tool and original size.",
+    "Applies at a trigger and then waits, to limit cache breaks."
+   ],
+   "not_expected": [
+    "No LLM summary call.",
+    "No edit below 10 events (loses 45 to 149 percent at 7 events or fewer [C:133]).",
+    "No masking of protected, non-re-fetchable results."
+   ],
+   "algorithm": {
+    "name": "Windowed observation masking",
+    "formula": "if E >= 10 and trigger_met: mask observations older than the newest M",
+    "steps": [
+     "Count observation events E in the history.",
+     "If E < 10, do nothing and emit skip_short.",
+     "If tokens since last edit are below the trigger, do nothing (protects the cache).",
+     "Mask every observation older than the newest M=10, except protected tools.",
+     "Record the new masked index. The prefix up to that index is stable on later turns."
+    ],
+    "params": {
+     "window_M": "10 [C:130]",
+     "min_events": "about 10 [C:133]",
+     "trigger_tokens": "30,000 (DevX proposal, align with clear trigger [C:066])",
+     "slide_step": "5 events (DevX proposal)"
+    }
+   },
+   "math": {
+    "definitions": [
+     "c0 = cost of the unmasked run; c1 = cost with masking.",
+     "E = number of observation events; M = window.",
+     "p = cache-write price per token of the new suffix after an edit."
+    ],
+    "formula_full": "saving = (c0 - c1)/c0;  edit cost = (tokens after first masked block) * (w - r);  fire when E >= 10 and projected saving > edit cost",
+    "derivation": "Masking removes old observation tokens from every later turn. It also changes the history, so the cache must re-write the suffix after the first changed block once. Slide in steps so the re-write happens rarely.",
+    "worked_example": "Gemini 2.5 Flash, M=10: $0.41 to $0.18, (0.41-0.18)/0.41 = 56.1 percent saving; LLM summary cost $0.24 [C:130]. Qwen3-Coder solve rate: masking 54.8 percent, summary 53.8 percent, raw 53.4 percent [C:130]. At 7 events or fewer, masking cost 45 to 149 percent more [C:133].",
+    "complexity": "O(E) per trigger.",
+    "failure_modes": [
+     "Masked result was needed later and the agent re-fetches it.",
+     "Window too small for the scaffold.",
+     "Frequent edits repeatedly break the cache."
+    ],
+    "calibration": "Sweep M in 5, 10, 20 and trigger in 30k, 60k, 100k per scaffold (R3 experiment 2). Use billed cost with caching on."
+   },
+   "security": [
+    "Placeholders must not leak the omitted content, only tool name and size.",
+    "Masking must not remove audit-relevant safety events or permission prompts from the history."
+   ],
+   "performance": {
+    "slo": "Under 10 ms p95 for histories up to 500 messages (DevX proposal).",
+    "complexity": "Linear in event count at trigger time only.",
+    "scaling": "Per-session state is one integer."
+   },
+   "edge_cases": [
+    "Event count is exactly 10: no masking.",
+    "Observation was produced by a protected tool: kept.",
+    "History already edited by the client: detect by hash change and skip one cycle.",
+    "Short task ends at event 9: no edit ever fires."
+   ],
+   "tests": [
+    {
+     "name": "short_skip",
+     "given": "7 events, window 10",
+     "expect": "no edit, skip_short"
+    },
+    {
+     "name": "mask_fires",
+     "given": "23 events, trigger met",
+     "expect": "events 1..13 masked, 10 kept"
+    },
+    {
+     "name": "protected",
+     "given": "tool in exclude list at event 3",
+     "expect": "event 3 kept"
+    },
+    {
+     "name": "no_trigger",
+     "given": "23 events, 4,000 tokens since last edit, trigger 30,000",
+     "expect": "no edit"
+    },
+    {
+     "name": "idempotent",
+     "given": "apply twice to same history",
+     "expect": "second pass changes nothing"
+    }
+   ],
+   "cost_levers": [
+    "Fewer input tokens per later turn.",
+    "No summary call cost."
+   ],
+   "feedback_events": [
+    "Re-fetch rate of masked results.",
+    "Solve rate versus control arm.",
+    "Cache re-write tokens after each edit."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.mask.applied",
+     "fields": [
+      "session_id",
+      "events",
+      "masked_n",
+      "tokens_before",
+      "tokens_after"
+     ],
+     "when": "edit applied"
+    },
+    {
+     "name": "token_economics.mask.skip",
+     "fields": [
+      "session_id",
+      "reason"
+     ],
+     "when": "no edit"
+    },
+    {
+     "name": "token_economics.mask.refetch",
+     "fields": [
+      "session_id",
+      "tool"
+     ],
+     "when": "masked result requested again"
+    }
+   ],
+   "papers": [
+    {
+     "ref": "C:130",
+     "key_idea": "Window M=10 masking cuts cost 56.1 percent with equal solve rate; software-engineering only.",
+     "how": "Default window and comparison to summaries."
+    },
+    {
+     "ref": "C:133",
+     "key_idea": "Only masking saved cost among 8 condensers; negative at 7 events or fewer.",
+     "how": "Minimum event rule."
+    }
+   ],
+   "repos": [],
+   "industry": "OpenHands ships a context condenser with masking and LLM variants [C:122]. Most coding harnesses summarise instead; Token Economics prefers masking where the evidence supports it."
+  }
+ },
+ "clear": {
+  "inn": "Token count of context, tool-result list, exclude_tools policy, session cache state.",
+  "out": "A context_management block that asks the provider to clear old tool results, or no change.",
+  "store": "Reads policy and last-clear token mark. Writes clear events and cache re-write tokens to metadata.",
+  "fail": "Fail open. Do not add the clearing block. The request runs with the original context.",
+  "req": "RQ-D-011, RQ-D-012, RQ-D-013, RQ-D-008",
+  "src": [
+   "C:065",
+   "C:066",
+   "C:067",
+   "C:035",
+   "C:006",
+   "A:271",
+   "A:268",
+   "C:130",
+   "C:055",
+   "A:199"
+  ],
+  "prop": "The break-even test before firing is a DevX derivation. The thresholds come from Anthropic guidance.",
+  "hard": "Conflict: API defaults trigger 100,000 and keep 3 [C:065, C:066] versus production guidance trigger 30,000 to 40,000 and keep 5 [C:066]. Chosen: guidance. Cookbook peak 335,279 to 173,137 is a single synthetic run without dollars [C:006]. The context editing -84 percent claim has no stated baseline [A:268].",
+  "line": "ctx=36,000 -> clear_tool_uses, keep=5\nclear_at_least=5,000; exclude: memory",
+  "dumb": "When the conversation gets long, the provider can drop old tool results. Token Economics asks for that only when the saving is bigger than the cost of rebuilding the cache.",
+  "deep": {
+   "purpose": "Use server-side tool-result clearing (strategy clear_tool_uses_20250919 [C:065]) to cut the context when re-fetchable results dominate. The cookbook case had file reads at 96.3 percent of context [C:006].",
+   "expected": [
+    "Adds context_management with trigger 30,000 to 40,000, keep 5, clear_at_least 3,000 to 5,000.",
+    "Sets exclude_tools for non-re-fetchable tools [C:067].",
+    "Fires only if the break-even test passes.",
+    "Keeps thinking blocks for 1 turn so the thinking cache survives [C:065]."
+   ],
+   "not_expected": [
+    "No clearing of results the agent cannot re-fetch.",
+    "No firing on small yield.",
+    "No firing when the client already manages context editing."
+   ],
+   "algorithm": {
+    "name": "Break-even clearing",
+    "formula": "fire iff n_remaining * Y * r > P_after * (w - r) and ctx >= trigger",
+    "steps": [
+     "If ctx tokens are below the trigger, stop.",
+     "Estimate Y, the tokens removable above clear_at_least, from the tool-result sizes older than the newest 5.",
+     "Estimate P_after, the tokens at and after the first cleared block (these must be re-written).",
+     "Estimate remaining turns n_remaining from the task baseline for this tenant.",
+     "If the break-even test passes, add context_management with keep and exclude_tools; else emit skip_no_payback."
+    ],
+    "params": {
+     "trigger_tokens": "30,000 to 40,000 [C:066]",
+     "keep": "5 [C:066]",
+     "clear_at_least": "3,000 to 5,000 [C:066]",
+     "api_default_trigger": "100,000 [C:065]",
+     "api_default_keep": "3 [C:065]",
+     "thinking_keep_turns": "1 [C:065]"
+    }
+   },
+   "math": {
+    "definitions": [
+     "Y = tokens cleared; P_after = tokens re-written after the first cleared block.",
+     "r, w = cache-read and cache-write price per token.",
+     "n = turns left in the task."
+    ],
+    "formula_full": "fire iff n*Y*r > P_after*(w - r);  break-even turns n* = P_after*(w - r)/(Y*r)",
+    "derivation": "Clearing removes Y tokens from every later read, saving Y*r per turn. It breaks the cached prefix after the first cleared block. So P_after tokens are written once at w instead of read at r.",
+    "worked_example": "Sonnet 5.5 5-minute write $2.50 and read $0.10 per MTok [A:199]. P_after = 20,000, Y = 5,000: extra = 20,000*2.40/1e6 = $0.048; saving per turn 5,000*0.10/1e6 = $0.0005; n* = 96 turns. Y = 20,000: saving $0.002 per turn; n* = 24 turns. Small yield rarely pays on cost alone.",
+    "complexity": "O(R) in tool-result count per trigger check.",
+    "failure_modes": [
+     "Fires often with small yield and thrashes the cache [C:066].",
+     "Clears a result the agent needs; content is unrecoverable [C:065].",
+     "Cache time to live (TTL) expired anyway, so the re-write is free."
+    ],
+    "calibration": "Sweep clear_at_least 3k, 5k, 10k against compaction at 150K; count cache re-writes (R3 experiment 3)."
+   },
+   "security": [
+    "exclude_tools must always include memory and secret-bearing tools so they are never cleared and re-fetched from a weaker source.",
+    "Clear events log counts only, never cleared content."
+   ],
+   "performance": {
+    "slo": "Decision under 2 ms p95 (DevX proposal).",
+    "complexity": "Linear in tool-result count.",
+    "scaling": "One counter per session."
+   },
+   "edge_cases": [
+    "Context just under trigger: no clear.",
+    "Client sets its own context_management: skip and record.",
+    "Cache already expired: treat w - r as 0 in the test.",
+    "All old results are protected: Y = 0, skip."
+   ],
+   "tests": [
+    {
+     "name": "below_trigger",
+     "given": "ctx 28,000, trigger 30,000",
+     "expect": "no action"
+    },
+    {
+     "name": "pays_back",
+     "given": "Y=20,000, P_after=20,000, n_remaining=30, Sonnet 5.5",
+     "expect": "n*=24 below 30, fire"
+    },
+    {
+     "name": "no_payback",
+     "given": "Y=5,000, P_after=20,000, n_remaining=40",
+     "expect": "n*=96 above 40, skip_no_payback"
+    },
+    {
+     "name": "exclude",
+     "given": "memory tool results in range",
+     "expect": "memory results kept"
+    },
+    {
+     "name": "client_owns",
+     "given": "request already has context_management",
+     "expect": "skip_client_owns"
+    }
+   ],
+   "cost_levers": [
+    "Lower tokens read per turn.",
+    "Avoids a compaction call later."
+   ],
+   "feedback_events": [
+    "Cache re-write tokens after clear.",
+    "Tasks that re-fetch cleared content.",
+    "Clear frequency per session."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.clear.fired",
+     "fields": [
+      "session_id",
+      "ctx_tokens",
+      "y_tokens",
+      "p_after",
+      "n_remaining"
+     ],
+     "when": "clear requested"
+    },
+    {
+     "name": "token_economics.clear.skip",
+     "fields": [
+      "session_id",
+      "reason"
+     ],
+     "when": "no clear"
+    },
+    {
+     "name": "token_economics.clear.refetch",
+     "fields": [
+      "session_id",
+      "tool"
+     ],
+     "when": "cleared content fetched again"
+    }
+   ],
+   "papers": [
+    {
+     "ref": "C:006",
+     "key_idea": "Cookbook peak 335,279 to 173,137 tokens; one synthetic task.",
+     "how": "Illustrates yield only; no dollars."
+    }
+   ],
+   "repos": [],
+   "industry": "Anthropic documents clear_tool_uses_20250919 with default trigger 100,000 and keep 3, and guidance to start at 30,000 to 40,000 [C:065, C:066]. OpenAI and Google have no equivalent server-side strategy in corpus."
+  }
+ },
+ "compact": {
+  "inn": "Context tokens, window size, compaction count in session, harness compaction setting.",
+  "out": "Advisory flag or hook response: allow, warn, or recommend restart. Optional summary instructions.",
+  "store": "Reads harness thresholds from adapters. Writes compaction count and cost per session.",
+  "fail": "Fail open. Let the harness compact on its own. Token Economics only counts and warns.",
+  "req": "RQ-D-014, RQ-D-009, RQ-D-008",
+  "src": [
+   "C:112",
+   "C:106",
+   "C:007",
+   "C:089",
+   "C:006",
+   "A:224",
+   "C:055",
+   "C:074",
+   "C:090",
+   "C:130",
+   "C:133",
+   "C:122"
+  ],
+  "prop": "Counting and the restart recommendation are sourced rules. Using PreCompact hooks as an advisory channel is a DevX design; hooks can be disabled so nothing here enforces.",
+  "hard": "Threshold conflict: about 50 percent [C:112] vs about 90 percent [C:106] vs window minus 33,000 [C:007]. Cache effect conflict: C:112 says compaction destroys the cache. C:055 says it reuses the parent prefix at a 5-minute time to live (TTL). A:224 shows a miss and a net loss. No head-to-head test. Token Economics measures, and does not set the threshold.",
+  "line": "compaction #3 at 188,000 tok (window 200,000)\nrecommend: restart with handoff file",
+  "dumb": "Compaction asks the model to summarise the whole chat. It costs real money and loses detail. Token Economics counts them and suggests a fresh start after three.",
+  "deep": {
+   "purpose": "Treat compaction as a last resort. Each one is a model call, can miss the cache, and drops specifics [C:112, C:106, C:006].",
+   "expected": [
+    "Counts compactions per session and shows the count to the user.",
+    "Warns before the harness compacts if the context is below the break-even point.",
+    "Recommends a restart with a handoff file at the third compaction.",
+    "Uses PreCompact only to add summary instructions or to block, when hooks exist [C:074]."
+   ],
+   "not_expected": [
+    "No Token Economics-run summary call.",
+    "No compaction below about 10 events [C:133].",
+    "No claim that the compaction threshold is tuned; no head-to-head evidence exists."
+   ],
+   "algorithm": {
+    "name": "Late-compaction advisor",
+    "formula": "warn if n_compactions >= 2; recommend_restart if n_compactions >= 3",
+    "steps": [
+     "Read context tokens from the usage row after each response.",
+     "Detect a compaction by a drop in input tokens above 50 percent with a summary-sized block.",
+     "Increment the per-session counter and store the cost of the call from the ledger.",
+     "Run the break-even test (see math) before an expected compaction and warn if it fails.",
+     "At count 3, emit recommend_restart with a handoff-file hint."
+    ],
+    "params": {
+     "restart_at_compactions": "3 [C:106, A:224, C:112]",
+     "harness_threshold_claude_code": "about 89 percent [C:112]",
+     "harness_threshold_codex": "about 90 percent [C:112]",
+     "harness_threshold_gemini_cli": "about 50 percent [C:112]",
+     "claude_code_formula": "window - min(max_output, 20,000) - 13,000 [C:007, estimate]"
+    }
+   },
+   "math": {
+    "definitions": [
+     "H = history tokens before; S = summary tokens; c_call = cost of the compaction call.",
+     "r, w = cache-read and cache-write price per token.",
+     "n = turns left."
+    ],
+    "formula_full": "pays iff n*(H - S)*r > c_call + S*w;  n* = (c_call + S*w)/((H - S)*r)",
+    "derivation": "After compaction each later turn reads S tokens in place of H. The one-time cost is the compaction call plus writing the summary to the cache.",
+    "worked_example": "H = 125,000; one compaction costs $0.40, about 21 cached turns [C:112, secondary]; S = 2,783 [C:006]. Sonnet 5.5 write $2.50 and read $0.10 per MTok [A:199] (the prices behind C:112 are not stated, so this mixes sources). Saved per turn (122,217)*0.10/1e6 = $0.01222. One-time 0.40 + 2,783*2.50/1e6 = $0.40696. n* = 33.3 turns. Grok example: 3 compactions cost 1.4, 1.7 and 3.3 cents. They removed 600 to 900 tokens, and the next turn missed the cache [A:224].",
+    "complexity": "O(1) per response.",
+    "failure_modes": [
+     "Summary drops obscure specifics (kept 3 of 3 high-level facts, 0 of 3 obscure ones [C:006]).",
+     "Thrashing when one output refills the context [C:089].",
+     "Repeated compactions reduce accuracy [C:106]."
+    ],
+    "calibration": "Break-even at 50K, 100K, 200K contexts and accuracy after 1, 2, 3 compactions (R3 experiment 4)."
+   },
+   "security": [
+    "Never store or forward the summary text; keep only token counts and cost.",
+    "A hook response must not inject text that overrides user instructions; summary instructions are limited to an allow-listed template."
+   ],
+   "performance": {
+    "slo": "Under 1 ms per response for counter update (DevX proposal).",
+    "complexity": "Constant per response.",
+    "scaling": "One counter per session."
+   },
+   "edge_cases": [
+    "Harness compacts on its own at an unexpected point: detect by the token drop and count it.",
+    "Session is resumed: reload the counter from metadata.",
+    "Two compactions within 3 turns: flag as thrash.",
+    "No hooks present: advisory shown only in the dashboard."
+   ],
+   "tests": [
+    {
+     "name": "count_three",
+     "given": "three detected compactions",
+     "expect": "recommend_restart on the third"
+    },
+    {
+     "name": "break_even_fail",
+     "given": "H=40,000 S=2,783 n_remaining=5",
+     "expect": "pays false, warn"
+    },
+    {
+     "name": "break_even_pass",
+     "given": "H=125,000 S=2,783 n_remaining=40, Sonnet 5.5",
+     "expect": "pays true (n*=33.3)"
+    },
+    {
+     "name": "thrash",
+     "given": "two compactions 2 turns apart",
+     "expect": "event token_economics.compact.thrash"
+    },
+    {
+     "name": "short_session",
+     "given": "8 events at threshold",
+     "expect": "no warning needed, advisory off"
+    }
+   ],
+   "cost_levers": [
+    "Fewer summary calls.",
+    "Fewer cache misses after compaction."
+   ],
+   "feedback_events": [
+    "Compactions per session.",
+    "Cost of each compaction.",
+    "Post-compaction success rate."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.compact.detected",
+     "fields": [
+      "session_id",
+      "h_tokens",
+      "s_tokens",
+      "cost_usd",
+      "count"
+     ],
+     "when": "compaction seen"
+    },
+    {
+     "name": "token_economics.compact.warn",
+     "fields": [
+      "session_id",
+      "reason"
+     ],
+     "when": "advisory raised"
+    },
+    {
+     "name": "token_economics.compact.restart_rec",
+     "fields": [
+      "session_id",
+      "count"
+     ],
+     "when": "third compaction"
+    }
+   ],
+   "papers": [
+    {
+     "ref": "C:112",
+     "key_idea": "One compaction at 125,000 tokens costs $0.40, about 21 cached turns; secondary source.",
+     "how": "Worked example input."
+    },
+    {
+     "ref": "C:133",
+     "key_idea": "LLM condensers cost 24 to 94 percent more with no significant quality gain.",
+     "how": "Reason to avoid summaries below 10 events."
+    }
+   ],
+   "repos": [],
+   "industry": "Compaction thresholds differ by harness. Gemini CLI is about 50 percent, Claude Code about 89 percent, Codex about 90 percent [C:112]. OpenHands condensers report 54 vs 53 percent solve [C:122]."
+  }
+ },
+ "mtok": {
+  "inn": "Request body, route class, tenant policy, model id, worst-case reserve input.",
+  "out": "Request with a hard max_tokens value, or a rejection when none can be set.",
+  "store": "Reads per-tenant and per-model cap policy. Writes cap value into the reservation record in the budget path.",
+  "fail": "Fail closed. Reject with 503 policy_unavailable if no cap can be resolved. An uncapped call makes the worst-case reserve unbounded.",
+  "req": "RQ-D-015, RQ-D-016, RQ-D-017",
+  "src": [
+   "C:073",
+   "C:093",
+   "A:197",
+   "A:052",
+   "C:027",
+   "C:136",
+   "A:104"
+  ],
+  "prop": "Cap values, floors and the 503 behaviour are DevX proposals. The corpus gives no numeric default.",
+  "hard": "Not in corpus: a safe default cap per task class. A 300-token cap broke 7 of 25 hard tasks [A:052]; OpenAI guidance reserves at least 25,000 tokens for reasoning [A:197]. Effort control does not cap tokens [C:073]. Hosted-API support for output-length control methods is not in corpus.",
+  "line": "max_tokens missing -> set 8,192 (tenant policy)\nreserve = 8,192 x output price",
+  "dumb": "Every call must say how long the answer may be. Token Economics adds a limit if the client forgot, so one runaway answer cannot burn the budget.",
+  "deep": {
+   "purpose": "Put an upper bound on output tokens. At a 96.3 percent cache hit rate they are 2.7 percent of tokens and 51.1 percent of dollars [C:027].",
+   "expected": [
+    "Sets max_tokens on every call that lacks one.",
+    "Lowers an oversized client value to the policy cap only when policy says so.",
+    "Applies a per-class floor so the cap cannot be set below the floor.",
+    "Passes the final value to the reserve step."
+   ],
+   "not_expected": [
+    "No reliance on effort or prompt text to limit output [C:073, C:136].",
+    "No cap below the class floor.",
+    "No silent change of a value the client set lower than policy."
+   ],
+   "algorithm": {
+    "name": "Resolve and enforce cap",
+    "formula": "cap = clamp(client_value or policy_default, floor_class, ceiling_policy)",
+    "steps": [
+     "Resolve class (interactive, batch, reasoning) from route and model.",
+     "Read policy default, floor and ceiling for tenant and class.",
+     "If client value is absent, use the default. If present, clamp to the ceiling.",
+     "If the resolved value is below the floor, raise to the floor and emit a warning event.",
+     "Write the value to the request and the reservation record."
+    ],
+    "params": {
+     "default_cap": "per tenant policy (DevX proposal, no corpus value)",
+     "floor_cap": "per class (DevX proposal; 300 broke 7 of 25 tasks [A:052])",
+     "reasoning_reserve_tokens": "at least 25,000 for OpenAI reasoning [A:197]"
+    }
+   },
+   "security": [
+    "The tenant cannot raise its own ceiling through a request header; only policy sets it.",
+    "Rejections return a stable error code without echoing the request body."
+   ],
+   "performance": {
+    "slo": "Under 0.5 ms added latency p99 (DevX proposal).",
+    "complexity": "Constant time.",
+    "scaling": "Stateless."
+   },
+   "edge_cases": [
+    "Client sets max_tokens above the ceiling.",
+    "Model uses reasoning tokens that count inside max_tokens; reserve must include them.",
+    "Model id unknown to policy: reject, not default (unpriced models escape budgets [A:242]).",
+    "Batch route with larger ceiling."
+   ],
+   "tests": [
+    {
+     "name": "missing",
+     "given": "no max_tokens, default 8,192",
+     "expect": "request sent with 8,192"
+    },
+    {
+     "name": "above_ceiling",
+     "given": "client 64,000, ceiling 32,000",
+     "expect": "clamped to 32,000"
+    },
+    {
+     "name": "below_floor",
+     "given": "client 300, floor 1,024 for class hard",
+     "expect": "raised to 1,024, warning event"
+    },
+    {
+     "name": "no_policy",
+     "given": "policy unreadable",
+     "expect": "503 policy_unavailable, no dispatch"
+    },
+    {
+     "name": "reasoning_reserve",
+     "given": "OpenAI reasoning model, cap 8,000",
+     "expect": "reserve adds 25,000 reasoning tokens"
+    }
+   ],
+   "cost_levers": [
+    "Bounds output cost per call.",
+    "Makes the reserve step exact."
+   ],
+   "feedback_events": [
+    "Truncation rate (stop_reason max_tokens).",
+    "Retry rate after truncation.",
+    "Floor warnings per class."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.mtok.set",
+     "fields": [
+      "tenant",
+      "model",
+      "class",
+      "value",
+      "source"
+     ],
+     "when": "cap applied"
+    },
+    {
+     "name": "token_economics.mtok.floor",
+     "fields": [
+      "tenant",
+      "model",
+      "client_value",
+      "floor"
+     ],
+     "when": "value raised to floor"
+    },
+    {
+     "name": "token_economics.mtok.reject",
+     "fields": [
+      "tenant",
+      "reason"
+     ],
+     "when": "no cap resolvable"
+    }
+   ],
+   "papers": [
+    {
+     "ref": "A:052",
+     "key_idea": "maxOutputTokens=300 broke 7 of 25 hard tasks.",
+     "how": "Basis for the per-class floor."
+    }
+   ],
+   "repos": [
+    {
+     "ref": "C:060",
+     "name": "LiteLLM",
+     "take": "Per-key budgets and budget fallbacks as the surrounding enforcement path."
+    }
+   ],
+   "industry": "Gateways usually forward max_tokens untouched and rely on budgets after the fact. Token Economics sets the cap before dispatch so the reserve is bounded."
+  }
+ },
+ "ilint": {
+  "inn": "Instruction files (CLAUDE.md, AGENTS.md, MEMORY.md), skill descriptions, file sizes.",
+  "out": "Lint findings with file path, size, limit and severity.",
+  "store": "Reads local files at scan time. Writes counts and findings (no file text) to the policy store.",
+  "fail": "Fail open. Advisory only. A failed scan blocks nothing.",
+  "req": "RQ-D-018, RQ-D-019",
+  "src": [
+   "C:077",
+   "C:036",
+   "A:269",
+   "C:075",
+   "C:079",
+   "C:104",
+   "C:028",
+   "C:074"
+  ],
+  "prop": "Finding severity and the confidence interval (CI) and SessionStart scan placement are DevX proposals. Saving figure is not in corpus.",
+  "hard": "Saving from instruction-file caps is not in corpus. Stale skills are re-billed with each prefix [C:028], but no size is given. Caps differ by harness: 200 lines vs 32 KiB vs 25 KB.",
+  "line": "AGENTS.md 41 KiB > 32 KiB: truncated silently\nCLAUDE.md 214 lines > 200: warn",
+  "dumb": "Rule files are read on every turn, so long ones cost money and some get cut off without warning. Token Economics checks their size and tells you before it hurts.",
+  "deep": {
+   "purpose": "Keep always-loaded instruction files under harness limits so they do not bloat the prefix or get silently truncated.",
+   "expected": [
+    "Flags CLAUDE.md above 200 lines [C:077].",
+    "Flags AGENTS.md above 32 KiB and warns of silent truncation [C:036].",
+    "Flags MEMORY.md above 200 lines or 25 KB [A:269].",
+    "Flags skill descriptions above 1,536 characters and Codex skills above 10,000 [C:075, C:104]."
+   ],
+   "not_expected": [
+    "No auto-edit of files.",
+    "No upload of file content.",
+    "No block of a session start."
+   ],
+   "algorithm": {
+    "name": "Size and staleness lint",
+    "formula": "finding if size > limit(file_type)",
+    "steps": [
+     "Locate instruction files from adapter paths and the InstructionsLoaded hook when present [C:074].",
+     "Measure lines, bytes and per-skill description length locally.",
+     "Compare to limit table; raise warn at 90 percent, error above limit (90 percent is a DevX proposal).",
+     "Mark skills not invoked in 30 days as stale candidates (DevX proposal).",
+     "Send counts to the policy store."
+    ],
+    "params": {
+     "claude_md_lines": "200 [C:077]",
+     "agents_md_bytes": "32 KiB [C:036]",
+     "memory_md": "200 lines or 25 KB [A:269]",
+     "skill_description_chars": "1,536 [C:075]",
+     "skills_reattach_after_compaction": "5,000 each, 25,000 total [C:075, C:079]",
+     "codex_skills_window_share": "2 percent, cap 10,000 [C:104]"
+    }
+   },
+   "security": [
+    "The scan runs locally and sends sizes only; file text may hold secrets.",
+    "Findings must not include file excerpts."
+   ],
+   "performance": {
+    "slo": "Scan of a repo under 1 s (DevX proposal).",
+    "complexity": "Linear in number of instruction files.",
+    "scaling": "Runs on the developer machine or CI, not the gateway."
+   },
+   "edge_cases": [
+    "File is a symlink to a shared file.",
+    "Encoding with multi-byte characters changes byte count.",
+    "No instruction file present.",
+    "Skill directory with hundreds of skills."
+   ],
+   "tests": [
+    {
+     "name": "claude_long",
+     "given": "CLAUDE.md 214 lines",
+     "expect": "warn, limit 200"
+    },
+    {
+     "name": "agents_big",
+     "given": "AGENTS.md 41 KiB",
+     "expect": "error, silent truncation warning"
+    },
+    {
+     "name": "memory_ok",
+     "given": "MEMORY.md 150 lines 12 KB",
+     "expect": "no finding"
+    },
+    {
+     "name": "skill_desc",
+     "given": "skill description 1,700 chars",
+     "expect": "warn, limit 1,536"
+    },
+    {
+     "name": "no_content",
+     "given": "any finding",
+     "expect": "contains no file text"
+    }
+   ],
+   "cost_levers": [
+    "Smaller always-loaded prefix.",
+    "Fewer stale skills re-billed."
+   ],
+   "feedback_events": [
+    "Findings fixed per week.",
+    "Prefix tokens before and after fixes."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.ilint.finding",
+     "fields": [
+      "file_type",
+      "size",
+      "limit",
+      "severity"
+     ],
+     "when": "each finding"
+    },
+    {
+     "name": "token_economics.ilint.scan",
+     "fields": [
+      "files",
+      "findings"
+     ],
+     "when": "each scan"
+    }
+   ],
+   "papers": [],
+   "repos": [],
+   "industry": "Harness vendors publish soft limits and ship no linter. Teams usually find truncation by accident."
+  }
+ },
+ "pwl": {
+  "inn": "System prompt files, skill text, custom command text, first 40 lines of each.",
+  "out": "Lint findings that name risky wording and the measured cost range.",
+  "store": "Reads local prompt files. Writes finding counts to the policy store.",
+  "fail": "Fail open. Advisory only.",
+  "req": "RQ-D-020, RQ-D-021, RQ-D-022",
+  "src": [
+   "C:026",
+   "A:224",
+   "A:204",
+   "C:055",
+   "A:104"
+  ],
+  "prop": "Pattern lists and severity are DevX proposals. Cost ranges are sourced.",
+  "hard": "Effort control saved 19 percent under one harness and 75 percent under another [C:026]. Findings are warnings, not proof. Conflict: \"be concise\" cut cost 22.67 percent but cost 27.69 percent accuracy on GPT-3.5 math [A:104].",
+  "line": "\"consider multiple approaches\" at line 12\nwarn: 2.4 to 7.4x reasoning tokens [C:026]",
+  "dumb": "Some prompt phrases make the model think far more without being right more often. Token Economics flags those phrases and any timestamp at the top of a prompt.",
+  "deep": {
+   "purpose": "Catch prompt wording that raises reasoning cost without raising success, and volatile text that breaks cache reuse.",
+   "expected": [
+    "Flags default text asking for multiple approaches (2.4 to 7.4x reasoning tokens) [C:026].",
+    "Flags default \"think deeply\" wording (1.6 to 2.2x) [C:026].",
+    "Flags timestamps and per-request values in the first lines of a prompt (reuse fell 87 to 3 percent [A:224]).",
+    "Reports how many findings exist per tenant."
+   ],
+   "not_expected": [
+    "No rewrite of prompts.",
+    "No default recommendation to add \"be concise\" [A:104].",
+    "No claim that the wording changes success; the evidence shows no gain, not harm."
+   ],
+   "algorithm": {
+    "name": "Pattern lint",
+    "formula": "finding if pattern matches in scope",
+    "steps": [
+     "Load pattern list from policy (multi-approach, deep-thinking, stop-early, volatile-top).",
+     "Scan prompt files; for volatile-top, check the first 40 lines for date, time or uuid patterns (40 is a DevX proposal).",
+     "Attach the sourced cost range to each finding.",
+     "Send counts only."
+    ],
+    "params": {
+     "multi_approach_cost": "2.4 to 7.4x reasoning tokens [C:026]",
+     "deep_think_cost": "1.6 to 2.2x [C:026]",
+     "volatile_top_effect": "reuse 87 to 3 percent, cost 2.2 to 2.9x [A:224]",
+     "stop_early_effect": "3 of 5 hidden-test failures [C:026]"
+    }
+   },
+   "security": [
+    "Scan locally; send no prompt text.",
+    "Pattern list is policy-controlled so a tenant cannot hide findings by editing it locally."
+   ],
+   "performance": {
+    "slo": "Under 500 ms per repo (DevX proposal).",
+    "complexity": "Linear in prompt file size.",
+    "scaling": "Runs on the developer machine or confidence interval (CI)."
+   },
+   "edge_cases": [
+    "Pattern appears inside a quoted example.",
+    "Date appears in a footer, not the top.",
+    "Non-English prompt text.",
+    "Template variable that renders to a timestamp at runtime."
+   ],
+   "tests": [
+    {
+     "name": "multi",
+     "given": "prompt contains \"try multiple approaches\"",
+     "expect": "finding with range 2.4 to 7.4x"
+    },
+    {
+     "name": "timestamp_top",
+     "given": "line 2 is \"Today is 2026-11-09\"",
+     "expect": "volatile-top finding"
+    },
+    {
+     "name": "timestamp_footer",
+     "given": "date on line 300",
+     "expect": "no finding"
+    },
+    {
+     "name": "clean",
+     "given": "plain prompt",
+     "expect": "zero findings"
+    },
+    {
+     "name": "no_text",
+     "given": "any finding",
+     "expect": "contains no prompt text"
+    }
+   ],
+   "cost_levers": [
+    "Lower reasoning tokens.",
+    "Higher prefix reuse."
+   ],
+   "feedback_events": [
+    "Findings resolved.",
+    "Reasoning tokens per task before and after."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.pwl.finding",
+     "fields": [
+      "rule",
+      "file",
+      "severity"
+     ],
+     "when": "each finding"
+    },
+    {
+     "name": "token_economics.pwl.scan",
+     "fields": [
+      "files",
+      "findings"
+     ],
+     "when": "each scan"
+    }
+   ],
+   "papers": [
+    {
+     "ref": "C:026",
+     "key_idea": "4,644 preregistered runs: multiple-approaches wording cost 2.4 to 7.4x reasoning tokens with no success gain.",
+     "how": "Pattern and cost ranges."
+    },
+    {
+     "ref": "A:104",
+     "key_idea": "Be concise cut GPT-3.5 accuracy 27.69 percent.",
+     "how": "Reason brevity wording is not a default."
+    }
+   ],
+   "repos": [],
+   "industry": "Prompt linters usually check style. Cost-aware wording lint is new in this corpus."
+  }
+ },
+ "evalh": {
+  "inn": "Arm definitions (baseline, candidate), task set, repeat count, success flags, billed cost per attempt.",
+  "out": "Run plan, per-arm result table, and a ship, hold or revert verdict with the numbers behind it.",
+  "store": "Reads the gold set and the ledger. Writes run manifests, arm results and verdicts.",
+  "fail": "Fail closed for shipping. With no verdict, an optimisation stays off. Fail open for traffic: production requests are never blocked by the harness.",
+  "req": "RQ-D-007, RQ-D-027, RQ-D-028, RQ-D-029, RQ-D-032, RQ-D-033, RQ-D-034, RQ-D-035, RQ-D-036, RQ-D-037, RQ-D-038, RQ-D-045, RQ-D-048, RQ-D-042",
+  "src": [
+   "C:024",
+   "C:026",
+   "C:028",
+   "C:025",
+   "C:053",
+   "A:006",
+   "A:122",
+   "C:132",
+   "C:081",
+   "A:002",
+   "A:001",
+   "C:030",
+   "A:052"
+  ],
+  "prop": "Run manifest format and the log field list are DevX proposals. Test design rules are sourced.",
+  "hard": "Not in corpus: formal power formulas and minimum test duration (Perplexity ran 2 weeks [A:272]). Also missing: an acceptable quality margin. C:025 accepted about -4 points for -23.6 percent cost, a business call. Whether public scores predict our tasks is unknown. Optimisations do not transfer between harnesses (Headroom +48 percent vs -12.49 percent [C:024]).",
+  "line": "B: mask M=10 vs A: raw, 100 tasks x 3\ncost/solve 0.82 [0.74,0.91], pass -1.1 pp",
+  "dumb": "Before any saving goes live, this runs the old way and the new way on the same tasks. It only says yes if cost per solved task drops and the solve rate holds.",
+  "deep": {
+   "purpose": "Run paired A/B tests of every optimisation. Decide with cost per successful task (CPS), which is the cost of all attempts divided by successes. Never decide on token savings.",
+   "expected": [
+    "Pairs arms by task, with repeats, and a baseline arm on the same tasks.",
+    "Uses a separate cache namespace per arm, or spaces the runs [C:024].",
+    "Charges the optimisation own overhead (a router call, a summary call) to the task [C:026, C:028].",
+    "Logs prompt variant, effort, harness version, tool surface, retries, compaction and whether the optimisation fired."
+   ],
+   "not_expected": [
+    "No verdict from token counts alone.",
+    "No voting, ensembles or agent teams without a measured CPS gain [A:122, C:132].",
+    "No tuning on the held-out tasks."
+   ],
+   "algorithm": {
+    "name": "Preregistered paired arm test",
+    "formula": "ship iff CI_upper(CPS_B/CPS_A) < 1 and success_lower_bound(B - A) >= -delta",
+    "steps": [
+     "Freeze the plan: tasks, repeats, primary metric CPS, success non-inferiority bound delta, stop rules.",
+     "Run both arms on the same tasks with isolated cache state and a verifiable success flag.",
+     "Hand attempt rows to stats for the clustered bootstrap CIs.",
+     "Check guard metrics: patch-apply, empty-patch, format validity, fix-commit ratio [C:053].",
+     "Emit verdict ship, hold or revert, with reasons and the manifest."
+    ],
+    "params": {
+     "baseline_arm": "required [C:024]",
+     "repeats": "several per cell; 3 runs per cell in the Lite study [A:060]",
+     "sample_sizes_seen": "100 tasks [C:025]; about 38 to 45 effective tasks per arm [C:024]; 60 tasks over 6 repos [C:028]",
+     "delta": "set before the test; value is a business call, no corpus default",
+     "turn_cap_start": "P75 of own per-model baseline, reject P25 [C:025]"
+    }
+   },
+   "security": [
+    "Eval prompts and repos may contain customer code; keep them in the tenant-scoped store and never export content.",
+    "Only the evaluation role can change a run manifest after freeze; changes create a new run id."
+   ],
+   "performance": {
+    "slo": "Verdict within 1 hour of the last attempt row (DevX proposal).",
+    "complexity": "Linear in attempts; bootstrap is delegated to stats.",
+    "scaling": "Runs are batch jobs; attempt count is tasks x repeats x arms."
+   },
+   "edge_cases": [
+    "An arm hits the cache of the other arm: invalidate the run and rerun with spacing.",
+    "A task has no verifiable success flag: exclude it and log the count.",
+    "Candidate fires on fewer than 10 percent of tasks: report per-fired subset and overall.",
+    "Public benchmark baseline is 96 to 98 percent: use hard private tasks instead [C:024]."
+   ],
+   "tests": [
+    {
+     "name": "paired",
+     "given": "100 tasks, 3 repeats, 2 arms",
+     "expect": "600 attempt rows, each task has both arms"
+    },
+    {
+     "name": "overhead",
+     "given": "router call costs $0.004 on a $0.050 attempt",
+     "expect": "attempt cost recorded as $0.054"
+    },
+    {
+     "name": "ni_breach",
+     "given": "success delta -5 pp with delta bound -3 pp",
+     "expect": "verdict revert, reason ni_breach"
+    },
+    {
+     "name": "token_only",
+     "given": "tokens -30 percent but CPS ratio 1.04",
+     "expect": "verdict hold, reason cps_not_lower"
+    },
+    {
+     "name": "cache_carryover",
+     "given": "arm B read tokens from arm A namespace",
+     "expect": "run invalid"
+    }
+   ],
+   "cost_levers": [
+    "Stops harmful optimisations before rollout.",
+    "Finds which optimisation is worth its overhead."
+   ],
+   "feedback_events": [
+    "Verdict reversals after rollout.",
+    "Gap between test CPS and production CPS."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.evalh.run_started",
+     "fields": [
+      "run_id",
+      "arms",
+      "tasks",
+      "repeats"
+     ],
+     "when": "plan frozen and run begins"
+    },
+    {
+     "name": "token_economics.evalh.attempt",
+     "fields": [
+      "run_id",
+      "arm",
+      "task",
+      "success",
+      "cost_usd",
+      "fired"
+     ],
+     "when": "each attempt"
+    },
+    {
+     "name": "token_economics.evalh.verdict",
+     "fields": [
+      "run_id",
+      "verdict",
+      "cps_ratio",
+      "ni_ok"
+     ],
+     "when": "run completes"
+    }
+   ],
+   "papers": [
+    {
+     "ref": "C:024",
+     "key_idea": "2,848-run study: compressor effects flip sign by harness; always use a baseline arm.",
+     "how": "Arm and cache isolation rules."
+    },
+    {
+     "ref": "C:026",
+     "key_idea": "4,644 preregistered runs, paired, task-clustered bootstrap.",
+     "how": "Design template."
+    },
+    {
+     "ref": "C:025",
+     "key_idea": "Turn caps at P75 of own baseline.",
+     "how": "Turn-cap test arm."
+    }
+   ],
+   "repos": [],
+   "industry": "Gateways offer A/B routing labels only as navigation items (Portkey [A:241, A:243]). Teams usually compare tokens. Token Economics compares billed cost per success."
+  }
+ },
+ "gold": {
+  "inn": "Labelled tasks from our repos, hard cases, success checkers, held-out flag, router labels.",
+  "out": "Versioned gold set with a Lite subset and a held-out split.",
+  "store": "Reads task repos and labels. Writes gold set versions, split manifests and label audit rows.",
+  "fail": "Fail closed for tuning. If the held-out split cannot be proven untouched, tuning jobs refuse to read it. Production traffic is not affected.",
+  "req": "RQ-D-039, RQ-D-040, RQ-D-041, RQ-D-042",
+  "src": [
+   "A:060",
+   "C:024",
+   "A:052",
+   "C:030",
+   "A:019",
+   "A:013",
+   "A:001",
+   "A:018",
+   "C:032"
+  ],
+  "prop": "Split ratios, versioning and the refresh cadence are DevX proposals.",
+  "hard": "Label count for routers: about 1,500 gold samples [A:001] vs 100 to 1,000 [A:013]. Chosen: 1,000 as a first target, to be checked against a learning curve. Public-score validity for our tasks: not in corpus. Router labels must not come from one dominant model [A:019].",
+  "line": "gold v7: 350 tasks, Lite 80, held-out 60\nlabels: 5 models, strong share 38%",
+  "dumb": "A private set of real tasks with known right answers, so tests use our work and not public puzzles. Some tasks stay hidden from tuning so we can catch overfitting.",
+  "deep": {
+   "purpose": "Provide the task set that stats and evalh need. Keep it private and hard, because public sets saturate (baseline 96 to 98 percent [C:024]).",
+   "expected": [
+    "Holds our own repo tasks with hard cases and a verifiable success check each.",
+    "Keeps a Lite subset of 80 tasks. It tracked the full 350 within 0.81 pp at 25.3 percent of the cost [A:060].",
+    "Reserves a held-out split that no tuning job reads [A:052].",
+    "Labels router data from several models so no single model dominates [A:019]."
+   ],
+   "not_expected": [
+    "No public benchmark as the only set.",
+    "No tuning on held-out tasks.",
+    "No labels from a single dominant model."
+   ],
+   "algorithm": {
+    "name": "Versioned split with Lite subset",
+    "formula": "gold = tune + heldout; lite = stratified sample(gold, 80)",
+    "steps": [
+     "Collect tasks with a checker and a repo snapshot.",
+     "Stratify by repo, language and difficulty; draw the Lite subset of 80.",
+     "Assign the held-out split by hash of task id so it is stable across versions.",
+     "Record the version and the checksum of each task.",
+     "Audit labels: count per model and block a set where one model holds the strong-label majority."
+    ],
+    "params": {
+     "lite_size": "80 tasks of 350 [A:060]",
+     "lite_gap": "0.81 pp mean abs diff, held-out max 1.70 pp [A:060]",
+     "lite_cost": "25.3 percent [A:060]",
+     "heldout_penalty_seen": "regex router lost 23.2 points held out [A:052]",
+     "router_labels": "about 1,500 [A:001] or 100 to 1,000 [A:013]"
+    }
+   },
+   "security": [
+    "Task repos can hold customer code and secrets; store snapshots per tenant with no cross-tenant read.",
+    "Checkers run in a sandbox with no network."
+   ],
+   "performance": {
+    "slo": "Gold version build under 10 minutes for 350 tasks (DevX proposal).",
+    "complexity": "Linear in task count.",
+    "scaling": "Batch only; storage grows with repo snapshots."
+   },
+   "edge_cases": [
+    "A task becomes flaky: remove it and bump the version.",
+    "A new repo enters: add it to both Lite and held-out strata.",
+    "All labels from one model: block the set.",
+    "Held-out task leaks into a prompt: retire it and replace."
+   ],
+   "tests": [
+    {
+     "name": "lite_size",
+     "given": "350 tasks",
+     "expect": "lite has 80 tasks, stratified"
+    },
+    {
+     "name": "holdout_stable",
+     "given": "task id 1042 in v6 and v7",
+     "expect": "same split in both versions"
+    },
+    {
+     "name": "label_block",
+     "given": "5 labels, 4 from model X",
+     "expect": "set blocked, reason dominant_model"
+    },
+    {
+     "name": "tuning_guard",
+     "given": "tuning job requests held-out ids",
+     "expect": "request refused"
+    },
+    {
+     "name": "lite_gap",
+     "given": "full pass 0.6610, lite 0.6607",
+     "expect": "gap 0.03 pp within the 0.81 pp mean seen"
+    }
+   ],
+   "cost_levers": [
+    "Lite subset lowers eval cost to 25.3 percent.",
+    "Held-out split prevents wasted rollouts."
+   ],
+   "feedback_events": [
+    "Lite vs full gap per version.",
+    "Held-out vs tune gap.",
+    "Flaky task rate."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.gold.version",
+     "fields": [
+      "version",
+      "tasks",
+      "lite",
+      "heldout"
+     ],
+     "when": "new gold version"
+    },
+    {
+     "name": "token_economics.gold.leak",
+     "fields": [
+      "task",
+      "job"
+     ],
+     "when": "held-out access attempt"
+    },
+    {
+     "name": "token_economics.gold.label_audit",
+     "fields": [
+      "version",
+      "models",
+      "max_share"
+     ],
+     "when": "label audit"
+    }
+   ],
+   "papers": [
+    {
+     "ref": "A:060",
+     "key_idea": "80-task Lite tracked 350 tasks within 0.81 pp at 25.3 percent cost.",
+     "how": "Lite subset size."
+    },
+    {
+     "ref": "A:052",
+     "key_idea": "Regex router fell 23.2 points on held-out tasks.",
+     "how": "Reason for a held-out split."
+    },
+    {
+     "ref": "A:019",
+     "key_idea": "Routers trained on one dominant model do not generalise.",
+     "how": "Label audit rule."
+    }
+   ],
+   "repos": [],
+   "industry": "Public coding sets saturate. Teams that track cost per task keep a private set and a cheap subset for confidence interval (CI)."
+  }
+ },
+ "stats": {
+  "inn": "Attempt rows per task and arm: cost, success, repeat id.",
+  "out": "Paired cost per successful task (CPS) ratio with a task-clustered bootstrap interval, success difference interval, and a test verdict.",
+  "store": "Reads the ledger and eval rows. Writes interval results with random seed.",
+  "fail": "Fail closed for decisions. If the interval cannot be computed, the verdict is hold. No effect on live traffic.",
+  "req": "RQ-D-029, RQ-D-030, RQ-D-031, RQ-D-026, RQ-D-037",
+  "src": [
+   "C:027",
+   "C:023",
+   "C:026",
+   "C:025",
+   "C:024",
+   "A:052",
+   "A:006",
+   "A:002",
+   "A:001"
+  ],
+  "prop": "Bootstrap count (10,000), the one-sided level and the stopping rule are DevX proposals. Power formulas are not in corpus.",
+  "hard": "Not in corpus: power formulas, minimum duration, acceptable margin. Derived from R6: log-SD ln(1.34) = 0.29 from the cost dispersion baseline [C:027]; fit it again on our pilot.",
+  "line": "cost/solve ratio 0.82, 95% interval [0.74, 0.91]\nsuccess delta -1.1 pp, bound -3 pp: ok",
+  "dumb": "This works out whether a new setting really saves money or just got lucky. It resamples whole tasks, so one easy task cannot fake a win.",
+  "deep": {
+   "purpose": "Turn paired attempt rows into a trustworthy CPS ratio and a success non-inferiority check. Task-clustered resampling is the method used in C:026.",
+   "expected": [
+    "Resamples tasks, not attempts, with all repeats of a task kept together.",
+    "Computes CPS = sum of all attempt costs / number of successes in each arm.",
+    "Reports the paired ratio CPS(arm)/CPS(baseline) with a confidence interval.",
+    "Tests success against a preset non-inferiority bound."
+   ],
+   "not_expected": [
+    "No unpaired comparison when pairs exist.",
+    "No bound chosen after seeing the data.",
+    "No claim of power beyond the pilot fit."
+   ],
+   "algorithm": {
+    "name": "Task-clustered paired bootstrap",
+    "formula": "for b in 1..B: resample tasks with replacement; ratio_b = CPS_B^b / CPS_A^b; confidence interval (CI) = quantiles of ratio_b",
+    "steps": [
+     "Group rows by task id; each group holds both arms and all repeats.",
+     "Draw B task samples with replacement using a fixed seed.",
+     "In each sample compute CPS per arm and the ratio; also the success rate difference.",
+     "Take the 2.5 and 97.5 percentiles for the ratio and the 5th percentile for the success difference.",
+     "Ship only if the ratio upper bound is below 1 and the success lower bound is at least the preset bound."
+    ],
+    "params": {
+     "B": "10,000 resamples (DevX proposal)",
+     "ci_level": "95 percent (DevX proposal)",
+     "dispersion_baseline": "geometric SD x1.34 per task and arm [C:027]",
+     "pilot_sample_sizes": "about 38 to 45 effective tasks per arm [C:024]; 100 tasks [C:025]",
+     "ni_bound": "preset per optimisation; not in corpus"
+    }
+   },
+   "math": {
+    "definitions": [
+     "CPS_arm = sum over attempts of cost, divided by count of successes.",
+     "sigma = SD of log cost ratio per task pair; ln(1.34) = 0.29 is the corpus dispersion baseline [C:027].",
+     "n = number of task pairs; delta = relative cost difference to detect."
+    ],
+    "formula_full": "ratio = CPS_B / CPS_A;  CI via B task-clustered resamples;  rough pair count n ~= ((z_a + z_b) * sigma / delta_log)^2 where delta_log = ln(1 - delta)",
+    "derivation": "For paired log-ratios with SD sigma, the standard error of the mean is sigma / sqrt(n). At a two-sided 5 percent level and 80 percent power, n is about ((1.96 + 0.84) * sigma / delta_log)^2. The corpus gives sigma but not power targets, so z values are DevX proposals.",
+    "worked_example": "sigma = 0.29 [C:027]. Detect a 10 percent paired cost difference: delta_log = ln(0.9) = -0.105. n = ((1.96 + 0.84) * 0.29 / 0.105)^2 = (7.73)^2 = about 60 task pairs. Compare: 100 tasks in C:025, about 38 to 45 effective tasks in C:024. Check against a pilot SD before use.",
+    "complexity": "O(B * N) for N attempts; B = 10,000 gives about 10^4 passes over the rows.",
+    "failure_modes": [
+     "Too few tasks: wide interval, verdict hold.",
+     "Cache carryover makes arms dependent.",
+     "Heavy tail from a few runaway tasks inflates CPS variance.",
+     "Success rate near 0 or 1: percentile bootstrap becomes unstable."
+    ],
+    "calibration": "Fit sigma on a pilot of 20 tasks; re-run the sample size formula; check coverage by simulation on past runs."
+   },
+   "security": [
+    "Rows are aggregated and carry task ids only; no prompts or outputs.",
+    "The random seed is stored so any third party can reproduce an interval."
+   ],
+   "performance": {
+    "slo": "Interval for 100 tasks x 3 repeats x 2 arms in under 5 s (DevX proposal).",
+    "complexity": "O(B * N).",
+    "scaling": "Vectorised; parallel across resamples."
+   },
+   "edge_cases": [
+    "A task has zero successes in one arm: CPS undefined for that arm, count as censored and report.",
+    "Repeats differ between arms: use the minimum common repeats.",
+    "Only 1 task pair: refuse an interval.",
+    "All costs identical: interval collapses; flag as degenerate."
+   ],
+   "tests": [
+    {
+     "name": "paired_ratio",
+     "given": "arm A cost $10.00 for 20 successes, arm B $8.20 for 20",
+     "expect": "ratio 0.82"
+    },
+    {
+     "name": "cluster",
+     "given": "3 repeats of task T1",
+     "expect": "all 3 rows resample together"
+    },
+    {
+     "name": "ni_pass",
+     "given": "success delta -1.1 pp, bound -3 pp, lower 5th pct -2.4 pp",
+     "expect": "ni_ok true"
+    },
+    {
+     "name": "ni_fail",
+     "given": "lower 5th pct -4.0 pp, bound -3 pp",
+     "expect": "ni_ok false, verdict revert"
+    },
+    {
+     "name": "sample_size",
+     "given": "sigma 0.29, delta 10 percent",
+     "expect": "n about 60 pairs"
+    },
+    {
+     "name": "seed",
+     "given": "same rows and seed twice",
+     "expect": "same interval"
+    }
+   ],
+   "cost_levers": [
+    "Right-sized tests avoid paying for extra runs.",
+    "Catches a fake win before rollout."
+   ],
+   "feedback_events": [
+    "Interval width vs plan.",
+    "Coverage on back-tests."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.stats.interval",
+     "fields": [
+      "run_id",
+      "ratio",
+      "lo",
+      "hi",
+      "n_tasks",
+      "seed"
+     ],
+     "when": "interval computed"
+    },
+    {
+     "name": "token_economics.stats.ni_check",
+     "fields": [
+      "run_id",
+      "delta",
+      "bound",
+      "ok"
+     ],
+     "when": "non-inferiority checked"
+    },
+    {
+     "name": "token_economics.stats.degenerate",
+     "fields": [
+      "run_id",
+      "reason"
+     ],
+     "when": "cannot compute"
+    }
+   ],
+   "papers": [
+    {
+     "ref": "C:026",
+     "key_idea": "Preregistered paired task-clustered bootstrap with a success non-inferiority floor.",
+     "how": "Core method."
+    },
+    {
+     "ref": "C:027",
+     "key_idea": "Geometric SD x1.34 per task and arm; one probe plus 1.9x headroom.",
+     "how": "Sigma input."
+    }
+   ],
+   "repos": [],
+   "industry": "Bootstrap on task clusters is common in agent evaluation. Vendors rarely publish an interval or a bound."
+  }
+ },
+ "cpsc": {
+  "inn": "Ledger rows tagged with task id, success flag, attempt cost, caller and model.",
+  "out": "cost per successful task (CPS) per task type, caller and model; failed-run waste share; spend after first repeated failure.",
+  "store": "Reads the ledger and success flags. Writes CPS aggregates and waste reports.",
+  "fail": "Fail open. A missing success flag leaves the attempt unscored and counted as unknown, never as a success.",
+  "req": "RQ-D-023, RQ-D-024, RQ-D-025, RQ-D-026, RQ-D-027, RQ-D-028, RQ-D-034, RQ-D-046",
+  "src": [
+   "A:122",
+   "A:069",
+   "C:026",
+   "C:024",
+   "C:028",
+   "C:027",
+   "C:023",
+   "C:025",
+   "C:053"
+  ],
+  "prop": "Dashboard layout and category list are DevX proposals. Metric definitions are sourced.",
+  "hard": "Cost-driver conflict: input [C:023], output [C:027], or harness base 74.7 percent [C:024]. Output is 2.7 percent of tokens and 51.1 percent of dollars at 96.3 percent hit. Chosen: report all three buckets and let data decide. Failure-share baselines (32 and 51 percent) come from one 60-task study [C:028].",
+  "line": "task_type=bugfix  attempts=3  ok=1  cost=$0.62\ncost per solve $0.62, failed spend 2/3",
+  "dumb": "A cheap run that fails is not cheap. This counts the money for every try, including the failed ones, and divides by how many tasks truly got solved.",
+  "deep": {
+   "purpose": "Compute the headline metric. Cost per successful task counts all attempts including failures [A:122, C:026].",
+   "expected": [
+    "Sums cost over all attempts including failed ones, divided by successes.",
+    "Reports per task category, since optimisations do not transfer across harnesses [C:024].",
+    "Tracks failed-run waste share (baseline 32 percent) and spend after first repeated failure (baseline 51 percent) [C:028].",
+    "Tracks quality guards: patch-apply, empty patch, format validity, fix-commit ratio [C:025, C:053]."
+   ],
+   "not_expected": [
+    "Never reports token savings alone.",
+    "Never counts an unknown-outcome run as a success.",
+    "No mixing of arms in one number."
+   ],
+   "algorithm": {
+    "name": "Failure-inclusive CPS",
+    "formula": "CPS = sum_i cost_i / count(success_i)",
+    "steps": [
+     "Join ledger rows to task ids and the success flag.",
+     "Group by category, caller, model, arm.",
+     "Add the optimisation overhead (router call, summary call) to the task total [C:026].",
+     "Compute CPS, waste share = failed cost / total cost, and cost after the first repeated failure signature.",
+     "Publish with median and P95 per developer [C:054]."
+    ],
+    "params": {
+     "failed_run_waste_baseline": "32 percent [C:028]",
+     "spend_after_repeat_failure_baseline": "51 percent [C:028]",
+     "dispersion": "geometric SD x1.34 [C:027]",
+     "harness_base_share": "74.7 percent of cost [C:024]",
+     "early_stop_rule": "cut runs after the first repeated failure signature [C:028]"
+    }
+   },
+   "math": {
+    "definitions": [
+     "c_ij = billed cost of attempt j on task i, including overhead.",
+     "s_i = number of successful attempts for task i (0 or 1 per task, repeats counted).",
+     "S = sum of s_i over tasks.",
+     "W = failed cost / total cost."
+    ],
+    "formula_full": "CPS = (sum_i sum_j c_ij) / S;  W = (sum over failed attempts c_ij) / (sum_i sum_j c_ij)",
+    "derivation": "Dividing total spend by successes charges every failed try to the tasks that did succeed. Token averages hide this because a cheap failure still adds to the numerator without raising S.",
+    "worked_example": "Example inputs are illustrative. 10 tasks, total spend $5.00, 4 successes: CPS = 5.00 / 4 = $1.25. If failed attempts cost $1.60 of the $5.00, W = 0.32 (the same as the C:028 baseline). Say an optimisation cuts spend to $4.00 but successes drop to 3. Then CPS = 4.00 / 3 = $1.33, so cost per success rose.",
+    "complexity": "O(N) over attempt rows.",
+    "failure_modes": [
+     "Success flag not verifiable: CPS undefined.",
+     "Long tail of unfinished tasks removes costly failures from the denominator.",
+     "Attempt rows missing overhead of the optimisation under test."
+    ],
+    "calibration": "Reconcile the sum of attempt costs against the invoice for the same period. Compare W with the 32 percent baseline on the first 30 days."
+   },
+   "security": [
+    "Aggregates drop prompt text and keep ids and numbers only.",
+    "Per-developer views follow tenant roles so one developer cannot read another cost profile without a grant."
+   ],
+   "performance": {
+    "slo": "Dashboard query under 2 s p95 for 30 days of data (DevX proposal).",
+    "complexity": "Linear in rows; pre-aggregate daily.",
+    "scaling": "Partition by tenant and day."
+   },
+   "edge_cases": [
+    "Task has several repeats: count each repeat as an attempt, each success separately.",
+    "Success flag arrives late: restate the aggregate with a version tag.",
+    "Zero successes in a category: CPS undefined, show spend only.",
+    "Shared tool-call cost across two tasks: split by turn share."
+   ],
+   "tests": [
+    {
+     "name": "cps_basic",
+     "given": "spend $5.00, 4 successes",
+     "expect": "CPS $1.25"
+    },
+    {
+     "name": "waste_share",
+     "given": "failed attempts $1.60 of $5.00",
+     "expect": "W 0.32"
+    },
+    {
+     "name": "no_success",
+     "given": "spend $2.00, 0 successes",
+     "expect": "CPS undefined, spend shown"
+    },
+    {
+     "name": "overhead",
+     "given": "attempt $0.050 plus router $0.004",
+     "expect": "task cost $0.054"
+    },
+    {
+     "name": "unknown_flag",
+     "given": "attempt with no success flag",
+     "expect": "counted unknown, not success"
+    }
+   ],
+   "cost_levers": [
+    "Shows where failed runs burn money.",
+    "Targets early stop after repeated failure."
+   ],
+   "feedback_events": [
+    "CPS trend per category.",
+    "Waste share trend.",
+    "Unknown-flag rate."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.cpsc.computed",
+     "fields": [
+      "window",
+      "category",
+      "cps",
+      "waste_share",
+      "n_success"
+     ],
+     "when": "each aggregate refresh"
+    },
+    {
+     "name": "token_economics.cpsc.unknown",
+     "fields": [
+      "task",
+      "reason"
+     ],
+     "when": "unscored attempt"
+    },
+    {
+     "name": "token_economics.cpsc.repeat_fail",
+     "fields": [
+      "task",
+      "signature",
+      "spend_after"
+     ],
+     "when": "repeat failure detected"
+    }
+   ],
+   "papers": [
+    {
+     "ref": "A:122",
+     "key_idea": "Cost-of-pass, including failed attempts, is the right metric.",
+     "how": "Definition of CPS."
+    },
+    {
+     "ref": "C:028",
+     "key_idea": "60 tasks over 6 repos: 32 percent failed-run waste, 51 percent spend after first repeated failure.",
+     "how": "Baselines."
+    }
+   ],
+   "repos": [],
+   "industry": "Gateways report spend and tokens. Success-adjusted cost needs a task and outcome join that few products ship."
+  }
+ },
+ "shadow": {
+  "inn": "Mirrored production requests, candidate arm config, write-isolation setting.",
+  "out": "Shadow arm outputs, costs and scores, with no effect on the user response.",
+  "store": "Reads mirrored requests. Writes shadow results to the eval store, tagged with the shadow flag.",
+  "fail": "Fail open for production. If the shadow path errors or lags, it is dropped. The user request is never delayed.",
+  "req": "RQ-D-043, RQ-D-044, RQ-D-045",
+  "src": [
+   "C:063",
+   "C:030",
+   "A:241",
+   "A:243"
+  ],
+  "prop": "Sampling rate, the spend cap and the queue design are DevX proposals. The shadow idea comes from one survey with placeholder values [C:063].",
+  "hard": "Measured production shadow results: not in corpus. Shadow doubles spend [R6]. Static labelled traces can score routers without live traffic [C:030]; chosen as the default for P2, with live shadow in P3.",
+  "line": "mirror 5% of tenant acme to arm B\nwrites blocked; shadow spend cap $20/day",
+  "dumb": "Token Economics quietly copies a small share of real requests to the new setting and watches what would have happened. Nothing the copy does reaches the user or the repo.",
+  "deep": {
+   "purpose": "Compare a candidate on real traffic before any user sees its output.",
+   "expected": [
+    "Mirrors a configured share of requests after the primary call is sent.",
+    "Blocks all side effects: file writes, shell commands, external calls [C:063].",
+    "Scores the shadow arm by cost per successful task (CPS) and valid output rate against the live arm.",
+    "Stops at a daily spend cap."
+   ],
+   "not_expected": [
+    "No effect on the user response or its latency.",
+    "No shadow arm that writes to a real repo.",
+    "No shadow on tenants that opt out."
+   ],
+   "algorithm": {
+    "name": "Mirror and isolate",
+    "formula": "shadow_spend <= cap; live latency delta = 0",
+    "steps": [
+     "After the live request is dispatched, copy the request to the shadow queue with the sampling rate.",
+     "Run the shadow arm in a write-isolated sandbox with tool stubs.",
+     "Score outputs with the checkers from gold or a judge.",
+     "Add shadow cost to the eval ledger under the shadow tag.",
+     "Stop the arm when spend reaches the cap or the sample reaches the plan size."
+    ],
+    "params": {
+     "sample_rate": "5 percent (DevX proposal)",
+     "daily_spend_cap": "per tenant policy (DevX proposal)",
+     "revert_triggers_in_survey": "schema validity -2 pp, ExecRate -3 pp, p95 +20 percent (placeholder values [C:063])"
+    }
+   },
+   "security": [
+    "Shadow copies hold customer prompts; apply the same retention and tenant isolation as live data.",
+    "Tool calls in shadow are stubbed; credentials are never passed into the sandbox."
+   ],
+   "performance": {
+    "slo": "Added live latency 0 ms; shadow lag under 10 minutes (DevX proposal).",
+    "complexity": "One extra call per sampled request.",
+    "scaling": "Separate queue and worker pool."
+   },
+   "edge_cases": [
+    "Shadow arm cost exceeds the live arm by 3x: stop at the cap.",
+    "Request contains a tool with side effects: stub it and tag the result partial.",
+    "Tenant policy forbids copying data: skip.",
+    "Primary call fails: do not mirror."
+   ],
+   "tests": [
+    {
+     "name": "no_effect",
+     "given": "shadow arm tries a file write",
+     "expect": "write blocked, live response unchanged"
+    },
+    {
+     "name": "cap",
+     "given": "spend cap $20, shadow spend $20.01",
+     "expect": "arm stops"
+    },
+    {
+     "name": "sample",
+     "given": "rate 5 percent, 1,000 requests",
+     "expect": "about 50 mirrored, within sampling noise"
+    },
+    {
+     "name": "optout",
+     "given": "tenant opted out",
+     "expect": "0 mirrored"
+    },
+    {
+     "name": "latency",
+     "given": "live p95 before and after enabling",
+     "expect": "no change"
+    }
+   ],
+   "cost_levers": [
+    "Finds a regression without user harm.",
+    "Replaces guesswork about a new router."
+   ],
+   "feedback_events": [
+    "Shadow CPS vs live CPS.",
+    "Shadow valid-output rate.",
+    "Shadow spend vs cap."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.shadow.mirrored",
+     "fields": [
+      "tenant",
+      "arm",
+      "req_id"
+     ],
+     "when": "request copied"
+    },
+    {
+     "name": "token_economics.shadow.blocked",
+     "fields": [
+      "tenant",
+      "arm",
+      "tool"
+     ],
+     "when": "side effect blocked"
+    },
+    {
+     "name": "token_economics.shadow.stopped",
+     "fields": [
+      "tenant",
+      "arm",
+      "reason"
+     ],
+     "when": "cap or plan reached"
+    }
+   ],
+   "papers": [
+    {
+     "ref": "C:063",
+     "key_idea": "Survey describes shadow evals, blue/green and auto-rollback with placeholder values.",
+     "how": "Design pattern."
+    },
+    {
+     "ref": "C:030",
+     "key_idea": "Static labelled traces score routers without live traffic.",
+     "how": "Offline alternative."
+    }
+   ],
+   "repos": [],
+   "industry": "Portkey lists canary and A/B only as navigation labels [A:241, A:243]. No measured production shadow results are in the corpus."
+  }
+ },
+ "canr": {
+  "inn": "Passing eval verdict, rollout plan stages, tenant list, per-session pin state.",
+  "out": "Stage transitions: shadow, small share, larger share, full, or hold.",
+  "store": "Reads verdicts and live metrics. Writes stage state per tenant and per optimisation.",
+  "fail": "Fail closed for expansion. If metrics are missing, hold at the current stage. Existing traffic is untouched.",
+  "req": "RQ-D-046, RQ-D-047, RQ-D-048, RQ-D-030, RQ-D-042",
+  "src": [
+   "C:063",
+   "C:024",
+   "A:204",
+   "C:055",
+   "A:129",
+   "C:050"
+  ],
+  "prop": "Stage sizes (1, 5, 25, 100 percent) and dwell times are DevX proposals. Stage idea is from one survey [C:063].",
+  "hard": "Not in corpus: production canary or staged-rollout results, minimum duration. Chosen: stage sizes are placeholders, to be set from the first pilot. Sticky pinning for cache is sourced [A:204, C:055].",
+  "line": "opt=mask stage 2/4: 5% of sessions, dwell 3 d\ncost ok, hit rate ok -> advance to 25%",
+  "dumb": "A new saving is switched on for a few sessions first, then more, as long as the numbers stay good. If any number slips, it stops and goes back.",
+  "deep": {
+   "purpose": "Roll out an optimisation in stages with per-session stickiness, so the cache and results stay comparable.",
+   "expected": [
+    "Assigns by session, not by request, so a session never changes arm mid-run [A:204].",
+    "Advances only when cost per successful task (CPS), success floor and cache hit rate hold.",
+    "Compares to the baseline arm that runs at the same time.",
+    "Reports the rollout state to the dashboard."
+   ],
+   "not_expected": [
+    "No mid-session arm change.",
+    "No jump over a stage.",
+    "No expansion without a passing verdict."
+   ],
+   "algorithm": {
+    "name": "Staged session-sticky rollout",
+    "formula": "arm = hash(tenant, session, opt) mod 100 < share_stage",
+    "steps": [
+     "Load the plan: stages, share, dwell time, gates.",
+     "Assign arm by hash of tenant, session and optimisation id.",
+     "At the end of dwell, read stats gates from the rollout window.",
+     "If all gates pass, move to the next stage; if any fail, call rollb.",
+     "Persist state and emit events."
+    ],
+    "params": {
+     "stage_shares": "1, 5, 25, 100 percent (DevX proposal)",
+     "dwell": "3 days per stage (DevX proposal)",
+     "gate_metrics": "CPS vs baseline confidence interval (CI), success floor, per-caller hit rate [C:063, C:024]",
+     "session_pin": "required because model, tool set or compaction change breaks the cache [C:055, A:204]"
+    }
+   },
+   "security": [
+    "Only the rollout role may advance a stage, and each change is audit logged.",
+    "A tenant can opt out; opt-out is honoured at every stage."
+   ],
+   "performance": {
+    "slo": "Arm assignment under 0.2 ms (DevX proposal).",
+    "complexity": "Constant per request (hash).",
+    "scaling": "Stateless assignment; state per tenant and optimisation."
+   },
+   "edge_cases": [
+    "Tenant has too little traffic to pass a gate: stay at the stage.",
+    "Session starts at stage 2 and stage 3 begins: session keeps its arm.",
+    "Two optimisations rolling out together: assign independent hashes, mark interactions.",
+    "Gate metric missing: hold."
+   ],
+   "tests": [
+    {
+     "name": "sticky",
+     "given": "same session id at 5 percent stage, 100 requests",
+     "expect": "same arm every time"
+    },
+    {
+     "name": "advance",
+     "given": "all gates pass at dwell end",
+     "expect": "stage 2 to 3"
+    },
+    {
+     "name": "hold_missing",
+     "given": "hit rate metric missing",
+     "expect": "hold, reason metric_missing"
+    },
+    {
+     "name": "no_skip",
+     "given": "plan stage 2 passing",
+     "expect": "next stage is 3, never 4"
+    },
+    {
+     "name": "optout",
+     "given": "tenant opted out",
+     "expect": "always baseline arm"
+    }
+   ],
+   "cost_levers": [
+    "Limits the damage of a bad optimisation.",
+    "Keeps cache hit rate stable inside sessions."
+   ],
+   "feedback_events": [
+    "Stage durations.",
+    "Reverts per stage.",
+    "Gate failures by metric."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.canr.assign",
+     "fields": [
+      "tenant",
+      "session",
+      "opt",
+      "arm",
+      "stage"
+     ],
+     "when": "first request of a session"
+    },
+    {
+     "name": "token_economics.canr.advance",
+     "fields": [
+      "tenant",
+      "opt",
+      "from",
+      "to"
+     ],
+     "when": "stage advanced"
+    },
+    {
+     "name": "token_economics.canr.hold",
+     "fields": [
+      "tenant",
+      "opt",
+      "reason"
+     ],
+     "when": "stage held"
+    }
+   ],
+   "papers": [
+    {
+     "ref": "C:063",
+     "key_idea": "Survey lists staged shadow, blue/green and auto-rollback keyed to CPS.",
+     "how": "Stage design."
+    }
+   ],
+   "repos": [],
+   "industry": "Portkey lists canary only as a navigation label [A:241, A:243]. Most gateways have no staged rollout for cost optimisations."
+  }
+ },
+ "kill": {
+  "inn": "Kill command (tenant, optimisation, scope), actor, reason.",
+  "out": "Immediate revert to the unchanged default path for the scope.",
+  "store": "Reads switch state on every request. Writes switch state and an audit row.",
+  "fail": "Fail open for optimisations: if the switch store is unreachable, all optimisations stay off and requests pass unchanged. Fail closed for budgets: budget enforcement is never behind this switch.",
+  "req": "RQ-D-049, RQ-D-050, RQ-D-051, RQ-D-073",
+  "src": [
+   "C:063",
+   "A:204",
+   "A:234",
+   "C:074"
+  ],
+  "prop": "Propagation target (under 5 s) and the cache of switch state are DevX proposals. Per-tenant and per-optimisation scope comes from C:063.",
+  "hard": "Not in corpus: kill-switch results. Phase conflict: the brief puts kill in P3, but P2 optimisations ship earlier. Chosen: P2 optimisations ship behind a static off flag until kill is built. Mid-run switches break caches [A:204]. So a kill takes effect at the next session by default. An emergency flag applies it at the next request.",
+  "line": "kill opt=mask tenant=acme scope=session-new\nactor=ops-7 reason=hit_rate; audit row written",
+  "dumb": "A stop button for each saving feature and each customer. Pressing it sends traffic back down the plain, unchanged path.",
+  "deep": {
+   "purpose": "Give operators and rollb a fast way to turn off an optimisation without a deploy. Enforcement stays at the gateway [A:234, C:074].",
+   "expected": [
+    "Scopes: tenant, optimisation, or both.",
+    "Kills at the gateway, not in a client hook [A:234, C:074].",
+    "Takes effect for new sessions by default; an emergency flag applies at the next request.",
+    "Never disables budget enforcement."
+   ],
+   "not_expected": [
+    "No change to a session pinned arm unless emergency.",
+    "No dependence on a client hook.",
+    "No silent failure: every switch change is audited."
+   ],
+   "algorithm": {
+    "name": "Scoped switch lookup",
+    "formula": "optimisation runs iff not killed(tenant, opt) and not global_kill(opt)",
+    "steps": [
+     "Gateway reads a local cache of switch state, refreshed by push and by a poll every 5 s (DevX proposal).",
+     "On each request, check the tenant and optimisation scope before applying a stage.",
+     "If the cache is stale beyond 30 s, treat all optimisations as off.",
+     "On a kill command, write state, write an audit row and push to gateways.",
+     "Emergency flag forces the check at the next request."
+    ],
+    "params": {
+     "poll_interval": "5 s (DevX proposal)",
+     "stale_limit": "30 s (DevX proposal)",
+     "default_effect": "new sessions only [A:204]"
+    }
+   },
+   "security": [
+    "Only roles with the kill permission may change a switch; each change is signed and audited.",
+    "The switch store is a separate service from the optimisation code so a bad deploy cannot disable it."
+   ],
+   "performance": {
+    "slo": "Propagation to all gateways under 5 s p95 (DevX proposal).",
+    "complexity": "Constant per request (cache lookup).",
+    "scaling": "Small state: tenants x optimisations."
+   },
+   "edge_cases": [
+    "Kill arrives while a session is pinned: default waits for the next session.",
+    "Gateway cannot reach the switch store: optimisations off.",
+    "Two operators send conflicting commands: last write wins, both audited.",
+    "Kill on an optimisation the tenant never enabled: no-op, logged."
+   ],
+   "tests": [
+    {
+     "name": "scope_tenant",
+     "given": "kill mask for acme",
+     "expect": "acme requests skip mask; other tenants unaffected"
+    },
+    {
+     "name": "stale",
+     "given": "cache age 31 s",
+     "expect": "all optimisations off"
+    },
+    {
+     "name": "budget_safe",
+     "given": "kill all optimisations",
+     "expect": "budget checks still run"
+    },
+    {
+     "name": "emergency",
+     "given": "emergency flag set",
+     "expect": "next request, not next session, is unmodified"
+    },
+    {
+     "name": "audit",
+     "given": "any kill",
+     "expect": "audit row with actor and reason"
+    }
+   ],
+   "cost_levers": [
+    "Stops a loss in minutes.",
+    "Avoids a deploy for a rollback."
+   ],
+   "feedback_events": [
+    "Kill count per optimisation.",
+    "Time from trigger to effect."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.kill.set",
+     "fields": [
+      "tenant",
+      "opt",
+      "actor",
+      "reason",
+      "scope"
+     ],
+     "when": "switch changed"
+    },
+    {
+     "name": "token_economics.kill.stale",
+     "fields": [
+      "gateway",
+      "age_s"
+     ],
+     "when": "cache stale"
+    },
+    {
+     "name": "token_economics.kill.applied",
+     "fields": [
+      "tenant",
+      "opt",
+      "req_id"
+     ],
+     "when": "request skipped an optimisation"
+    }
+   ],
+   "papers": [
+    {
+     "ref": "C:063",
+     "key_idea": "Per-tenant kill-switch plus auto-rollback in a survey.",
+     "how": "Scope design."
+    }
+   ],
+   "repos": [],
+   "industry": "Feature-flag services give the same pattern. Gateways rarely tie it to cost optimisations."
+  }
+ },
+ "rollb": {
+  "inn": "Live rollout metrics per tenant and optimisation, baseline intervals, estimated and billed cost.",
+  "out": "A rollback decision that calls kill for the scope and notifies the owner.",
+  "store": "Reads metrics and baselines. Writes rollback events with the trigger name and values.",
+  "fail": "Fail closed toward the safe path. If a metric is missing, treat it as breached for the hit-rate and success triggers and roll back.",
+  "req": "RQ-D-052, RQ-D-053, RQ-D-054, RQ-D-030, RQ-D-048",
+  "src": [
+   "C:063",
+   "C:025",
+   "C:052",
+   "C:076",
+   "A:216",
+   "C:002",
+   "A:052"
+  ],
+  "prop": "The divergence tolerance, the empty-patch spike rule and the evaluation window are DevX proposals. The p95 +20 percent value is a placeholder from a survey [C:063].",
+  "hard": "Reconciliation tolerance: not in corpus. Anomaly methods: not in corpus. Chosen: a spike rule using a count against the baseline 95 percent interval, to be calibrated. Per-caller hit rate is a trigger because account-level hit rate hid cron runs near 0 percent behind 77 percent [C:052].",
+  "line": "trigger=hit_rate caller=cron-7 hit 4% < base 88%\naction: kill opt=ttl-tune; notify owner",
+  "dumb": "Watches six warning signs once a saving is on. If any one goes bad, it switches the saving off by itself.",
+  "deep": {
+   "purpose": "Auto-revert on any of six breaches so a bad optimisation cannot run unseen.",
+   "expected": [
+    "Triggers on success below the floor.",
+    "Triggers on cost per successful task (CPS) above the baseline interval.",
+    "Triggers on per-caller cache hit rate below baseline, not account level [C:052, C:076].",
+    "Triggers on an empty-patch or apply-failure spike, p95 latency +20 percent (placeholder), and billed vs estimate divergence."
+   ],
+   "not_expected": [
+    "No rollback on a single noisy minute; use the evaluation window.",
+    "No account-level hit rate as a trigger.",
+    "No silent rollback; the owner is notified."
+   ],
+   "algorithm": {
+    "name": "Six-trigger evaluator",
+    "formula": "rollback if any trigger_k(window) is true",
+    "steps": [
+     "Every evaluation window, compute the six metrics per scope.",
+     "Compare each to its baseline interval or bound.",
+     "If any breach holds for the required window count, call kill for the scope.",
+     "Record the trigger name, value and baseline.",
+     "Notify the rollout owner and open an incident row."
+    ],
+    "params": {
+     "success_floor": "preset non-inferiority bound [C:025, A:052]",
+     "cps_trigger": "above baseline confidence interval (CI) upper bound [C:024]",
+     "p95_latency": "+20 percent (placeholder [C:063])",
+     "hit_rate": "per caller below baseline [C:052]",
+     "cache_miss_event": "more than 5 percent and at least 2,000 tokens reprocessed [C:076]",
+     "divergence_tolerance": "not in corpus (DevX proposal)",
+     "schema_validity_drop_in_survey": "-2 pp [C:063]",
+     "execrate_drop_in_survey": "-3 pp [C:063]"
+    }
+   },
+   "security": [
+    "Rollback decisions are audit logged with the metric values and no content.",
+    "Only the evaluator service identity can call kill with source rollb."
+   ],
+   "performance": {
+    "slo": "Rollback issued within 2 evaluation windows of a breach (DevX proposal).",
+    "complexity": "Six comparisons per scope per window.",
+    "scaling": "Linear in tenants x optimisations."
+   },
+   "edge_cases": [
+    "Low traffic leaves a metric undefined: treat as missing and roll back for hit rate, hold for latency.",
+    "Baseline moves during a long rollout: re-fit baseline weekly.",
+    "Two triggers fire together: record both.",
+    "Scheduled cron run has near 0 percent hit by design: allow-list the caller."
+   ],
+   "tests": [
+    {
+     "name": "hit_rate",
+     "given": "caller cron-7 hit 4 percent, baseline 88 percent",
+     "expect": "rollback, trigger hit_rate"
+    },
+    {
+     "name": "account_hide",
+     "given": "account hit 77 percent but one caller at 0 percent",
+     "expect": "rollback for that caller [C:052]"
+    },
+    {
+     "name": "p95",
+     "given": "p95 up 21 percent",
+     "expect": "rollback, trigger p95"
+    },
+    {
+     "name": "cps",
+     "given": "CPS 1.05 above CI upper 1.02",
+     "expect": "rollback, trigger cps"
+    },
+    {
+     "name": "divergence",
+     "given": "billed vs estimate differs beyond tolerance",
+     "expect": "rollback, trigger divergence"
+    }
+   ],
+   "cost_levers": [
+    "Limits the cost of a bad rollout.",
+    "Protects the quality floor."
+   ],
+   "feedback_events": [
+    "Rollbacks per trigger.",
+    "False rollback rate on later reruns."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.rollb.triggered",
+     "fields": [
+      "tenant",
+      "opt",
+      "trigger",
+      "value",
+      "baseline"
+     ],
+     "when": "any trigger"
+    },
+    {
+     "name": "token_economics.rollb.skipped",
+     "fields": [
+      "tenant",
+      "opt",
+      "reason"
+     ],
+     "when": "metric missing for non-fatal trigger"
+    },
+    {
+     "name": "token_economics.rollb.notified",
+     "fields": [
+      "tenant",
+      "opt",
+      "owner"
+     ],
+     "when": "owner notified"
+    }
+   ],
+   "papers": [
+    {
+     "ref": "C:063",
+     "key_idea": "Survey lists auto-rollback on schema validity, ExecRate and p95; placeholders.",
+     "how": "Trigger list."
+    },
+    {
+     "ref": "C:052",
+     "key_idea": "Account hit 77 percent hid cron runs near 0 percent.",
+     "how": "Per-caller trigger."
+    }
+   ],
+   "repos": [],
+   "industry": "Deployment tools roll back on error rate. Cost-aware rollback on CPS and hit rate is a DevX design."
+  }
+ },
+ "api": {
+  "inn": "Admin requests: create tenant, key, budget, policy; reads of reports; kill commands.",
+  "out": "JSON responses with stable error codes; HTTP 402 when a budget is exhausted on the data path.",
+  "store": "Reads and writes tenants, keys, budgets and policies in the control store. Writes an audit row per mutation.",
+  "fail": "Fail closed for budgets: no budget state means 503 and no dispatch. Fail open for observation: reads of reports may be stale or empty.",
+  "req": "RQ-D-055, RQ-D-056, RQ-D-057, RQ-D-058, RQ-D-061, RQ-D-062",
+  "src": [
+   "C:136",
+   "A:234",
+   "A:191",
+   "C:001",
+   "C:074"
+  ],
+  "prop": "Endpoint shapes, versioning and rate limits are DevX proposals. The 402 behaviour and hard external caps are sourced.",
+  "hard": "Gateway soft caps overshoot [A:234]. Chosen: reserve-before-dispatch with a hard 402, as in Bifrost [C:001], and no reliance on agent-honoured budgets [C:136]. Hosted-provider rate-limit headers are not enough for tenant budgets [A:191].",
+  "line": "POST /v1/tenants/acme/budgets {limit_usd:500}\n-> 201; later call -> 402 budget_exhausted",
+  "dumb": "The control panel for admins and the door for budget decisions. Once a budget runs out, the door returns a clear \"payment required\" answer and stops the call.",
+  "deep": {
+   "purpose": "Expose the admin surface and enforce budgets at the gateway. Never rely on a client hook, because developers can disable hooks [A:234, C:074].",
+   "expected": [
+    "Returns HTTP 402 with code budget_exhausted when a budget cannot cover the reserve [C:001].",
+    "Rejects dispatch with 503 policy_unavailable when budget state cannot be read.",
+    "Writes an audit row for every mutating call.",
+    "Versions the API path and keeps error codes stable."
+   ],
+   "not_expected": [
+    "No enforcement by a client hook alone.",
+    "No budget check that trusts an agent-stated estimate [C:136].",
+    "No prompt content in logs."
+   ],
+   "algorithm": {
+    "name": "Reserve then dispatch",
+    "formula": "allow iff budget_remaining >= reserve(request); then dispatch",
+    "steps": [
+     "Authenticate the key and resolve tenant and virtual key.",
+     "Check authorisation for the operation (authz).",
+     "For data-path calls, compute the worst-case reserve and compare with remaining budget; if short, return 402.",
+     "If budget or policy state is unavailable, return 503 and do not dispatch.",
+     "On mutation, commit the change with an audit row in one transaction."
+    ],
+    "params": {
+     "budget_exhausted_status": "402 [C:001]",
+     "state_unavailable_status": "503 (DevX proposal)",
+     "enforcement_location": "gateway, never client hook [A:234, C:074]"
+    }
+   },
+   "security": [
+    "Each key is scoped to a tenant; cross-tenant ids return 404, not 403, to avoid leaks.",
+    "Admin operations require a role (authz) and write audit rows; there are no anonymous mutations.",
+    "Secrets never appear in responses or logs."
+   ],
+   "performance": {
+    "slo": "Admin read p95 under 200 ms; data-path budget check under 2 ms (DevX proposal).",
+    "complexity": "Constant per request for the reserve check.",
+    "scaling": "Stateless API tier; budget counters in a low-latency store."
+   },
+   "edge_cases": [
+    "Two concurrent calls race for the last dollar: atomic reserve, one gets 402.",
+    "Budget state store is down: 503, no dispatch.",
+    "Unpriced model id: reject (unpriced models escape budgets [A:242]).",
+    "Client retries a mutating call: idempotency key returns the first result."
+   ],
+   "tests": [
+    {
+     "name": "exhausted",
+     "given": "remaining $0.02, reserve $0.05",
+     "expect": "402 budget_exhausted, no dispatch"
+    },
+    {
+     "name": "store_down",
+     "given": "budget store unreachable",
+     "expect": "503 policy_unavailable, no dispatch"
+    },
+    {
+     "name": "race",
+     "given": "2 calls, $0.06 left, reserve $0.05 each",
+     "expect": "one 200, one 402"
+    },
+    {
+     "name": "audit",
+     "given": "create budget",
+     "expect": "one audit row with actor and diff"
+    },
+    {
+     "name": "cross_tenant",
+     "given": "key of acme reads tenant beta",
+     "expect": "404"
+    }
+   ],
+   "cost_levers": [
+    "Hard caps stop runaway spend.",
+    "Atomic reserves remove soft-cap overshoot."
+   ],
+   "feedback_events": [
+    "402 rate per tenant.",
+    "503 rate.",
+    "Mutation count by role."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.api.request",
+     "fields": [
+      "route",
+      "tenant",
+      "status",
+      "latency_ms"
+     ],
+     "when": "each admin call"
+    },
+    {
+     "name": "token_economics.api.402",
+     "fields": [
+      "tenant",
+      "key",
+      "reserve",
+      "remaining"
+     ],
+     "when": "budget exhausted"
+    },
+    {
+     "name": "token_economics.api.503",
+     "fields": [
+      "tenant",
+      "reason"
+     ],
+     "when": "state unavailable"
+    }
+   ],
+   "papers": [],
+   "repos": [
+    {
+     "ref": "C:001",
+     "name": "Bifrost",
+     "take": "HTTP 402 when a virtual-key budget is exhausted."
+    },
+    {
+     "ref": "C:060",
+     "name": "LiteLLM",
+     "take": "Virtual keys with max_budget and a duration."
+    }
+   ],
+   "industry": "Gateways expose budgets on virtual keys. Many allow soft overshoot [A:234]."
+  }
+ },
+ "pol": {
+  "inn": "Policy bundle (budgets, allowed providers, caps, optimisation flags), signature, tenant id.",
+  "out": "Resolved policy for a request: allow-list, caps, stages, kill state.",
+  "store": "Reads the signed bundle. Writes bundle versions and decision logs (metadata).",
+  "fail": "Fail closed. If no valid bundle exists, use a safe default: no dispatch to unlisted providers and no optimisation. Budgets keep their last good state.",
+  "req": "RQ-D-059, RQ-D-060, RQ-D-061, RQ-D-062, RQ-D-050, RQ-D-051, RQ-D-056, RQ-D-065, RQ-D-041",
+  "src": [
+   "C:001",
+   "A:193",
+   "C:104",
+   "A:234",
+   "C:074",
+   "A:010",
+   "A:019"
+  ],
+  "prop": "Bundle format, review flow and cold-start rules are DevX proposals. Route pinning with allowedProviders is sourced for Claude Code [C:104].",
+  "hard": "Codex pins routes with model_provider in user config, so managed pinning is weaker there [C:104]. Chosen: the gateway is the enforcement point in all cases. Router labels must not rely on one dominant model [A:019]; strong-share ceiling [A:010] is a policy parameter.",
+  "line": "bundle v42 signed; allowedProviders=[bedrock]\nstrong_share_cap=0.40; budget fail=closed",
+  "dumb": "Rules as code: who may use which model, how much they may spend, which savings are on. A bundle must be signed and reviewed before it takes effect.",
+  "deep": {
+   "purpose": "Hold the policy-as-code that the gateway evaluates, and pin the route so the client cannot bypass Token Economics.",
+   "expected": [
+    "Loads only signed bundles and verifies the signature at the gateway.",
+    "Pins the route with allowedProviders in managed settings (Claude Code) [C:104].",
+    "Keeps enforcement at the gateway, never in a client hook [A:234, C:074].",
+    "Applies a strong-share ceiling and refuses a router trained on one dominant model [A:010, A:019]."
+   ],
+   "not_expected": [
+    "No unsigned or unreviewed bundle in production.",
+    "No policy that depends on a client hook for enforcement.",
+    "No default that allows unlisted providers."
+   ],
+   "algorithm": {
+    "name": "Signed bundle evaluation",
+    "formula": "decision = eval(bundle_vN, request) with default deny",
+    "steps": [
+     "Fetch the bundle for the tenant, verify the signature and version.",
+     "Evaluate in order: provider allow-list, model price known, caps, budget, optimisation stage, kill state.",
+     "Cache the decision for the session when the arm is pinned.",
+     "If the bundle is invalid or missing, apply the cold-start default (deny unlisted, no optimisation).",
+     "Log metadata only."
+    ],
+    "params": {
+     "default": "deny (DevX proposal)",
+     "pin_claude_code": "allowedProviders in managed settings [C:104]",
+     "pin_codex": "model_provider in user config [C:104]",
+     "strong_share_ceiling": "policy parameter, see A:010",
+     "review": "two-person approval (DevX proposal)"
+    }
+   },
+   "security": [
+    "Bundles are signed; keys live in the vault; a failed signature check raises an alert.",
+    "Policy evaluation has no network side effect and logs no prompt text."
+   ],
+   "performance": {
+    "slo": "Evaluation under 1 ms p99 with a cached bundle (DevX proposal).",
+    "complexity": "Linear in rule count, small.",
+    "scaling": "Bundles are cached per gateway; invalidated by version push."
+   },
+   "edge_cases": [
+    "Bundle signature fails: keep last good bundle and alert.",
+    "First start with no bundle: cold-start default.",
+    "Two versions during a push: each request evaluates against one version.",
+    "Client sets a different provider: pinned route wins; gateway rejects."
+   ],
+   "tests": [
+    {
+     "name": "unsigned",
+     "given": "bundle without a valid signature",
+     "expect": "rejected, last good bundle kept"
+    },
+    {
+     "name": "unlisted_provider",
+     "given": "request to provider not in allowedProviders",
+     "expect": "403 provider_not_allowed"
+    },
+    {
+     "name": "cold_start",
+     "given": "no bundle at start",
+     "expect": "default deny, optimisations off"
+    },
+    {
+     "name": "strong_share",
+     "given": "strong-share ceiling 0.40, current 0.45",
+     "expect": "router steers down or flags"
+    },
+    {
+     "name": "hook_off",
+     "given": "client hook disabled",
+     "expect": "gateway still enforces"
+    }
+   ],
+   "cost_levers": [
+    "Prevents routing around the gateway.",
+    "Caps strong-model spend."
+   ],
+   "feedback_events": [
+    "Denials per rule.",
+    "Bundle change lead time."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.pol.loaded",
+     "fields": [
+      "tenant",
+      "version",
+      "signed"
+     ],
+     "when": "bundle loaded"
+    },
+    {
+     "name": "token_economics.pol.denied",
+     "fields": [
+      "tenant",
+      "rule",
+      "req_id"
+     ],
+     "when": "request denied"
+    },
+    {
+     "name": "token_economics.pol.cold_start",
+     "fields": [
+      "gateway"
+     ],
+     "when": "default applied"
+    }
+   ],
+   "papers": [
+    {
+     "ref": "A:019",
+     "key_idea": "Routers trained on one dominant model do not generalise.",
+     "how": "Router label rule."
+    }
+   ],
+   "repos": [],
+   "industry": "Policy-as-code with signed bundles is common in cloud access control. In gateways, allow-lists per key are the usual form [C:060]."
+  }
+ },
+ "tenant": {
+  "inn": "Tenant id, virtual key, price table version, budget, strong-share ceiling.",
+  "out": "Per-tenant key set, budget counters and price bindings.",
+  "store": "Reads and writes tenant records, keys and budget counters.",
+  "fail": "Fail closed for budgets: an unreadable budget counter blocks dispatch. Unpriced models are rejected, not defaulted.",
+  "req": "RQ-D-063, RQ-D-064, RQ-D-065, RQ-D-066, RQ-D-055, RQ-D-056",
+  "src": [
+   "C:060",
+   "C:061",
+   "C:001",
+   "A:242",
+   "A:245",
+   "A:191",
+   "A:010"
+  ],
+  "prop": "Key format, revocation latency and the budget period are DevX proposals. Virtual keys with budgets are sourced.",
+  "hard": "Unpriced models and bring-your-own-key (BYOK) routes can escape budgets [A:242, A:245, A:191]. Chosen: reject any model with no price row, and bill BYOK usage in shadow accounting only. Hosted limits are not tenant budgets.",
+  "line": "tenant=acme key=vk_9 max_budget=$500/30d\nmodel=x-new: no price row -> reject",
+  "dumb": "Each customer gets their own keys and their own spending limit. A model without a known price is blocked, so nothing slips through unbilled.",
+  "deep": {
+   "purpose": "Isolate tenants and attach budgets to virtual keys (LiteLLM max_budget with a duration [C:060, C:061]; Bifrost 402 [C:001]).",
+   "expected": [
+    "Issues virtual keys with budget and duration.",
+    "Returns 402 when a key budget is exhausted [C:001].",
+    "Rejects unpriced models and unpriced BYOK routes [A:242, A:245].",
+    "Revokes a key within the revocation service level objective (SLO)."
+   ],
+   "not_expected": [
+    "No shared budget counter across tenants.",
+    "No dispatch to a model with no price row.",
+    "No key text in logs."
+   ],
+   "algorithm": {
+    "name": "Virtual key budget",
+    "formula": "spent + reserve <= max_budget within window",
+    "steps": [
+     "Resolve tenant from the key.",
+     "Look up the price row of the requested model; reject if absent.",
+     "Reserve the worst-case cost atomically against the key and tenant counters.",
+     "On completion, settle with the billed cost and release the unused reserve.",
+     "At window end, reset or roll over by policy."
+    ],
+    "params": {
+     "max_budget": "per key (LiteLLM max_budget [C:060])",
+     "duration": "per key (LiteLLM budget_duration [C:061])",
+     "exhausted_status": "402 [C:001]",
+     "revocation_target": "under 60 s (DevX proposal)",
+     "strong_share_ceiling": "see A:010"
+    }
+   },
+   "security": [
+    "Keys are shown once, stored hashed; revocation is immediate on the gateway cache.",
+    "Cross-tenant reads are impossible by construction: every query includes tenant id."
+   ],
+   "performance": {
+    "slo": "Key lookup under 1 ms p99 (DevX proposal).",
+    "complexity": "Constant (hash lookup).",
+    "scaling": "Shard counters by tenant."
+   },
+   "edge_cases": [
+    "Key revoked mid-request: let the in-flight call finish, block the next.",
+    "Budget window rolls over during a long task.",
+    "BYOK call on a tenant with no BYOK policy: reject.",
+    "Price table updated mid-day: bind the price version at reserve time."
+   ],
+   "tests": [
+    {
+     "name": "exhausted",
+     "given": "max_budget $500, spent $499.97, reserve $0.05",
+     "expect": "402"
+    },
+    {
+     "name": "unpriced",
+     "given": "model with no price row",
+     "expect": "400 model_unpriced"
+    },
+    {
+     "name": "revoke",
+     "given": "revoke key then call",
+     "expect": "401 within 60 s"
+    },
+    {
+     "name": "isolation",
+     "given": "key of acme reads beta counters",
+     "expect": "404"
+    },
+    {
+     "name": "settle",
+     "given": "reserve $0.05, billed $0.03",
+     "expect": "counter reduced by $0.03 net"
+    }
+   ],
+   "cost_levers": [
+    "Hard per-key limits.",
+    "Blocks unbilled routes."
+   ],
+   "feedback_events": [
+    "Budget exhaustion events.",
+    "Unpriced reject count.",
+    "Revocation latency."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.tenant.key_created",
+     "fields": [
+      "tenant",
+      "key_id",
+      "max_budget",
+      "duration"
+     ],
+     "when": "key issued"
+    },
+    {
+     "name": "token_economics.tenant.key_revoked",
+     "fields": [
+      "tenant",
+      "key_id",
+      "actor"
+     ],
+     "when": "key revoked"
+    },
+    {
+     "name": "token_economics.tenant.unpriced",
+     "fields": [
+      "tenant",
+      "model"
+     ],
+     "when": "model rejected"
+    }
+   ],
+   "papers": [],
+   "repos": [
+    {
+     "ref": "C:060",
+     "name": "LiteLLM",
+     "take": "Virtual keys, max_budget and budget_duration."
+    },
+    {
+     "ref": "C:001",
+     "name": "Bifrost",
+     "take": "402 on exhausted virtual-key budget."
+    }
+   ],
+   "industry": "Virtual keys with budgets are the standard gateway pattern [C:060, C:001]. Unpriced and BYOK escapes are known gaps [A:242, A:245]."
+  }
+ },
+ "audit": {
+  "inn": "Events from api, pol, kill, secrets, authz and the data path: actor, action, scope, outcome.",
+  "out": "Append-only metadata log with a hash chain and export.",
+  "store": "Writes audit rows. Reads for export and verification.",
+  "fail": "Fail closed for mutations. If an audit row cannot be written, the admin change is rejected. Fail open for data-path reads: a request is not blocked by a failed audit write, it is buffered.",
+  "req": "RQ-D-067, RQ-D-068, RQ-D-057",
+  "src": [
+   "A:217",
+   "C:104"
+  ],
+  "prop": "Hash chain, field list and export formats are DevX proposals. Metadata-only logging is sourced: content logging is opt-in in vendor telemetry [A:217, C:104].",
+  "hard": "Retention period is not in corpus; see the ret card. Whether a hash chain is needed or object-lock storage is enough: open.",
+  "line": "2026-11-09T10:02Z actor=ops-7 act=kill.set\nscope=acme/mask prev=9f2c.. hash=41ab..",
+  "dumb": "A permanent record of who changed what and when. It has no prompts and no code, only facts about the actions.",
+  "deep": {
+   "purpose": "Record every control-plane action so changes can be traced. Log metadata only; content stays off unless a tenant opts in (OTEL_LOG_* style opt-in [A:217, C:104]).",
+   "expected": [
+    "Writes one row per admin mutation and per policy decision of class deny.",
+    "Stores actor, action, scope, outcome, time, request id and diff of settings.",
+    "Chains each row to the previous with a hash.",
+    "Exports to the tenant store on a schedule."
+   ],
+   "not_expected": [
+    "No prompt or output text.",
+    "No edit or delete of a row.",
+    "No secrets in rows."
+   ],
+   "algorithm": {
+    "name": "Hash-chained append log",
+    "formula": "hash_n = H(hash_{n-1} || canonical(row_n))",
+    "steps": [
+     "Build the row from the event with a fixed field set.",
+     "Redact any field not on the allow-list.",
+     "Compute the hash from the previous hash and the row.",
+     "Append in one transaction with the mutation it records.",
+     "Verify the chain daily and alert on a break."
+    ],
+    "params": {
+     "hash": "SHA-256 (DevX proposal)",
+     "content_logging": "off by default; opt-in only [A:217, C:104]",
+     "verify_interval": "24 hours (DevX proposal)"
+    }
+   },
+   "security": [
+    "Rows are append-only; the writer role has no update or delete rights.",
+    "Field allow-list is enforced in code so a new field cannot leak content by default."
+   ],
+   "performance": {
+    "slo": "Append under 5 ms p99 (DevX proposal).",
+    "complexity": "Constant per row.",
+    "scaling": "Partition by tenant and month."
+   },
+   "edge_cases": [
+    "Two writers append at once: serialise per tenant chain.",
+    "Clock skew: order by sequence number, not time.",
+    "Row contains a forbidden field: drop the field and log the drop.",
+    "Storage full: reject mutations, buffer reads."
+   ],
+   "tests": [
+    {
+     "name": "chain",
+     "given": "append 3 rows",
+     "expect": "row 3 hash = H(hash2, row3)"
+    },
+    {
+     "name": "tamper",
+     "given": "edit row 2",
+     "expect": "chain verification fails at row 2"
+    },
+    {
+     "name": "no_content",
+     "given": "event with prompt text field",
+     "expect": "field dropped, row kept"
+    },
+    {
+     "name": "atomic",
+     "given": "mutation fails after audit write",
+     "expect": "both rolled back"
+    },
+    {
+     "name": "export",
+     "given": "daily export",
+     "expect": "tenant bucket holds the new rows"
+    }
+   ],
+   "cost_levers": [
+    "Fast incident review.",
+    "No cost from content storage."
+   ],
+   "feedback_events": [
+    "Chain verification failures.",
+    "Dropped-field count."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.audit.append",
+     "fields": [
+      "tenant",
+      "action",
+      "actor",
+      "seq"
+     ],
+     "when": "row written"
+    },
+    {
+     "name": "token_economics.audit.chain_break",
+     "fields": [
+      "tenant",
+      "seq"
+     ],
+     "when": "verification failed"
+    },
+    {
+     "name": "token_economics.audit.field_dropped",
+     "fields": [
+      "field"
+     ],
+     "when": "forbidden field removed"
+    }
+   ],
+   "papers": [],
+   "repos": [],
+   "industry": "Vendor telemetry logs metadata by default and offers opt-in content logging [A:217, C:104]. Hash-chained logs are common in security tooling."
+  }
+ },
+ "secrets": {
+  "inn": "Provider keys, OAuth tokens, signing keys, per-tenant secret references.",
+  "out": "Short-lived credentials handed to the gateway at call time.",
+  "store": "Reads and writes encrypted secrets in the vault. Writes access audit rows.",
+  "fail": "Fail closed. If a secret cannot be fetched, the call is rejected with 503 and no request goes out with a wrong key.",
+  "req": "RQ-D-069, RQ-D-070, RQ-D-071",
+  "src": [
+   "C:104",
+   "A:193",
+   "C:088"
+  ],
+  "prop": "Whole card is a DevX proposal except the point that credentials differ by harness (OAuth and key modes) [A:193, C:088].",
+  "hard": "How subscription (OAuth) credentials are handled by a gateway is not settled in the corpus. Chosen: do not store end-user subscription tokens; accept only API keys and cloud-role credentials.",
+  "line": "tenant=acme provider=bedrock ref=vault://acme/br\nissued 15-min token; never logged",
+  "dumb": "A safe for the keys that let Token Economics talk to model providers. Keys are only handed out briefly and are never written to logs.",
+  "deep": {
+   "purpose": "Store and deliver provider credentials with the least exposure.",
+   "expected": [
+    "Encrypts secrets at rest and per tenant.",
+    "Issues short-lived tokens where the provider supports it.",
+    "Logs each access as a metadata audit row.",
+    "Blocks a secret from appearing in any log, trace or error."
+   ],
+   "not_expected": [
+    "No secret in config files, env dumps or logs.",
+    "No sharing of a secret across tenants.",
+    "No storage of end-user subscription tokens."
+   ],
+   "algorithm": {
+    "name": "Per-tenant vault fetch",
+    "formula": "token = vault.fetch(tenant, ref, ttl)",
+    "steps": [
+     "Gateway requests a secret by tenant and reference.",
+     "Vault checks the caller identity and tenant scope.",
+     "Vault returns a token with a time to live, or a wrapped key.",
+     "Gateway caches it in memory for the ttl and zeroes it after.",
+     "Vault writes an access audit row."
+    ],
+    "params": {
+     "ttl": "15 minutes (DevX proposal)",
+     "encryption": "per-tenant data key (DevX proposal)",
+     "harness_credential_modes": "OAuth and API key differ by harness [A:193, C:088]"
+    }
+   },
+   "security": [
+    "Redaction filter on all log sinks drops any string matching key patterns.",
+    "Vault access needs workload identity; no static admin credentials.",
+    "Rotation: keys are rotated on a schedule and on any suspected leak."
+   ],
+   "performance": {
+    "slo": "Fetch under 20 ms p99 with cache hit under 1 ms (DevX proposal).",
+    "complexity": "Constant.",
+    "scaling": "Cache in gateway memory, one fetch per ttl per key."
+   },
+   "edge_cases": [
+    "Vault unreachable: 503; no fallback key.",
+    "Key rotated during a request: retry once with the new key.",
+    "Tenant deleted: secrets are destroyed after the retention grace.",
+    "Provider returns 401: mark the secret suspect and alert."
+   ],
+   "tests": [
+    {
+     "name": "fail_closed",
+     "given": "vault down",
+     "expect": "503 secret_unavailable, no outbound call"
+    },
+    {
+     "name": "scope",
+     "given": "tenant beta asks for acme ref",
+     "expect": "denied and audited"
+    },
+    {
+     "name": "ttl",
+     "given": "token ttl 15 min",
+     "expect": "refetched at minute 15"
+    },
+    {
+     "name": "redact",
+     "given": "log line contains key string",
+     "expect": "string replaced by redacted marker"
+    },
+    {
+     "name": "rotation",
+     "given": "rotate key",
+     "expect": "old key 401, new key works"
+    }
+   ],
+   "cost_levers": [
+    "Avoids incident cost from leaked keys.",
+    "Short ttl limits blast radius."
+   ],
+   "feedback_events": [
+    "Fetch failures.",
+    "Redaction hits.",
+    "Rotation age."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.secrets.fetch",
+     "fields": [
+      "tenant",
+      "ref",
+      "ok"
+     ],
+     "when": "secret fetched"
+    },
+    {
+     "name": "token_economics.secrets.denied",
+     "fields": [
+      "tenant",
+      "ref",
+      "reason"
+     ],
+     "when": "access denied"
+    },
+    {
+     "name": "token_economics.secrets.rotated",
+     "fields": [
+      "tenant",
+      "ref"
+     ],
+     "when": "rotation done"
+    }
+   ],
+   "papers": [],
+   "repos": [],
+   "industry": "Cloud vaults with workload identity are the common pattern. Gateways often store provider keys in config; Token Economics does not."
+  }
+ },
+ "authz": {
+  "inn": "Actor identity, role, requested operation, scope (tenant, optimisation).",
+  "out": "Allow or deny with the matched rule.",
+  "store": "Reads role bindings. Writes decision rows (deny) to the audit log.",
+  "fail": "Fail closed. If role data is unreadable, deny admin actions. Data-path calls use the cached key scope.",
+  "req": "RQ-D-072, RQ-D-073",
+  "src": [
+   "C:088"
+  ],
+  "prop": "Whole card is a DevX proposal. Only the point that harnesses differ in credential and permission models has a source [C:088].",
+  "hard": "Role set is a proposal and needs review with the first customer. Whether to use external identity providers is open.",
+  "line": "actor=ops-7 role=rollout op=kill.set scope=acme\n-> allow (rule r12)",
+  "dumb": "Decides who may press which button. A developer can read their own spend, an operator can stop a saving, and an admin can change budgets.",
+  "deep": {
+   "purpose": "Give each admin action the least role that can do it, so kill and policy changes are controlled.",
+   "expected": [
+    "Defines roles: viewer, developer, rollout, finance, admin.",
+    "Allows kill only to rollout and admin.",
+    "Checks scope on every call; tenant roles do not cross tenants.",
+    "Audits every deny."
+   ],
+   "not_expected": [
+    "No wildcard role in production.",
+    "No role inherited across tenants.",
+    "No permission through a client hook."
+   ],
+   "algorithm": {
+    "name": "Role-scope check",
+    "formula": "allow iff exists binding(actor, role, scope) and op in perms(role)",
+    "steps": [
+     "Resolve the actor from the token.",
+     "Load bindings for the tenant scope.",
+     "Check the operation against the role permission table.",
+     "Return allow or deny with the rule id.",
+     "Write a deny audit row."
+    ],
+    "params": {
+     "roles": "viewer, developer, rollout, finance, admin (DevX proposal)",
+     "kill_roles": "rollout, admin (DevX proposal)",
+     "cache_ttl": "30 s (DevX proposal)"
+    }
+   },
+   "security": [
+    "Role changes require admin and a second approval for admin grants.",
+    "Bindings are stored per tenant; queries always filter by tenant id."
+   ],
+   "performance": {
+    "slo": "Check under 1 ms p99 with cache (DevX proposal).",
+    "complexity": "Constant (table lookup).",
+    "scaling": "Cache bindings in the API tier."
+   },
+   "edge_cases": [
+    "Actor holds two roles: union of permissions.",
+    "Role revoked: cache expires within 30 s.",
+    "Service account without a role: deny.",
+    "Cross-tenant operator: needs an explicit binding per tenant."
+   ],
+   "tests": [
+    {
+     "name": "kill_allowed",
+     "given": "rollout role sends kill.set",
+     "expect": "allow"
+    },
+    {
+     "name": "kill_denied",
+     "given": "developer role sends kill.set",
+     "expect": "deny, audit row"
+    },
+    {
+     "name": "cross_tenant",
+     "given": "admin of acme edits beta",
+     "expect": "deny"
+    },
+    {
+     "name": "no_role",
+     "given": "service account without binding",
+     "expect": "deny"
+    },
+    {
+     "name": "revoke",
+     "given": "role revoked at t0",
+     "expect": "deny after 30 s at most"
+    }
+   ],
+   "cost_levers": [
+    "Prevents accidental kills and budget edits."
+   ],
+   "feedback_events": [
+    "Deny rate by role.",
+    "Role change count."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.authz.allow",
+     "fields": [
+      "actor",
+      "op",
+      "scope",
+      "rule"
+     ],
+     "when": "allowed"
+    },
+    {
+     "name": "token_economics.authz.deny",
+     "fields": [
+      "actor",
+      "op",
+      "scope",
+      "reason"
+     ],
+     "when": "denied"
+    }
+   ],
+   "papers": [],
+   "repos": [],
+   "industry": "Role-based access is standard. Gateways usually have admin and key roles only."
+  }
+ },
+ "ret": {
+  "inn": "Retention policy per tenant and data class, legal hold flags.",
+  "out": "Deletion jobs and a retention report.",
+  "store": "Reads policy and data inventory. Writes deletion manifests and audit rows.",
+  "fail": "Fail closed for deletion of held data: a hold blocks deletion. Fail open for ordinary jobs: a missed run is retried next cycle.",
+  "req": "RQ-D-074, RQ-D-075, RQ-D-076, RQ-D-077, RQ-D-067",
+  "src": [
+   "A:217",
+   "C:104",
+   "C:003",
+   "A:232"
+  ],
+  "prop": "Retention windows and the redaction job are DevX proposals. Metadata-only default and opt-in content logging are sourced [A:217, C:104].",
+  "hard": "Retention periods are not in corpus. Chosen: metadata 400 days (covers one billing year and a reconciliation window; a DevX proposal). Content 0 days unless a tenant opts in. Frozen price snapshots are kept with the data they priced [A:232].",
+  "line": "class=metadata keep=400d; class=content keep=0d\nhold=none; deleted 12,004 rows",
+  "dumb": "Rules for how long records are kept. By default Token Economics keeps only facts and numbers, and throws away anything with content.",
+  "deep": {
+   "purpose": "Keep only what is needed for billing and audit, for as long as it is needed.",
+   "expected": [
+    "Defaults to metadata only; content logging is opt-in per tenant [A:217, C:104].",
+    "Deletes data past its window on a schedule.",
+    "Honours legal holds before any delete.",
+    "Keeps price snapshots with the records they priced [A:232]."
+   ],
+   "not_expected": [
+    "No content stored without an opt-in.",
+    "No deletion of held data.",
+    "No deletion of audit rows before their window."
+   ],
+   "algorithm": {
+    "name": "Window-based purge",
+    "formula": "delete rows where age > window(class) and not hold",
+    "steps": [
+     "Load policy per tenant and data class.",
+     "Select rows older than the window, excluding held ids.",
+     "Delete in batches and write a manifest of counts.",
+     "Redact opted-in content older than the content window.",
+     "Report counts to the tenant."
+    ],
+    "params": {
+     "metadata_window": "400 days (DevX proposal)",
+     "content_window": "0 days unless opt-in (DevX proposal)",
+     "content_default": "off [A:217, C:104]",
+     "price_snapshots": "kept with records [A:232]"
+    }
+   },
+   "security": [
+    "Deletion jobs run with a role that cannot read content.",
+    "Manifests hold counts only."
+   ],
+   "performance": {
+    "slo": "Daily job finishes in under 1 hour per 100 million rows (DevX proposal).",
+    "complexity": "Linear in expired rows.",
+    "scaling": "Partitioned by day, drop whole partitions."
+   },
+   "edge_cases": [
+    "Legal hold added mid-job: stop deleting held ids.",
+    "Tenant lowers its window: apply at next run, never extend deleted data.",
+    "Tenant deleted: purge after the grace period.",
+    "Clock skew at the window edge: use a one-day safety margin."
+   ],
+   "tests": [
+    {
+     "name": "default_off",
+     "given": "new tenant",
+     "expect": "no content rows stored"
+    },
+    {
+     "name": "purge",
+     "given": "rows older than 400 days",
+     "expect": "deleted, manifest count matches"
+    },
+    {
+     "name": "hold",
+     "given": "row on hold older than window",
+     "expect": "kept"
+    },
+    {
+     "name": "optin",
+     "given": "content opt-in, window 30 days",
+     "expect": "content older than 30 days redacted"
+    },
+    {
+     "name": "snapshot",
+     "given": "price snapshot referenced by a kept row",
+     "expect": "snapshot kept"
+    }
+   ],
+   "cost_levers": [
+    "Lower storage cost.",
+    "Smaller breach exposure."
+   ],
+   "feedback_events": [
+    "Rows deleted per day.",
+    "Hold count."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.ret.purged",
+     "fields": [
+      "tenant",
+      "class",
+      "rows"
+     ],
+     "when": "purge batch done"
+    },
+    {
+     "name": "token_economics.ret.held",
+     "fields": [
+      "tenant",
+      "hold_id"
+     ],
+     "when": "hold applied"
+    },
+    {
+     "name": "token_economics.ret.redacted",
+     "fields": [
+      "tenant",
+      "rows"
+     ],
+     "when": "content redaction"
+    }
+   ],
+   "papers": [],
+   "repos": [],
+   "industry": "Vendor telemetry logs metadata by default with opt-in content [A:217, C:104]. Retention windows are set by customer policy."
+  }
+ }
+}

@@ -1,0 +1,2257 @@
+TITLE: Inference Auctions
+URL: https://arxiv.org/abs/2609.40070
+ORG: arXiv  TYPE: paper  DATE: 2026-09
+
+Inference Auctions
+Keegan Harris∗1 , Siddharth Prasad∗2 , Asher Trockman∗3 ,
+Nika Haghtalab†1 , and Michael I. Jordan†1,4
+1 University of California, Berkeley
+2 Toyota Technological Institute at Chicago
+3 Google Research
+
+arXiv:2609.40070v1 [cs.LG] 30 Sep 2026
+
+4 Inria & École Normale Supérieure
+
+{keegan.harris,nika,michael_jordan}@berkeley.edu
+sprasad@ttic.edu, trockman@google.com
+
+Abstract
+When inference demand exceeds available compute capacity, model providers must decide
+which requests should be served first. Users have different tolerances for delay from an LLM
+API, but current priority pricing schemes compress these differences into coarse fixed-price
+service tiers. We design an inference auction that allows users to bid for faster service. Our
+auction allocates priority in an economically efficient way without sacrificing latency, and
+we develop fast algorithms for implementing prices that incentivize truthful bidding. We
+also design an autobidding agent for our inference auction, where users specify an inference
+budget and the autobidder dynamically adjusts its bids over time to maximize user utility
+subject to the budget constraint. Experiments validate the practicality of our auction: it
+increases system welfare while maintaining the cache utilization and latency advantages of
+SGLang, a state-of-the-art inference serving framework.
+
+1
+
+Introduction
+
+Large-scale LLM inference requires allocation of shared compute resources across different users’
+requests. During periods of heavy traffic, model providers need to determine which requests
+to serve first, and how much to charge for faster service. Users can differ substantially in their
+willingness to pay for earlier service. For example, an interactive request may be sensitive
+to delays that are inconsequential for a background job. Today, most major model providers
+allocate priority through a small number of fixed-price service tiers (typically two or three), with
+higher-paying requests receiving priority over lower-paying ones during times of high traffic [e.g.,
+3, 6, 23, 38, 49]. These coarse tiers give users limited scope to express their latency preferences,
+and as a result, priority is allocated in an economically inefficient way.
+The design of a more expressive and efficient market for inference priority raises new challenges
+that are absent from conventional queuing systems and transaction-fee markets. Modern inference
+engines process prompts with the same prefix by reusing the key-value (KV) cache across their
+shared prefix, so the time it takes to serve a request depends on which requests have already been
+served [e.g., 34, 41, 52]. For example, interrupting a batch of requests that all share a long common
+prefix to serve unrelated requests may cause the common prefix to be evicted from the KV cache,
+disrupting cache reuse and harming request throughput. Serving that same batch of commonprefix requests contiguously instead will generally yield improved throughput due to better cache
+utilization. This form of prefix-aware scheduling and KV cache management is implemented in
+∗ ,† : Denotes equal contribution.
+
+1
+
+state-of-the-art inference serving frameworks such as SGLang [52], leading to significant latency
+and throughput gains. A good market design should not sacrifice these performance gains.
+We design an inference auction that allows users to bid for priority. Our key observation is that
+preserving the cache-reuse benefits of prefix-aware serving systems still leaves freedom to decide which groups of requests receive priority, enabling significant gains in social welfare while
+retaining the cache optimality of practical serving systems. Our key contributions, in more detail,
+are as follows:
+Inference Auction Design (Section 2 and Section 3). We develop the first inference auction, a
+way for LLM providers to prioritize requests by letting users bid for faster service. Each bid represents the user’s reported value for moving a request from the back of the scheduling queue to the
+front, with value increasing linearly as the request moves earlier in the schedule. Our goal is to maximize social welfare—the total value users derive from their assigned priorities—while retaining
+cache optimality. A key aspect of our inference auction design is to constrain the resulting schedule
+of requests to be a depth-first-search (DFS) schedule, that is, it must correspond to a DFS traversal
+of the radix tree of requests (a tree in which requests that share a prompt prefix share a path from
+the root). Inference auctions corresponding to such DFS schedules maximize KV cache hit rate due
+to optimal prefix sharing. We show that the welfare-maximizing DFS schedule corresponds to the
+DFS traversal that orders a node’s children by average bid across requests in their subtrees, and can
+therefore be computed very efficiently. We pair our scheduling rule with Vickrey–Clarke–Groves
+(VCG) payments that incentivize truthful bidding. Computing VCG payments naively requires
+recomputing an optimal schedule for each user, causing a quadratic worst-case dependence on
+the number of requests. We develop an algorithm that computes all payments in quasilinear
+run-time by decomposing each user’s welfare externality into local changes along the radix tree.
+Autobidding Agents for Inference Auctions (Section 4). Inference users typically submit many
+requests over time and must manage their inference budget. Even when truthful reporting is
+optimal in each auction in isolation, users still need to choose how aggressively to bid across
+requests so that their inference budget is spent where it is most valuable. To address this, we
+design an autobidding agent that adjusts a user’s bids over time to maximize their cumulative
+utility, subject to a budget constraint. Our autobidding algorithm scales each request’s value
+by a multiplier and adjusts
+this multiplier over time using gradient descent. We show that this
+√
+strategy achieves 𝑂 ( 𝑇 ) regret relative to the optimal-in-hindsight bidding policy on a sequence
+of 𝑇 inference auctions. We also characterize the welfare loss when users have different pacing
+multipliers: we show that welfare only decreases when these differences reverse the ordering of
+requests in the DFS schedule, and we bound the resulting inefficiency by the variation in pacing
+multipliers across the radix subtrees.
+Experiments (Section 5). We implement our inference auction as a scheduling layer in front of
+an unmodified SGLang server and evaluate it across several workloads with various shared prefix
+structures. Compared to a bid-blind, cache-optimal request ordering, our mechanism improves
+overall welfare by 12–18.6% under i.i.d. request valuations and up to 100% when valuations
+are non-i.i.d., all while leaving cache hit rate and average time-to-first-token virtually unchanged.
+Simultaneously, we find that our mechanism enjoys ∼80% of the welfare of the unconstrained
+schedule ordered by decreasing bids. In contrast, this unconstrained schedule sharply reduces
+cache hit rates, which results in an increase in average latency by as much as 12×.
+
+2
+
+Cache-Optimal Schedules and Our Bidding Environment
+
+Serving an autoregressive language model has two stages. During prefill, the model processes a
+request’s prompt and stores its keys and values in the KV cache. During decoding, it generates
+output tokens while reusing the cached keys and values. Modern inference engines interleave the
+2
+
+two stages across requests, typically prioritizing the decode steps of requests already in progress.
+Our mechanism determines the order in which queued requests are admitted for prefill.
+The KV cache entries for a prompt prefix can be reused by other requests which share that prefix,
+reducing prefill computation. Because cache capacity is limited, this reuse depends on the request
+scheduling order: processing requests with a long shared prefix consecutively can avoid evicting
+and recomputing their common entries. The inference engine SGLang [52] puts this principle
+into practice by storing shared token prefixes in a radix tree and scheduling requests in the order
+of a DFS traversal of that tree, which is a longest-prefix-match order and is cache-optimal. A key
+aspect of our auction design is to allow bids to only affect the ordering of children in a DFS traversal
+of the request radix tree. This ensures that no matter the precise economics of the auction (e.g.,
+schedules, payments, incentives), we maintain the cache efficiency of prefix-aware scheduling.
+We now formally introduce the elements of the auction environment.
+Notation. S𝑛 denotes the set of all permutations of {1, . . . , 𝑛}. For a set of indexed elements
+a1:𝑚 ≔ {a1 , . . . , a𝑚 }, we write a− 𝑖 ≔ a1:𝑚 \ {a𝑖 } to denote a1:𝑚 with element 𝑖 excluded.
+Requests and Scheduling Batches. We consider a setting where a model provider is serving
+requests to a single LLM on one inference worker. Requests arrive asynchronously and are periodically grouped into scheduling batches of 𝑛 queued requests. We treat the formation of these
+batches as exogenous: our mechanism determines the relative prefill priority of requests within
+a batch, but not which requests enter the batch.1
+Let R ≔ {1, . . . , 𝑛} be the requests in a batch. There are 𝑚 ≤ 𝑛 inference users who may each
+submit multiple requests. We use R𝑖 ⊆ R to denote the set of requests submitted by user 𝑖, where
+Ð𝑚
+𝑖=1 R𝑖 = R and R𝑖 ∩ R 𝑗 = ∅ for all 𝑖 ≠ 𝑗. A schedule is a permutation 𝜎 ∈ S𝑛 , where 𝜎 ( 𝑟 ) is the
+position of request 𝑟 within the batch. Smaller positions receive earlier prefill service, and the
+scheduler admits requests for prefill according to this ordering. Each request is represented by its
+sequence of prompt tokens. Let 𝑀 denote the total number of prompt tokens across all requests
+in R, counting tokens separately for each request. The shared-prefix structure of R is captured by
+a radix tree.
+Definition 2.1 (Request Radix Tree). The radix tree for a set of requests is the rooted, edge-labeled
+tree obtained by merging common prefixes and contracting every non-branching path into a
+single edge. Each request is represented by an auxiliary leaf node (that stores request metadata,
+e.g., user ID and user bid), and the lowest common ancestor of two request leaves represents their
+longest shared prefix. T denotes the request-augmented radix tree. For a node u, let C(u) denote
+its children, L(u) denote the request leaves in the subtree rooted at u, 𝑑 (u) ≔ |C(u)|, and 𝑁 (u) ≔
+|L(u)|. The maximum branching factor of T is 𝜈 ≔ maxu |C(u)|. See Figure 5 for an example.
+Of particular interest are schedules that process all requests in one radix subtree before moving
+on to another, that is, they correspond to DFS traversals of T.
+Definition 2.2 (DFS Schedule). A schedule 𝜎 is a DFS schedule if for every node u, the leaves
+belonging to each child subtree c ∈ C(u) appear contiguously in 𝜎. Let D(T) ⊆ S𝑛 denote the set
+of DFS schedules for T.
+Under the assumption that the KV cache is large enough to hold the longest request in the batch,
+schedules in D(T) enjoy the optimal cache hit rate by Theorem 3.1 in Zheng et al. [52].
+Values and Priority. The user who submits request 𝑟 has a private value 𝑣𝑟 ≥ 0 for receiving earlier
+𝑠 ) >𝜎 ( 𝑟 ) |
+service. The fractional priority received by request 𝑟 under schedule 𝜎 is 𝑥𝑟 ( 𝜎) ≔ | 𝑠 ∈R:𝜎𝑛(−1
+.
+The first request has fractional priority 1, the last has fractional priority 0, and a request scheduled
+ahead of an 𝛼-fraction of the batch receives priority 𝛼. Let v𝑖 ≔ [ 𝑣𝑟 ] 𝑟 ∈R𝑖 denote the vector of user
+1 In practice, batches would be formed only during times of high traffic when requests start to queue.
+
+3
+
+𝑖’s values for his requests and x𝑖 ( 𝜎) ≔ [ 𝑥𝑟 ( 𝜎)] 𝑟 ∈R𝑖 be the vector of the corresponding fractional
+priorities under 𝜎. User 𝑖’s total value under 𝜎, interpreted as his maximum willingness-to-pay for
+Í
+fractional priority x𝑖 ( 𝜎), is 𝑉𝑖 ( 𝜎) ≔ ⟨v𝑖 , x𝑖 ( 𝜎)⟩ and the welfare of 𝜎 is 𝑊 ( 𝜎; v1:𝑚 ) ≔ 𝑚
+𝑖=1 𝑉𝑖 ( 𝜎).
+
+Fractional priority provides a simple rank-based proxy for queueing delay and the resulting time-tofirst-token (TTFT). Modeling value as being linear in fractional priority is a design choice to keep the
+bidding language simple: users only need to report how much they value moving a request from the
+back of the scheduling batch to the front, rather than specify a potentially complex value function
+over TTFT. Our experiments show that bidding according to fractional priority leads to schedules
+that closely track realized TTFT, supporting fractional priority as a practical proxy for latency.
+Bids, Schedules, and Payments. Each request 𝑟 has a corresponding user bid 𝑏𝑟 ≥ 0, interpreted
+as the user’s reported value for 𝑟 receiving full priority. Let b𝑖 ≔ [ 𝑏𝑟 ] 𝑟 ∈R𝑖 be the vector of user 𝑖’s
+bids. An inference auction is a mechanism which maps bids to a DFS schedule and user payments.
+Definition 2.3 (Inference Auction). Given a radix tree T, an inference auction consists of (1) a
+scheduling rule 𝐴 : ℝ+𝑛 → D(T) mapping bids to DFS schedules and (2) a payment rule 𝑝 : ℝ+𝑛 → ℝ+𝑚
+mapping bids to payments, where 𝑝𝑖 (b1:𝑚 ) is the payment charged to user 𝑖.
+Any inference auction enjoys optimal cache utilization by Theorem 3.1 of Zheng et al. [52].
+We make the standard assumption that users have quasilinear utility, so a user with true values v𝑖
+obtains utility 𝑉𝑖 ( 𝐴 (b1:𝑚 )) − 𝑝𝑖 (b1:𝑚 ) in an inference auction with scheduling rule 𝐴 and payment
+rule 𝑝. Our goal in the sequel is to design an inference auction that maximizes welfare over D(T)
+while incentivizing truthful bidding. A simple symmetry argument shows that the welfare loss
+due to restricting to D(T) is no more than 50%.2
+Proposition 2.4. For any v1:𝑚 , max𝜎 ∈D(T) 𝑊 ( 𝜎; v1:𝑚 ) ≥ 12 max𝜎 ∈S𝑛 𝑊 ( 𝜎; v1:𝑚 ).
+
+3
+
+Welfare-Optimal Inference Auctions
+
+We now design a welfare-maximizing (or economically efficient) inference auction that is simple
+and tractable. In Section 3.1, we design a scheduling rule that maximizes reported user welfare.
+The scheduling rule admits a clean algorithm: at every node of the radix tree, visit its children
+in decreasing order of their average sub-tree bid. In Section 3.2, we implement VCG prices
+that incentivize truthful bidding. Although these payments are defined through a separate
+counterfactual optimization for each user, we show that they can be computed in quasilinear
+total run-time. Taken together, our scheduling and payment rules maximize true user welfare
+and can be implemented with very little overhead compared to the time it takes to construct and
+traverse the radix tree.3
+
+3.1
+
+Implementing Welfare-Maximizing DFS Schedules
+
+Since we restrict to DFS schedules, the scheduler’s only decision is how to order the children
+Í
+of each internal node in the radix tree. For a node u, let 𝐹𝑏 (u) ≔ 𝑟 ∈L(u) 𝑏𝑟 denote the sum of
+bids in the subtree rooted at u. We will show that reported welfare is maximized by visiting the
+children of every internal node in decreasing order of 𝐹𝑏 (u)/ 𝑁 (u).
+2 At the same time, the welfare-maximizing DFS schedule can improve significantly over an arbitrary schedule in
+D(T). As an example, consider the setting where one request has value 𝑣★ > 0 and shares no common prefix with the
+𝑛 − 1 other requests, each of which has value 0 and a common shared prefix. A uniformly random DFS schedule would
+obtain zero welfare with probability 1/2, whereas the optimal DFS schedule always achieves the maximum welfare 𝑣★.
+3 Inference frameworks such as SGLang already construct and traverse the radix tree to implement prefix-aware
+scheduling. We only incur an additional 𝑂 (log 𝜈) multiplicative factor.
+
+4
+
+ALGORITHM 1: Average-Bid DFS
+Scheduling Rule 𝐴¯(b1:𝑚 )
+Let u be the root of the radix tree T
+Initialize 𝐿 ← [ ]
+DFS(u, 𝐿)
+return 𝐿
+
+ALGORITHM 2: DFS(u, 𝐿)
+if u is a leaf then
+𝐿.append(u)
+[c1 , . . . , c𝑑 ( u ) ] ← C(u) sorted in descending order of 𝐹𝑏 / 𝑁
+for 𝑘 = 1, . . . , 𝑑 (u) do
+DFS(c𝑘 , 𝐿)
+
+For intuition as to why this is the case, consider two children c and d of the same internal node. If
+c is visited before d, every request in L(c) is scheduled ahead of every request in L(d), and these
+𝐹𝑏 (c)
+cross-subtree pairs contribute 𝑁 (d)
+to reported welfare. Visiting d before c instead contributes
+𝑛 −1
+𝑁 (c) 𝐹𝑏 (d)
+. It is therefore welfare-improving to place c before d whenever 𝑁 (d) 𝐹𝑏 (c) ≥ 𝑁 (c) 𝐹𝑏 (d),
+𝑛 −1
+or equivalently when 𝐹𝑏 (c)/ 𝑁 (c) ≥ 𝐹𝑏 (d)/ 𝑁 (d). The following theorem shows that applying this
+local rule independently at every branch produces a globally-optimal DFS schedule.
+Theorem 3.1. Given bid vectors b1:𝑚 , the average-bid DFS scheduling rule 𝐴¯(b1:𝑚 ) given by Algorithm 1 returns a cache-optimal schedule 𝜎 that maximizes 𝑊 ( 𝜎; b1:𝑚 ) among all DFS schedules.
+Furthermore, this schedule can be computed in 𝑂 ( 𝑀 + 𝑛 log 𝜈) expected run-time.
+Figure 6 illustrates an example of an average-bid DFS schedule.
+
+3.2
+
+Computing VCG Payments
+
+The average-bid DFS of Algorithm 1 yields a schedule that maximizes reported welfare, but our
+ultimate goal is to maximize welfare with respect to users’ true values. Vickrey [48]-Clarke
+[13]-Groves [24] (VCG) payments ensure this property by charging each user for the welfare
+loss that his bids impose on the other users. When paired with a scheduling rule that maximizes
+reported welfare over a fixed set of feasible outcomes, these payments make truthful bidding (i.e.,
+bidding b𝑖 = v𝑖 ) an optimal strategy for users with quasilinear utility. We instantiate the VCG
+mechanism with average-bid DFS schedules and D(T) as the feasible set:
+Definition 3.2 (VCG payment rule). Let ℎ𝑖 (b− 𝑖 ) = max𝜎 ∈D(T) 𝑊 ( 𝜎; (0, b− 𝑖 )) denote the maximum
+reported welfare the other users could obtain if user 𝑖’s bids were set to zero while its requests
+remain in the radix tree.4 The VCG payment rule charges user 𝑖
+∑︁
+𝑝VCG
+(b
+)
+=
+ℎ
+(b
+)
+−
+⟨b 𝑗 , x 𝑗 ( 𝐴¯(b1:𝑚 ))⟩ .
+1:
+𝑚
+𝑖
+−
+𝑖
+𝑖
+𝑗≠ 𝑖
+
+The inference auction with average-bid DFS schedules and VCG payments satisfies the following
+properties:
+1. Efficiency: Under truthful bidding, true welfare 𝑊 ( 𝜎; v1:𝑚 ) is maximized over DFS schedules.
+2. Incentive compatibility (IC): 𝑉𝑖 ( 𝐴¯(v𝑖 , b− 𝑖 )) − 𝑝VCG
+(v𝑖 , b− 𝑖 ) ≥ 𝑉𝑖 ( 𝐴¯(b𝑖 , b− 𝑖 )) − 𝑝VCG
+(b𝑖 , b− 𝑖 )
+𝑖
+𝑖
+for all v𝑖 , b𝑖 , b− 𝑖 . This makes truthful bidding an optimal strategy.
+3. Individual rationality (IR): 𝑉𝑖 ( 𝐴¯(v𝑖 , b− 𝑖 )) − 𝑝VCG
+(v𝑖 , b− 𝑖 ) ≥ 0 for all v𝑖 , b− 𝑖 .
+𝑖
+4. No positive transfers: 𝑝VCG
+(b1:𝑚 ) ≥ 0 for all bid vectors b1:𝑚 .
+𝑖
+Furthermore by Krishna and Perry [33], these payments maximize the model provider’s revenue
+among all IC and IR mechanisms that implement the welfare-maximizing DFS schedule.
+4 The VCG counterfactual ℎ (b
+
+𝑖
+− 𝑖 ) is often described informally as removing user 𝑖 from the auction. In our setting,
+removing a user’s requests would change the radix tree and hence the set of feasible schedules. In fact, this (incorrect)
+version of VCG would require the platform to pay some users (see Appendix B). We instead fix the set of requests and
+assign user 𝑖 his weakest possible type, the zero bid vector.
+
+5
+
+Efficient Payment Computation. Naively computing VCG payments for each user consists of repeatedly zeroing out that user’s bids and rerunning Algorithm 1. This approach takes 𝑂 ( 𝑚𝑛 log 𝜈)
+time, which is quadratic in 𝑛 if each user has only a single request. While such a quadratic
+dependence on 𝑛 is unavoidable if the goal is to return the welfare-optimal DFS traversal when
+each user is excluded, we are able to bypass this barrier since we only need the optimal welfare
+values. As a result, our algorithm enjoys an improved runtime of 𝑂 (min{ 𝑀, 𝑚𝑛} log 𝜈).
+The key idea behind our algorithm (Appendix B.2) is easiest to see when each user submits a
+single request. Suppose we set the bid of request 𝑟 to zero. At every internal node on the path from
+the root to 𝑟 ’s leaf, only the average bid of the child containing 𝑟 changes. This average can only
+decrease, and so the affected child can only move later in the welfare-optimal traversal while all
+other children retain their relative order. Siblings that remain on the same side of the affected child
+do not contribute to the user’s payment, while each sibling that overtakes it contributes a local
+externality. Since the children are already sorted by average bid from the average-bid DFS schedule,
+a binary search identifies the siblings that overtake the affected child. Summing these local effects
+via pre-computed prefix sums over the root-to-leaf path then gives the user’s VCG payment.
+When a user submits multiple requests, zeroing out all of his bids may affect multiple children
+of a given internal node. However the same principle still applies: jointly reorder the affected
+children according to their modified average bids and merge them with the unchanged children.
+Theorem 3.3. Given as input the processed radix tree T, where at every node u (1) 𝐹𝑏 (u) and 𝑁 (u)
+are stored and (2) its children are sorted in decreasing order of average bid, all VCG payments
+VCG (b
+𝑝1VCG (b1:𝑚 ) , . . . , 𝑝𝑚
+1:𝑚 ) can be computed in 𝑂 (min{ 𝑀, 𝑚𝑛 } log 𝜈) total run-time.
+The end-to-end run-time of implementing the welfare-optimal DFS schedule with VCG prices is
+therefore 𝑂 ( 𝑀 + min{ 𝑀, 𝑚𝑛} log 𝜈).
+
+4
+
+Autobidding Agents for Inference Auctions
+
+The VCG mechanism makes truthful bidding optimal within any single scheduling batch. However,
+inference users typically have many requests that need to be served over time, and they may
+have a budget allocated for the total amount they can spend in a given time period. This budget
+constraint couples the user’s bids, as bidding truthfully in every batch can exhaust the budget too
+early. Motivated by autobidding systems in online advertising,5 we develop an autobidding agent
+for inference auctions: an online policy that converts a user’s values and remaining budget into
+bids, without requiring a model of future demand or competing bids.
+Repeated Auction Model. Consider a sequence of 𝑇 scheduling batches. In batch 𝑡 ∈ [𝑇 ], let T ( 𝑡 )
+be the request radix tree, R1( 𝑡 ) be the autobidder’s requests, v1( 𝑡 ) = [ 𝑣𝑟( 𝑡 ) ] 𝑟 ∈R (𝑡 ) be his value vector,
+1
+
+(𝑡 )
+b1( 𝑡 ) be his bid vector, and b2:
+be the other users’ bids.6 We consider the welfare-maximizing
+𝑚
+(𝑡 )
+(𝑡 )
+inference auction of Section 3. Given bids b1:
+, the mechanism selects schedule 𝐴¯( 𝑡 ) (b1:
+)
+𝑚
+𝑚
+(𝑡 )
+(𝑡 )
+and charges the autobidder his VCG payment 𝑝1 (b1:𝑚 ). The autobidder’s value in batch 𝑡 is
+(𝑡 )
+(𝑡 )
+(𝑡 )
+𝑉1 ( 𝜎 ( 𝑡 ) ) ≔ ⟨v1 , x1 ( 𝜎 ( 𝑡 ) )⟩. The autobidder has total budget 𝐵 = 𝑇 𝛾 (where 𝛾 > 0 is the target
+spend per batch), and seeks to maximize cumulative utility subject to the budget constraint
+Í𝑇
+(𝑡 )
+(𝑡 )
+𝑡 =1 𝑝1 (b1:𝑚 ) ≤ 𝑇 𝛾 . We measure the performance of the autobidder through the notion of regret.
+(𝑡 ) 𝑇
+Definition 4.1 (Autobidder Regret). For a realized sequence of instances (v1( 𝑡 ) , T ( 𝑡 ) , b2:
+) ∼ P,
+𝑚 𝑡 =1
+5 See Section 6 for more background in autobidding in ad auctions.
+6We use the convention that the autobidder’s index is 1, which is without loss of generality.
+
+6
+
+ALGORITHM 3: Pacing Autobidder for Welfare-Optimal Inference Auctions
+Input: Target spend 𝛾 , step size 𝜂 > 0
+Initialize 𝐵 (1) = 𝑇 𝛾 , 𝜇 (1) = 0
+for 𝑡 = 1, . . . , 𝑇 do
+Let 𝛼 ( 𝑡 ) = 1+1𝜇 (𝑡 ) and bid b1( 𝑡 ) = 𝛼 ( 𝑡 ) v1( 𝑡 ) 1{∥ 𝛼 ( 𝑡 ) v1( 𝑡 ) ∥ 1 ≤ 𝐵 ( 𝑡 ) }
+
+(𝑡 )
+(𝑡 )
+Observe payment 𝑝1( 𝑡 ) (b1:
+) and update budget 𝐵 ( 𝑡+1) ← 𝐵 ( 𝑡 ) − 𝑝1( 𝑡 ) (b1:
+)
+𝑚
+𝑚
+h
+i
+(𝑡 )
+(𝑡 )
+(
+𝑡 +1)
+(
+𝑡)
+Update 𝜇
+← 𝜇 + 𝜂 ( 𝑝1 (b1:𝑚 ) − 𝛾 )
++
+
+the optimal cumulative utility in hindsight is
+)
+( 𝑇
+𝑇
+∑︁
+∑︁
+(
+𝑡
+)
+(
+𝑡
+)
+(𝑡 )
+(
+𝑡
+)
+(
+𝑡
+)
+𝑝1 (b1:𝑚 ) ≤ 𝑇 𝛾 .
+OPT(𝑇 ) ≔ max
+𝑉1 ( 𝜎 ( 𝑡 ) ) − 𝑝1 (b1:𝑚 ) :
+(1)
+
+(𝑇 )
+
+b1 ,...b1
+
+𝑡 =1
+
+𝑡 =1
+
+Regret is the expected difference between OPT(𝑇 ) and the autobidder’s cumulative utility; i.e.,
+#
+"
+𝑇
+∑︁
+(𝑡 )
+(
+𝑡
+)
+(𝑉1 ( 𝜎 ( 𝑡 ) ) − 𝑝1 (b1:𝑚 )) .
+𝑅 (𝑇 ) ≔ 𝔼 OPT(𝑇 ) −
+𝑡 =1
+
+Value Pacing. At every timestep, our autobidder scales the request values by a common pacing
+factor 𝛼 ( 𝑡 ) , bids b1( 𝑡 ) = 𝛼 ( 𝑡 ) v1( 𝑡 ) , and updates the pacing factor 𝛼 ( 𝑡 ) → 𝛼 ( 𝑡+1) . The pacing factor
+decreases when spending exceeds the per-batch target 𝛾 , and increases when spending falls below
+the target. Pseudocode for our autobidding agent is given in Algorithm 3.
+(𝑡 ) 𝑇
+Theorem 4.2. Suppose that (v1( 𝑡 ) , T ( 𝑡 ) , b2:
+) are drawn i.i.d. from an unknown distribution
+𝑚 𝑡 =1
+(𝑡 )
+(𝑡 )
+P. Let 𝐾 := max𝑡 ∈ [𝑇 ] |R1 |, ∥v1 ∥ ∞ ≤ 𝐶 , and suppose that schedules and payments are assigned
+√
+according to the inference
+√ auction of Section 3. Then if 𝜂 = Θ (1/ 𝑇 ), Algorithm 3 obtains regret
+𝑅 (𝑇 ) = 𝑂 (poly( 𝐶, 𝐾, 𝛾 ) 𝑇 ) when 𝑇 is sufficiently large.
+
+The proof proceeds via a reduction to Balseiro et al. [8], who study online allocation problems
+with generic concave reward functions and resource constraints. The main technical difficulty
+is showing that their framework actually applies in our setting. The distributional assumption
+models a stationary serving environment in which request values, prefix structures, and competing
+bids can vary across batches but arise from a stable workload.
+Welfare Under Heterogeneous Pacing. When multiple autobidders pace independently, their
+multipliers can differ, and so their bids will generally not be proportional to a common pacing
+factor. This can lead to a loss in per-batch social welfare compared to the welfare under truthful
+reporting. We now quantify this loss as a function of the request radix tree’s structure.
+For the remainder of this section, we suppress the batch index and write each bid as 𝑏𝑟 = 𝛼𝑟 𝑣𝑟 . For
+Í
+a subtree c, let 𝐹 𝑣 (c) ≔ 𝑟 ∈L(c) 𝑣𝑟 and define its value-weighted pacing factor by 𝛼 (c) ≔ 𝐹𝑏 (c)/ 𝐹 𝑣 (c).
+Definition 4.3 (Node Pacing Condition Number). The condition number of node u is 𝜅u ≔
+max{𝛼 (c) : c ∈ C(u) , 𝐹 𝑣 (c) > 0}/min{𝛼 (c) : c ∈ C(u) , 𝐹 𝑣 (c) > 0}, with 𝜅u ≔ 1 if at most one child
+of u has 𝐹 𝑣 (c) > 0.
+Condition number measures how unevenly sibling subtrees are paced. When 𝜅u = 1, pacing
+preserves the welfare-maximizing order, whereas larger values of 𝜅u result in greater local
+distortion. The following theorem formalizes this relationship by lower-bounding the realized
+welfare at a single timestep in terms of the node-level condition numbers.
+Theorem 4.4. Suppose that each request 𝑟 has corresponding bid 𝑏𝑟 = 𝛼𝑟 𝑣𝑟 for pacing factors
+𝛼1 , . . . , 𝛼𝑛 ∈ (0, 1], and let Ωu denote the marginal contribution of node u to the optimal DFS
+7
+
+Figure 1: Stars topology. Welfare, cache hit rate, and mean TTFT, varying: batch size 𝑛 (left), sharing
+fraction 𝑃 with 𝑛=256 (middle), and within-cluster bid correlation 𝜌 (right).
+
+welfare. Then the social welfare for the batch is bounded as
+Í
+𝑊 ( 𝐴¯(b1:𝑚 ); v1:𝑚 )
+1
+u Ωu /𝜅u
+≥ Í
+≥
+.
+max𝜎 ∈D(𝑇 ) 𝑊 ( 𝜎; v1:𝑚 )
+Ω
+max
+u 𝜅u
+u u
+Theorem 4.4 isolates the economically relevant source of inefficiency from value pacing in
+inference auctions. Pacing dispersion only matters when it changes the average-bid ordering of
+sibling subtrees, and the loss in welfare is weighted by 1/𝜅u . Heterogeneous request-level pacing
+may therefore be harmless when it “averages out” within subtrees; what matters more is any
+systematic pacing variation across sibling subtrees that directly compete for scheduling priority.
+See Figure 7 for an example.
+
+5
+
+Experiments
+
+Experiment Setup. We evaluate our algorithm as a layer on top of the SGLang [52] inference system across several semi-synthetic workloads, on a single 80GB H100 serving a 32B LLM [15]. We
+assume the server is saturated: a waiting queue holds 𝑄 = 1024 queries, which we split into batches
+of 𝑛 before ordering with our algorithm. When 𝑛 ≠ 𝑄 we do not flush the KV cache in between
+batches. We configure SGLang to process queries first-come-first-served to preserve their order.
+Algorithms. dfs-bid is the average-bid DFS of Algorithm 1 with VCG payments as in Section 3.2.
+dfs-uniform runs the same DFS with all bids equal (meant to replicate SGLang’s longest-prefixmatch policy); bid-sort sorts queries by bid and ignores the prefix tree (it is the unconstrained
+welfare maximizer in Proposition 2.4); no-sort serves queries in arrival order. Values are
+synthetic, drawn i.i.d. (unless otherwise noted) from 1 + Pareto(1.5), and bids are truthful. Every
+number reported is a mean of three trials with 1-standard-error bars.
+Workloads. We construct semi-synthetic workloads from real LLM evaluation data, covering three
+basic radix tree topologies: stars, chains, and 3-ary trees. For stars, mixshare mixes SQuAD [43]
+questions sharing an article as a prefix with GSM8K [14] questions sharing few-shot examples; in
+mixshare-P, a 𝑃 % of the queries share prefixes and the rest are singletons. For chains we replay
+8
+
+Figure 2: Tree topologies at 𝑛 = 𝑄 . When the workload exceeds the cache (all topologies except small
+trees), bid-sort pays for its welfare lead (left) in cache misses (middle) and latency (right).
+
+Figure 3: One cluster has non-zero bids, everyone else bids zero (mixshare-50). dfs-bid matches bidsort’s welfare (left; curves offset slightly for readability) while keeping dfs-uniform’s hit rate (middle)
+and latency (right).
+
+SWE-agent [50] trajectories. For trees, we run tree-of-thought [51] in a short variant and a long
+variant over articles of 3–5k tokens. Prompts are ≈1k tokens on stars, 3k on chains, and 160 or
+4k on the two tree variants, with 60–97% of tokens shared (Appendix D.2). The model’s weights
+leave a 23k-token KV cache; the short trees fit in the cache entirely and serve as a control, while
+the other workloads force cache eviction.
+Results. We measure welfare on the realized order, i.e., with queries ranked by TTFT, and plot it
+Í
+as the percentage above 12 𝑟 𝑏𝑟 (this quantity is the expected welfare of a uniformly random DFS
+order). We also report the cache hit rate as reported by SGLang and the mean TTFT over the queue.
+In every experiment, dfs-bid and dfs-uniform
+have the same cache hit rate and the same TTFT,
+but dfs-bid has substantially higher welfare. bidsort has higher welfare, but it interleaves queries
+that share a prefix, significantly reducing cache hit
+rate. At 𝑛 = 𝑄 , dfs-bid’s welfare is within 19–
+22% of bid-sort’s welfare, well under the 50%
+that Proposition 2.4 allows.
+The first column of Figure 1 varies the batch size Figure 4: Welfare under autobidding when 𝑇 =
+on mixshare-50. With more queries in a batch 60. Details are in Appendix D.11.
+there are more shared prefixes to group, so both
+DFS orders gain cache hits and get faster with 𝑛 while bid-sort and no-sort do not. In terms of
+welfare, dfs-bid’s lead over dfs-uniform grows from 1% at 𝑛 = 32, with few shared prefixes
+per batch, to 12% at 𝑛 = 𝑄 . The second column varies the sharing fraction at 𝑛 = 256 with the
+same result: more sharing helps the DFS orders and hurts the flat ones, and dfs-bid stays 4–7%
+above dfs-uniform. The third column varies 𝜌, how much values are correlated within clusters.
+9
+
+bid-sort is substantially slower than dfs-bid until 𝜌 = 1, when cluster members are naturally
+grouped by having the same bid; even then, dfs-bid achieves competitive welfare with better
+TTFT.
+Figure 2 repeats the comparison at 𝑛 = 𝑄 across tree topologies. bid-sort’s TTFT is 2.4× dfs-bid’s
+on chains and 12× on long trees. The short trees are the exception since they fit in the cache, so
+nothing is ever evicted and every order gets the same hit rate and the same TTFT regardless of how
+it schedules. This is the one case where the DFS restriction buys nothing and costs 20% of welfare.
+Figure 3 shows the case most favorable to our mechanism (and perhaps the most realistic): one
+cluster of queries with a shared prefix has non-zero bids, and every other request bids zero.
+Serving that cluster first is both the unconstrained optimum and a DFS order, so dfs-bid matches
+bid-sort’s welfare at every batch size while keeping dfs-uniform’s hit rate, and bid-sort pays
+about 1.5× the TTFT.
+Finally, in Figure 4 we simulate the pacing autobidders of Algorithm 3 on the same trees. Autobidding in repeated auctions causes welfare to decrease by about 10% on average compared
+to the single-shot setting, and welfare is always above what Theorem 4.4 predicts.
+
+6
+
+Related Work
+
+Prefix-Aware LLM Serving. Modern LLM serving frameworks improve request throughput via
+continuous batching and efficient management of the KV cache. vLLM [34] uses ideas from virtual
+memory and paging to reduce KV cache fragmentation. SGLang [52] stores requests in a radix tree
+and uses longest prefix matching to increase cache reuse across requests. Preble [45] jointly optimizes prefix reuse and load balancing across multiple GPUs, while BatchLLM [53] groups requests
+with common prefixes offline and coordinates their execution. Dexter et al. [17] study optimal
+request scheduling under a certain arrival pattern when cached requests are stored in a radix
+tree, and they propose a new family of scheduling policies which interpolate between first-comefirst-served and longest prefix matching. Llumnix [46] and QoServe [22] support differentiated
+latency objectives and request prioritization. Another related line of work studies fairness in LLM
+serving [11, 44]. Our inference auction is the first approach that prioritizes economic efficiency.
+Priority Auctions and Queues. The idea of allowing delay-sensitive users to purchase queue
+priority has a long history [e.g., 1, 21, 28, 29, 31, 32, 37]. LLM inference differs from these
+classical models because inference requests are not computationally independent from one
+another. To the best of our knowledge, our work is the first to design incentive-compatible priority
+mechanisms for LLM inference serving.
+Autobidding Agents. Autobidding has been studied extensively in online ad auctions; see Aggarwal et al. [2] for a recent survey. Balseiro and Gur [10] provide an adaptive pacing algorithm
+which scales bids according to realized expenditure. Balseiro et al. [8] generalize their algorithm
+to online mirror descent and weaken several theoretical assumptions. Subsequent work studies
+social welfare and learning dynamics when autobidders interact in repeated ad auctions [e.g.
+5, 9, 16, 20, 36, 39]. While our pacing autobidding algorithm is similar to some that are typically
+used in ad auctions, our welfare guarantees leverage the specific structure of the radix tree and
+are unique to our LLM inference setting.
+LLMs and Incentives. Our results are broadly related to the growing body of work at the intersection of game theory, mechanism design, and generative AI. Chen et al. [12], Guo et al.
+[25], and Liu et al. [35] study pricing and incentives for LLM routing, while Harris et al. [27]
+and Anagnostides et al. [4] design incentive-aware credit assignment schemes for AI-generated
+content. Velasco et al. [47] study social inefficiency resulting from model providers’ incentives
+to increase test-time compute in order to increase revenue; they propose having model providers
+10
+
+bid in a reverse second-price auction to resolve this inefficiency. There is also a line of work which
+designs auctions for ad placements in LLM-generated text [18, 19, 26]. Finally, Ji et al. [30]
+also combine an inference system with auction design in the context of distributed computing;
+specifically, procuring edge devices for speculative decoding.
+
+7
+
+Conclusion
+
+We design the first inference auction, a mechanism for allocating LLM serving capacity during times
+of high request volume. Our inference auction enjoys the following key properties: (1) forcing
+the winning schedule to be a DFS schedule ensures cache optimality, (2) welfare maximization
+corresponds to a simple DFS comparator that orders radix subtrees by average bid, and (3) VCG
+payments, which incentivize truthful bidding, can be implemented with negligible computational
+overhead. We also design a pacing autobidder that learns how to bid in repeated inference
+auctions under a budget constraint. Our autobidder dynamically adjusts bids based on realized
+spending, and achieves sublinear regret relative to the optimal-in-hindsight bidding policy. When
+users in a batch run pacing autobidders independently, we bound the resulting welfare loss by
+the differences in the effective pacing factors of sibling subtrees. In experiments, our inference
+auction improves social welfare while retaining the caching and latency advantages of SGLang.
+Our work demonstrates how economic objectives can be incorporated directly into LLM serving
+infrastructure without sacrificing performance.
+There are several exciting directions for future research. Serving large-scale systems may require
+joint orchestration of auctions, request routing, and cache management across multiple inference
+workers. Support for richer latency preferences is also an interesting direction. Finally, collusionproof inference auction design is important to prevent strategic coordination across users.
+
+Acknowledgments
+We would like to thank Annie Ulichney for helpful comments and suggestions. This work was
+funded by the European Union (ERC-2022-SYG-OCEAN-101071601), the NSF Institute for Foundations of Machine Learning under grant CCF-2505865, the National Science Foundation under
+grant CCF-2145898, the Office of Naval Research under grant N00014-24-1-2159, a Google
+Research Scholar Award, an Alfred P. Sloan fellowship, and a Schmidt Science AI2050 fellowship.
+Views and opinions expressed are however those of the author(s) only and do not necessarily
+reflect those of the European Union or the European Research Council Executive Agency. Neither
+the European Union nor the granting authority can be held responsible for them.
+
+References
+[1] Philipp Afeche and Haim Mendelson. Pricing and priority auctions in queueing systems
+with a generalized delay cost structure. Management Science, 50(7):869–882, 2004.
+[2] Gagan Aggarwal, Ashwinkumar Badanidiyuru, Santiago R Balseiro, Kshipra Bhawalkar,
+Yuan Deng, Zhe Feng, Gagan Goel, Christopher Liaw, Haihao Lu, Mohammad Mahdian,
+et al. Auto-bidding and auctions in online advertising: A survey. ACM SIGecom Exchanges,
+22(1):159–183, 2024.
+[3] Amazon Web Services. Optimize costs with Amazon Bedrock provisioned throughput and
+service tiers, 2026. URL https://docs.aws.amazon.com/bedrock/latest/userguide/
+service-tiers-inference.html.
+
+11
+
+[4] Ioannis Anagnostides, Kshipra Bhawalkar, Christopher Liaw, Aranyak Mehta, Renato Paes
+Leme, Yifeng Teng, Grigoris Velegkas, and Weiqiang Zheng. Compensation design. arXiv
+preprint arXiv:2607.14438, 2026.
+[5] Ioannis Anagnostides, Ian Gemp, Georgios Piliouras, and Kelly Spendlove. Chaos in autobidding auctions. arXiv preprint arXiv:2602.09118, 2026.
+[6] Anthropic. Service tiers, 2026.
+service-tiers.
+
+URL https://platform.claude.com/docs/en/api/
+
+[7] Maria-Florina Balcan, Siddharth Prasad, and Tuomas Sandholm. Bicriteria multidimensional
+mechanism design with side information. Advances in Neural Information Processing Systems,
+36:40832–40852, 2023.
+[8] Santiago Balseiro, Haihao Lu, and Vahab Mirrokni. Dual mirror descent for online allocation
+problems. In International Conference on Machine Learning, pages 613–628. PMLR, 2020.
+[9] Santiago Balseiro, Yuan Deng, Jieming Mao, Vahab Mirrokni, and Song Zuo. Robust auction
+design in the auto-bidding world. Advances in Neural Information Processing Systems, 34:
+17777–17788, 2021.
+[10] Santiago R Balseiro and Yonatan Gur. Learning in repeated auctions with budgets: Regret
+minimization and equilibrium. Management Science, 65(9):3952–3968, 2019.
+[11] Shiyi Cao, Yichuan Wang, Ziming Mao, Pin-Lun Hsu, Liangsheng Yin, Tian Xia, Dacheng Li,
+Shu Liu, Yineng Zhang, Yang Zhou, et al. Locality-aware fair scheduling in LLM serving.
+arXiv preprint arXiv:2501.14312, 2025.
+[12] Haolong Chen, Zhengyuan Xin, Liang Zhang, Lei Xue, and Guangxu Zhu. Error-aware reverse auction mechanism for large language model routing. arXiv preprint arXiv:2608.12719,
+2026.
+[13] Edward H Clarke. Multipart pricing of public goods. Public Choice, pages 17–33, 1971.
+[14] Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz
+Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, Christopher Hesse,
+and John Schulman. Training verifiers to solve math word problems. arXiv preprint
+arXiv:2110.14168, 2021.
+[15] DeepSeek-AI. DeepSeek-R1: Incentivizing reasoning capability in LLMs via reinforcement
+learning. arXiv preprint arXiv:2501.12948, 2025.
+[16] Yuan Deng, Jieming Mao, Vahab Mirrokni, and Song Zuo. Towards efficient auctions in an
+auto-bidding world. In Proceedings of the Web Conference 2021, pages 3965–3973, 2021.
+[17] Gregory Dexter, Shao Tang, Ata Fatahi, Qingquan Song, Tejas Dharamsi, and Aman Gupta.
+LLM query scheduling with prefix reuse and latency constraints. Advances in Neural Information Processing Systems, 38:94356–94379, 2026.
+[18] Avinava Dubey, Zhe Feng, Rahul Kidambi, Aranyak Mehta, and Di Wang. Auctions with
+LLM summaries. In Proceedings of the 30th ACM SIGKDD Conference on Knowledge Discovery
+and Data Mining, pages 713–722, 2024.
+[19] Paul Duetting, Vahab Mirrokni, Renato Paes Leme, Haifeng Xu, and Song Zuo. Mechanism
+design for large language models. In Proceedings of the ACM Web Conference 2024, pages
+144–155, 2024.
+
+12
+
+[20] Jason Gaitonde, Yingkai Li, Bar Light, Brendan Lucier, and Aleksandrs Slivkins. Budget
+pacing in repeated auctions: Regret and efficiency without convergence. arXiv preprint
+arXiv:2205.08674, 2022.
+[21] Amihai Glazer and Refael Hassin. Stable priority purchasing in queues. Operations Research
+Letters, 4(6):285–288, 1986.
+[22] Kanishk Goel, Jayashree Mohan, Nipun Kwatra, Ravi Shreyas Anupindi, and Ramachandran
+Ramjee. Qoserve: Breaking the silos of LLM inference serving. In Proceedings of the 31st ACM
+International Conference on Architectural Support for Programming Languages and Operating
+Systems, Volume 2, pages 1492–1507, 2026.
+[23] Google. Gemini API: Priority inference, 2026. URL https://ai.google.dev/gemini-api/
+docs/priority-inference.
+[24] Theodore Groves. Incentives in teams. Econometrica, pages 617–631, 1973.
+[25] Zhendong Guo, Wenchao Bai, and Jiahui Jin. Pricing online llm services with data-calibrated
+stackelberg routing game. In Proceedings of the AAAI Conference on Artificial Intelligence,
+volume 40, pages 17005–17013, 2026.
+[26] MohammadTaghi Hajiaghayi, Sébastien Lahaie, Keivan Rezaei, and Suho Shin. Ad auctions
+for LLMs via retrieval augmented generation. Advances in Neural Information Processing
+Systems, 37:18445–18480, 2024.
+[27] Keegan Harris, Siddharth Prasad, and Asher Trockman. In-context credit assignment via
+the core. arXiv preprint arXiv:2605.06920, 2026.
+[28] Rafael Hassin. Decentralized regulation of a queue. Management Science, 41(1):163–173,
+1995.
+[29] Birgit Heydenreich, Debasis Mishra, Rudolf Müller, and Marc Uetz. Optimal mechanisms for
+single machine scheduling. In International Workshop on Internet and Network Economics,
+pages 414–425. Springer, 2008.
+[30] Mingtao Ji, Lei Jiao, Bin Tang, Zhihao Qu, Chen Chen, and Baoliu Ye. Incentivizing
+and orchestrating cloud-edge LLM speculative decoding via auctions. In 2026 IEEE 46th
+International Conference on Distributed Computing Systems (ICDCS), pages 425–435. IEEE,
+2026.
+[31] Thomas Kittsteiner and Benny Moldovanu. Priority auctions and queue disciplines that
+depend on processing time. Management Science, 51(2):236–248, 2005.
+[32] Leonard Kleinrock. Optimum bribing for queue position. Operations Research, 15(2):
+304–318, 1967.
+[33] Vijay Krishna and Motty Perry. Efficient mechanism design. Available at SSRN 64934, 1998.
+[34] Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu,
+Joseph Gonzalez, Hao Zhang, and Ion Stoica. Efficient memory management for large
+language model serving with PagedAttention. In Proceedings of the 29th Symposium on
+Operating Systems Principles, pages 611–626, 2023.
+[35] Hongze Liu, Chang Guo, Yingzeng Li, Mengru Wang, Jiong Lou, Shijing Yuan, Hefeng Zhou,
+Chentao Wu, and Jie Li. Iemas: An incentive-efficiency routing framework for open agentic
+web ecosystems. arXiv preprint arXiv:2603.17302, 2026.
+
+13
+
+[36] Brendan Lucier, Sarath Pattathil, Aleksandrs Slivkins, and Mengxiao Zhang. Autobidders
+with budget and ROI constraints: Efficiency, regret, and pacing dynamics. arXiv preprint
+arXiv:2301.13306, 2023.
+[37] Manipushpak Mitra. Mechanism design in queueing problems. Economic Theory, 17(2):
+277–305, 2001.
+[38] OpenAI. Priority processing, 2026. URL https://developers.openai.com/api/docs/
+guides/priority-processing.
+[39] Renato Paes Leme, Georgios Piliouras, Jon Schneider, Kelly Spendlove, and Song Zuo.
+Complex dynamics in autobidding systems. In Proceedings of the 25th ACM Conference on
+Economics and Computation, pages 75–100, 2024.
+[40] Siddharth Prasad, Maria Florina Balcan, and Tuomas Sandholm. Weakest bidder types
+and new core-selecting combinatorial auctions. In Proceedings of the AAAI Conference on
+Artificial Intelligence, volume 40, pages 17206–17214, 2026.
+[41] Ruoyu Qin, Zheming Li, Weiran He, Jialei Cui, Feng Ren, Mingxing Zhang, Yongwei Wu,
+Weimin Zheng, and Xinran Xu. Mooncake: Trading more storage for less computation—a
+{KVCache-centric} architecture for serving {LLM} chatbot. In 23rd USENIX Conference on
+File and Storage Technologies (FAST 25), pages 155–170, 2025.
+[42] Qwen Team. Qwen2.5 technical report. arXiv preprint arXiv:2412.15115, 2025.
+[43] Pranav Rajpurkar, Jian Zhang, Konstantin Lopyrev, and Percy Liang. SQuAD: 100,000+
+questions for machine comprehension of text. In Proceedings of the 2016 Conference on
+Empirical Methods in Natural Language Processing, 2016.
+[44] Ying Sheng, Shiyi Cao, Dacheng Li, Banghua Zhu, Zhuohan Li, Danyang Zhuo, Joseph E
+Gonzalez, and Ion Stoica. Fairness in serving large language models. In 18th USENIX
+Symposium on Operating Systems Design and Implementation (OSDI 24), pages 965–988,
+2024.
+[45] Vikranth Srivatsa, Zijian He, Reyna Abhyankar, Dongming Li, and Yiying Zhang. Preble:
+Efficient distributed prompt scheduling for LLM serving. In International Conference on
+Learning Representations, volume 2025, pages 37057–37082, 2025.
+[46] Biao Sun, Ziming Huang, Hanyu Zhao, Wencong Xiao, Xinyi Zhang, Yong Li, and Wei Lin.
+Llumnix: Dynamic scheduling for large language model serving. In 18th USENIX Symposium
+on Operating Systems Design and Implementation (OSDI 24), pages 173–191, 2024.
+[47] Ander Artola Velasco, Dimitrios Rontogiannis, Stratis Tsirtsis, and Manuel Gomez-Rodriguez.
+Test-time compute games. arXiv preprint arXiv:2601.21839, 2026.
+[48] William Vickrey. Counterspeculation, auctions, and competitive sealed tenders. Journal of
+Finance, 16(1):8–37, 1961.
+[49] xAI.
+Priority processing, 2026.
+advanced-api-usage/priority-processing.
+
+URL
+
+https://docs.x.ai/developers/
+
+[50] John Yang, Carlos E. Jimenez, Alexander Wettig, Kilian Lieret, Shunyu Yao, Karthik
+Narasimhan, and Ofir Press. SWE-agent: Agent-computer interfaces enable automated
+software engineering. In Advances in Neural Information Processing Systems, 2024.
+[51] Shunyu Yao, Dian Yu, Jeffrey Zhao, Izhak Shafran, Thomas L. Griffiths, Yuan Cao, and
+Karthik Narasimhan. Tree of thoughts: Deliberate problem solving with large language
+models. In Advances in Neural Information Processing Systems, 2023.
+14
+
+[52] Lianmin Zheng, Liangsheng Yin, Zhiqiang Xie, Chuyue Sun, Jeff Huang, Cody H Yu, Shiyi
+Cao, Christos Kozyrakis, Ion Stoica, Joseph E Gonzalez, et al. SGLang: Efficient execution
+of structured language model programs. Advances in Neural Information Processing Systems,
+37:62557–62583, 2024.
+[53] Zhen Zheng, Xin Ji, Taosong Fang, Fanghao Zhou, Chuanjie Liu, and Gang Peng. BatchLLM:
+Optimizing large batched LLM inference with global prefix sharing and throughput-oriented
+token batching. Proceedings of Machine Learning and Systems, 8:1742–1756, 2026.
+
+15
+
+A
+
+Appendix for Section 2: Cache-Optimal Schedules and Our Bidding
+Environment
+
+Summarize
+
+the article
+
+this email
+
+about cats
+
+as bullets
+
+in French
+
+briefly
+
+1
+
+2
+
+3
+
+4
+
+1 Summarize the article about cats
+2 Summarize the article as bullets
+3 Summarize the article in French
+4 Summarize this email briefly
+5 Summarize this email for my boss
+6 Summarize this email for my team
+
+for my
+
+boss
+
+team
+
+5
+
+6
+
+Figure 5: A request radix tree. Each request is a root-to-leaf path; requests with a common prefix share
+the path from the root to their lowest common ancestor, and non-branching paths are contracted into a
+single edge. The maximum branching factor of this tree is 3. Requests in the same subtree are easier to
+store together in the KV cache, as their shared prefixes only need to be stored once.
+
+Proposition 2.4. For any v1:𝑚 , max𝜎 ∈D(T) 𝑊 ( 𝜎; v1:𝑚 ) ≥ 12 max𝜎 ∈S𝑛 𝑊 ( 𝜎; v1:𝑚 ).
+Proof. Let 𝜎 ∈ D(T) be any feasible schedule and let 𝜋 be the reverse of 𝜎. We have 𝜋 ∈ D(T)
+since 𝜋 is attainable by reversing all child orderings in the DFS traversal of T corresponding to
+𝜎. For any user 𝑖 and request 𝑟 , we have x𝑖 ( 𝜎) [ 𝑟 ] + x𝑖 ( 𝜋) [ 𝑟 ] = 1, so 𝑊 ( 𝜎; v1:𝑚 ) + 𝑊 ( 𝜋; v1:𝑚 ) =
+Í
+Í𝑚
+least one of 𝜎 or 𝜋 generates welfare at least 12 𝑚
+𝑖=1 ∥v𝑖 ∥ 1 , and so
+𝑖=1 ∥v𝑖 ∥ 1 . Therefore, at Í
+1
+max𝜎 ∈D(T) 𝑊 ( 𝜎; v1:𝑚 ) ≥ 21 𝑚
+∥v
+∥
+≥
+max
+𝑊
+(
+𝜎
+;
+v
+).
+□
+𝑖
+1
+1:
+𝑚
+𝜎
+∈S
+𝑛
+𝑖=1
+2
+
+B
+
+Appendix for Section 3: Welfare-Optimal Inference Auctions
+
+Discussion on VCG Payments. The Clarke [13] pivot term ℎ𝑖 (b− 𝑖 ) in VCG payments is often
+(informally) framed as the maximum welfare the bidders excluding 𝑖 could obtain when bidder
+𝑖 is removed from the auction, while we define it by zeroing out that bidder’s bids. In typical
+multi-item multi-bidder auction settings, there is no distinction. In our setting, actually evicting 𝑖’s
+requests would alter the radix tree of requests and change the ground set of feasible schedules to
+allow requests to go un-served. In addition to the fact that all requests should eventually be served,
+a payment scheme based on eviction would incur outward payments made by the system to the
+users. Indeed, any zero-bidder would have to be paid because the maximum welfare enjoyed by
+the remaining bidders decreases when that zero-bidder is evicted, since each remaining bidder
+would win lower fractional priority.
+In our setting, the correct formulation of VCG involves the minimum value of the maximum
+welfare the bidders excluding 𝑖 could obtain over all possible “types” (bids) for bidder 𝑖, which is
+attained when 𝑖 is a zero bidder. This is precisely the reasoning folded into the enhancement of
+VCG based on “weakest types” [see, e.g., 7, 33, 40].
+16
+
+Summarize
+
+the article
+
+this email
+
+avg $6
+
+about cats
+
+in French
+
+avg $5
+
+for my
+
+as bullets
+
+briefly
+
+avg $6.5
+
+team
+
+boss
+1
+
+$9
+
+3
+
+$6
+
+2
+
+$3
+
+5
+
+$8
+
+6
+
+$5
+
+4
+
+$2
+
+prefill order
+Figure 6: The welfare-maximizing DFS schedule on an example radix tree. At every internal node, children
+are visited in decreasing order of average subtree bid (blue marks the child visited first). The resulting
+schedule is 1, 3, 2, 5, 6, 4. Note that request 5 bids $8 but is served after request 2, which bids $3. This is
+because request 5 belongs to a subtree with a lower average bid, and a DFS schedule cannot interleave the
+two subtrees.
+
+For completeness, we include below the standard arguments demonstrating that VCG in our
+setting is indeed efficient, incentive compatible, individually rational, and incurs no positive
+transfers.
+Under VCG prices, efficiency follows from Theorem 3.1. To see why these payments incentivize
+truthful bidding, fix the bids b− 𝑖 of the other users. If user 𝑖 bids according to b𝑖 , his utility can
+be written as
+𝑉𝑖 ( 𝐴¯(b𝑖 , b − 𝑖 )) − 𝑝VCG
+(b𝑖 , b− 𝑖 ) = 𝑊 ( 𝐴¯(b𝑖 , b− 𝑖 ); (v𝑖 , b− 𝑖 )) − ℎ𝑖 (b− 𝑖 ) .
+𝑖
+ℎ𝑖 (b − 𝑖 ) does not depend on b𝑖 , and 𝑊 ( 𝐴¯(b𝑖 , b − 𝑖 ); (v𝑖 , b − 𝑖 )) is maximized when b𝑖 = v𝑖 by Theo-
+
+rem 3.1. Therefore, it is a (weakly) dominant strategy for each user to bid truthfully, independent
+of the bids of the other users. Individual rationality holds because user 𝑖’s values and priorities
+are non-negative. Under truthful bidding, user 𝑖’s utility is max𝜎 ∈D(T) 𝑊 ( 𝜎; (v𝑖 , b− 𝑖 )) − ℎ𝑖 (b− 𝑖 ).
+Now consider the schedule that maximizes the other users’ welfare when 𝑖’s bids are zero. That
+schedule remains feasible when 𝑖 bids truthfully. Under it, total welfare is ℎ𝑖 (b− 𝑖 ) + 𝑉𝑖 ( 𝜎) ≥ ℎ𝑖 (b− 𝑖 ),
+since 𝑉𝑖 ( 𝜎) ≥ 0. Finally, no positive transfers follows because ℎ𝑖 (b− 𝑖 ) is the maximum welfare
+available to the other users, and is always at least the welfare they receive under the selected
+schedule.
+
+B.1
+
+Algorithm for Computing the Welfare-Maximizing Schedule
+
+Theorem 3.1. Given bid vectors b1:𝑚 , the average-bid DFS scheduling rule 𝐴¯(b1:𝑚 ) given by Algorithm 1 returns a cache-optimal schedule 𝜎 that maximizes 𝑊 ( 𝜎; b1:𝑚 ) among all DFS schedules.
+Furthermore, this schedule can be computed in 𝑂 ( 𝑀 + 𝑛 log 𝜈) expected run-time.
+Í
+Í Í
+Let Φ ( 𝜎; b1:𝑚 ) ≔ ( 𝑛 − 1)𝑊 ( 𝜎; b1:𝑚 ) = 𝑟𝑛=1 𝑏𝑟 · |{ 𝑗 : 𝜎 ( 𝑟 ) < 𝜎 ( 𝑗)}| = 𝑟𝑛=1 𝑗 ≻𝜎 𝑟 𝑏𝑟 . Maximizing
+𝑊 (·; b1:𝑚 ) over a set of feasible schedules is equivalent to maximizing its un-normalized version
+Φ (·; b1:𝑚 ).
+17
+
+Proof. Let 𝜎 ∈ D(T) be a valid DFS leaf ordering. For u an internal node (that is, not a leaf
+node) of T, let c1 , . . . , c𝑑 (u) be the children of u, labeled in the DFS order induced by 𝜎. So, all
+leaves under child c 𝑗 are visited before all leaves under child c𝑘 for all 1 ≤ 𝑗 < 𝑘 ≤ 𝑑 (u). The
+un-normalized welfare contribution from ordered leaf pairs in L(c 𝑗 ) × L(c𝑘 ) for 𝑗 < 𝑘 is therefore
+Í
+Í
+𝑖1 ∈L(c 𝑗 )
+𝑖2 ∈L(c𝑘 ) 𝑏𝑖1 = 𝑁 (c𝑘 ) 𝐹𝑏 (c 𝑗 ). It follows that un-normalized welfare can be written as
+Φ ( 𝜎; b1:𝑚 ) =
+
+∑︁
+
+∑︁
+
+𝑁 (c𝑘 ) 𝐹𝑏 (c 𝑗 ) .
+
+u 1≤ 𝑗<𝑘 ≤ 𝑑 (u)
+
+We show that Φ ( 𝜎; b1:𝑚 ) is maximized by visiting the children of any internal node u in descending
+order of 𝐹𝑏 / 𝑁 . Suppose c 𝑗 , c 𝑗+1 ∈ C(u) are adjacent in the DFS traversal with 𝐹𝑏 (c 𝑗 )/ 𝑁 (c 𝑗 ) <
+𝐹𝑏 (c 𝑗+1 )/ 𝑁 (c 𝑗+1 ). This pair contributes 𝑁 (c 𝑗+1 ) 𝐹𝑏 (c 𝑗 ) to Φ. Swapping their order contributes
+𝑁 (c 𝑗 ) 𝐹𝑏 (c 𝑗+1 ) > 𝑁 (c 𝑗+1 ) 𝐹𝑏 (c 𝑗 ) to welfare without impacting the contribution of any other pair in
+C(u) (since the relative ordering of c 𝑗 and c 𝑗+1 with respect to all other children is preserved).
+Í
+Therefore, each inner sum of 1≤ 𝑗<𝑘 ≤ 𝑑 (u) 𝑁 (c𝑘 ) 𝐹𝑏 (c 𝑗 ) is independently maximized for each u by
+visiting C(u) in descending order of average bid, so average-bid DFS is a welfare optimal DFS
+traversal.
+Runtime analysis: A radix tree can be constructed in 𝑂 ( 𝑀 + 𝑛) = 𝑂 ( 𝑀 ) expected time using hash
+tables for child lookup. Let T = (𝑉, 𝐸) be the radix tree and let 𝑑 (u) denote the number of children
+of internal node u. Note that 𝑑 (u) ≤ 𝜈 by definition, and let 𝐼 be the total number of internal nodes.
+It takes 𝑂 (|𝑉 |) time to compute 𝐹𝑏 (u) for every node, since each node is processed a constant
+number of times across all computations. Sorting at each internal node u takes 𝑂 ( 𝑑 (u) log( 𝑑 (u)))
+Í
+Í
+time. The time it takes to sort all nodes is 𝑂 ( u 𝑑 (u) log( 𝑑 (u))) = 𝑂 ( u 𝑑 (u) log 𝜈) = 𝑂 (| 𝐸 | log 𝜈) =
+𝑂 (|𝑉 | log 𝜈). A DFS schedule following this order outputs the order in 𝑂 (|𝑉 |) time. Finally, since a
+Í
+radix tree has no internal node with exactly one child, we have that 𝑛 + 𝐼 − 1 = | 𝐸 | = 𝑢 𝑑 ( 𝑢) ≥ 2 𝐼 ,
+and so 𝑉 ≤ 2𝑛 − 1.
+□
+
+B.2
+
+Algorithm for Computing VCG Prices
+
+In this subsection we abbreviate 𝐹𝑏 as 𝐹 for brevity. Let [ 𝑥 ] + ≔ max{ 𝑥, 0}.
+Fix an internal node u and let c1 , . . . , c𝑑 denote its children sorted in descending average-bid
+order, so
+𝐹 (c1 )
+𝐹 (c𝑑 )
+≥ ··· ≥
+.
+𝑁 (c1 )
+𝑁 (c𝑑 )
+Consider some user 𝑖. Let
+
+∑︁
+
+𝑍 c 𝑗 [ 𝑖] ≔
+
+𝑏𝑟
+
+𝑟 ∈R𝑖 ∩L(c 𝑗 )
+
+denote user 𝑖’s aggregate bid across his requests under child c 𝑗 . After zeroing out user 𝑖’s bids,
+the total bid under child c 𝑗 is
+𝐺 𝑖 (c 𝑗 ) ≔ 𝐹 (c 𝑗 ) − 𝑍c 𝑗 [ 𝑖] .
+Lemma B.1. For any user 𝑖 and internal node u, the welfare externality at u due to 𝑖 is
+∑︁ 
+
+𝐸 𝑖 (u) ≔
+𝐺 𝑖 (c𝑘 ) 𝑁 (c 𝑗 ) − 𝐺 𝑖 (c 𝑗 ) 𝑁 (c𝑘 ) + .
+1≤ 𝑗<𝑘 ≤ 𝑑
+
+Consequently, ( 𝑛 − 1) 𝑝VCG
+=
+𝑖
+
+Í
+
+u 𝐸 𝑖 (u) .
+
+Proof. In the original descending average-bid order, pair 𝑗 < 𝑘 of children contributes 𝐺 𝑖 (c 𝑗 ) 𝑁 (c𝑘 )
+to the other users’ welfare. The counterfactual optimal ordering sorts children in decreasing order
+of 𝐺 𝑖 / 𝑁 , so 𝑗 < 𝑘 contributes max{𝐺 𝑖 (c 𝑗 ) 𝑁 (c𝑘 ) , 𝐺 𝑖 (c𝑘 ) 𝑁 (c 𝑗 )} to welfare. So, the externality—that
+18
+
+
+
+is, the welfare gain in the counterfactual optimum—is precisely 𝐺 𝑖 (c𝑘 ) 𝑁 (c 𝑗 ) − 𝐺 𝑖 (c 𝑗 ) 𝑁 (c𝑘 ) + .
+Summing over all child pairs yields the claimed externality 𝐸 𝑖 (u). To compute the VCG price it
+suffices to sum 𝐸 𝑖 (u) over all internal nodes and normalize.
+□
+Preprocessing.
+
+For 𝑡 = 1, . . . , 𝑑 , let
+𝑃𝐹 [𝑡] ≔
+
+𝑡
+∑︁
+
+𝐹 (c𝑘 );
+
+𝑃 𝑁 [𝑡] ≔
+
+𝑘=1
+
+𝑡
+∑︁
+
+𝑁 (c𝑘 ) .
+
+𝑘=1
+
+Computing these prefix sums is a 𝑂 ( 𝑑 (u)) run-time operation at each node. So, the overall
+Í
+run-time of prefix sum computation is 𝑂 ( u 𝑑 (u)) = 𝑂 ( 𝑛). This computation is done once and the
+same prefix sums are used in the price calculation for all bidders.
+B.2.1
+
+Computing local externalities
+
+Let Au [ 𝑖] ≔ { 𝑗 ∈ {1, . . . , 𝑑 } : 𝑍c 𝑗 [ 𝑖] > 0} denote the set of affected child indices; enumerate Au [ 𝑖]
+as 𝑗1 < . . . < 𝑗𝑎 (so 𝐹 (c 𝑗1 )/ 𝑁 (c 𝑗1 ) ≥ · · · ≥ 𝐹 (c 𝑗𝑎 )/ 𝑁 (c 𝑗𝑎 )). We now show how to compute 𝐸 𝑖 (u) at
+a given node, assuming that at each internal node we have access to 𝐹 , 𝑁 , 𝑃 𝐹 , 𝑁𝐹 , Au [ 𝑖], and
+𝑍c 𝑗𝑠 [ 𝑖] for all 𝑗𝑠 ∈ Au [ 𝑖]. (We will show how to perform bottom-up computation of A and 𝑍 in
+Section B.2.2.)
+Pairs of children are of three types: unaffected-unaffected, affected-unaffected, affected-affected.
+Unaffected-unaffected pairs have zero externality since zeroing out 𝑖’s bids does not change their
+relative ordering.
+Affected-unaffected pairs. Let c 𝑗𝑠 be an affected child whose average bid has decreased from
+𝐹 (c 𝑗𝑠 )/ 𝑁 (c 𝑗𝑠 ) to 𝐺 𝑖 (c 𝑗𝑠 )/ 𝑁 (c 𝑗𝑠 ). An unaffected child before c 𝑗𝑠 , that is, an unaffected child c𝑘
+with 𝑘 < 𝑗𝑠 , stays before c 𝑗𝑠 . An unaffected child c𝑘 with 𝑘 > 𝑗𝑠 overtakes c 𝑗𝑠 if and only if
+𝐹 (c𝑘 )/ 𝑁 (c𝑘 ) > 𝐺 𝑖 (c 𝑗𝑠 )/ 𝑁 (c 𝑗𝑠 ).
+Run binary search to find
+
+
+
+
+𝐺 𝑖 (c 𝑗𝑠 )
+𝐹 (c𝑘 )
+𝑝𝑠 ≔ max 𝑘 ∈ { 𝑗𝑠 , . . . , 𝑑 } :
+>
+.
+𝑁 (c𝑘 )
+𝑁 (c 𝑗𝑠 )
+
+So, all unaffected children in the interval ( 𝑗𝑠 , 𝑝𝑠 ] overtake c 𝑗𝑠 in the counterfactual optimal ordering.
+Let 𝑈𝑠 ≔ ( 𝑗𝑠 , 𝑝𝑠 ] ∩ ( [ 𝑑 ] \ A𝑖 (u)) denote this set of unaffected children. The externality due to all
+such unaffected children c𝑘 , 𝑘 ∈ 𝑈𝑠 , from overtaking c 𝑗𝑠 is 𝐹 (c𝑘 ) 𝑁 (c 𝑗𝑠 ) − 𝐺 𝑖 (c 𝑗𝑠 ) 𝑁 (c𝑘 ), and so the
+total externality from all affected-unaffected child pairs is
+!
+𝑎
+∑︁
+∑︁
+∑︁
+𝑁 (c 𝑗𝑠 )
+𝐹 (c𝑘 ) − 𝐺 𝑖 (c 𝑗𝑠 )
+𝑁 (c𝑘 ) .
+𝑠=1
+
+𝑘 ∈𝑈𝑠
+
+𝑘 ∈𝑈𝑠
+
+We now show how to compute this quantity via prefix sums. For 𝑠 = 1, . . . , 𝑎 compute affected
+child prefix sums
+𝑠
+𝑠
+∑︁
+∑︁
+𝑃 𝐹𝐴 [ 𝑠] ≔
+𝐹 (c 𝑗ℓ ); 𝑃 𝑁𝐴 [ 𝑠] ≔
+𝑁 (c 𝑗ℓ ) .
+ℓ=1
+
+ℓ=1
+
+Run binary search to compute 𝑞𝑠 ≔ max{ ℓ : 𝑗ℓ ≤ 𝑝𝑠 }. Then,
+∑︁
+
+𝐹 (c𝑘 ) = ( 𝑃 𝐹 [ 𝑝𝑠 ] − 𝑃 𝐹 [ 𝑗𝑠 ]) −
+𝑃 𝐹𝐴 [ 𝑟𝑠 ] − 𝑃 𝐹𝐴 [ 𝑠]
+|
+{z
+}
+|
+{z
+}
+𝑘 ∈𝑈𝑠
+total bid under
+children in ( 𝑗𝑠 ,𝑝𝑠 ]
+
+total bid under
+affected children in ( 𝑗𝑠 ,𝑝𝑠 ]
+
+19
+
+≕ 𝑆 𝐹 [ 𝑠]
+
+ALGORITHM 5: Process(u)
+if u is a leaf with request 𝑟 ∈ R𝑖 then
+if 𝑏𝑟 > 0 then
+𝑍u ← { 𝑖 ↦→ 𝑏𝑟 }
+else if 𝑏𝑟 = 0 then
+𝑍u ← ∅
+return 𝑍u
+Initialize 𝑍u ← ∅, Au ← ∅
+for 𝑗 = 1, . . . , 𝑑 (u) do
+𝑍c 𝑗 ← Process(c 𝑗 )
+for ( 𝑖, 𝑧 ) ∈ 𝑍c 𝑗 do
+Au [ 𝑖] .append(( 𝑗, 𝑧))
+𝑍 u [ 𝑖] ← 𝑍 u [ 𝑖] + 𝑧
+for 𝑖 ∈ Au .keys do
+𝑃 𝑖 ← 𝑃 𝑖 + LocalExternality(u, Au [ 𝑖])
+return 𝑍u
+
+ALGORITHM 4: VCG Payments
+Initialize 𝑃𝑖 ← 0 for each user 𝑖
+Let u be the root of the radix tree T
+Process(u)
+return [ 𝑃 𝑖 /( 𝑛 − 1)] 𝑚
+𝑖=1
+
+and
+
+∑︁
+
+𝑃 𝑁𝐴 [ 𝑟𝑠 ] − 𝑃 𝑁𝐴 [ 𝑠]
+
+𝑁 (c𝑘 ) = ( 𝑃 𝑁 [ 𝑝𝑠 ] − 𝑃 𝑁 [ 𝑗𝑠 ]) −
+
+𝑘 ∈𝑈𝑠
+
+|
+
+{z
+
+}
+
+total leaves under
+children in ( 𝑗𝑠 ,𝑝𝑠 ]
+
+|
+
+{z
+
+
+
+≕ 𝑆 𝑁 [ 𝑠] .
+
+}
+
+total leaves under
+affected children in ( 𝑗𝑠 ,𝑝𝑠 ]
+
+So, the total externality from affected-unaffected pairs is
+𝑎
+∑︁
+
+
+
+𝑁 (c 𝑗𝑠 ) 𝑆𝐹 [ 𝑠] − 𝐺 𝑖 (c 𝑗𝑠 ) 𝑆 𝑁 [ 𝑠] .
+
+(1)
+
+𝑠=1
+
+Affected-affected pairs. Sort the affected children in descending order of modified average bid.
+Let 𝜋 denote the sorting order, so
+𝐺 𝑖 (c 𝑗𝜋 (1) )
+𝑁 (c 𝑗𝜋 (1) )
+
+≥ ··· ≥
+
+𝐺 𝑖 (c 𝑗𝜋 ( 𝑎) )
+𝑁 (c 𝑗𝜋 ( 𝑎) )
+
+.
+
+The total externality from pairs of affected children is
+∑︁
+∑︁
+𝐺 𝑖 (c 𝑗𝜋 ( 𝑠) ) 𝑁 (c 𝑗𝜋 ( 𝑡 ) ) −
+𝐺 𝑖 (c 𝑗𝑠 ) 𝑁 (c 𝑗𝑡 ) .
+1≤ 𝑠<𝑡 ≤ 𝑎
+
+(2)
+
+1≤ 𝑠<𝑡 ≤ 𝑎
+
+Í
+For any ordering ℓ1 , . . . , ℓ𝑎 of affected children, a sum of the form 1≤ 𝑠<𝑡 ≤ 𝑎 𝐺 𝑖 (cℓ𝑠 ) 𝑁 (cℓ𝑡 ) can
+Í𝑎
+be computed in 𝑂 ( 𝑎) run-time: initialize ( 𝑅, 𝐶 ) ← ( 𝑡=1 𝑁 (cℓ𝑡 ) , 0); for 𝑠 = 1, . . . , 𝑎 do 𝑅 ←
+𝑅 − 𝑁 (cℓ𝑠 ) , 𝐶 ← 𝐶 + 𝐺 𝑖 (cℓ𝑠 ) 𝑅; return 𝐶 .
+Finally, the total externality 𝐸 𝑖 (u) is the sum of expressions (1) and (2). We perform for each
+affected child one binary search on a list of size 𝑂 ( 𝑑 (u)) and another on a list of size 𝑎. Prefix
+sum computation of 𝑃 𝐹𝐴 , 𝑃 𝑁𝐴 and affected-affected pair externality computation are 𝑂 ( 𝑎) run-time
+computations. Sorting takes run-time 𝑂 ( 𝑎 log 𝑎). So, the overall run-time for computing 𝐸 𝑖 (u) is
+𝑂 ( 𝑎 log 𝑑 (u)).
+B.2.2
+
+Computing all prices
+
+Let LocalExternality(u, A𝑢 [ 𝑖]) return 𝐸 𝑖 (u), where A𝑢 [ 𝑖] = [( 𝑗1 , 𝑍c 𝑗1 [ 𝑖]) , . . . , ( 𝑗𝑎 , 𝑍c 𝑗𝑎 [ 𝑖])] is a
+list containing the children of u affected by 𝑖 and 𝑍c 𝑗𝑠 [ 𝑖] is 𝑖’s aggregate bid under c 𝑗𝑠 .
+Algorithm 4 computes VCG payments via a bottom-up computation of affected children and
+aggregate bids (Algorithm 5).
+20
+
+B.2.3
+
+Run-time analysis
+
+Í
+Global prefix sum arrays 𝑃 𝐹 , 𝑃 𝑁 can be constructed in 𝑂 ( u 𝑑 (u)) = 𝑂 ( 𝑛) run-time.
+Í Í
+Í Í (u)
+Í
+Let Γ ≔ u 𝑖 | 𝐴u [ 𝑖] |. Observe that Γ = u 𝑑𝑗=1
+| 𝑍c 𝑗 | = u≠root(T) | 𝑍u | . Indeed, every entry
+( 𝑖, 𝑧 ) ∈ 𝑍c 𝑗 appends exactly one pair ( 𝑗, 𝑧) to Au [ 𝑖], and every element of every affected-child list
+arises in this way.
+Process called on the root of T visits every node once, and every entry of the hash map 𝑍c 𝑗
+is visited. Each call to LocalExternality( 𝑢, Au [ 𝑖]) incurs 𝑂 (|Au [ 𝑖] | log 𝑑 (u)) run-time. So, the
+Í Í
+total run-time across all calls to LocalExternality is 𝑂 ( u 𝑖 |Au [ 𝑖] | log 𝑑 (u)) ≤ 𝑂 ( Γ log 𝜈).
+The total run-time of Process on the root of T (Algorithm 4) is therefore 𝑂 ( 𝑛 + Γ log 𝜈).
+We next bound Γ in terms of the input size. For each non-root node u and each entry ( 𝑖, 𝑧) ∈ 𝑍u ,
+charge this entry to an arbitrary positive-bid request 𝑟 ∈ R𝑖 ∩ L(u). A request 𝑟 can receive at
+most one charge from each non-root node on its root-to-leaf path, and so its total charge is at
+Í
+Í
+most depthT ( 𝑟 ). Consequently, Γ = u≠root(T) | 𝑍u | ≤ 𝑟𝑛=1 depthT ( 𝑟 ) ≤ 𝑀 + 𝑛 = 𝑂 ( 𝑀 ) .
+Also, Γ = 𝑂 ( 𝑚𝑛), since each map 𝑍u contains at most one entry per user and the radix tree has
+𝑂 ( 𝑛) nodes. So, Γ = 𝑂 (min{ 𝑀, 𝑚𝑛}).
+We have therefore proven Theorem 3.3.
+Theorem 3.3. Given as input the processed radix tree T, where at every node u (1) 𝐹𝑏 (u) and 𝑁 (u)
+are stored and (2) its children are sorted in decreasing order of average bid, all VCG payments
+VCG (b
+𝑝1VCG (b1:𝑚 ) , . . . , 𝑝𝑚
+1:𝑚 ) can be computed in 𝑂 (min{ 𝑀, 𝑚𝑛 } log 𝜈) total run-time.
+
+C Appendix for Section 4: Autobidding Agents for Inference Auctions
+(𝑡 ) 𝑇
+Theorem 4.2. Suppose that (v1( 𝑡 ) , T ( 𝑡 ) , b2:
+) are drawn i.i.d. from an unknown distribution
+𝑚 𝑡 =1
+(𝑡 )
+(𝑡 )
+P. Let 𝐾 := max𝑡 ∈ [𝑇 ] |R1 |, ∥v1 ∥ ∞ ≤ 𝐶 , and suppose that schedules and payments are assigned
+√
+according to the inference
+√ auction of Section 3. Then if 𝜂 = Θ (1/ 𝑇 ), Algorithm 3 obtains regret
+𝑅 (𝑇 ) = 𝑂 (poly( 𝐶, 𝐾, 𝛾 ) 𝑇 ) when 𝑇 is sufficiently large.
+
+Proof Sketch. The framework of Balseiro et al. [8] requires (1) a convex and bounded action
+set that contains a “do nothing” action, (2) nonnegative, bounded, concave rewards, and (3)
+nonnegative, bounded resource consumption. To obtain the required action set, we first subtract
+the priority received by a zero bid, which is independent of the autobidder’s report, and consider
+only additional priority. For any fixed auction instance, the finitely many feasible schedules
+induce a finite menu of priority-and-payment outcomes. Allowing randomization over this menu
+produces a bounded and convex action set with zero as a feasible option, as well as nonnegative
+and bounded expected utility. Under VCG, the autobidder’s paced bid selects exactly the menu
+option that maximizes incremental utility after penalizing its payment by the current budget
+multiplier. Thus, the two algorithms coincide until the remaining budget is no greater than the
+largest possible payment. Finally, the randomized hindsight benchmark is at least as strong as
+our original deterministic benchmark in Definition 4.1.
+□
+Proof. Since bids, values, and prompts are all finite, P will have finite support without loss of
+generality.
+(𝑡 )
+Define the shorthand x ( 𝑡 ) (b1 ) ≔ x1 ( 𝐴¯(b1 , b2:
+)). Because the zero bid vector can receive positive
+𝑚
+priority for free, define x ( 𝑡,0) ≔ x ( 𝑡 ) (0) and a ( 𝑡 ) (b1 ) ≔ x ( 𝑡 ) (b1 ) − x ( 𝑡,0) . Thus a ( 𝑡 ) (b1 ) is the vector
+of incremental priorities obtained through bidding according to vector b1 in round 𝑡 . The baseline
+
+21
+
+Time Horizon:
+Capacity:
+Action Set:
+Decision
+Variable:
+Reward
+Function:
+
+Balseiro et al. [8]
+
+𝑇
+𝑇𝛾
+
+𝑇
+𝑇𝜌
+
+Y = {y ≥ 0 :
+
+Í
+
+𝑘 y[ 𝑘] ≤ 1}
+
+Generic action set X
+
+Menu selection vector 𝑦 ∈ Y
+
+Action 𝑥𝑡 ∈ X
+
+(⟨v1( 𝑡 ) , a ( 𝑡 ) [ 𝑘]⟩ − p ( 𝑡 ) [ 𝑘])y[ 𝑘]
+
+𝑓𝑡 ( 𝑥 )
+
+⟨y, p ( 𝑡 ) ⟩
+
+𝑏𝑡 𝑥𝑡
+𝜇𝑡
+
+Í
+𝑘
+
+Resource
+Consumption:
+Dual Variable:
+Primal
+Objective:
+
+Our Notation
+
+𝜇 (𝑡 )
+
+max
+
+Í
+
+y∈Y 𝑘
+
+(⟨v1( 𝑡 ) , a ( 𝑡 ) [ 𝑘]⟩ − (1 + 𝜇 ( 𝑡 ) )p ( 𝑡 ) [ 𝑘])y[ 𝑘]
+
+max{ 𝑓𝑡 ( 𝑥𝑡 ) − 𝜇 ⊤
+𝑡 𝑏𝑡 𝑥𝑡 }
+𝑥𝑡 ∈X
+
+Table 1: Notation translation between our setting and Balseiro et al. [8].
+
+Í
+value 𝑇𝑡=1 ⟨v1( 𝑡 ) , x ( 𝑡,0) ⟩ is independent of the autobidder’s reports and therefore does not affect
+either the optimal bidding policy or regret.
+Fix a round 𝑡 and hold the other users’ requests and bids fixed. As the autobidder varies its bid
+|R
+
+(𝑡)
+
+|
+
+vector b1 ∈ ℝ+ 1 , the VCG mechanism presents it with a finite menu of incremental-priority
+vector and payment pairs
+
+
+
+(𝑡)
+|R1 |
+(𝑡 )
+(𝑡 )
+(𝑡 )
+M ≔ a (b1 ) , 𝑝 (b1 ) : b ∈ ℝ+
+.
+(𝑡)
+
+Because this menu is finite, we can vectorize its distinct elements as M ( 𝑡 ) = {(a ( 𝑡 ) [ 𝑘] , p ( 𝑡 ) [ 𝑘])} 𝑘𝐾=1 ,
+where a ( 𝑡 ) [ 𝑘] is itself a vector of length |R1( 𝑡 ) |.7 Since every menu outcome is induced by a feasible
+DFS schedule, we have that 𝐾 ( 𝑡 ) ≤ 𝑛!. We can “convexify” the menu M ( 𝑡 ) by introducing a vector
+Í!
+y ∈ ℝ+𝑛! with 𝑛𝑘=1
+y[ 𝑘] ≤ 1, where we interpret y[ 𝑘] as the probability of selecting menu item 𝑘.8
+Let Y be the set of all such vectors y.
+Í!
+Í ! (𝑡 )
+Define 𝑓 ( 𝑡 ) (y) ≔ 𝑛𝑘=1
+(⟨v1( 𝑡 ) , a ( 𝑡 ) [ 𝑘]⟩ − p ( 𝑡 ) [ 𝑘])y[ 𝑘] and ⟨c ( 𝑡 ) , y⟩ ≔ 𝑛𝑘=1
+p [ 𝑘]y[ 𝑘]. This now is a
+valid instance of the online allocation framework of Balseiro et al. [8] with one resource: The
+action set Y is convex, bounded, and contains the zero action. The reward function and resource
+consumption are both nonnegative and linear. Because the autobidder has at most 𝐾 requests and
+every request value is at most 𝐶 , ⟨v1( 𝑡 ) , a ( 𝑡 ) [ 𝑘]⟩ ≤ ∥v1( 𝑡 ) ∥ 1 ≤ 𝐾𝐶 . After replacing negative utility
+menu items with the zero item, every remaining menu item satisfies 0 ≤ ⟨v1( 𝑡 ) , a ( 𝑡 ) [ 𝑘]⟩ − p ( 𝑡 ) [ 𝑘] ≤
+(𝑡 )
+𝐾𝐶 and 0 ≤ p ( 𝑡 ) [ 𝑘] ≤ ⟨v1 , a ( 𝑡 ) [ 𝑘]⟩ ≤ 𝐾𝐶 . Thus rewards and resource consumption are both
+bounded by 𝐾𝐶 , and the resource capacity is 𝑇 𝛾 .
+Algorithm 3 is the same as Algorithm 1 in Balseiro et al. [8] specialized to online gradient descent
+and using our notation, up to its stopping time. To see this, fix a round 𝑡 and hold T ( 𝑡 ) and
+(𝑡 )
+(𝑡 )
+b2:
+fixed. Let 𝑊−1
+( 𝜎) denote the welfare of all players except the autobidder under 𝜎, and let
+𝑚
+(𝑡 )
+(𝑡 )
+ℎ1 ≔ max𝜎 ∈D(T ( 𝑡 ) ) 𝑊−1 ( 𝜎). Under VCG, bidding according to bid vector b1 selects
+(𝑡 )
+
+𝐴¯( 𝑡 ) (b1 , b2:𝑚 ) ∈ arg
+
+(𝑡 )
+max {⟨b1 , x1 ( 𝜎)⟩ + 𝑊−1
+( 𝜎)}
+
+𝜎 ∈D(T ( 𝑡 ) )
+
+7 If ⟨v ( 𝑡 ) , a ( 𝑡 ) [ 𝑘]⟩ − p ( 𝑡 ) [ 𝑘] < 0, we replace the item with (0, 0). This is without loss of generality since the bidder
+1
+
+can always obtain zero incremental utility by bidding nothing.
+8 If 𝐾 ( 𝑡 ) < 𝑛!, we can pad y with zeros at the end.
+
+22
+
+(𝑡 )
+( 𝑡 ) ¯( 𝑡 )
+(𝑡 )
+) = ℎ1( 𝑡 ) − 𝑊−1
+( 𝐴 (b1 , b2:
+)). Substituting in the
+and incurs the user-level payment 𝑝 ( 𝑡 ) (b1 , b2:
+𝑚
+𝑚
+(
+𝑡)
+(
+𝑡)
+definitions of a and 𝑝 gives
+(𝑡 )
+( 𝑡 ) ¯( 𝑡 )
+(𝑡 )
+⟨b1 , a ( 𝑡 ) (b1 )⟩ − 𝑝 ( 𝑡 ) (b1 , b2:
+) = ⟨b1 , x ( 𝑡 ) (b1 )⟩ + 𝑊−1
+( 𝐴 (b1 , b2:
+)) − (⟨b1 , x ( 𝑡 ) (0)⟩ + ℎ1( 𝑡 ) ) .
+𝑚
+𝑚
+
+For a fixed bid vector b1 , the final term on the right-hand side does not depend on the schedule
+(𝑡 )
+) is equivalent to maximizing
+that is selected. Therefore, maximizing ⟨b1 , a ( 𝑡 ) (b1 )⟩ − 𝑝 ( 𝑡 ) (b1 , b2:
+𝑚
+(𝑡 )
+⟨b1 , x1 ( 𝜎)⟩ + 𝑊−1 ( 𝜎). This is exactly reported total welfare, which is precisely what the VCG
+allocation rule maximizes.
+Using our notation, the primal step of the dual mirror descent algorithm of Balseiro et al. [8]
+selects a menu item maximizing ⟨v1( 𝑡 ) , a⟩ − (1 + 𝜇 ( 𝑡 ) ) 𝑝. The VCG mechanism implements this
+v
+
+(𝑡)
+
+menu choice when the submitted bid vector is b̃ ( 𝑡 ) = 1+1𝜇 (𝑡 ) .
+Let 𝜏 be the stopping time used by Balseiro et al. [8], namely the first round after which cumulative
+spending is within 𝐶 𝐾 of the total budget 𝑇 𝛾 . For every 𝑡 ≤ 𝜏, minimality of the stopping time
+implies that 𝐵 ( 𝑡 ) > 𝐶 𝐾 . Because ∥ 𝛼 ( 𝑡 ) v1( 𝑡 ) ∥ 1 ≤ 𝐶 𝐾 < 𝐵 ( 𝑡 ) in every round 𝑡 ≤ 𝜏, both Algorithm 3
+and Algorithm 1 in Balseiro et al. [8] therefore execute the menu item induced by 𝛼 ( 𝑡 ) v1( 𝑡 ) , incur
+the same payment, and perform the same dual update in every round through 𝜏. The proof of
+Theorem 1 in Balseiro et al. [8] bounds regret by the primal-dual gap accumulated through 𝜏,
+together with a term 𝐶 𝐾 𝔼[𝑇 − 𝜏] accounting for the remaining rounds. The former depends only
+on the algorithms’ behavior through 𝜏, while their stopping-time bound controls the latter. Since
+rewards are nonnegative, the rewards earned after 𝜏 may be discarded when lower-bounding
+Algorithm 3’s total reward. Thus the algorithms need not coincide after 𝜏. All assumptions for
+Theorem 1 in Balseiro et al. [8] now hold, and so translating it into our notation gives the desired
+regret guarantee. Finally, it is worth noting that the guarantees of Balseiro et al. [8] are with
+respect to an adversary optimizing over Y. However the convexified hindsight benchmark can only
+be larger than the deterministic hindsight optimum, so this bound holds in our setting as well.
+The regret bound in Balseiro et al. [8] give us the guarantee
+
+
+𝐶𝐾 𝐶𝐾
+𝐶2 𝐾2
+𝑅 (𝑇 ) ≤ 2( 𝐶 2 𝐾 2 + 𝛾 2 ) 𝜂𝑇 +
++1 +
+.
+𝛾𝜂
+
+√︂
+Setting 𝜂 =
+
+𝐶𝐾 𝐶𝐾
+𝛾 ( 𝛾 +1)
+
+2𝑇 ( 𝐶 2 𝐾 2 +𝛾 2 )
+
+𝛾
+
+𝛾
+
+gives us a regret bound of
+√︂
+𝐶𝐾 𝐶𝐾
+𝐶2 𝐾2
+𝑅 (𝑇 ) ≤ 2
+(
++ 1) · 2(𝐶 2 𝐾 2 + 𝛾 2 )𝑇 +
+,
+𝛾
+
+𝛾
+
+𝛾
+
+3 3
+
+as long as 𝑇 ≥ 2𝛾 (𝐶𝐶2 𝐾𝐾2 +𝛾2 ) ( 𝐶𝛾𝐾 + 1).
+□
+Lemma C.1 (DFS Welfare Decomposition). If a DFS schedule 𝜎 visits the children c1 , . . . , c𝑑 (u) of
+each internal node u in that order, then
+∑︁
+∑︁
+( 𝑛 − 1)𝑊 ( 𝜎; v) =
+𝑁 (c 𝑗 ) 𝑁 (c𝑘 )¯
+𝑣 (c 𝑗 ) .
+(3)
+u 1≤ 𝑗<𝑘 ≤ 𝑑 (u)
+
+Consequently,
+( 𝑛 − 1) max 𝑊 ( 𝜎; v) =
+𝜎 ∈D(𝑇 )
+
+∑︁
+
+∑︁
+
+𝑁 (c) 𝑁 (d) max{¯
+𝑣 (c) , 𝑣
+¯(d)} .
+
+(4)
+
+u {c,d} ⊆C(u)
+
+Proof. Both equations follow from the same reasoning as in the proof of Theorem 3.1.
+23
+
+□
+
+Theorem 4.4. Suppose that each request 𝑟 has corresponding bid 𝑏𝑟 = 𝛼𝑟 𝑣𝑟 for pacing factors
+𝛼1 , . . . , 𝛼𝑛 ∈ (0, 1], and let Ωu denote the marginal contribution of node u to the optimal DFS
+welfare. Then the social welfare for the batch is bounded as
+Í
+1
+𝑊 ( 𝐴¯(b1:𝑚 ); v1:𝑚 )
+u Ωu /𝜅u
+≥
+.
+≥ Í
+max𝜎 ∈D(𝑇 ) 𝑊 ( 𝜎; v1:𝑚 )
+maxu 𝜅u
+u Ωu
+Proof. Fix an internal node u and an unordered pair of children {c, d}. Without loss of generality
+suppose that 𝑣¯(c) ≥ 𝑣¯(d). The maximum welfare contribution of this pair is therefore 𝑁 (c) 𝑁 (d)¯
+𝑣 (c).
+We now compare this with the contribution under the average-bid order:
+1. If 𝐴¯(b1:𝑚 ) places c before d, then the pair contributes exactly 𝑁 (c) 𝑁 (d)¯
+𝑣 (c), and so it obtains
+its maximum possible contribution.
+2. Now suppose that 𝐴¯(b1:𝑚 ) places d before c. Because the children are ordered by descending
+average bid, 𝑏¯(d) ≥ 𝑏¯(c). By Definition 4.3, we have that 𝑏¯(c) = 𝛼 (c)¯
+𝑣 (c) and 𝑏¯(d) = 𝛼 (d)¯
+𝑣 (d),
+and so 𝛼 (d)¯
+𝑣 (d) ≥ 𝛼 (c)¯
+𝑣 (c). Rearranging terms, we have that
+𝑣
+¯(d) 𝛼 (c)
+1
+≥
+≥
+𝑣
+¯(c) 𝛼 (d) 𝜅u
+𝑣 (c).
+and therefore the pair’s welfare contribution is 𝑁 (c) 𝑁 (d)¯
+𝑣 (d) ≥ 𝜅1u 𝑁 (c) 𝑁 (d)¯
+
+Therefore, whether or not the average-bid order agrees with the average value order, every
+unordered pair of children of u obtains at least 1/𝜅u of its maximum possible welfare contribution.
+Summing over all unordered pairs and internal nodes, we get that
+∑︁
+∑︁
+( 𝑛 − 1)𝑊 ( 𝜎; v1:𝑚 ) =
+𝑁 (c) 𝑁 (d)¯
+𝑣 (c)
+u c,d∈C(u) ,c≺ 𝐴¯(b
+
+≥
+
+∑︁ 1
+𝜅u
+
+u
+
+1:𝑚 )
+
+∑︁
+
+d
+
+𝑁 (c) 𝑁 (d) max{¯
+𝑣 (c) , 𝑣
+¯(d)}
+
+{c,d} ⊆C(u)
+
+by Equation 3. To obtain the final result, we can apply Equation 4 to get
+𝑊 ( 𝐴¯(b1:𝑚 ); v1:𝑚 )
+≥
+max𝜎 ∈D(𝑇 ) 𝑊 ( 𝜎; v1:𝑚 )
+1
+where Ωu ≔ 𝑛−1
+
+Í
+
+Í
+
+1 Í
+𝑣 (c) , 𝑣
+¯(d)}
+{c,d} ⊆C(u) 𝑁 (c) 𝑁 (d) max{¯
+u 𝜅u
+
+Í Í
+u
+
+𝑣 (c) , 𝑣
+¯(d)}
+{c,d} ⊆C(u) 𝑁 (c) 𝑁 (d) max{¯
+
+{c,d} ⊆C(u) 𝑁 (c) 𝑁 (d) max{ 𝐹 𝑣 (c)/ 𝑁 (c) , 𝐹 𝑣 (d)/ 𝑁 (d)}.
+
+D
+
+Appendix for Section 5: Experiments
+
+D.1
+
+Setup Details
+
+≥
+
+1
+.
+maxu 𝜅u
+□
+
+We use SGLang v0.5.179 serving DeepSeek-R1-Distill-Qwen-32B in bf16 with the engine’s defaults,
+except that we fix its static memory fraction at 0.85, which leaves a 23k-token KV cache. Prefix
+caching and LRU eviction are handled by SGLang. Every query decodes at most 128 tokens, so
+TTFT is dominated by prefill and caching. The queue in front of the server holds 𝑄 queries, splits
+them into 𝑄 /𝑛 batches, orders each batch with one of our algorithms, and sends them sequentially
+without pausing the engine. The cache is cleared once per experiment (not between batches).
+The queue sends about 20 queries per second and the engine serves 3 to 4, so the engine’s own
+queue has a few hundred entries for the whole run; TTFT is almost entirely time spent waiting in
+9 https://github.com/sgl-project/sglang
+
+24
+
+Summarize
+𝜅0 = 0.64/0.5 = 1.28
+𝛼 = 0.5
+
+the article
+
+this email
+
+𝜅1 = 0.75/0.3 = 2.5
+
+about cats
+
+in French
+
+𝜅2 = 0.9/0.6 = 1.5
+𝛼 = 0.6
+
+as bullets
+
+𝛼 = 0.64
+
+for my
+
+briefly
+
+𝜅3 = 0.85/0.2 = 4.25
+
+team
+
+boss
+1
+
+$9
+
+𝛼 = 0.4
+
+3
+
+$6
+
+𝛼 = 0.75
+
+2
+
+$3
+
+5
+
+$8
+
+𝛼 = 0.85
+
+𝛼 = 0.3
+
+6
+
+$5
+
+𝛼 = 0.2
+
+4
+
+$2
+
+𝛼 = 0.9
+
+Figure 7: Welfare under heterogeneous pacing. Leaves show true values 𝑣𝑟 and pacing factors 𝛼𝑟 , so
+that 𝑏𝑟 = 𝛼𝑟 𝑣𝑟 . Internal subtrees are labeled with their value-weighted pacing factor 𝛼 (c) = 𝐹𝑏 (c)/ 𝐹 𝑣 (c),
+and 𝜅u is the ratio of the largest to smallest 𝛼 (c) among the children of u. Red nodes are where paced
+bids reverse the value-optimal order. At the root, “this email” now has the higher average bid (3.2 versus
+3), and under “the article,” request 3 now outbids request 1 (4.5 versus 3.6). The realized schedule is
+5
+2, which attains 87/99 ≈ 0.88 of the optimal DFS welfare. Theorem 4.4 guarantees at least
+,Í
+Í, 6, 4, 3, 1
+u Ωu /𝜅u
+u Ωu ≈ 0.63, and hence at least 1/maxu 𝜅u ≈ 0.24. Node 3 has the largest condition number
+but no reversal, so it loses nothing.
+
+the queue (in the order we sent). The queue tokenizes prompts with the model’s tokenizer, so
+the tree it optimizes is the same one built by SGLang.
+We ran the experiments on three H100 nodes with slightly varying hardware. Welfare and hit
+rate do not depend on the machine; TTFT does, so throughout the paper we only compare TTFTs
+measured on the same machine. The threshold, correlation, and long-tree experiments are from
+the second machine and the one-cluster experiment from the third; everything else is from the
+first.
+Welfare is measured with respect to the final ordering of queries ranked by TTFT. It agrees with
+the welfare of the planned average-bid DFS order to within 1.3% for all results, so we report only
+the realized value. Raw welfare varies substantially from trial to trial because a heavy-tailed draw
+puts a different amount of value in the batch each time, and it moves every algorithm together
+Í
+(Figure 9), which is why we plot the percentage over 12 𝑟 𝑏𝑟 . Cache hit rate is defined as the
+number of cached prompt tokens divided by the total number of prompt tokens, as reported by
+SGLang. All completion times, when reported, record the time from the first send to the last
+completion of the batch. The queue itself is a Python prototype: for a batch of 1024 queries
+it computes the order in under a millisecond and the VCG payments in 0.3 s by naive per-user
+recomputation (Appendix D.10 has the fast version), while actually serving the batch takes on
+the order of minutes.
+
+D.2
+
+Workloads
+
+mixshare mixes three kinds of queries: SQuAD questions, 32 per article, with the article as a
+shared prefix; GSM8K questions over one of 12 few-shot prefixes; and singletons that share only
+a short instruction. In mixshare-P, 𝑃 % of the queries belong to one of the shared prefix clusters.
+agent replays logged SWE-agent trajectories, where each call’s prompt is the history up to that
+25
+
+call, so call 𝑘 is a prefix of call 𝑘 + 1. tot replays tree-of-thought on GSM8K (3-ary thought trees
+of depth 3). tot-long is the same, with a SQuAD article of 3-5k tokens as the root of every tree;
+since each thought is a single sentence, nearly every token of every prompt is the article, which is
+why its shared prefixes are so long and its unique suffixes so short. Table 2 gives the tree statistics
+of one 𝑄 = 1024 instance of each and Figure 8 the per-query distributions. Note the third column
+of the table: every workload but tot exceeds the KV cache several times over.
+workload
+
+total
+tokens
+
+distinct
+tokens
+
+distinct /
+KV cache
+
+shared
+fraction
+
+prompt
+
+stars
+chains
+short trees
+long trees
+
+2.05M
+3.32M
+168k
+4.07M
+
+781k
+437k
+23k
+124k
+
+33.7
+18.9
+1.0
+5.4
+
+0.62
+0.87
+0.86
+0.97
+
+1086
+2854
+159
+4143
+
+median tokens per query
+shared prefix
+unique suffix
+381
+2852
+147
+4127
+
+57
+0
+12
+15
+
+queries at
+interior nodes
+0
+876
+357
+335
+
+Table 2: Radix-tree statistics of one 𝑄 = 1024 instance of each workload. Distinct tokens is the total
+edge length of the tree; a query’s shared prefix is its longest common prefix with any other query. Stars
+corresponds to mixshare-50, chains corresponds to agent, short trees corresponds to tot, and long trees
+corresponds to tot-long.
+
+D.3
+
+Batch Size and Sharing Fraction
+
+Figure 9 gives the raw welfare and TTFT behind the first two columns of Figure 1. In the sharing
+sweep at 𝑛 = 256, nothing can be cached at 𝑃 = 0 and the algorithms differ only through the
+order itself. As 𝑃 grows, the completion time of the two DFS orders falls from about 560 s to 330 s
+while that of bid-sort and no-sort rises to 740 s. In the batch-size sweep on mixshare-50,
+no-sort does not depend on 𝑛 by construction, which is a useful consistency check; for dfs-bid,
+the hit rate goes from 0.23 at 𝑛 = 32 to 0.60 at 𝑛 = 𝑄 and mean TTFT from 316 s to 160 s. The
+ratio of the best DFS welfare to the unconstrained optimum falls gently with sharing, from 0.83
+at 𝑃 = 0 to 0.78 at 𝑃 = 75%, as deeper trees hit the DFS restriction more often. While one might
+expect dfs-bid and bid-sort to agree at 𝑃 = 0, singletons in our dataset contain a very short
+shared instruction, causing us to serve one group before another.
+
+D.4
+
+Different Tree Topologies
+
+Figures 10, 11, and 12 vary the batch size on different radix tree topologies: chains, short trees,
+and long trees. On chains at 𝑛 = 𝑄 , dfs-bid beats dfs-uniform by 16% at the same hit rate
+and TTFT, while bid-sort wins welfare by 48% and pays with a 0.48 hit rate (versus dfs-bid’s
+0.75) and 2.4× the TTFT. no-sort and bid-sort have the same hit rate at every 𝑛, since sorting
+a random order by bid leaves it random from the cache’s point of view. Short trees fit in the
+cache, so nothing is evicted. Here, every algorithm has the same 28 s TTFT. Long trees are where
+the DFS restriction of our inference auction has the largest impact. dfs-bid keeps a 0.96 hit
+rate and a 46 s TTFT, and bid-sort drops to 0.20 and 559 s, because every branch it interleaves
+recomputes a 4k-token prefix.
+
+D.5
+
+Correlated Values
+
+The main results draw bids i.i.d. per query, which is the case of many users sharing a prefix with
+unrelated values and the hardest case for dfs-bid. To interpolate toward the case where one user
+owns a whole cluster, we draw values from a Gaussian copula with within-cluster correlation 𝜌
+and the same Pareto marginal. A cluster is a set of queries sharing at least 128 prefix tokens on
+stars, a trajectory on chains, and a tree on trees; singletons are unaffected. Each cluster 𝑐 draws
+𝑍 𝑐 ∼ N(0, 1) √︁
+and each query 𝑟 in it draws 𝜖𝑟 ∼ N(0, 1); its value is 𝑣𝑟 = 1 + (1 − Φ ( 𝑧𝑟 )) −1/1.5 with
+√
+𝑧𝑟 = 𝜌 𝑍 𝑐 + 1 − 𝜌 𝜖𝑟 . So 𝜌 = 0 is i.i.d. and 𝜌 = 1 gives every query in a cluster the same value.
+26
+
+Figure 8: Per-query distributions of prompt, shared prefix, and unique suffix length (log scale).
+
+27
+
+Figure 9: Raw welfare and mean TTFT for the sharing-fraction (top) and batch-size (bottom) sweeps of
+Figure 1.
+
+Figure 10: Chains (agent) against batch size 𝑛.
+
+28
+
+Figure 11: Short trees (tot) against batch size 𝑛. The workload fits in the cache, so hit rate and TTFT do
+not depend on the order.
+
+Figure 12: Long trees (tot-long) against batch size 𝑛, second machine.
+
+Figure 13 plots welfare against 𝜌 on stars and the right column of Figure 1 displays the engine
+results at 𝜌 ∈ {0, 0.5, 1}. dfs-bid gains as 𝜌 grows because the value-sorted order and the
+tree-contiguous order agree more often: the best DFS welfare rises from 0.83 to 0.91 of the
+unconstrained optimum. bid-sort does not gain, and it still thrashes the cache at 𝜌 = 0.5 (hit
+rate 0.29 against 0.60). At 𝜌 = 1 its order happens to keep clusters together and its hit rate
+matches dfs-bid’s, but dfs-bid is still faster (mean TTFT 85 s against 124 s), because it serves
+short high-value clusters first.
+Figure 14 repeats this experiment on chains and long trees at 𝑛 = 𝑄 . On long trees at 𝜌 = 1 the
+two optima coincide: dfs-bid reaches 0.999 of the unconstrained welfare at the same hit rate
+and TTFT as bid-sort. On chains it reaches 0.90, and the remaining gap is the cost of the DFS
+restriction when trajectories on the same task share interior nodes with other users. On both,
+bid-sort recovers the cache only at 𝜌 = 1; at 𝜌 = 0.5 its TTFT is still 2× dfs-bid’s on chains and
+10× on long trees.
+
+D.6
+
+One Cluster Bids
+
+We consider now a situation similar to that of the highest-correlation setting of the experiments
+in Figures 13 and 14 (though in the original setting of i.i.d. Pareto bids). We draw one cluster of
+queries with a shared prefix at random among the clusters with at least eight members (32 to
+58 queries on these instances). That cluster keeps its Pareto bids. Every other bid is set to zero
+(Figure 3).
+This bid distribution is meant to model a realistic scenario where most users do not submit any
+bid for priority (such users still participate in the auction and must be served in a timely fashion).
+
+29
+
+Figure 13: Offline sweeps on the planned orders, three trials. (a) dfs-bid’s welfare as a fraction of the
+unconstrained optimum against the minimum-prefix threshold 𝐿, per sharing fraction. (b) Planned welfare
+of each algorithm against within-cluster value correlation 𝜌.
+
+Figure 14: Within-cluster value correlation 𝜌 on chains (top) and long trees (bottom) at 𝑛 = 𝑄 , third
+machine.
+
+30
+
+Serving the cluster with non-zero bids first corresponds to both the unconstrained optimum and
+a DFS order, so dfs-bid matches bid-sort’s welfare at every where the paying cluster gets its first
+tokens in about a second under either algorithm. The margin over the bid-blind algorithms grows
+with 𝑛, from nothing at 𝑛 = 32, where a batch rarely holds more than one or two members of the
+cluster, to about 100 points at 𝑛 = 𝑄 . dfs-bid’s hit rate and completion time equal dfs-uniform’s
+at every 𝑛, while bid-sort’s hit rate stays near 0.25 and its TTFT is about 1.5× at every 𝑛 above 32.
+
+D.7
+
+Online Arrivals
+
+The main protocol has the whole queue present at 𝑡 = 0, so the batch-size sweep in Figure 1
+shows the benefit of a larger batch but not its cost (the wait for the batch to fill). Here the 1024
+queries of mixshare-50 arrive as a Poisson process at 4 or 1 per second, a batch is released when
+its 𝑛-th query arrives, and TTFT is measured from arrival. no-sort is batched the same way, so
+the batching cost is common to all algorithms. Table 3 reports means over three trials.
+rate
+4/s
+4/s
+1/s
+1/s
+
+𝑛
+
+64
+512
+64
+512
+
+wait
+8
+63
+31
+254
+
+dfs-bid
+mean TTFT
+150
+160
+45
+328
+
+hit
+
+no-sort
+mean TTFT
+
+0.33
+0.56
+0.30
+0.56
+
+211
+314
+47
+406
+
+Table 3: Poisson arrivals on mixshare-50. “Wait” is the mean time from a query’s arrival to the release of
+its batch; all times in seconds.
+
+At 4 queries per second the server is saturated: the queue arrives in about 250 s and takes over
+500 s to serve. Going from 𝑛 = 64 to 𝑛 = 512 adds 55 s of batch wait but changes dfs-bid’s mean
+TTFT by between −7 and +29 s across trials, because the added wait mostly replaces time the
+query would have spent waiting in the engine, while the hit rate rises from 0.33 to 0.56. The
+same change costs no-sort 100 s and buys it nothing. At 1 query per second the server keeps up
+with arrivals, there is no queue to hide the wait, and 𝑛 = 512 costs about 280 s of TTFT. Under
+load a large batch is nearly free; under light load a timeout should release batches long before
+they fill.
+
+D.8
+
+Second Model
+
+Table 4 repeats our main experiments with Qwen2.5-7B-Instruct [42] in place of the 32B model,
+on the same instances and with the KV cache capped at the same number of tokens. The two
+models share a tokenizer, so the trees are identical. Welfare agrees to the unit in every experiment
+and hit rates are very similar; time metrics are smaller due to the smaller size of the model.
+
+D.9
+
+Other Value Distributions
+
+Figure 15 repeats the mixshare-50 and chains experiments at 𝑛 = 𝑄 with bids pulled from
+different distributions, namely uniform and lognormal. The cache hit rate and TTFT does not
+change, since they depend on the tree and not on the bids. dfs-bid’s gain over dfs-uniform is
+positive and significant under every distribution and grows with the tail, as does bid-sort’s gain
+over dfs-bid.
+
+D.10
+
+Fast VCG Payments
+
+The experiments compute payments by rerunning the allocation once per user, which incurs a
+quadratic run-time. We also implemented the algorithm of Theorem 3.3, which re-sorts only the
+31
+
+experiment
+
+algorithm
+
+mixshare-50, 𝑛 = 𝑄
+
+dfs-bid
+bid-sort
+dfs-uniform
+no-sort
+dfs-bid
+bid-sort
+dfs-bid
+bid-sort
+dfs-bid
+bid-sort
+
+mixshare-75, 𝑛 = 256
+agent, 𝑛 = 𝑄
+tot, 𝑛 = 𝑄
+
+welfare
+7B
+32B
+1541
+1936
+1376
+1322
+1660
+1757
+1853
+2375
+1686
+2098
+
+1542
+1936
+1376
+1322
+1660
+1757
+1854
+2375
+1686
+2098
+
+hit rate
+7B 32B
+0.60
+0.22
+0.60
+0.21
+0.70
+0.29
+0.82
+0.49
+0.86
+0.78
+
+0.60
+0.23
+0.59
+0.21
+0.69
+0.28
+0.75
+0.48
+0.79
+0.81
+
+completion time (s)
+7B
+32B
+87
+163
+91
+165
+81
+188
+77
+227
+54
+53
+
+319
+615
+322
+629
+327
+739
+438
+1076
+61
+60
+
+Table 4: Qwen2.5-7B-Instruct against the 32B model on identical instances; means over three trials.
+
+Figure 15: Welfare gain on mixshare-50 and agent under Pareto, uniform on [1, 5], and lognormal
+(𝜎 = 0.5) values with the same mean.
+
+32
+
+affected children on a user’s root-to-leaf paths. Its payments agree with the naive computation
+to 10−12 on random trees and on our stored instances, and at 𝑛 = 1024 it takes 34 ms while the
+naive algorithm takes 370 ms on average.
+
+D.11
+
+Autobidding
+
+We simulate Algorithm 3 over 𝑇 = 60 batches of 𝑛 = 256. For stars, each shared-prefix cluster
+belongs to a distinct user. For chains, each trajectory belongs to a distinct user. Half the users
+pace toward a target spend of half their mean truthful payment with step size 𝜂 = 0.1 normalized
+by the target; the rest bid truthfully. Figure 16 shows the usual behavior of dual descent with
+a fixed step: spend runs above the target while the multiplier is small and below it once the
+multiplier has grown. Welfare under pacing averages 0.91 of the DFS optimum at true values on
+stars and 0.93 on chains, and the bound of Theorem 4.4 holds in every batch.
+
+Figure 16: Pacing autobidders over 𝑇 = 60 batches of 𝑛 = 256, half the users pacing and half truthful. (a)
+Spend relative to the per-batch target. (b) Welfare under pacing as a fraction of the DFS optimum at true
+values.
+
+33

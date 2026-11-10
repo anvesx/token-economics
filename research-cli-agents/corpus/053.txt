@@ -1,0 +1,2384 @@
+TITLE: Inference Economics of Enterprise Coding Agents: A Case Study of Cloud vs. On-Premise LLMs
+URL: https://arxiv.org/abs/2607.13080
+ORG: arXiv  TYPE: paper  DATE: 2026-07
+
+arXiv:2607.13080v1 [cs.SE] 13 Jul 2026
+
+Inference Economics of Enterprise Coding Agents:
+A Case Study of Cloud vs. On-Premise LLMs
+Sheng-Wei Peng
+
+Yi-Hsun Lin
+
+Yi-Pei Lee
+
+PEGAVERSE
+Pegatron Corporation
+Taipei, Taiwan
+ken peng@pegatroncorp.com
+
+PEGAVERSE
+Pegatron Corporation
+Taipei, Taiwan
+michael lin@pegatroncorp.com
+
+PEGAVERSE
+Pegatron Corporation
+Taipei, Taiwan
+penny6 lee@pegatroncorp.com
+
+In enterprise software engineering, two primary archetypes
+of LLM provision exist:
+
+Abstract—Autonomous coding agents force engineering organizations to choose between API-based frontier models—strong
+reasoning at high token cost—and on-premise quantized openweights models, which promise low-marginal-cost scaling and
+data sovereignty at some loss of reasoning fidelity. We study this
+trade-off through a single-developer, non-randomized longitudinal
+case study over two contiguous 28-day periods on a production
+monorepo: an API-based Claude Opus 4.7/4.8 configuration using
+Claude Code versus an on-premise GLM-5.1/5.2 configuration
+using Opencode, quantized to NVFP4, on NVIDIA Blackwell
+hardware. Analyzing LLM telemetry and Git history, we find
+that prompt caching (99.3% hit rate) cuts realized API cost
+by 88.6% to an effective $0.57 per million tokens—below even
+the $2.83 amortized unit cost of the shared on-premise slice (a
+utilization-dependent inversion; total realized spend and total cost
+of ownership (TCO) are the robust quantities). At comparable
+gross code churn, the local configuration was associated with a
+far higher defect-repair burden: a Fix Commit Ratio (FCR) of
+74.9% versus 45.9%, with the odds of a commit being a repair 2.6
+to 4.9 times higher within every difficulty tier (Mantel–Haenszel
+OR = 3.61). Under Taiwan-market parameters and a symmetric
+labor model, on-premise deployment nonetheless saves 40.1%
+of true TCO under shared GPU allocation, whereas dedicated
+reservation costs 43.8% more than the cached API. Under
+shared allocation, the genuine penalty is not monetary but a
+measurable developer-experience burden—timestamp indicators
+show more work trapped in debugging spirals and a slower
+commit cadence—and an offline replay shows hybrid routing
+gateways trade defect rate for infrastructure savings along a
+cost–quality frontier rather than dominate the pure-API baseline.
+
+1) Commercial Public APIs: Utilizing closed-source frontier models, such as Claude Opus, hosted by vendors.
+These models represent the state-of-the-art in reasoning
+and code generation. However, they require sending code
+to third-party endpoints and incur token-based pricing.
+2) On-Premise Private Clusters: Deploying open-weights
+models, such as GLM-5.1/5.2, on internal compute
+hardware, such as an NVIDIA GB200 NVL72 cluster.
+These deployments often leverage aggressive quantization techniques (e.g., NVFP4) to achieve high throughput and low latency while keeping code and data within
+the corporate network [1].
+To date, few empirical studies have quantified the developer
+productivity, financial efficiency, and code quality differences
+between these two paradigms in real-world, large-scale software engineering projects. To bridge this gap, this paper
+conducts a comparative study of development activities on
+the production repository of a corporate AI Platform-as-aService (PaaS) over two contiguous 28-day periods. During
+the first period (Period A), the developer utilized Claude Code
+driven by API-based Claude Opus 4.7/4.8. During the second
+period (Period B), the developer utilized Opencode driven by
+GLM-5.1/5.2 NVFP4 running on an internal NVL72 cluster.
+Methodologically, this is a longitudinal industrial case study:
+it trades the breadth of a controlled, multi-subject experiment
+for the depth and ecological validity of continuous production
+telemetry from a live enterprise codebase; we scope our
+claims accordingly, deferring generalization to the replication
+protocol of Section VII-B.
+Through database queries on LLM telemetry and mining
+of Git commit logs, we provide a detailed analysis of the
+quantitative token usage, financial expenditure, and software
+production metrics. Concretely, we investigate four research
+questions:
+
+Index Terms—Autonomous Coding Agents, Inference Economics, LLM Quantization (NVFP4), NVIDIA Blackwell, OnPremise LLM Serving, Prompt Caching, Software Repository
+Mining, Sovereign AI, Total Cost of Ownership.
+
+I. I NTRODUCTION
+Large Language Models (LLMs) have evolved from passive
+autocomplete utilities (e.g., GitHub Copilot) into autonomous
+coding agents (e.g., Claude Code, SWE-agent) capable of
+executing multi-step software engineering workflows. These
+agents function in closed loops where they inspect file hierarchies, edit source code, invoke compilers or test runners,
+and dynamically self-correct based on error outputs. The outer
+loop execution speed and accuracy of such agents are heavily
+constrained by the reasoning capability, output speed, and
+token cost structure of their core LLMs.
+
+RQ1 (Cost economics): How do the realized token
+economics of a cache-optimized frontier API compare
+to a self-hosted quantized cluster, both per token and in
+total? (Sections V-A and V-D)
+• RQ2 (Code quality): How do the two deployments
+•
+
+1
+
+differ in defect-repair burden—Fix Commit Ratio and
+defect composition—once task difficulty is controlled
+for? (Sections V-B and V-C)
+• RQ3 (True TCO): Under realistic Taiwan-market operating parameters and a data-grounded labor model, which
+deployment minimizes the true total cost of ownership
+(TCO), and how robust is that ordering to parameter
+choice? (Section VI-A)
+• RQ4 (Developer experience): Beyond direct dollars,
+what objective developer-experience cost does the local
+configuration impose? (Section V-G)
+In answering these, this paper makes the following contributions:
+1) A ground-truth measurement methodology that triangulates deduplicated LLM telemetry with Git repository
+mining across two contiguous 28-day production periods, specified in full so it can be reproduced on other
+repositories and telemetry.
+2) The empirical finding that prompt caching (99.3%
+hit rate) inverts the per-token cost comparison between a frontier API and a self-hosted cluster—
+an effective $0.57 per million tokens, below even
+the shared on-premise amortization ($2.83/M)—a
+utilization-dependent inversion that reframes the conventional cloud-versus-on-premise cost narrative.
+3) A difficulty-stratified defect analysis (ORMH = 3.61)
+demonstrating that the local configuration’s defect-repair
+premium holds within every difficulty tier, independent
+of a strict output-volume match.
+4) A data-grounded total-cost-of-ownership model under
+Taiwan-market parameters with a symmetric, timestampgrounded labor basis and a four-axis sensitivity analysis.
+5) A set of objective, reproducible behavioral workload
+indicators mined from commit timestamps that quantify
+the developer-experience cost without subjective selfreport.
+6) A cost–quality frontier analysis of hybrid routing gateways via offline counterfactual replay, showing that no
+routing policy dominates the pure-API baseline; shifting
+work to the local model trades defect rate for infrastructure savings.
+The rest of this paper is organized as follows: Section II
+reviews the related work. Section III contrasts the architectural
+frameworks of Claude Code and Opencode. Section IV details
+the empirical methodology. Section V presents our quantitative
+evaluation. Section VI discusses the strategic business and
+opportunity costs. Section VII analyzes threats to validity, and
+Section VIII concludes the paper.
+
+environment enables agents to locate bugs, modify multiple
+files, and verify changes via test suites—though simpler nonagentic pipelines remain competitive on the same tasks [3].
+Public benchmarks like SWE-bench [4] evaluate this capacity
+by testing models on real GitHub issues. However, these
+agents execute in multi-turn loops, often requiring dozens
+of sequential model calls to complete a single task. This
+recursive loop behavior amplifies the impact of underlying
+model inaccuracies, as minor errors in earlier steps can lead
+to compounding failures later in the execution trace.
+B. Empirical Studies of AI Coding Assistants
+A parallel line of empirical work measures the productivity
+and quality impact of AI coding assistants on developers. Controlled and field studies of autocomplete-style assistants such
+as GitHub Copilot report task-completion speedups (e.g., a
+randomized trial finding a 55.8% faster completion of a scoped
+task [5]), alongside more nuanced effects on acceptance behavior and cognitive load. These studies predominantly evaluate
+single-suggestion completion in short lab tasks or self-report
+surveys; a more recent field randomized controlled trial (RCT)
+of agentic assistants on experienced open-source maintainers
+found a measured slowdown despite perceived speedup [6],
+but reported no cost or deployment dimension. The agentic
+frameworks above [2], [4] are in turn evaluated mainly on
+public issue-resolution benchmarks rather than longitudinal
+production telemetry. Our study complements both lines by
+mining 56 days of production agent telemetry and Git history,
+and by contrasting a hosted frontier API against an on-premise
+quantized deployment—a cost-and-quality dimension absent
+from prior developer-productivity studies.
+C. On-Premise Deployment and Quantization
+For enterprise adoption, on-premise hosting of LLMs has
+emerged as a viable alternative to commercial APIs. Running
+models locally requires substantial compute infrastructure.
+Serving frameworks like vLLM [7] and Orca [8] optimize
+throughput through PagedAttention and iteration-level batching. To optimize hardware efficiency, post-training quantization techniques compress model parameters from 16-bit floating point representations to 8-bit (FP8) or 4-bit (FP4) formats;
+calibration-based methods such as AWQ [9], GPTQ [10],
+and SmoothQuant [11] reduce the accuracy loss of aggressive quantization. The release of NVIDIA Blackwell GPUs
+introduced native hardware acceleration for 4-bit formats
+(NVFP4 and MXFP4) [1], and large open-weights Mixtureof-Experts (MoE) models make quantized private serving increasingly practical. While quantization significantly increases
+token throughput and reduces GPU memory (VRAM) requirements, it can introduce degradation in complex reasoning
+tasks, such as structural code refactoring and mathematical
+logic. Vendor-published calibration reports claim near-lossless
+accuracy for NVFP4 on standard benchmarks [1], [12], and
+benchmark-level studies of quantized code LLMs report mixed
+degradation [13]; the cost on production agentic workloads,
+
+II. R ELATED W ORK
+A. Autonomous Software Engineering Agents
+Recent work in software engineering has shifted from
+single-line code prediction toward end-to-end task execution by autonomous agents. Frameworks like SWE-agent [2]
+demonstrate that combining LLMs with a sandboxed shell
+
+2
+
+however, remains uncharacterized, motivating the deploymentlevel measurement this study provides. The multi-turn loops of
+Section II-A then compound even small single-step accuracy
+losses.
+
+weights alternatives such as DeepSeek-V4 Pro impose
+materially higher VRAM floors.
+• API Cost Optimization and Prompt Caching: Claude
+Opus 4.8 carries the highest nominal pricing among
+the models deployed in this study ($5.00 input, $25.00
+output per million tokens). However, Anthropic’s prompt
+caching discounts cached prefix reads by 90% (to $0.50
+per million tokens), and cache-heavy agentic workloads
+realize most input tokens as cache reads (99.3% in our
+telemetry, Section V). This caching mechanism renders
+Claude far more price-competitive in repetitive multi-turn
+development workflows than its nominal rates suggest,
+while the on-premise cost basis remains hardware-hours
+rather than tokens.
+This architectural decision matrix justifies the selection of
+GLM-5.2 (and its predecessor GLM-5.1 prior to the 5.2 release
+on 2026-06-13) as the local benchmark model, balancing
+context capacity, hardware overhead, and coding intelligence.
+
+D. Model Selection Matrix and Rationale
+To justify the selection of the local open-weights model
+and outline the design space, we establish a model selection
+matrix comparing state-of-the-art open-weights and API-based
+frontier models available during the study period (leaderboard
+values accessed 2026-07-07). The evaluation criteria prioritize:
+(1) context window capacity to prevent retrieval truncation
+in deep monorepos, (2) on-premise deployability to satisfy
+enterprise data governance, (3) systems-HPC optimization on
+Blackwell architectures, and (4) coding intelligence benchmarks.
+Table I organizes the design space along the axis that
+governs on-premise adoption—whether a model can be selfhosted at all. Closed-source frontier models (Claude Opus,
+OpenAI’s GPT-5.5) are reachable only through a vendor’s
+cloud API and cannot run on internal hardware; open-weights
+models (Zhipu’s GLM, DeepSeek, Moonshot AI’s Kimi, MiniMax) can. This split makes the endpoints of our study the
+natural choices on each side. Within the closed-source group,
+Claude Opus 4.8 leads the compared frontier models on the
+Artificial Analysis Intelligence Index (56, ahead of GPT-5.5
+at its xhigh reasoning setting at 55, and its own predecessor
+Opus 4.7 at 54) [14], and it is the model that drives Claude
+Code. Within the open-weights group, GLM-5.2 is the highestranked open-weights model on the same index [14] and the top
+open-weights model on SWE-bench Pro [15]. Selecting these
+two therefore pits the strongest self-hostable model against the
+frontier cloud model our agent already used. All Intelligence
+Index scores are reported at each model’s maximum reasoning
+effort, matching our own deployment, which ran both Claude
+Opus and GLM-5.2 at maximum reasoning effort.
+The model selection matrix reveals key architectural tradeoffs:
+
+E. Prompt Caching in Agentic Workflows
+Autonomous coding agents are highly context-intensive,
+as they frequently send substantial parts of the codebase,
+JSDocs, database schemas, and tool definitions with every
+request. Prompt caching (e.g., Anthropic’s Prompt Caching)
+allows the inference server to reuse the KV cache of static
+prompt prefixes. This skips the redundant prefill computation,
+yielding significant latency reductions (up to 85%) and input
+cost discounts (up to 90%) [17]. In agentic frameworks, the
+prefix remains highly static (containing system instructions
+and repository index), making such workloads ideal candidates
+for prompt caching.
+III. S YSTEM A RCHITECTURES : C LAUDE C ODE VS .
+O PENCODE
+A critical aspect of this study is comparing the software
+architectures of the two agent frameworks: Claude Code and
+Opencode. Although both serve as terminal-based autonomous
+agents, they are built on fundamentally different engineering
+paradigms, contrasted at a glance in Fig. 1.
+
+Coding Capability and Openness: At the time of
+deployment, GLM-5.2 held the highest SWE-bench Pro
+score among open-weights models (62.1%, versus 59.0%
+for MiniMax M3) [15], and ranked as the top openweights model on the Artificial Analysis Intelligence
+Index (51, versus 56 for Claude Opus 4.8) [14]. Combined with its MIT license and a native 1M-token context
+window, this made it the strongest candidate for private
+deployment.
+• Serving and Memory Efficiency: GLM-5.2 pairs a
+753B total-parameter MoE structure with only 40B active
+parameters per token, and NVIDIA publishes an official
+NVFP4 quantization checkpoint with an FP8 Key-Value
+(KV) cache [12]. This permits serving on a four-GPU
+slice—one GB200 NVL72 compute tray—rather than the
+≥8-GPU allocation required for unquantized checkpoints,
+yielding a cost-efficient private deployment. Larger open-
+
+•
+
+A. Claude Code Execution Model
+Claude Code is a commercial, Node.js-based terminal agent
+developed by Anthropic [18]. It operates locally, interacting
+directly with the filesystem and local shell commands, and
+handles task execution by issuing API calls to the hosted
+Anthropic service. The local client parses the repository directory and dynamically updates the context window with file
+contents, terminal execution output, and history of past agent
+steps, which is then submitted to the remote inference models.
+B. Opencode Framework Architecture
+Opencode is an open-source (MIT-licensed) terminal coding
+agent [19]. It follows a client–server design: a background
+server process manages session state, conversation history,
+and filesystem operations, while a terminal-UI (TUI) client
+connects to it, so a session persists across terminal restarts.
+
+3
+
+TABLE I
+M ODEL S ELECTION M ATRIX FOR E NTERPRISE AGENT D EPLOYMENT
+
+Deployability
+
+Model
+
+Closed-Source
+Claude Opus 4.8
+(Cloud API only; GPT-5.5 (xhigh)
+not self-hostable) Claude Opus 4.7
+Open-Weights
+(self-hostable
+on-premise)
+
+GLM-5.2
+MiniMax M3
+GLM-5.1
+
+Params (Total/Active)
+
+Context
+
+API Price $/M (in/out)
+
+AA Index†
+
+SWE-bench Pro
+
+Proprietary
+Proprietary
+Proprietary
+
+1M
+1M
+1M
+
+$5.00 / $25.00
+$5.00 / $30.00
+$5.00 / $25.00
+
+56
+55
+54
+
+69.2%
+58.6%
+64.3%
+
+753B / 40B MoE
+428B / 23B MoE
+744B / 40B MoE
+
+1M
+1M
+200k
+
+$1.40 / $4.40
+$0.30 / $1.20
+$1.40 / $4.40
+
+51
+44
+40
+
+62.1%
+59.0%
+58.4%
+
+† AA = Artificial Analysis Intelligence Index [14], reported at each model’s maximum reasoning effort (e.g., “max effort”/“xhigh”); SWE-bench Pro scores from
+
+the leaderboard aggregation [15]. Each group lists the two model versions used in this study plus the strongest same-class competitor by index; bold marks the
+primary configuration on each side, both run at maximum reasoning effort. GPT-5.5 price and context are from the vendor’s official API documentation [16].
+
+Period A:
+Claude Code
+Agent loop
+edit → test → fix
+tokens
+
+Claude API · cloud
+Prompt Cache (99.3% hit)
+
+cel AI SDK provider abstraction, the framework binds
+provider-specific system-prompt profiles and tool-schema
+encodings at session start (e.g., an Anthropic-tuned profile
+versus generic profiles for open-weights backends), rather
+than assuming a single vendor’s prompt conventions.
+
+Period B: Opencode
+Agent loop
+edit → test → fix
+tokens
+
+C. Architectural Trade-offs
+
+vLLM · NVFP4
+· on-premise
+Blackwell 4× B200;
+Prefix Cache (86.4% hit)
+
+Table II highlights the design contrasts between the two
+agent frameworks.
+
+$0.57/M effective
+
+GPU-hours amortized
+
+TABLE II
+A RCHITECTURAL C OMPARISON OF AGENT F RAMEWORKS
+
+Opus 4.7 / 4.8
+
+$2.83/M (shared)
+
+Metered tokens
+
+GLM-5.1 / 5.2
+
+Fig. 1. Deployable-configuration architectures compared in this study. Period
+A pairs Claude Code with the hosted Claude API; Period B pairs Opencode
+with a self-hosted vLLM engine serving NVFP4-quantized GLM on a Blackwell 4× B200 tray, priced by amortized GPU-hours. The model axis (Opus
+vs. GLM) and deployment axis (cloud vs. on-premise) are the two contrasted
+variables; cache-hit rates and unit prices preview results from Section V.
+
+The server core is written in TypeScript and executed on the
+Bun runtime, whereas the TUI client is implemented in Go;
+model access is mediated through a provider-abstraction layer
+(the Vercel AI SDK), making the agent provider-agnostic. In
+our deployment, Opencode drove the on-premise Blackwell
+cluster serving the quantized GLM models via an OpenAIcompatible endpoint, with every session in its full-tool-access
+Build Mode.
+Unlike the single-vendor architecture of Claude Code,
+Opencode’s design centers on provider neutrality:
+• Bun Runtime Core: The server core runs on Bun rather
+than Node.js, providing rapid cold-start times and native
+TypeScript execution; the interactive TUI client is a
+separate Go process.
+• Local Session Persistence: Sessions, message history,
+and token-usage metrics are persisted in a local SQLite
+database managed through the Drizzle ORM, independent
+of any vendor service.
+• Provider-Agnostic Model Access: Through the Ver-
+
+Dimension
+
+Claude Code
+
+Opencode
+
+Runtime Engine
+Source Availability
+Session State
+Agent Interface
+Prompt Profiles
+Model Coupling
+Prompt Caching
+
+Node.js
+Closed-source
+JSON transcripts
+CLI / IDE extensions
+Vendor-tuned
+Anthropic models only
+Server-side KV reuse
+
+Bun
+Open-source (MIT)
+SQLite (Drizzle ORM)
+CLI + terminal UI
+Per-provider profiles
+Provider-agnostic
+vLLM prefix caching
+
+Crucially, these engineering dimensions act as capability
+multipliers for the underlying LLMs, explaining a portion of
+the performance differences observed in practice:
+Vendor Co-design: Claude Code and the Claude Opus
+models are developed by the same vendor, and the harness
+(tool schemas, system prompts, edit formats) is co-tuned
+with the model’s training. Opencode, as a provideragnostic framework, must adapt heterogeneous models
+through generic prompt profiles, which cannot exploit
+model-specific alignment to the same degree.
+• Prompt Caching Integration: Claude Code automatically inserts cache breakpoints so that static prefixes
+(system rules, tool schemas, conversation history) are
+reused server-side. Our local vLLM deployment similarly
+benefits from automatic prefix caching (86.4% of Period
+B prompt tokens served as cache hits, Section V-A).
+•
+
+These engineering differences represent a construct confound,
+discussed further in Section VII-C.
+
+4
+
+prefill latency amortized via server-side prompt caching. On
+the local side, the deployed checkpoints differ by generation:
+the GLM-5.1 NVFP4 checkpoint is configured for a 202,752token context, whereas the GLM-5.2 NVFP4 checkpoint supports 1,048,576 tokens (verified from the deployed Hugging
+Face model configurations [12], [20]). Local serving via
+vLLM likewise enabled automatic prefix caching (86.4% hit,
+Section V-A); because the local cost basis is hardware-hours
+(Section V-D), the TCO and defect-rate results are unaffected
+by the caching configuration.
+3) Data Governance and Network Compliance: Data residency is a critical distinction. Operating Claude Code involves transmitting corporate intellectual property (source
+code, database schema, logs) to Anthropic’s cloud endpoints.
+This requires compliance audits under data protection regulations (such as GDPR). Opencode, operating within a private
+Kubernetes namespace on an internal network, keeps inference
+traffic inside the corporate intranet, which substantially simplifies compliance for proprietary technology assets relative to
+third-party API transmission.
+
+D. Base Model Performance Benchmarks
+To understand the underlying capabilities of the models
+driving the autonomous coding agents in our evaluation,
+we compile independently aggregated benchmark and market
+data. Table III compares the commercial cloud models (Claude
+Opus 4.8 and 4.7) against the local open-weights Mixtureof-Experts models (GLM-5.2 and 5.1) using the Artificial
+Analysis Intelligence Index [14], the SWE-bench Pro leaderboard [15], and measured serving throughput of the vendors’
+hosted endpoints.
+TABLE III
+BASE M ODEL C OMPARISON (I NDEPENDENTLY AGGREGATED )
+
+Metric
+
+Opus 4.8
+
+Opus 4.7
+
+GLM-5.2
+
+GLM-5.1
+
+AA Intelligence Index
+56
+54
+51
+40
+SWE-bench Pro
+69.2%
+64.3%
+62.1%
+58.4%
+Hosted output (tok/s)
+66.0
+56.6
+214.9
+76.4
+Price $/M (in/out)
+$5/$25
+$5/$25 $1.40/$4.40 $1.40/$4.40
+Context window
+1M
+1M
+1M
+200k
+Release date
+2026-05-28 2026-04-16 2026-06-13 2026-04-07
+
+IV. M ETHODOLOGY
+A. Development Environment and Tools
+
+The aggregated scores show that GLM-5.2 was the strongest
+open-weights coding model at the time of the study—ranked
+first among open-weights models on both the Intelligence
+Index and SWE-bench Pro—yet a persistent gap remains
+against the frontier API models (Intelligence Index 51 vs. 56;
+SWE-bench Pro 62.1% vs. 69.2%). Our empirical evaluation
+examines how this single-digit benchmark gap, compounded
+by NVFP4 quantization and provider-agnostic harness adaptation, is associated with a much larger gap in end-to-end defect
+rates (FCR 74.9% vs. 45.9%, Section V).
+
+This study was conducted on a production codebase of a
+corporate AI PaaS monorepo consisting of 12 distinct packages (including frontends in TypeScript/React and backends in
+Python/FastAPI).
+• Period A (Claude Code + Claude Opus): From 202605-11 to 2026-06-07. The developer utilized the Claude
+Code terminal agent, interacting with commercial API
+endpoints of Claude Opus 4.7 (released 2026-04-16)
+and, after its release on 2026-05-28, Claude Opus 4.8.
+Telemetry attributes 28,615 requests to Opus 4.7 and
+3,286 to Opus 4.8.
+• Period B (Opencode + GLM): From 2026-06-08 to
+2026-07-05. The developer transitioned to Opencode,
+backed by private NVFP4-quantized deployments on a
+shared NVIDIA Blackwell cluster: GLM-5.1 for the
+initial days (GLM-5.2 was released on 2026-06-13),
+followed by GLM-5.2 served first from a community
+NVFP4 checkpoint and later from NVIDIA’s official
+NVFP4 checkpoint. Both periods therefore span a midperiod upgrade to the vendor’s latest generation, keeping the “rolling frontier” condition symmetric. Although
+GLM-5.1 and GLM-5.2 differ more in capability (Intelligence Index 40 vs. 51) than Opus 4.7 and 4.8 (54
+vs. 56), the weekly defect series (Fig. 12) shows no
+structural break at these checkpoint transitions, so Period
+B is analyzed as a single configuration, symmetric with
+Period A’s pooling of Opus 4.7/4.8.
+
+E. Unified Multi-Dimensional Ecosystem Comparison
+To provide a complete comparative view of the two
+paradigms, we analyze the multi-dimensional differences between the hosted API model (Opus) and the on-premise openweights cluster (GLM), alongside their corresponding CLI
+frameworks (Claude Code and Opencode).
+1) Infrastructure Footprint and Scaling Limits: Claude
+Code acts as a thin client requiring negligible local CPU and
+memory. However, it is bound by vendor-side, per-organization
+rate limits (request- and token-per-minute quotas). In contrast,
+Opencode requires an on-premise private GPU cluster (in our
+deployment, four NVIDIA Blackwell B200-class GPUs—one
+GB200 NVL72 compute tray) to serve the quantized GLM
+model. While this demands substantial capital expenditure
+and VRAM allocation (approximately 465 GB of NVFP4
+weights plus an FP8 KV cache), it removes external rate limits,
+allowing parallel requests across the corporate intranet up to
+the cluster’s serving capacity.
+2) Context Window Dynamics and Latency Profiles: The
+core models exhibit distinct context capabilities. Claude Opus
+4.7 and 4.8 feature a 1,000,000-token context window, allowing the Claude Code agent to ingest large directory structures
+and multi-turn conversation history in a single prompt, with
+
+B. Data Collection
+We gathered data from two primary channels:
+1) Telemetry Logs: Period A’s hosted Claude API
+telemetry was recorded in a Langfuse server
+deployed in a private namespace on Kubernetes,
+
+5
+
+and extracted directly from its ClickHouse
+database
+backend
+[21]
+on
+2026-07-07
+by
+aggregating observation-level usage records (input,
+output,
+cache_creation_input_tokens,
+cache_read_input_tokens) grouped by model
+and filtered to the developer’s user identifier and to
+the coding-agent models (claude-opus-4-7 and
+claude-opus-4-8); auxiliary model traffic from
+unrelated pipelines is excluded. Two extraction details
+are essential for correctness: (i) because Langfuse’s
+ClickHouse tables use a ReplacingMergeTree
+engine, queries deduplicate multi-version rows
+via FINAL with is_deleted = 0 on both the
+observations and traces tables (omitting this inflates
+request counts by roughly 3% in our data); and (ii)
+period boundaries are evaluated in the developer’s local
+time zone (Asia/Taipei, UTC+8), matching the
+time zone semantics of the Git mining, rather than the
+server’s native UTC. These two conditions apply to the
+Langfuse-recorded Period A telemetry. Period B’s local
+GLM traffic, by contrast, was served by an on-premise
+vLLM stack, whose engine-level Prometheus counters
+(prompt, cached, and recomputed tokens) provide the
+Period B token and cache accounting, with prefix-cache
+hits reported directly (86.4%); these source the Period
+B column of Table VI. The two periods thus use the
+backend-appropriate telemetry surface—Langfuse for
+the hosted Claude API, vLLM engine metrics for the
+local GLM cluster—not a single shared pipeline.
+2) Git Repository Mining: Git logs from the PaaS repository were parsed to isolate the development commits
+under study via their Git author identity, from which
+we extracted line additions, deletions, files changed, and
+keyword-classified bug-fix commits [22]; all commitlevel metrics exclude merge commits (--no-merges).
+To capture the developer’s authored work completely—
+including commits developed on feature branches or
+rebased prior to merging—we enumerate every nonmerge commit authored by the developer over each period across all branches and pull-request refs. Two safeguards keep this from over-counting: git patch-id
+collapses rebased or cherry-picked copies of the same
+change to a single instance (retaining the earliest authoring timestamp), and each commit is assigned to a period
+solely by its author timestamp, so only in-window work
+under the developer’s identity is counted. As an additional attribution check, the mined commits were crossvalidated against the team’s Redmine issue tracker (Table V), corroborating—without adjusting—the authorand-timestamp filter; every metric is computed directly
+from Git. We further verified that every mined work
+stream was ultimately merged into the mainline through
+the reviewed pull-request flow (Section IV-G): the commit series measures accepted, review-approved output—
+including the repair iterations that precede acceptance—
+rather than abandoned drafts. Figure 2 summarizes the
+
+end-to-end extraction and reconstruction pipeline across
+both channels.
+Git: all branches + PR
+refs (--no-merges)
+Redmine crossvalidation
+
+patch-id dedup
+(earliest author timestamp)
+Keyword classify: FCR
++ defect taxonomy
+Difficulty tiering:
+High / Med / Low
+Metrics: statistics
+/ cost / behavior
+
+Telemetry: Langfuse
+(Period A) + vLLM
+engine (Period B)
+
+Fig. 2. End-to-end measurement pipeline: Git history (all branches and PR
+refs) is patch-id-deduplicated, Redmine-cross-validated, then keywordclassified and difficulty-stratified; token telemetry (Langfuse for Period A,
+vLLM engine counters for Period B) feeds the cost metrics. All rules are
+deterministic (Sections IV-B–IV-E).
+
+C. Defect Metric Formulation
+To evaluate code quality, we define the Fix Commit Ratio
+(FCR) as:
+Cfix
+FCR =
+× 100%,
+(1)
+Ctotal
+where Cfix represents the count of commits whose
+message matches the regular expression pattern
+/(fix|bug|issue|patch|correct)/i,
+indicating
+that the commit was dedicated to repairing defects, resolving
+compile/lint errors, or fixing broken tests [22]. Ctotal is the
+total number of commits by the developer during the period.
+1) Classification Reproducibility: Both the fix/non-fix decision and the defect taxonomy assignment (Section V-B) are
+produced by deterministic keyword rules applied to commit
+subjects, rather than ad-hoc human judgment: the fix decision
+uses the regular expression above, and taxonomy assignment
+applies a fixed priority order of category-specific keyword sets
+(test-related, then syntax/type-related, then API/dependencyrelated, with the remainder classified as logical defects). The
+complete rule set is specified in this paper, making every
+classification decision reproducible from a repository’s own
+commit history. The first author manually reviewed every
+classified commit and confirmed its rule assignment; because
+this rater is not blind to the hypothesis, we recommend a blind
+second-rater protocol reporting inter-rater agreement (Cohen’s
+κ) as a replication check. The residual risk is construct-level—
+which changes should count as defect repairs at all—and is
+discussed under construct validity (Section VII-C).
+D. Economic and Feedback Loop Model
+To evaluate the true cost of using autonomous coding agents,
+we construct an economic model adapted from classical software engineering economics [23], modeling both compute
+expenses and developer hourly costs. Let the total corporate
+cost of development (T C) for M tasks be represented as:
+T C = M × (Ccompute + Cops + Titer × Rdev ) ,
+
+6
+
+(2)
+
+where Ccompute is the compute/inference cost per task, Cops
+is the operational infrastructure overhead per task (inclusive
+of electricity, cooling, facilities, and personnel support), Rdev
+is the developer’s hourly wage rate, and Titer is the feedback
+loop iteration time required to successfully complete a single
+coding task.
+We formalize Titer as a function of developer time and model
+performance:
+Titer = Tcoding + Nround × (Twait + Treview ) ,
+
+TABLE IV
+C OMMIT C ATEGORY AND D IFFICULTY D ISTRIBUTION ( NON - MERGE
+COMMITS )
+
+Period
+
+(3)
+
+where Tcoding is the developer’s initial scoping and coding time,
+Twait is the average inference wait time per request (determined
+by model throughput and network latency), Treview is the
+developer’s cognitive review and debugging time per iteration,
+and Nround is the average number of interaction rounds. A local
+on-premise model achieves a net financial advantage over a
+commercial API model if and only if:
+∆Ccompute > Rdev × ∆Titer ,
+
+Category
+
+High
+
+Med
+
+Low Total
+
+Period A Feature
+28
+6
+3
+(Opus)
+Refactor/Perf/Style
+7
+5
+6
+Fix (fix: prefix)‡
+8
+39
+54
+Test/CI
+12
+4
+11
+Docs/Chore
+31
+13
+19
+Total
+86
+67
+93
+Tier share
+35.0% 27.2% 37.8%
+
+37
+18
+101
+27
+63
+246
+
+Period B Feature
+31
+14
+4
+(GLM)
+Refactor/Perf/Style
+8
+7
+3
+Fix (fix: prefix)‡
+34
+110
+111
+Test/CI
+3
+4
+6
+Docs/Chore
+10
+9
+13
+Total
+86
+144
+137
+Tier share
+23.4% 39.2% 37.3%
+
+49
+18
+255
+13
+32
+367
+
+‡ The Fix category here partitions commits by their conventional-commit prefix
+
+(fix:) and is disjoint from the other categories; it is distinct from the Fix
+Commit Ratio count of Section IV-C (113 for Period A, 275 for Period B),
+which applies the regex /(fix|bug|issue|patch|correct)/i to the
+full commit message and therefore also captures repair commits filed under
+other prefixes. The per-tier FCR analysis (Section V-C) uses the latter (regex)
+count. Percentages may not sum to 100 due to rounding.
+
+(4)
+
+where ∆Ccompute = Ccompute, api − Ccompute, local and ∆Titer =
+Titer, local − Titer, api .
+E. Task Difficulty and Category Mapping
+To assess task selection effects, we classify every nonmerge commit in both periods by category and difficulty using
+deterministic rules computed from the Git metadata itself.
+Category follows the conventional-commit prefix (feat, fix,
+refactor/perf/style, test/ci, docs/chore). Difficulty is derived from the change footprint: High (touching ≥ 3
+packages, modifying ≥ 5 files, or > 200 net lines), Medium
+(touching 2 packages or modifying 2–4 files), and Low (singlefile modifications). Both rules are fully reproducible from the
+repository history.
+Table IV displays the resulting distribution. Unlike an
+idealized controlled experiment, the two periods are not homogeneous: Period A contains a larger share of High-difficulty
+commits (35.0% vs. 23.4%; χ2 (2) = 13.14, p = 0.0014,
+Cramér’s V = 0.15), reflecting that Period A included heavier
+feature and infrastructure work while Period B skewed toward
+smaller changes. We address this confound in two ways.
+First, all defect comparisons in Section V are additionally
+reported stratified by difficulty tier, and the local configuration
+exhibits a higher fix-commit share within every tier. Second,
+the direction of the imbalance is conservative with respect to
+our conclusion: the period that handled harder tasks (Period A,
+Claude) produced the lower defect-repair share, so equalizing
+difficulty would widen, not narrow, the observed gap.
+
+executed with the specification file injected directly into its
+context.
+The agent’s task execution loop follows a strict
+specification-compliance
+protocol:
+(1)
+parsing
+the
+specifications, (2) generating or updating corresponding
+TypeScript interfaces and backend schemas, (3) creating unit
+tests, and (4) implementing the core logic. While the Opus
+configuration generally produced type-safe implementations
+matching the specification in a few iterations, the GLM
+configuration more frequently violated the specified type
+constraints and API boundaries, yielding type-check
+and runtime integration failures that required developer
+intervention—a difference we quantify in Section V-B.
+G. Software Quality-Assurance and Delivery Pipeline
+Both evaluation periods were conducted not on a throwaway prototype but inside the enterprise software development
+lifecycle (SDLC) of the production PaaS monorepo, under
+a single, uniformly enforced quality-assurance and delivery
+pipeline. This property is central to the study’s internal and
+construct validity: every commit we mine—in either period—
+is a gated artifact admitted through the same multi-stage
+quality gate and, once merged, promoted along the same multienvironment path. Because the pipeline is held fixed while
+the coding agent, model, quantization, and serving stack vary
+together, engineering-process maturity is controlled by design
+and cannot manufacture a between-period difference; the FCR
+and defect deltas of Section V therefore isolate the deployable
+configuration rather than the surrounding engineering discipline. Table V summarizes the controls.
+The quality gate is a single source of truth—one command,
+invoked identically by every runner (workstation, manda-
+
+F. Specification-Driven Development (SDD) Protocol
+Both evaluation periods utilized a Specification-Driven Development (SDD) methodology to guide the autonomous
+agents. In the SDD workflow, the developer first creates a detailed markdown specification file (e.g., feature_spec.md
+or OpenAPI schemas) outlining the required functions,
+database schemas, and type definitions. The agent is then
+
+7
+
+tory pre-push hook, nightly full run)—spanning linting, strict
+type checking, layered tests behind a per-file coverage gate,
+migration-chain checks, a full software-supply-chain security suite, and load/benchmark/chaos testing (detailed in Table V). Merges require human review under CODEOWNERS and Conventional-Commit enforcement plus—notably
+for this study—two AI review agents served by an internally
+hosted model, so the team dogfoods on-premise agentic inference within its own review loop. Releases follow near-daily
+semantic-versioned delivery, promoting one Helm chart across
+six environment overlays with rolling updates and automatic
+rollback. We report this pipeline not as a contribution in itself
+but as evidence that the mined commits reflect productiongrade, quality-gated engineering under both configurations.
+
+Cumulative Net LOC
+
+100k
+80k
+60k
+40k
+20k
+0
+
+Period A (Opus)
+Period B (GLM)
+
+1
+
+4
+
+8
+
+12
+
+16
+
+20
+
+24
+
+28
+
+Day of Period
+Fig. 3. Cumulative net line growth over the 28-day periods (daily Git data).
+Period A concentrates most growth in a large feature burst during week 2;
+Period B grows more steadily, including a mid-period feature push around
+days 15–21.
+
+V. E MPIRICAL E VALUATION
+A. Token Usage and Caching Characteristics
+Table VI presents the token telemetry for both periods,
+restricted to the coding-agent models (Period A from the Langfuse ClickHouse backend per Section IV-B; Period B from
+the on-premise vLLM engine’s Prometheus counters, whose
+request counts are not directly comparable to Langfuse’s).
+Under the agentic loop of Claude Code, every request retransmits the accumulated session context. This results in an
+enormous raw prompt volume of 15.31 billion input-side
+tokens (approximately 480k prompt tokens per request) for
+Opus. However, due to Anthropic’s prompt caching mechanism, 99.3% of these prompt tokens were served as cache
+reads; only 0.7% were billed at uncached rates. The two
+output volumes also differ sharply: the Opus configuration
+generated 20.2M output tokens versus 5.06M for GLM—a
+4.0× difference. Since the two periods delivered comparable
+code volume (Section V-B), this reflects Claude Code’s more
+verbose agentic loop (extensive reasoning traces and repeated
+full-file rewrites) rather than a code-output gap.
+The GLM deployment exhibits the same reliance on prefix
+caching: with vLLM’s automatic prefix caching enabled, Period B served 86.4% of its prompt tokens (778M of 900M)
+as KV-cache hits, with the recomputed-prefill counter effectively zero; the agentic loop’s prompt prefixes are equally
+repetitive. In our cost model (Section V-D), caching reduces
+Claude’s realized API cost by 88.6% relative to the same
+token volume at nominal input rates, consistent with the up-to90% discount bound documented for prefix caching in agentic
+workflows [17].
+
+periods are comparable—indeed Period B is marginally higher
+(80,258 vs. 75,738 lines). We take code-only gross insertions
+as the volume-invariance basis. The all-file net growth of
+Table VII runs the other way (90,718 vs. 58,673, favoring
+Period A), again a documentation artifact compounded by
+Period A’s larger deletion churn—which only strengthens the
+quality reading: Period A produced more retained net lines and
+carried the lower defect-repair share. The two configurations
+therefore delivered a similar gross code churn (Fig. 3 traces the
+cumulative net-line trajectory of each period); because the allfile net growth diverges, we do not claim strict output-volume
+invariance and instead rest the quality comparison on the
+difficulty-stratified within-tier analysis (ORMH = 3.61, Section V-C), which does not depend on equal volume. However,
+raw LOC is a flawed proxy for developer productivity when
+accompanied by high defect rates. To measure the actual utility
+of the generated code, we define the Effective Productivity
+Ratio as Enet = 1 − FCR, the proportion of commits that
+deliver new logic rather than defect corrections. With an FCR
+A
+of 45.93%, Period A retains Enet
+= 54.07% of its commits as
+net-new logic; with an FCR of 74.93% (roughly three out of
+four commits were defect corrections), Period B retains only
+B
+Enet
+= 25.07%.
+This effective-yield gap restates the measured FCR difference: under the local GLM setup, the developer’s activity was
+dominated by repairing agent-generated defects rather than
+writing new logic. Enet is a coarse discount—treating every fix
+commit as zero-value—but it bounds the direction and rough
+magnitude of the quality adjustment (Section V-G).
+
+B. Software Output and Code Quality Metrics
+Table VII summarizes the Git mining results from the PaaS
+repository.
+Commit counts were higher in Period B (367 vs. 246
+non-merge commits). Total inserted volume was higher in
+Period A (129,556 vs. 93,281 lines), but this gap is largely
+an artifact of documentation: 36.6% of Period A’s insertions were Markdown specification files produced under the
+SDD protocol (Section IV-F), versus only 10.1% in Period
+B (Table VIII). Restricted to code-only insertions, the two
+
+To further analyze the quality gap, Table IX provides a
+defect taxonomy classifying all non-merge fix commits during both periods, using the deterministic keyword rules of
+Section IV-C. The distributions differ, but the difference is
+concentrated in the Test/CI category—a Period-A infrastructure confound (Fig. 4); we test its statistical significance in
+Section V-C.
+
+8
+
+TABLE V
+S OFTWARE D EVELOPMENT L IFECYCLE C ONTROLS A PPLIED U NIFORMLY ACROSS B OTH E VALUATION P ERIODS (S ECTION IV-G)
+SDLC stage
+
+Controls and tooling
+
+Enforcement point
+
+Requirements & design
+
+Specification-driven development (versioned specs/), architecture decision
+records, and design documents; Redmine issue ↔ PR ↔ commit traceability
+Ruff, mypy (×5 projects), ESLint/tsc; a written team style guide and an agentinstruction file; Conventional Commits
+≥ 1 human approval under CODEOWNERS with a PR / Definition-of-Done
+template; two AI review agents served by an internally hosted model
+pytest/vitest behind a per-file coverage gate, E2E, OpenAPI contract snapshots, and DB-migration chain checks; load, benchmark, and chaos suites
+SAST (Bandit, Semgrep, CodeQL), secret scanning (gitleaks), dependency audit
+(pip/npm), image and filesystem CVE scans (Trivy, grype), SBOM (syft), and an
+SPDX license allowlist; threat modeling, penetration testing, and a secret manager
+with rotation
+Single-source-of-truth CI (one command, every runner); semantic versioning with
+automated changelog; continuous, near-daily delivery
+One Helm chart across six environment overlays (local, standalone,
+test, staging, production, plus a shared-PVC variant); Helm lint,
+kubeconform, and dry-run validation; rolling update with automatic rollback
+Metrics, centralized logging, distributed tracing, and alerting; on-call rotation, postincident reviews, and defined SLOs
+
+Specification precedes implementation
+
+Coding standards
+Code review
+Test
+Security & supply chain
+
+Build & release
+Deployment
+
+Runtime & ops
+
+TABLE VI
+T OKEN T ELEMETRY C OMPARISON . P ERIOD B ( V LLM) METERS ONLY
+CACHE - HIT VS . COMPUTE ; ALL COMPUTED PREFILL IS CACHED , HENCE
+REPORTED AS C ACHE C REATION , WITH NO SEPARATE INCREMENTAL
+INPUT (—).
+
+Metric
+Total Requests
+Incremental Input Tokens
+Cache Creation Tokens
+Cache Read Tokens
+Total Output Tokens
+Total Tokens
+Cache Hit Rate (%)
+
+Period A (Opus)
+
+Period B (GLM)
+
+31,901
+980,326
+108,060,378
+15,202,019,495
+20,156,852
+15,331,217,051
+
+12,281
+—
+122,472,214
+778,058,773
+5,059,772
+905,590,759
+
+99.3%
+
+86.4%
+
+Period A (Opus)
+
+Period B (GLM)
+
+Total Commits (Ctotal )
+Files Changed
+Insertions (Lins )
+of which code-only†
+Deletions (Ldel )
+Net Line Growth (Lnet )
+
+246
+2,469
+129,556
+75,738
+38,838
+90,718
+
+367
+2,159
+93,281
+80,258
+34,608
+58,673
+
+Fix Commits (Cfix )
+Fix Commit Ratio (FCR)
+
+113
+45.93%
+
+275
+74.93%
+
+Branch protection; required status
+checks
+Pre-push (fast subset) + nightly (full)
+Nightly gate; periodic security audit
+
+Git-hook enforced
+Strict promotion; manual production approval
+Continuous monitoring
+
+TABLE VIII
+I NSERTED L INES BY L ANGUAGE / F ILE T YPE
+Language / File Type
+
+Period A (Opus) Period B (GLM)
+
+Python (.py)
+Markdown docs (.md)
+TypeScript (.ts, .tsx)
+Config & Shell§
+Other
+
+48,666 (37.6%)
+47,405 (36.6%)
+22,151 (17.1%)
+4,921 (3.8%)
+6,413 (4.9%)
+
+38,813 (41.6%)
+9,381 (10.1%)
+35,593 (38.2%)
+5,804 (6.2%)
+3,690 (4.0%)
+
+Total Insertions (Lins )
+
+129,556 (100%)
+
+93,281 (100%)
+
+§ .json, .sh, .yaml, .toml. Percentages may not sum to 100 due to
+
+rounding.
+
+without the required dict | list union annotation, failing
+mypy on the exception branch (Listing 1). We note that
+message-level mining underestimates this category for both
+configurations: type errors that the agent repairs within the
+same working session never surface as separate fix commits, so
+these counts reflect only the residual type errors that escaped
+the agent’s own iteration loop and required dedicated repair
+commits.
+2) Dependency Mapping and API Boundary Compliance:
+API, import, and dependency misuse accounted for 10.5% of
+GLM’s fix commits (29 commits) versus 2.7% for Opus (3
+commits)—a nearly 10× absolute inflation. Notably, this gap
+cannot be attributed to context capacity: the deployed GLM5.2 checkpoint supports the same 1M-token context class
+as Claude Opus (Section III-E). The failure modes instead
+concern the correct use of repository-internal and library APIs:
+hallucinated import paths, stale method signatures, migrationrevision collisions, and environment-behavior misuse such as
+an HTTP client inheriting proxy environment variables inside
+the cluster network (Listing 2). This suggests that long-context
+capacity alone does not confer accurate API grounding in a
+
+TABLE VII
+G IT P RODUCTIVITY AND Q UALITY M ETRICS ( NON - MERGE COMMITS )
+
+Metric
+
+Pre-push and commit-msg Git hooks
+
+† Excluding Markdown documentation, dependency lockfiles, and extension-
+
+less files.
+
+1) Syntax and Type Discipline: The GLM configuration
+produced 20 syntax/type-repair commits versus 2 under Opus
+(7.3% vs. 1.8% of fix commits—a 10× absolute inflation). A
+representative Period B example is a static-typing violation in
+which the agent assigned an endpoint response to a variable
+
+9
+
+large monorepo.
+3) Logical Defects Dominate the GLM Repair Load:
+Logical defects are the largest category in both periods but
+dominate under GLM: 196 commits (71.3% of fix commits)
+versus 61 (54.0%) under Opus—a 3.2× absolute inflation.
+Period B logical repairs include broken control flow around
+failure paths (e.g., aborting swap operations on deleted resources, preserving recoverable state on post-commit failures)
+that required developer-directed correction after the agent’s
+initial implementation shipped subtly incorrect behavior.
+4) Test and CI Repair: An Infrastructure Confound in
+Period A: The test/CI category inverts the pattern: 47 commits
+(41.6%) under Opus versus 30 (10.9%) under GLM. Inspection
+shows that much of Period A’s repair volume was testinfrastructure maintenance (raising CI memory limits, scoping
+coverage guards, deflaking suites) coinciding with a phase of
+active CI build-out, rather than repairs of model-generated
+logic. This has an important interpretive consequence: Period A’s FCR of 45.9% partially reflects infrastructure churn
+unrelated to model output quality, meaning the raw FCR
+comparison likely understates the model-attributable quality
+gap between the two configurations. We revisit this as a
+construct-validity consideration in Section VII-C.
+
+potheses and perform non-parametric Mann–Whitney U tests
+(Wilcoxon rank-sum) on the Git-derived metrics, since daily
+software metrics do not conform to a normal distribution.
+We measure effect sizes using Cliff’s Delta (∆) [24], a nonparametric measure recommended for small-sample softwareengineering experiments, classified as negligible (|∆| <
+0.147), small (|∆| < 0.33), medium (|∆| < 0.474), or large
+(|∆| ≥ 0.474).
+The three hypotheses are defined as follows:
+(1)
+• H0 : There is no difference in daily commit frequency
+between Period A and Period B.
+(2)
+• H0 : There is no difference in code volume per unit of
+work between Period A and Period B.
+(3)
+• H0 : There is no difference in daily FCR between Period
+A and Period B.
+Table X summarizes the results.
+TABLE X
+S TATISTICAL H YPOTHESIS T ESTING R ESULTS ( NON - MERGE COMMITS )
+
+Metric
+Commits / active day (mean)
+Insertions / active day (mean)
+Insertions / commit (median)
+Daily FCR, active days (mean)
+
+TABLE IX
+D EFECT TAXONOMY C OMPARISON ( KEYWORD - RULE CLASSIFICATION )
+
+Defect Category
+
+Period A (Opus)
+
+Period B (GLM)
+
+Syntax & Type Errors
+API & Package Misuse
+Logical Defects
+Test & CI Repairs
+
+2 (1.8%)
+3 (2.7%)
+61 (54.0%)
+47 (41.6%)
+
+20 (7.3%)
+29 (10.5%)
+196 (71.3%)
+30 (10.9%)
+
+Total Fix Commits
+
+113 (100%)
+
+275 (100%)
+
+(1)
+
+Defect Percentage (%)
+
+71.3
+
+Period B (GLM)
+54.0
+
+41.6
+
+40
+
+20
+10.9
+
+10.5
+7.3
+1.8
+
+2.7
+
+0
+
+Syntax
+
+API
+
+Logical
+
+18.35 0.066 −0.332 (M)
+4,664 0.801 −0.046 (N)
+25 0.068 +0.087 (N)
+72.8% 0.0002 −0.661 (L)
+
+Three findings emerge. First, we fail to reject H0 at
+α = 0.05 (p = 0.066): daily commit count does not differ
+significantly across periods, though Period B trends toward
+a higher count (mean 18.4 vs. 11.2, ∆ = −0.332). Second,
+(2)
+for H0 we report a transparent null result: neither the daylevel insertion distribution (p = 0.801) nor the per-commit
+insertion size (median 36 vs. 25 lines; p = 0.068) differs
+significantly, with negligible effect sizes—consistent with the
+comparable code volume (75.7k vs. 80.3k code-only lines)
+(3)
+that holds output roughly constant. Third, H0 is rejected
+decisively (p = 0.0002) with a large effect size (∆ = −0.66):
+on comparable working days, the share of repair work under
+the local GLM configuration is dramatically higher.
+To quantify the association on the aggregated commit contingency table (Period A: 113 fix vs. 133 non-fix; Period B:
+275 fix vs. 92 non-fix), a Pearson χ2 test of independence
+rejects the null hypothesis with high significance: χ2 (1) =
+53.30, p < 0.0001, ϕ = 0.295. The unadjusted Odds Ratio is
+3.52 (95% CI [2.49, 4.96]). Because the two periods differ in
+difficulty composition (Section IV-E), we additionally compute
+the Mantel–Haenszel odds ratio stratified by difficulty tier,
+obtaining ORMH = 3.61, with per-tier odds ratios of 4.88
+(High: 46.5% vs. 15.1%), 2.63 (Medium: 80.6% vs. 61.2%),
+and 3.81 (Low: 86.9% vs. 63.4%). The stratified and unadjusted estimates are close, demonstrating that the defect-repair
+premium of the local configuration is not an artifact of task
+mix: within every difficulty tier, the odds of a commit being
+
+80
+
+60
+
+11.18
+5,889
+36
+38.1%
+
+p Cliff’s ∆
+
+Daily metrics are means over active days (22 in Period A, 20 in Period B).
+Cliff’s ∆ > 0 indicates Period A stochastically larger; effect sizes: N =
+negligible, M = medium, L = large (thresholds of Section V-C).
+
+Percentages may not sum to 100 due to rounding.
+
+Period A (Opus)
+
+A (Opus) B (GLM)
+
+Test
+
+Fig. 4. Percentage distribution of defect categories classified from fix
+commits. Period A’s repair load is dominated by logical and test/CIinfrastructure work, whereas Period B shifts markedly toward syntax/type and
+API/dependency defects.
+
+C. Statistical Hypothesis Testing
+To validate the productivity and quality differences observed
+between the two periods, we formulate three statistical hy-
+
+10
+
+a defect repair are 2.6–4.9× higher under GLM (Fig. 5). We
+flag one construct nuance: because difficulty is derived from
+change footprint and fix commits are systematically smaller
+(median 25 vs. 36 lines, fix vs. non-fix), the Low tier is
+mechanically enriched with fixes (hence Claude’s inverted
+ordering: Low 63.4% > Medium 61.2% > High 15.1%). This
+couples the stratifier to the outcome base rate, not to the
+between-period contrast; applied identically to both periods,
+it cannot manufacture the odds-ratio gap—so the tiers read as
+change-size strata rather than intrinsic-difficulty measures.
+Aggregate
+
+3.52 [2.49, 4.96]
+
+High
+
+4.88 [2.36, 10.1]
+
+Medium
+
+2.63 [1.38, 4.99]
+
+Low
+
+3.81 [1.99, 7.31]
+
+MH-adj.†
+
+3.61 [2.46, 5.30]
+
+1
+
+2
+
+3
+
+5
+
+period rather than randomized between-subjects. The reported
+p-values and CIs therefore quantify how strongly and consistently the difference manifests within this developer and
+project, and do not by themselves license inference to a
+broader population; we defer that to the multi-developer crossover protocol of Section VII-B.
+D. Financial Cost Evaluation
+We calculate the financial cost of both configurations. For
+the Claude API, we apply Anthropic’s published Opus 4.7/4.8
+rates with prompt caching ($5.00/M base input, $6.25/M cache
+write, $0.50/M cache read, $25.00/M output) [25]. The onpremise workload ran on a shared NVIDIA GB200 NVL72
+cluster; for cost accounting we attribute it to the minimum
+viable serving footprint of GLM-5.2 NVFP4—a 4× B200
+slice, one GB200 NVL72 compute tray (Section V-H), i.e.,
+a lower bound on the hardware a team must provision. We
+evaluate two rental-equivalent scenarios for this footprint at
+$16.00/hour ($4.00 per GPU-hour, consistent with June–July
+2026 market on-demand rates of $3.70–$5.90 per B200-hour
+across major GPU clouds [26]):
+• Scenario I (Dedicated Reservation): Dedicated aroundthe-clock allocation for the full period (24 h × 28 d =
+672 hours) = $10,752.00 USD.
+• Scenario II (Shared Allocation): Allocation charged as
+a standard 160-hour monthly developer seat under the
+shared cluster’s chargeback model = $2,560.00 USD.
+Because both agent configurations ran around the clock—
+including unattended sessions—per-developer attribution is a
+billing convention rather than a measurement; Scenarios I
+and II bracket that attribution spectrum, from full wall-clock
+reservation to a standard seat.
+
+10
+
+Fix-commit odds ratio (Period B / Period A), log scale
+Fig. 5. Forest plot of the fix-commit odds ratio (Period B / Period A), overall
+and stratified by task-difficulty tier. Markers are point estimates; whiskers are
+95% CIs (Wald on the log-odds; Robins–Breslow–Greenland for the Mantel–
+Haenszel summary, † ). Every interval lies entirely right of the null (OR = 1,
+dashed): the local GLM configuration carries a significantly higher defectrepair share within every difficulty tier, not merely in aggregate (Table X,
+Section V-C).
+
+Finally, the defect-taxonomy distributions of Table IX differ
+significantly between deployments (χ2 (3) = 51.93, p <
+0.0001, Cramér’s V = 0.37); however, this difference is
+driven by the Test/CI category, whose Period-A excess is
+infrastructure churn unrelated to model output (Section VB, “Test and CI Repair”). Excluding Test/CI, the remaining model-attributable categories do not differ significantly
+(χ2 (2) = 5.59, p = 0.06, V = 0.13), so the two deployments
+differ primarily in the volume of repair work, not its structural
+composition.
+(3)
+We treat the daily-FCR difference (H0 ) as primary and
+the rest as descriptive; the principal results survive multiplicity. Under a conservative Bonferroni correction across
+the seven tests here—the four contrasts of Table X, the
+aggregate and taxonomy χ2 tests, and the Mantel–Haenszel
+stratified contrast (α = 0.05/7 = 0.0071)—the daily-FCR
+(p = 0.0002), aggregate-fix (p < 0.0001), and defecttaxonomy (p < 0.0001) differences all remain significant,
+while the non-significant tests are unaffected. Other tests
+reported elsewhere (per-language FCR, weekly trends) are
+exploratory and excluded from this confirmatory family. No
+conclusion depends on a p-value near threshold.
+Scope of inference. These tests take the day or the individual
+commit as the unit of analysis. Because every observation
+derives from one developer on one repository, these units
+are not independent replicates: consecutive days and commits
+are autocorrelated, and the design is single-subject and two-
+
+TABLE XI
+F INANCIAL C OST C OMPARISON (USD; S CENARIOS I/II = 4× B200
+D EDICATED /S HARED )
+
+Item
+
+Claude API Scenario I Scenario II
+
+Input Cost
+Cache Write
+Cache Read
+Output Cost
+
+$4.90
+$675.38
+$7,601.01
+$503.92
+
+—
+—
+—
+—
+
+—
+—
+—
+—
+
+Total Cost
+
+$8,785.21 $10,752.00
+
+$2,560.00
+
+−22.4%
+$11.87
+
+70.9%
+$2.83
+
+Compute Savings vs. API†
+Eq. Cost/Million Tokens
+
+—
+$0.573
+
+† Total-bill comparison; the per-token rates below invert it—the cached API is
+
+cheaper per processed token despite the larger bill—as analyzed in Section VD.
+
+Two structural observations follow from Table XI. First,
+absent caching, the same Claude token volume would have
+cost $77,059 at nominal input rates; prompt caching therefore
+reduced realized spend by 88.6%. Second, and counterintuitively, caching drives Claude’s effective unit price ($0.57
+per million processed tokens) below both the shared onpremise amortization ($2.83/M) and the dedicated-reservation
+unit cost ($11.87/M). The API’s total bill remains higher
+
+11
+
+only because the Claude configuration processed 16.9× more
+tokens: per processed token, the cached frontier API is the
+cheaper option—an inversion of what nominal price sheets
+suggest. The on-premise per-token figure divides a time-billed
+resource by one developer’s token volume, so it is inflated by
+low single-tenant utilization; we therefore treat total realized
+spend and the TCO of Section VI-A as the robust quantities,
+with the per-token rate as corroboration.
+Extrapolating to a 100-developer organization, a pure API
+approach would cost approximately $879,000 USD monthly
+versus $256,000 USD for shared on-premise allocation. We
+caution that this assumes the per-developer amortization holds
+at fleet scale: serving 100 concurrent workloads needs proportionally more GPU capacity (one 4× B200 tray cannot serve
+100 developers), so the extrapolation compares amortization
+rates, not a fixed footprint.
+
+60
+
+AA Intelligence Index
+
+Opus 4.8
+
+GLM-5.2
+
+Opus 4.7
+
+50
+
+local
+
+GLM-5.1
+
+40
+
+50
+
+100
+
+150
+
+200
+
+Output throughput (tok/s)
+Claude Opus (API)
+
+GLM (hosted API)
+
+GLM-5.2 (our local NVFP4)
+
+Fig. 6. Speed–quality trade-off (Artificial Analysis hosted-endpoint measurements, July 2026): output throughput versus Intelligence Index. The Claude
+models occupy the high-quality/low-speed upper-left; the GLM models occupy
+the high-speed/lower-quality lower-right. The orange triangle marks our
+local NVFP4 GLM-5.2 deployment (≈185 tok/s, a single-tenant deployment
+observation).
+
+E. Model Performance Benchmarking
+To provide context for the empirical productivity results,
+Fig. 6 contrasts output throughput with the Artificial Analysis
+Intelligence Index for the four models, as measured on the
+vendors’ hosted endpoints in July 2026 [14]. There is a
+clear trade-off between throughput and reasoning quality: the
+Claude Opus 4.8 and 4.7 APIs lead on intelligence (Index
+56 and 54) but deliver 66.0 and 56.6 output tok/s, whereas
+hosted GLM-5.2 sustains 214.9 tok/s at Index 51 (GLM-5.1:
+76.4 tok/s at Index 40).
+Our local NVFP4 deployment of GLM-5.2 on the shared
+NVL72 cluster sustained observed output speeds of roughly
+185 tok/s under interactive agent load—a single-tenant deployment observation rather than a controlled benchmark, but of
+the same order as the hosted 214.9 tok/s figure and consistent with Blackwell’s native 4-bit hardware acceleration, and
+approximately 2.8× the Opus 4.8 API. Faster raw generation,
+however, is not expected to translate into faster end-to-end task
+completion in Period B: the elevated defect rate multiplied the
+number of repair iterations per task (Section V-B), so reviewand-repair overhead—not raw token throughput—dominates
+wall-clock time. We did not instrument wall-clock completion
+time directly; consistent with this expectation, commit cadence
+slowed in Period B (median inter-commit interval 12.7 vs.
+5.9 min, Section V-G)—echoing the slowdown measured in
+the agentic-assistant field RCT [6]—though that proxy also
+absorbs the higher repair volume.
+
+mypy on the exception-handling branch, and a dedicated repair
+commit adding the dict | list annotation was required.
+Listing 1. GLM omits the union type (POST returns dict, GET returns
+list):
+result = await client.request(token, payload)
+# mypy: incompatible assignment on the
+# except-branch. Fix:
+result: dict | list = \
+await client.request(token, payload)
+
+2) Environment-Behavior API Misuse (httpx proxy inheritance): In the second case, the agent constructed an
+httpx client for a cluster-internal service without disabling
+environment-variable trust. The client silently inherited the
+pod’s HTTP_PROXY settings, routing in-cluster traffic through
+an external proxy and breaking the integration—a defect
+invisible at compile time that surfaced only at runtime inside
+the Kubernetes network.
+Listing 2. GLM output inherits the proxy environment:
+client = httpx.AsyncClient(base_url=URL)
+# -> in-cluster calls routed via HTTP_PROXY
+# Fix:
+client = httpx.AsyncClient(
+base_url=URL,
+trust_env=False) # bypass proxy for
+# cluster-internal calls
+
+Both anomalies illustrate the pattern quantified in Table IX: the local configuration’s failures concentrate in typing
+discipline and in the correct use of API and environment
+semantics—categories where the frontier API model rarely
+required dedicated repair commits.
+
+F. Qualitative Case Studies and Code Anomalies
+To understand the nature of coding errors generated by the
+on-premise quantized GLM-5.1/5.2 configuration, we examine
+two representative defects drawn from Period B fix commits
+(code paraphrased and identifiers genericized).
+1) Static Typing Violation (mypy): Listing 1 shows a typediscipline failure. The agent implemented an internal API call
+whose backend endpoint returns a dict for POST requests
+but a list for GET requests, and bound the result without the
+required union annotation. The un-annotated assignment fails
+
+G. Objective Workload and Developer-Experience Indicators
+Rather than rely on subjective self-report to characterize
+the developer’s day-to-day experience, we derive a set of
+objective behavioral indicators directly from the timestamped
+Git history. Each indicator is computed deterministically from
+
+12
+
+commit metadata and is fully reproducible; together they
+operationalize the workload dimensions that instruments such
+as the NASA-TLX [27] capture subjectively, but without recall
+bias or self-report subjectivity. We define: (i) the debuggingspiral share, the fraction of commits occurring inside a maximal run of three or more consecutive fix commits; (ii) the
+longest uninterrupted repair run; (iii) the median inter-commit
+interval within a working stretch (gaps under 8 hours), a proxy
+for the cadence of visible progress; (iv) the median daily active
+span, the wall-clock hours between the first and last commit
+on active days, a proxy for the workflow’s temporal footprint
+(sessions frequently ran unattended) rather than continuous
+human presence; (v) the mean rework multiplicity, the average
+number of distinct commits touching each file. Table XII
+reports these indicators for both periods.
+
+Longest repair run
+Inter-commit interval
+
+Fix-commit share (FCR)
+Commits in debugging spirals (≥ 3)
+Longest uninterrupted repair run
+Median inter-commit interval
+Median daily active span
+Mean rework (commits per file)
+
+A (Opus) B (GLM)
+45.9%
+35.0%
+18
+5.9 min
+6.6 h
+1.61
+
+2.2
+
+Debug-spiral share
+
+2.0
+
+Fix-commit share
+
+1.6
+
+Daily active span
+
+1.9
+
+Rework mult.
+
+1.4
+
+0
+
+1
+
+2
+
+3
+
+4
+
+Period B / Period A ratio (1.0× = parity)
+Fig. 7. Objective behavioral workload indicators expressed as the Period-B-toPeriod-A ratio (Table XII). All six axes exceed the 1.0× parity line (dashed),
+i.e., every indicator worsens under the local GLM configuration; the repairloop measures (longest run, inter-commit interval, spiral share) degrade most.
+
+TABLE XII
+O BJECTIVE B EHAVIORAL W ORKLOAD I NDICATORS ( FROM TIMESTAMPED
+G IT HISTORY )
+
+Indicator
+
+3.2
+
+included—whereas the NVFP4 checkpoint stores quantized
+weights at 4.5 bits per parameter (4-bit values plus one
+FP8 scale per 16-element block); with embeddings, router,
+and normalization tensors retained at higher precision, the
+deployed checkpoint measures ≈465 GB, fitting a 4× B200
+tray (∼750 GB HBM) with an FP8 KV cache. As noted in
+Section II-C, vendor calibration reports claim near-lossless
+NVFP4 accuracy on standard benchmarks; Blackwell’s native
+FP4 tensor-core path underlies the high observed generation
+throughput. This one-tray footprint is what enables the low
+amortized cost of $2,560.00 USD in our economic model.
+We emphasize a scoping limitation: we did not deploy FP16
+or FP8 baselines of GLM-5.2 for a controlled quantization
+ablation (an FP16 baseline alone would occupy more than a
+full eight-GPU allocation). Consequently, our defect analysis
+cannot empirically separate quantization-induced degradation
+from the base model’s intrinsic capability gap relative to
+Claude Opus. We instead treat the NVFP4 checkpoint as
+the unit of analysis—it is the artifact an enterprise would
+actually deploy—and flag the attribution question as a threat
+to construct validity in Section VII-C.
+
+B/A
+
+74.9% 1.6×
+69.8% 2.0×
+58 3.2×
+12.7 min 2.2×
+12.4 h 1.9×
+2.32 1.4×
+
+The indicators consistently show a heavier, more repairdominated workload under the local GLM configuration:
+69.8% of Period B commits fell inside consecutive-fix runs
+(versus 35.0% in Period A), the longest such run growing from
+18 to 58 repair commits, with progress cadence, active-day
+span, and rework multiplicity all degrading in step (Table XII;
+Fig. 7 plots each indicator’s Period-B-to-Period-A ratio, every
+axis worsening with no offsetting improvement). These behavioral signals corroborate the quality findings of Section V-B
+along a complementary axis: the cadence and span indicators
+derive purely from timestamps, and the run-structure indicators
+add temporal patterning to the keyword classification. Unlike a
+subjective questionnaire, they are free of recall bias and selfreport framing—though not of a hypothesis-aware subject’s
+labeling behavior, bounded by the invariance arguments of
+Section VII-C.
+
+VI. D ISCUSSION
+Before interpreting these results, we state their causal scope.
+The gap we measure—most sharply the ≈3.6× difference in
+defect-repair odds—is the joint effect of a deployable bundle:
+base-model capability, NVFP4 quantization, vLLM serving,
+the agent harness (Claude Code vs. Opencode), and the fixed
+period ordering of a naturalistic study. It cannot be attributed
+to any single factor—least of all “the model” in isolation—so
+every claim below should be read at the level of the deployable
+configuration an enterprise would adopt; factor decomposition
+is deferred to Section VII-C.
+To synthesize the empirical findings, Table XIII presents
+a multi-dimensional comparative summary of the commercial
+public API model and the on-premise open-weights cluster
+configuration.
+
+H. Hardware Serving Configuration and Quantization
+The local serving configuration follows the deployed Hugging Face checkpoint configurations [12], [20]: both generations were served via the vLLM engine with PagedAttention [7] on a shared NVIDIA GB200 NVL72 cluster. The
+smallest allocation on which the NVFP4 checkpoint can be
+served—a 4× B200 slice, one GB200 NVL72 compute tray—
+is the cost-accounting basis rather than the full physical cluster.
+The arithmetic of 4-bit compression is what makes the
+one-tray footprint possible: a 753B-parameter model occupies
+roughly 1.5 TB in BF16—beyond even an eight-GPU allocation (∼1.5 TB HBM) once KV cache and activations are
+
+13
+
+TABLE XIII
+OVERALL C OMPARATIVE S UMMARY OF E VALUATED PARADIGMS
+Evaluation Dimension
+
+Period A: API-based Opus
+
+Period B: On-Premise GLM on NVL72
+
+Inference Infrastructure
+Quantization Format
+Serving Framework
+Prompt Caching
+
+Public Cloud (Claude API)
+Vendor-managed (undisclosed)
+Vendor Hosted
+Enabled (Anthropic KV Cache, 99.3% Hit Rate)
+
+Private Cluster (4× B200 tray, shared Blackwell)
+NVFP4 (NVIDIA 4-Bit Floating Point)
+Local vLLM Engine with PagedAttention
+Enabled (vLLM Prefix Cache, 86.4% Hit Rate)
+
+Inference Speed (Output)
+56.6–66.0 tok/s (hosted, Opus 4.7/4.8)
+Model Capability (AA Index / SWE-bench Pro) 56 / 69.2%
+Task Development Protocol
+Specification-Driven Development (SDD)
+
+≈ 185 tok/s (single-tenant; 2.8× vs. Opus 4.8)
+51 / 62.1%
+Specification-Driven Development (SDD)
+
+Git Commit Yield (non-merge)
+Fix Commit Ratio (FCR)
+Syntax/Type Repair Share
+
+246 Commits / 129,556 Insertions
+45.93% (Low defect-repair overhead)
+Low (1.8% of fix commits)
+
+367 Commits / 93,281 Insertions
+74.93% (High defect-repair overhead)
+Elevated (7.3% of fix commits)
+
+28-Day Compute / Infra Cost
+Data Compliance / Governance
+
+$8,785.21 (Token-based API cost)
+Requires sending code to third-party endpoints
+
+Shared $3,453 / dedicated $11,645 (incl. $893 ops)
+On-premise (no third-party transmission)
+
+2) MLOps Personnel Amortization: A local sitereliability or MLOps engineer at a monthly employer
+cost of NT$100,000 ($3,125 USD/month), amortized
+across a shared cohort of ∼100 developers, contributes
+≈ $30 USD per developer.
+3) Facilities and Maintenance: Space and data center
+bandwidth amortized at $50.00 USD per developer.
+
+A. The Cost–Quality Trade-off and Developer Churn
+Our results highlight a classic software quality trade-off.
+While the local infrastructure reduces direct compute expenditure by up to 71% (shared allocation), it introduces substantial
+developer churn: the high FCR (74.93%) of the GLM-5.1/5.2
+configuration implies that the developer spent considerable
+work hours correcting suboptimal AI outputs.
+We can model the total cost of development (T C) as:
+T C = Ccompute + Cops + (Tdev × Rdev ).
+
+This yields a total operational overhead of Cops ≈ $893 USD
+(NT$28,576) per developer for Period B. The three components deliberately use different bases—power at the full-tray
+672-hour draw, MLOps and facilities amortized across a 100developer cohort. Charging the whole tray’s power to one
+developer over-attributes idle-time energy to Period B, and
+adding local ops on top of a rental rate that already embeds
+facility overheads double-counts in the same direction; both
+are conservative against our savings conclusion, so the true
+saving is if anything larger. We evaluate the developer’s defectrepair time (Tdev ) as the number of fix commits times a per-fix
+review time. This directly instantiates the developer-time term
+of the feedback-loop model (Section IV-D): the timestamped
+commit history measures realized repair effort directly, so the
+Titer decomposition serves as the conceptual frame while the
+observed fix-commit volume supplies the quantity. Rather than
+assume an asymmetric per-fix duration, we apply a single
+symmetric review time of 15 minutes (0.25 hours) to both
+configurations, so that the labor difference is driven entirely by
+the objectively counted difference in fix-commit volume rather
+than by a subjective per-fix penalty. The symmetric value
+is empirically grounded: the median inter-commit interval
+immediately preceding a fix commit is nearly identical across
+periods (14.1 min in Period A, 13.2 min in Period B), so the
+per-fix repair cadence itself shows no asymmetry—the overall
+cadence gap (5.9 vs. 12.7 min, Section V-G) stems from the
+surrounding non-repair workflow. Initial feature-development
+labor, common to both periods and of comparable magnitude,
+cancels in this between-configuration comparison, so the “True
+TCO” below is compute plus differential repair labor rather
+than an absolute lifecycle cost.
+
+(5)
+
+To parameterize this model under realistic industrial conditions
+in Taipei, Taiwan (all conversions at 32 NTD/USD), we
+set the developer wage rate to Rdev = $35.00 USD per
+hour (NT$1,120/hour). This approximates the total employer
+compensation cost of a senior software engineer in Taiwan—
+official earnings statistics and market data (cf. [28]) place
+senior engineer base pay near NT$90k–130k per month, which
+grosses to roughly NT$170k–190k per month after statutory
+labor/health insurance, pension contributions, and bonus provisions, i.e., about NT$1,120 per working hour.
+For the cloud API configuration (Period A), Cops = 0 as
+infrastructure maintenance, electricity, and cooling are fully
+absorbed by the provider. For the private on-premise B200
+allocation (Period B), we define Cops from Taiwan operating
+parameters:
+1) Power and Cooling: A 4× B200 serving tray draws
+approximately 6.0 kW under load, accounting for the
+roughly 1.2 kW per-GPU board power plus the amortized host system share. Over a 28-day cycle (672
+hours) at Taipower’s high-voltage industrial summer
+rate of approximately NT$4.3 per kWh [29] ($0.134
+USD/kWh), direct electricity is $542; applying a Power
+Usage Effectiveness (PUE) multiplier of 1.5 for subtropical cooling overhead yields a total power cost of
+≈ $813; inference-time carbon emissions [30] are a
+further dimension our dollar-denominated model does
+not price.
+
+14
+
+Period A (Opus): 113 fix commits × 0.25 h × $35 =
+A
+= 28.25 h). The True TCO (Compute +
+$988.75 (Tdev
+Labor) is $9,773.96 USD.
+• Period B (GLM): 275 fix commits × 0.25 h × $35
+B
+= $2,406.25 (Tdev
+= 68.75 h). Adding Cops , the True
+TCO under shared allocation is $2,560.00 + $893.00 +
+$2,406.25 = $5,859.25 USD (NT$187,496); under dedicated reservation it is $10,752.00+$893.00+$2,406.25 =
+$14,051.25 USD.
+
+B. Information Security and Governance Context
+
+•
+
+Beyond mitigating the third-party data-governance risk already noted (Section III-E), local NVL72 serving keeps inscope inference data inside the corporate network.
+However, operating a shared local GPU cluster introduces
+internal multi-tenancy risk: proprietary code, schemas, and
+request contexts from multiple departments co-reside in shared
+GPU memory and host logs. Our infrastructure therefore
+layers hardware-level isolation (NVIDIA Multi-Instance GPU
+partitions with dedicated compute and memory outside the
+tensor-parallel serving trays), network and container isolation
+(dedicated Kubernetes namespaces under strict network policies, mutual TLS in transit), and token-based request isolation
+(role-based access control via developer-specific tokens). Because prefix caching is enabled, KV prefixes may be reused
+across requests, so cross-tenant isolation is enforced at these
+hardware, network, and access-control layers—maintaining
+data sovereignty not only against external third parties but
+also internally across multi-tenant development cohorts.
+
+We caution that commit cadence is an upper-bound proxy
+for developer effort (it includes agent and test-runner wait
+time); we therefore report TCO to indicate magnitude, not
+precision. Comparing the two periods, the allocation regime
+decides the outcome: under shared allocation, local deployment saves 40.1% of True TCO ($5,859.25 vs. $9,773.96,
+a net $3,914.71 saving per 28 days), whereas under dedicated reservation it costs 43.8% more than the cached API
+($14,051.25 vs. $9,773.96)—the 512 of 672 tray-hours billed
+beyond the standard seat erase the unit-cost advantage. In
+the shared regime, the dominant driver is that the cachedAPI compute bill ($8,785) still dwarfs the tray amortization
+($2,560) plus the incremental repair labor ($2,406 vs. $989),
+so even a 2.4× defect-repair burden does not erase the
+compute advantage. Instantiating the break-even criterion of
+Section IV-D: ∆Ccompute = $8,785 − $3,453 = $5,332 against
+Rdev × ∆Tdev = $35 × 40.5 h = $1,418—the shared-allocation
+advantage clears the criterion by 3.8×. The genuine cost of the
+local configuration is therefore not dollars but the developerexperience burden quantified objectively in Section V-G.
+
+C. Cost–Quality Frontier of a Hybrid Routing Gateway
+To evaluate the proposed hybrid routing gateway, we perform an offline counterfactual replay over the pooled set
+of 613 real non-merge commits from both periods, using
+the empirically measured per-tier fix rates of each configuration (Section V-C): Claude 15.1%/61.2%/63.4% and GLM
+46.5%/80.6%/86.9% for High/Medium/Low tiers respectively.
+Each routing policy assigns every difficulty tier to one backend; infrastructure cost is amortized per commit by dividing
+each backend’s measured period total (API $8,785.21; shared
+GPU + ops $3,453) by the pooled 613-commit denominator—
+so routing 100% of the pooled workload to a backend reproduces its measured bill—and repair labor is priced per fix
+commit at the symmetric per-fix review time of Section VIA. This assumes each backend’s infrastructure cost scales
+linearly with commit count and that the pooled workload’s
+footprint matches that backend’s own period—first-order approximations, not measured quantities. The Pure Local GLM
+TCO reported here ($7,388) is deliberately not the Period B
+actual of Section VI-A ($5,859): the replay reprices the pooled
+613-commit workload—not Period B’s own 367 commits—at
+each backend’s per-tier fix rates, so that all four policies are
+scored on an identical workload and are therefore mutually
+comparable, at the cost of not being directly comparable to
+the single-period figures.
+Table XIV yields a sobering correction to the intuitive “best
+of both worlds” narrative. Because the local configuration’s
+fix rate exceeds Opus’s within every difficulty tier—including
+86.9% on Low-difficulty commits—no routing policy that
+sends any tier to the local model can match the pure-API
+defect profile. Routing decisions therefore trace a monotonic
+cost–quality frontier rather than finding a dominating optimum: each increment of workload shifted to the local backend
+buys infrastructure savings at the price of a higher overall FCR
+and more repair labor (Fig. 8 decomposes each policy’s TCO
+into compute/infrastructure and repair-labor components). On
+
+Parameter sensitivity. Because the cost model rests on several point estimates, we sweep the three most consequential:
+the wage rate ($27–45/hr), the GPU lease rate ($3–6 per GPUhour), and the per-fix review time (10–25 min). The sharedallocation conclusion is robust—on-premise True TCO savings stay positive across the entire sweep, ranging from about
+9% (all-adverse corner) to 56% (all-favorable). The dedicatedreservation option, by contrast, is dominated throughout: with
+the tray reserved around the clock, its True TCO exceeds
+the cached API’s at every point of the sweep (from roughly
+10% above in the most favorable corner to more than double
+in the most adverse), so dedicated reservation only pays off
+when the tray serves substantially more than a single developer’s workload. Attribution hours are a fourth axis: at the
+point estimates, the shared-allocation saving survives any perdeveloper attribution up to ≈405 of the 672 tray-hours (≈2.5
+standard seats, 60% of the period’s wall clock); only beyond
+that does the on-premise True TCO exceed the cached API’s.
+The qualitative ordering—shared on-premise cheapest, then
+the pure API, then dedicated on-premise—holds throughout
+the sweep. One axis is held fixed: the Claude bill uses public
+list rates, though Anthropic also offers negotiated volume and
+committed-use discounts [25]; a committed-use reduction of
+≈45% in the API compute bill would by itself equalize the
+shared-allocation TCO, so this advantage is scoped to list-price
+API economics.
+
+15
+
+TABLE XIV
+S IMULATED ROUTING P OLICIES ON THE P OOLED R EAL W ORKLOAD (613 COMMITS ; TWO - STAGE BOOTSTRAP 95% CI S OVER 10,000 RESAMPLES )
+
+Metric
+Workload share routed to API
+Infrastructure + Ops Cost
+Repair Labor Cost
+True TCO
+TCO saving vs. Pure API
+
+Pure Claude API
+
+Pure Local GLM
+
+Hybrid (High→Claude)
+
+Hybrid (High+Med→Claude)
+
+100%
+$8,785
+$2,634
+$11,419 [11,043, 11,795]
+—
+
+0%
+$3,453
+$3,935
+$7,388 [7,084, 7,679]
+35.3%
+
+28.1%
+$4,949
+$3,463
+$8,412 [8,125, 8,703]
+26.3%
+
+62.5%
+$6,785
+$3,105
+$9,890 [9,550, 10,232]
+13.4%
+
+49.1% [42.1, 56.1]
+
+73.4% [67.7, 78.8]
+
+64.6% [59.2, 70.0]
+
+57.9% [51.5, 64.3]
+
+Simulated Overall FCR
+
+this frontier, the High→Claude hybrid is a defensible compromise (26.3% TCO saving while protecting the higheststakes work with the stronger model), and pure local remains
+the TCO minimum (35.3% saving) for organizations that
+can absorb the defect churn. Notably, the High+Med hybrid
+still saves 13.4% but delivers an FCR 9 points worse than
+pure Claude—illustrating that partial-quality strategies must
+be checked against the frontier, not assumed beneficial. A
+dynamic escalation policy (start locally, escalate on repeated
+self-healing failure) would require modeling escalation latency
+and retry token burn that our commit-level replay cannot
+resolve; we leave its evaluation to the gateway prototype in
+future work. Figure 9 plots the four policies in cost–quality
+space, making the monotonic frontier explicit: moving left
+(cheaper) strictly moves up (worse FCR). Cost–quality routing
+has been explored on public benchmarks—cascades [31] and
+learned routers [32]—and cost-controlled agent evaluation is
+an emerging norm [33]; what this frontier adds is per-tier
+defect-repair rates and repair labor measured on a production
+enterprise workload.
+
+Simulated overall FCR (%)
+
+80
+
+Total Cost (USD)
+
+4k
+2k
+
+Compute + Ops Cost
+
+Pure Claude
+
+50
+8k
+
+9k
+
+10k
+
+11k
+
+12k
+
+suggestion depends on the reviewing developer. We therefore sketch—as an explicitly unevaluated design direction—
+an adaptive gateway that routes on the product of a normalized task complexity C(T ) ∈ [0, 1] (aggregating change
+size, module dependency fan-out, and target-file cyclomatic
+complexity) and a developer-experience coefficient E(P ) ∈
+[0, 1] (estimated from the developer’s historical Git-mined
+success rate): a task is routed to the local model only when
+C(T ) (1−E(P )) ≤ θ and to the cloud API otherwise, where θ
+is an enterprise safety tolerance. The intent is that harder tasks
+and less-experienced reviewers both bias routing toward the
+stronger cloud model, shrinking the low-yield manual-repair
+loops most likely to trap junior developers. We deliberately
+report no numeric instantiation: the present study does not vary
+developer profiles, so calibrating θ, the complexity weighting,
+and E(P ) against measured per-developer outcomes requires
+the multi-developer replication we leave to future work.
+2) Uncertainty Quantification via Bootstrap Resampling:
+Because both the per-commit outcomes and the per-cell fix
+rates are estimated from finite samples, presenting the simulated TCO and FCR as point estimates ignores sampling
+variance. We therefore quantify uncertainty by a two-stage
+bootstrap: in each of N = 10,000 iterations, we first resample
+every backend×tier cell at its observed period size to redraw
+its fix rate (propagating rate-estimation error), then resample
+
+6k
+
+Hybrid H
+
+High+Med→Claude
+
+60
+
+Fig. 9. Cost–quality frontier of the four routing policies (Table XIV). The
+dashed line traces the Pareto frontier; shifting workload to the local model
+moves strictly left-and-up (lower TCO, higher FCR)—a deliberate trade-off,
+not a free lunch.
+
+8k
+
+Pure GLM
+
+High→Claude
+
+True TCO (USD, pooled 613-commit workload)
+
+10k
+
+Pure Claude
+
+70
+
+7k
+
+12k
+
+0
+
+Pure GLM
+
+Hybrid H+M
+
+Defect-Repair Labor Cost
+
+Fig. 8. Simulated True TCO breakdown on the pooled 613-commit workload
+(Table XIV), comparing compute/infrastructure cost against developer defectrepair labor cost under Taiwan wage parameters. All four policies are
+evaluated on the same workload so the bars are directly comparable; Hybrid H
+is the High→Claude routing policy and Hybrid H+M the High+Med→Claude
+policy.
+
+1) Developer-Adaptive Thresholding (Design Sketch): The
+static routing policies above assign whole difficulty tiers
+uniformly, but the automation-bias risk of accepting a defective
+
+16
+
+the 613 pooled commits with replacement and redraw each
+commit’s fix outcome as a Bernoulli trial from the redrawn rate
+of its tier and assigned backend. The resulting 95% confidence
+intervals are reported in Table XIV and visualized in Fig. 10.
+The four TCO intervals are pairwise disjoint, and the full TCO
+ordering (Pure GLM < High→Claude < High+Med < Pure
+Claude) persists in all 10,000 paired resamples; the inverse
+FCR ordering persists in 99.8% of resamples for the threepolicy comparison (97.3% across all four, whose adjacent FCR
+intervals overlap). The cost–quality frontier’s ordering is thus
+statistically stable under workload and rate resampling—the
+trade-off itself, not merely its point estimate, is robust.
+We stress that the bootstrap quantifies sampling variance
+only. The replay rests on a stronger structural assumption:
+that each backend’s per-tier fix rate is a transportable property
+of the (difficulty tier, backend) pair, independent of which
+tasks are routed. Because the two periods carried different task
+streams, this treats the tiers as exchangeable across periods—
+for instance, it assumes a High-difficulty task rerouted to
+Claude would inherit Claude’s observed High-tier rate rather
+than a rate specific to that task’s content. The simulation is
+therefore a first-order projection, not a deployed-system measurement; a routing gateway can also change outcomes through
+mechanisms this static replay cannot capture (e.g., context
+handoff on escalation, or selection effects in which tasks reach
+which backend). We accordingly present the frontier as an
+illustrative decision aid whose ordering is robust, and defer
+measured validation to the gateway prototype of Section VIII
+(Future Work).
+
+dynamically typed Python (37.6% of Period A insertions)
+with statically typed TypeScript (17.1%), plus specification
+documents and configuration (Table VIII). To analyze how the
+cost–quality trade-offs vary by language paradigm, we assign
+each non-merge commit a dominant language by the file types
+it touches, and compute per-language FCR for both periods:
+• Statically Typed (TypeScript): In Period A (Opus),
+TypeScript-dominant work yielded 48 commits, of which
+20 were fixes (FCRTS = 41.7%). In Period B (GLM), 79
+commits with 50 fixes (FCRTS = 63.3%). TypeScript’s
+compile-time checks surface interface and type violations
+immediately in the agent loop, keeping the repair cycle
+localized to fast compiler feedback.
+• Dynamically Typed (Python): In Period A, Pythondominant work yielded 95 commits with 46 fixes
+(FCRPy = 48.4%). In Period B, 228 commits with
+198 fixes (FCRPy = 86.8%). Without compile-time type
+enforcement, incorrect interface assumptions in the local
+model’s output tend to bypass initial static checks and
+surface only at runtime or in test suites (e.g., FastAPI
+dependency wiring and Pydantic validation), lengthening
+the repair feedback loop relative to compiler-caught defects.
+In both periods, Python-dominant commits exhibit a higher
+FCR than TypeScript-dominant commits (48.4% vs. 41.7% under Opus; 86.8% vs. 63.3% under GLM), and the deployment
+effect dwarfs the language effect: switching from Opus to the
+local GLM configuration sharply raises the per-language FCR
+in both paradigms (Fig. 11). This suggests our cost–quality
+findings are not an artifact of a single language ecosystem,
+while static typing shows a consistent directional defectsurfacing advantage (the within-period gaps are not individually significant)—in line with large-scale repository evidence
+associating type discipline with defect proneness [34], an
+association whose magnitude subsequent replication work has
+questioned [35].
+
+·10−3
+
+2
+
+1
+
+0
+
+7k
+
+8k
+
+9k
+
+10k
+
+11k
+
+Fix Commit Ratio (FCR, %)
+
+Probability Density
+
+3
+
+12k
+
+Bootstrap True TCO (USD)
+Pure GLM
+Hybrid (High+Med→Claude)
+
+Hybrid (High→Claude)
+Pure Claude
+
+across
+
+Programming
+
+86.8
+
+80
+63.3
+
+60
+48.4
+41.7
+
+40
+20
+0
+
+Fig. 10. Two-stage-bootstrap distributions (normal approximation of 10,000
+resamples) of True TCO for the four routing policies of Table XIV. The
+central 95% intervals are pairwise disjoint; lower TCO trades against higher
+FCR.
+
+D. Generalizability
+Paradigms
+
+100
+
+TypeScript (static)
+Period A (Opus)
+
+Python (dynamic)
+Period B (GLM)
+
+Fig. 11. Fix Commit Ratio by language paradigm. The Period-A→B increase
+is far larger for dynamically typed Python (48.4% → 86.8%, +38.4 pts) than
+for statically typed TypeScript (41.7% → 63.3%, +21.6 pts): the compiler’s
+static checks surface a share of the local model’s errors inside the agent loop,
+before they become separate repair commits.
+
+Language
+
+Our empirical evaluation was conducted within the production monorepo under study, a hybrid codebase mixing
+
+17
+
+ORMH = 3.61 confirm

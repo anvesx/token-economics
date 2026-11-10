@@ -1,0 +1,2205 @@
+TITLE: RouterDC: Query-Based Router by Dual Contrastive Learning for Assembling Large Language Models
+URL: https://arxiv.org/abs/2409.19886
+ORG: NeurIPS  TYPE: paper  DATE: 2024-09
+
+RouterDC: Query-Based Router by Dual Contrastive
+Learning for Assembling Large Language Models
+
+arXiv:2409.19886v1 [cs.LG] 30 Sep 2024
+
+Shuhao Chen1, ⋆ , Weisen Jiang1, 2, ⋆ , Baijiong Lin3 , James T. Kwok2 , Yu Zhang1, †
+1
+Southern University of Science and Technology
+2
+The Hong Kong University of Science and Technology
+3
+The Hong Kong University of Science and Technology (Guangzhou)
+12232388@mail.sustech.edu.cn, jamesk@cse.ust.hk
+{waysonkong@gmail.com, bj.lin.email, yu.zhang.ust}@gmail.com
+
+Abstract
+Recent works show that assembling multiple off-the-shelf large language models
+(LLMs) can harness their complementary abilities. To achieve this, routing is a
+promising method, which learns a router to select the most suitable LLM for each
+query. However, existing routing models are ineffective when multiple LLMs
+perform well for a query. To address this problem, in this paper, we propose a
+method called query-based Router by Dual Contrastive learning (RouterDC). The
+RouterDC model consists of an encoder and LLM embeddings, and we propose
+two contrastive learning losses to train the RouterDC model. Experimental results
+show that RouterDC is effective in assembling LLMs and largely outperforms
+individual top-performing LLMs as well as existing routing methods on both
+in-distribution (+2.76%) and out-of-distribution (+1.90%) tasks. Source code is
+available at https://github.com/shuhao02/RouterDC.
+
+LLMs
+
+Sim
+
+ila
+
+rity
+
+RouterDC
+
+In-Distribution
+Out-of-Distribution
+
+Figure 1: The inference pipeline of RouterDC.
+The encoder E and the LLM embeddings k’s are
+trainable parameters, while the LLMs are frozen.
+
+1
+
+Figure 2: Testing accuracy of candidate LLMs
+and our RouterDC on in-distribution and out-ofdistribution tasks.
+
+Introduction
+
+Large language models (LLMs) have demonstrated remarkable capabilities across various tasks.
+Many LLMs are publicly available online, such as Mistral [23], LLaMA-2 [43], and LLaMA-3 [42].
+Those LLMs have been further fine-tuned to be generalists or specialists. For example, MetaMath [50]
+excels in solving mathematical reasoning problems. Since those LLMs are pre-trained or fine-tuned
+with various data, they typically exhibit varying strengths and weaknesses across different tasks
+⋆
+
+Equal contribution
+
+†
+
+Corresponding author
+
+38th Conference on Neural Information Processing Systems (NeurIPS 2024).
+
+8
+Density
+
+6
+softmax
+
+4
+2
+0
+
+Figure 3: Score distributions of LLMs on an example query (w/ or
+w/o normalization).
+
+64%
+
+0 0.10.2 0.4 0.6 0.8
+Difference of top-2 scores
+
+1
+
+Figure 4: Distribution of the
+score difference between the
+top two LLMs.
+
+[24, 30]. Therefore, assembling multiple off-the-shelf LLMs can harness their complementary
+abilities, resulting in better performance than relying on a single LLM.
+LLM ensembling is a straightforward method to assemble LLMs, which feeds the query to all
+candidate LLMs and merges all outputs into a final answer by majority voting [28, 48] or pairwise
+ranking [24]. However, this approach is computationally prohibitive as it requires generating outputs
+with all candidate LLMs during inference. To tackle this issue, recent works [40, 30, 41] propose
+to learn a router to select a suitable LLM for each query. During inference, routing is much more
+efficient than ensembling as it only needs to perform inference on the selected LLM.
+The current state-of-the-art routing method is ZOOTER [30]. To train a router, ZOOTER scores the
+outputs of candidate LLMs as the supervision signal via an off-the-shelf reward model and then learns
+the router by minimizing the Kullback-Leibler divergence [26] between the selection probability
+from the router and the softmax normalized score. However, this loss is inappropriate when multiple
+LLMs perform well for a query. Figure 3 shows the scores of seven LLMs for an example query,
+where the top three LLMs have significantly higher scores than the bottom three LLMs. After the
+softmax normalization, the scores are small, leading the router to generate small probabilities on the
+top LLMs. Moreover, the normalized score tends to be uniform, which is not a strong supervision
+signal for learning the router. Figure 4 shows that the score difference between the top two LLMs is
+usually tiny (under the experimental setting in Section 4.1), indicating that the loss used in ZOOTER
+is suboptimal.
+In this paper, we propose a query-based Router by Dual Contrastive learning (RouterDC). The
+RouterDC consists of an encoder, whose architecture is a small language model, and learnable LLM
+embeddings for candidate LLMs. For each query, we first score the candidate LLMs by comparing
+their predictions with the gold label. Instead of directly aligning the score distribution, we leverage
+the score to choose the top-performing and bottom-performing LLMs and then propose a sample-LLM
+contrastive loss to pull the query embedding (extracted by the encoder) close to the embeddings
+of top LLMs while pushing far away from the embeddings of bottom LLMs. Based on this loss,
+our RouterDC could equally select one of top-performing LLMs for a query and hence alleviate the
+shortcoming of ZOOTER introduced previously. We empirically observe that training the router
+using the sample-LLM contrastive loss alone is not stable as similar queries can have dissimilar
+embeddings and be assigned to different LLMs. To improve the training stability, we cluster all the
+training queries into multiple groups and design a sample-sample contrastive loss to maximize the
+similarity between queries in the same group while minimizing the similarity between queries from
+different groups.
+We conduct experiments on challenging reasoning tasks (language understanding, code generation,
+and mathematical reasoning) to evaluate the proposed RouterDC in both in-distribution and out-ofdistribution settings. Empirical results show that RouterDC can harness the complementary potentials
+of LLMs, achieving state-of-the-art performance. Moreover, RouterDC outperforms existing routing
+methods by a large margin, showing that the proposed two contrastive losses are more beneficial for
+training the RouterDC.
+Our contributions are summarized as follows. (i) We propose a novel framework to learn a router to
+select the suitable LLM for each query by dual contrastive learning, which consists of sample-LLM
+and sample-sample contrastive losses; (ii) The proposed RouterDC is parameter-efficient (has less
+than 100M parameters) and computation-efficient (without backpropagating the gradients through
+LLMs) in training. Moreover, RouterDC is also efficient in inference (6× faster than Voting) as it only
+requires computation cost for the selected LLM and negligible cost for the router; (iii) Experimental
+2
+
+results show that RouterDC effectively assembles LLMs and outperforms individual top-performing
+LLMs as well as existing routing methods on both in-distribution (+2.76%) and out-of-distribution
+(+1.90%) tasks.
+
+2
+
+Related Work
+
+Large Language Models (LLMs). LLMs have achieved great success in natural language processing
+and many foundation models have been released online [23, 43, 42]. Many prior works [50, 44,
+54, 9, 8, 38, 19, 31] focus on fine-tuning those foundation models to obtain specialized LLMs for
+solving versatile tasks, for example, language understanding [54, 19], code generation [38, 8], and
+mathematical reasoning [50, 31]. In this paper, we study the problem of assembling LLMs to harness
+their strengths by a router.
+LLM Ensembling. The goal of LLM ensembling is to leverage multiple LLMs to boost performance
+compared with a single model across various downstream tasks. Voting [28, 48] is a simple but
+effective ensemble method. Jiang et al. [24] further propose PairRanker and GenFuser to generate
+an improved output from the outputs of all LLMs, which needs to call LLMs O(T 2 ) times with
+T as the number of LLMs. LLM cascading [2, 12, 35, 51] query a list of LLMs (whose capacity
+depends on the model size) sequentially until an LLM’s output is satisfied (i.e., having a significantly
+high confidence score), which is returned as the final output. Fusion of Experts [47] concatenates
+all LLMs outputs to build the final output and casts it as a supervised learning problem. Unlike
+the aforementioned ensembling methods which require querying the LLMs at least O(T ) times in
+inference, our RouterDC is much more efficient as it only needs to call the selected LLM once.
+LLM Routing. LLM routing aims to select the most suitable model for a query without calling all
+LLMs. Many works have been proposed to design an effective routing strategy. Shnitzer et al. [40]
+propose a collection of binary classifiers to evaluate the correctness of each LLM. Lu et al. [30]
+propose ZOOTER to align a router with the supervision from the reward model. LoraRetriever [52]
+propose a task-wise router to select the LLM by predicting the task identity of the query. Srivatsa
+et al. [41] explore the routing ability using both classifier-based and clustering-based approaches.
+Though those routers are cost-effective, they neglect the fact that multiple LLMs can be wellsuited to answer a single query. In contrast, the proposed RouterDC leverages contrastive losses to
+simultaneously consider the strengths of several powerful LLMs.
+Contrastive Learning. Contrastive learning learns effective representations by distinguishing
+between similar and dissimilar pairs of data points. It has been widely used in various tasks, such
+as visual representation learning [4, 13], sentence representation leaning [11, 49, 39], and visionlanguage alignment [36, 55]. In this paper, we propose two contrastive losses to learn the RouterDC
+for assembling LLMs.
+
+3
+
+Methodology
+
+In this section, we propose RouterDC, a framework for learning a query-based router to assemble
+LLMs. An overview is illustrated in Figure 1. We introduce the problem of router learning in
+Section 3.1 and design a scoring method to measure the performance of LLMs on each training query
+(Section 3.2). Next, we propose two contrastive losses to train the router, including a sample-LLM
+contrastive loss for learning the routing strategy (Section 3.3) and a sample-sample contrastive loss
+for improving training stability (Section 3.4). The training and inference procedures are provided in
+Algorithm 1.
+3.1
+
+Problem Formulation
+
+Consider a set of LLMs {Mt : t = 1, . . . , T } and a training set Dtrain = {(xi , yi ) : i = 1, . . . , n},
+where xi is a query (i.e., question) and yi is its answer (i.e., ground truth). Usually, no single
+LLM is universally suitable for all queries in Dtrain . Moreover, LLMs are diverse and have different
+architectures (e.g., Mistral-based [23], LLaMA-based [42]), making it infeasible to merge all LLMs
+into a single model [33, 21, 25]. In this paper, we study the problem of assembling LLMs by learning
+a router to select the suitable LLM for each query. The router takes x as input and produces the
+probability distribution of T LLMs being selected. As training and testing queries may come from
+different data distributions, the learned router is expected to generalize well on both in-distribution
+and out-of-distribution scenarios.
+3
+
+3.2
+
+Scoring
+
+To learn the router, we need to design a scoring method to assess the performance of LLMs on
+queries. For an open-ended generation query xi (requiring a long answer, e.g., GSM8K [7], with an
+example shown in Example 2), one can directly compare the ground truth yi with the output of the
+(t)
+LLM ŷi = Mt (xi ) generated by greedy decoding. Though greedy decoding is simple and efficient,
+its inherent shortsightedness often prevents it from discovering the optimal solution. Conversely,
+sampling, like beam sampling [46], is an advanced approach that is widely used in practice as it
+explores multiple alternatives in the search space, potentially leading to better results. We feed the
+(t)
+query xi to the LLM Mt M times to obtain outputs {ŷi,m : m = 1, . . . , M }. Then, we define the
+score of LLM Mt on the query xi as:
+M
+
+(t)
+si =
+
+1 X
+(t)
+evaluate(ŷi,m , yi ),
+M m=1
+
+(1)
+
+where evaluate(ŷ, y) gives 1 if the prediction ŷ is correct otherwise 0.
+For a multiple-choice question xi with an option set Ai (e.g., MMLU [16], as an example shown in
+Example 2), sampling is unnecessary as we can simply define the score based on the probability of
+options, i.e.,
+
+ P PMt (ŷi(t) |xi )
+(t)
+if ŷi = yi
+(t)
+a∈Ai PMt (a|xi )
+si =
+(2)
+0
+otherwise
+where PMt (a|xi ) is the probability of option a predicting by the LLM Mt . According to Eq. (2),
+(t)
+when the LLM Mt outputs a correct option (i.e., ŷi = yi ), we normalize the probability to make it
+comparable across different LLMs, which will be used in Section 3.3; When the LLM Mt generates
+(t)
+(t)
+a wrong option, si is set to 0 to punish Mt for xi . Based on the scores {si : t = 1, . . . , T }, we
+introduce a sample-LLM contrastive loss in the next section.
+Example 1
+An open-ended question from GSM8K [7]:
+Question: Tim has 30 less apples than Martha, and Harry has half as many apples as Tim. If
+Martha has 68 apples, how many apples does Harry have?
+Answer: Tim has 68-30 = 68-30=38 apples. Harry has 38/2 = 38/2=19 apples. #### 19
+A multiple-choice question from MMLU [16]:
+Question: An object is placed 100cm from a plane mirror. How far is the image from the object?
+Options: A. 50cm B. 100cm C. 200cm D. 300cm
+Answer: C
+3.3
+
+Sample-LLM Contrastive Loss
+
+As illustrated in Figure 1, The proposed RouterDC consists of an encoder E(x; w) parameterized by
+w (where in our experiments E(x; w) uses a small language model mDeBERTaV3-base [14]) to map
+x into an embedding in Rp , and T learnable LLM embeddings {kt ∈ Rp : t = 1, . . . , T } for the T
+LLMs. For a query xi , the RouterDC generates a selection probability distribution over T LLMs as
+R(xi ; θ) = softmax [sim(E(xi ; w), k1 ), . . . , sim(E(xi ; w), kT )] ,
+
+(3)
+
+where θ ≡ {w, k1 , k2 , . . . , kT } denotes the set of the parameters in RouterDC, sim(·, ·) denotes the
+cosine similarity, and softmax(·) denotes the softmax normalization.
+One can train the router by minimizing the distance between the 
+output of the router and a score distri
+P
+(t)
+(1)
+(T )
+bution over {si : t = 1, . . . , T }, i.e., minθ (xi ,yi )∈Dtrain KL R(xi ; θ), softmax[si , . . . , si ] ,
+where KL(·, ·) is the Kullback-Leibler divergence [26]. This KL loss is recently used in [30] for
+LLM routing, but we argue that it may not be a good proxy for training the router since the goal of
+4
+
+Algorithm 1 Query-Based Router by Dual Contrastive Learning (RouterDC)
+Input: training set Dtrain , LLMs {Mt : t = 1, . . . , T }, #positive LLMs K+ , #negative LLMs K− ,
+#out-group queries H, #clusters N , hyper-parameter λ, mini-batch size b, and learning rate η;
+learnable parameters θ: encoder E(·; w) and LLM embeddings {kt : t = 1, . . . , T };
+training:
+(t)
+
+1: score LLMs for each sample (xi , yi ) ∈ Dtrain and obtain {si : t = 1, . . . , T };
+2: cluster training queries {xi : i = 1, . . . , n} into N groups;
+3: repeat
+4:
+sample a mini-batch of data B from Dtrain ;
+5:
+for (xi , yi ) ∈ B do
+6:
+obtain positive LLMs index set Ii+ and negative LLMs index set Ii− ;
+7:
+compute the sample-LLM contrastive loss Lsample-LLM (xi , yi ; θ) by Eq. (4);
+−
+8:
+sample an in-group query x+
+i and a set of H out-group queries Xi from B;
+9:
+compute the sample-sample contrastive loss Lsample-sample (xi ; θ) by Eq. (5);
+10:
+end for P
+11:
+L(B; θ) = (xi ,yi )∈B Lsample-LLM (xi , yi ; θ) + λ Lsample-sample (xi ; θ);
+12:
+θ ← θ − η∇θ L(B; θ);
+13: until converged.
+
+inference:
+14: sample a testing query x′ ;
+15: t′ = arg maxt∈{1,...,T } sim(E(x′ ; w), kt );
+16: ŷ′ = Mt′ (x′ ).
+
+the router is to assign queries to top-performing LLMs instead of aligning the scores with R(xi ; θ),
+particularly for the bottom-performing LLMs.
+We draw inspiration from contrastive learning [34, 22] and propose a sample-LLM contrastive loss
+to learn the router. For a query xi , we construct its positive LLMs index set Ii+ and its negative
+(t)
+LLMs index set Ii− based on the scores {si : t = 1, . . . , T } as: Ii+ consists of the indices of LLMs
+corresponding to the top-K+ scores, while Ii− consists of the indices of LLMs corresponding to the
+(t)
+bottom-K− scores with si < 0.5. Note that K+ can be larger than 1 (K+ = 3 in our experiments)
+as there can be multiple LLMs that are suitable for a query in practice. We expect the router to pull
+the query embedding E(xi ; w) closer to the positive LLMs’ embeddings {kt+ : t+ ∈ Ii+ } while
+pushing apart from the negative LLMs’ embeddings {kt− : t− ∈ Ii− }. To this end, we propose the
+sample-LLM contrastive loss as
+Lsample-LLM (xi , yi ; θ) =
+
+X
+
+− log
+
+t+ ∈Ii+
+
+3.4
+
+esim(E(xi ;w),kt+ )
+.
+P
+esim(E(xi ;w),kt+ ) + t− ∈I − esim(E(xi ;w),kt− )
+
+(4)
+
+i
+
+Sample-Sample Contrastive Loss
+
+We empirically find that training the router by minimizing the sample-LLM contrastive loss alone
+is not stable (refer to Figure 12 in Section 4.4). The reason is that some similar queries can have
+dissimilar embeddings and may be routed to different LLMs. To improve the robustness of the
+router, we introduce a sample-sample contrastive loss to encourage the encoder to generate similar
+embeddings for similar queries.
+First, we cluster queries into multiple groups by unsupervised clustering. Specifically, we extract the
+embeddings of all training queries using a pre-trained encoder (i.e., mDeBERTaV3-base [14]) and
+transform them into low-dimensional vectors by the t-SNE algorithm [45]. Then the k-means clustering algorithm [32] is used to cluster these low-dimensional vectors into N groups {K1 , . . . , KN }.
+Next, we construct a sample-sample contrastive loss to encourage samples in the same group to
+have similar embeddings. Specifically, for a query xi ∈ Kj , we randomly select an in-group query
+5
+
+−
+x+
+i ∈ Kj and an out-group set Xi ⊂ {∪j ′ ̸=j Kj ′ } of H queries from the training mini-batch at each
+iteration. Similar to the sample-LLM contrastive loss, we propose a sample-sample contrastive loss to
+pull the embedding of xi closer to the embedding of x+
+i while pushing it away from the embedding
+−
+of queries in Xi . Formally, the sample-sample contrastive loss is formulated as
++
+
+Lsample-sample (xi ; θ) = − log
+
+esim(E(xi ;w),E(xi ;w))
+.
+P
++
+−
+esim(E(xi ;w),E(xi ;w)) + x− ∈X − esim(E(xi ;w),E(xi ;w))
+i
+
+3.5
+
+(5)
+
+i
+
+Training and Inference
+
+Training. We learn a router R(x; θ) by minimizing the final objective consisting of sample-LLM
+and sample-sample contrastive losses, i.e.,
+X
+L(Dtrain ; θ) =
+Lsample-LLM (xi , yi ; θ) + λ Lsample-sample (xi ; θ),
+(6)
+(xi ,yi )∈Dtrain
+
+where λ > 0 is a hyper-parameter. In our experiments, λ is set to 1.
+RouterDC contains less than 100M parameters (that is, the encoder model E(x; w) is small and the
+number of parameters of LLM embeddings {k1 , . . . , kT } are negligible), thus it is parameter-efficient.
+Moreover, training the router is computationally efficient as it does not require backpropagating the
+gradients through the LLMs.
+Inference. During inference, for each testing query x′ , we compute R(x′ ; θ) and select the LLM
+with the largest probability, i.e., t′ = arg maxt∈{1,...,T } sim(E(x′ ; w), kt ). Then we generate the
+prediction as ŷ′ = Mt′ (x′ ).
+Compared with existing LLM assembling methods like voting [28] and cascade [2], which require
+calling LLMs multiple times for a query, RouterDC is much more efficient as it only needs to call the
+selected LLM once.
+
+4
+
+Experiments
+
+4.1
+
+Experimental Setup
+
+Candidate LLMs. We choose seven open-source LLMs from HuggingFace1 : (i) Mistral-7B [23]
+is a general LLM released by the Mistral-AI team; (ii) MetaMath-Mistral-7B [50] is fine-tuned
+on the MetaMathQA dataset [50]; (iii) zephyr-7b-beta [44] is an aligned version of Mistral-7B
+using direct preference optimization [37] on a mix of publicly available, synthetic datasets; (iv) Chinese-Mistral-7B [54] expands the vocabulary and incrementally pre-trains Mistral-7B on Chinese
+corpus; (v) dolphin-2.6-mistral-7b [8] is fine-tuned from Mistral-7B and released by Cognitive
+Computations; (vi) Llama-3-8B [42] is a general LLM developed by the Meta company; (vii) dolphin-2.9-llama3-8b [9] is fine-tuned from Llama-3-8B and released by Cognitive Computations. The
+first five LLMs are Mistral-based, while the last two LLMs are Llama-3-based.
+Datasets. We evaluate in various tasks: (i) MMLU [16] is a general benchmark that covers 57
+subjects; (ii) GSM8K [7] is a mathematical benchmark with diverse grade school questions;
+(iii) CMMLU [27] is a comprehensive Chinese benchmark that covers 67 subjects ranging from basic
+to advanced professional levels; (iv) ARC-C [6] is a reasoning benchmark containing different
+grade-school level questions; and (v) HumanEval [3] is a code completion benchmark consisting of
+programming problems assessing language comprehension, algorithms, and simple mathematics. For
+GSM8K, we use its default training and testing split. As the rest tasks do not have a default split,
+we randomly split the dataset into training (70%) and testing (30%) sets. All the training sets are
+unioned together to form the total training set Dtrain for learning the router. The learned router is then
+evaluated on the testing set of in-distribution tasks.
+We also evaluate the trained router on three out-of-distribution (OOD) tasks: (i) PreAlgebra [17],
+which consists of basic university-level algebra problems; (ii) MBPP [1], which is a code benchmark
+that consists of 1,000 crowd-sourced Python programming problems; and (iii) C-EVAL [20], which
+1
+
+https://huggingface.co/
+
+6
+
+Routing
+
+Candidate LLMs
+
+Table 1: Testing accuracy (%) on in-distribution tasks. “Time” denotes the total inference time in
+minutes. The best is in bold and the second-best is underlined.
+MMLU
+
+GSM8K
+
+CMMLU
+
+ARC-C
+
+HumanEval
+
+Avg
+
+Time (m)
+
+Mistral-7B [23]
+MetaMath-Mistral-7B [50]
+zephyr-7b-beta [44]
+Chinese-Mistral-7B [54]
+dolphin-2.6-mistral-7b [8]
+Meta-Llama-3-8B [42]
+dolphin-2.9-llama3-8b [9]
+
+62.14
+59.86
+59.81
+57.42
+60.53
+64.59
+59.46
+
+36.71
+69.63
+33.00
+41.03
+52.38
+47.76
+69.81
+
+43.83
+43.83
+42.82
+49.67
+43.71
+51.77
+44.72
+
+49.43
+48.30
+57.95
+43.47
+52.56
+49.43
+49.43
+
+28.98
+29.80
+22.04
+21.43
+45.10
+26.73
+49.39
+
+44.22
+50.28
+43.13
+42.60
+50.86
+48.06
+54.56
+
+6.94
+7.23
+6.73
+7.11
+6.91
+6.33
+5.33
+
+Voting [28]
+
+63.30
+
+67.39
+
+47.48
+
+50.85
+
+42.85
+
+54.37
+
+46.59
+
+CosineClassifier
+ZOOTER [30]
+LoraRetriever (clustering) [52]
+RouterDC
+
+59.72
+60.48
+63.33
+61.07
+
+69.03
+66.69
+66.63
+70.32
+
+45.47
+45.27
+51.77
+51.77
+
+50.57
+53.13
+57.10
+58.52
+
+46.33
+44.29
+40.00
+51.02
+
+54.22
+53.97
+55.77
+58.54
+
+8.30
+8.01
+7.86
+7.97
+
+Routing
+
+Candidate LLMs
+
+Table 2: Testing accuracy (%) on out-of-distribution tasks. “Time” denotes the total inference time in
+minutes. The best is in bold and the second-best is underlined.
+PreAlgebra
+
+MBPP
+
+C-EVAL
+
+Avg
+
+Time (m)
+
+Mistral-7B [23]
+MetaMath-Mistral-7B [50]
+zephyr-7b-beta [44]
+Chinese-Mistral-7B [54]
+dolphin-2.6-mistral-7b [8]
+Meta-Llama-3-8B [42]
+dolphin-2.9-llama3-8b [9]
+
+24.80
+39.15
+20.78
+18.48
+29.28
+27.67
+39.72
+
+37.90
+37.74
+31.14
+29.64
+44.86
+43.02
+47.34
+
+46.43
+45.17
+44.87
+48.44
+45.10
+52.01
+44.80
+
+36.38
+40.69
+32.26
+32.19
+39.75
+40.90
+43.95
+
+4.31
+4.13
+4.30
+4.40
+3.20
+3.95
+3.15
+
+Voting [28]
+
+39.03
+
+41.60
+
+48.50
+
+43.04
+
+27.43
+
+CosineClassifier
+ZOOTER [30]
+LoraRetriever (clustering) [52]
+RouterDC
+
+36.97
+34.44
+35.36
+38.81
+
+38.48
+41.10
+43.12
+46.80
+
+47.77
+44.95
+52.01
+51.93
+
+41.07
+40.16
+43.50
+45.85
+
+4.43
+4.28
+4.22
+4.24
+
+is a comprehensive Chinese evaluation benchmark spanning 52 diverse disciplines and four difficulty
+levels.
+Baselines. We compare RouterDC with the following baselines: (i) CosineClassifier, which treats
+the routing problem as a multi-class classification (the top-1 LLM is the label) and trains a cosine
+classifier on outputs of the encoder. CosineClassifier is equivalent to RouterDC with K+ = 1,
+K− = T − 1, and λ = 0; (ii) Voting [28], which feeds the query to all LLMs and chooses the final
+prediction by majority voting; (iii) ZOOTER [30], which trains a router by supervised learning
+using rewards obtained by the scoring method in Section 3.2; (iv) LoraRetriever [52] designs a
+routing strategy based on task identities, which are unavailable in practice and we replace them with
+the cluster indices obtained by the clustering method in Section 3.4.
+Implementation Details. By following [5], we use the Language Model Evaluation Harness
+package [10] for evaluation. For open-ended generation questions, we query LLMs M = 10 times
+by employing beam sampling with a temperature of 0.2 to calculate the score. For the router, we
+adopt mDeBERTaV3-base [15] as the encoder E(x; w), which is a small language model containing
+only 86M parameters. The dimension of each LLM embedding is set to 768. The hyper-parameters
+K+ , K− , H, and λ are set to 3, 3, 3, and 1, respectively. The number of clusters N is set to 5. The
+router is trained for 1000 steps using the AdamW [29] optimizer with a learning rate of 5 × 10−5 , a
+weight decay of 0.01, and a mini-batch size of 64. All experiments are run on NVIDIA A100 80GB
+GPUs.
+4.2
+
+Main Results
+
+In-Distribution Results. Table 1 shows the testing accuracy on five in-distribution tasks. As can
+be seen, RouterDC achieves the highest average accuracy, surpassing the best individual LLM (i.e.,
+dolphin-2.9-llama3-8b) by a large margin of 3.98%. RouterDC achieves accuracy improvements over
+the top-performing individual model on three tasks, with an increase of +0.51% for GSM8K, +0.57%
+for ARC-C, and +1.63% for HumanEval. Compared with ZOOTER and CosineClassifier, RouterDC
+7
+
+CMMLU
+ARC-C
+
+HumanEval
+Avg
+
+70
+60
+50
+0 0.1 0.5 1
+
+2
+
+5 10
+
+Figure 5: Effects of λ.
+
+80
+
+MMLU
+
+GSM8K
+
+CMMLU
+
+ARC-C
+
+HumanEval
+
+Avg
+
+70
+60
+50
+40
+
+2 3 4 5 6 7 8 9 10 15 20 25 30
+N
+
+Figure 6: Effects of #clusters N .
+
+Testing Accuracy (%)
+
+MMLU
+GSM8K
+
+Testing Accuracy (%)
+
+Testing Accuracy (%)
+
+80
+
+80
+
+MMLU
+GSM8K
+
+CMMLU
+ARC-C
+
+HumanEval
+Avg
+
+70
+60
+50
+0
+
+1
+
+2
+
+H
+
+3
+
+4
+
+5
+
+Figure 7: Effects of H.
+
+consistently performs better on all the tasks, demonstrating that the proposed dual contrastive
+losses can train a more effective router. Furthermore, RouterDC achieves an average accuracy
+improvement of +2.77% over LoraRetriever, validating the usefulness of the sample-LLM contrastive
+loss. Additionally, RouterDC, with only 28.3 minutes for training, outperforms Voting on four of five
+tasks and is about 6× faster in inference.
+Out-of-Distribution Results. Table 2 shows the testing accuracy on three OOD tasks. As can
+be seen, the proposed RouterDC again achieves the highest accuracy on average, exceeding the
+best-performing individual LLM (i.e., dolphin-2.9-llama3-8b) by a large margin of 1.9%. For each
+task, RouterDC has roughly comparable performance with the best-performing individual LLM,
+e.g., 38.81 vs. 39.72 on PreAlgebra, 46.80 vs. 47.34 on MBPP, and 51.93 vs. 52.01 on C-EVAL,
+which demonstrates that RouterDC can select suitable LLMs for queries from OOD tasks. Among all
+routing methods, only our RouterDC can surpass dolphin-2.9-llama3-8b, confirming that RouterDC
+has a better generalization ability. Compared with Voting, RouterDC performs better on all tasks
+except PreAlgebra, on which they are comparable.
+4.3
+
+Sensitivity Analysis
+
+Effects of λ. We conduct an experiment to study the effect of λ in Eq. (6) w.r.t. the testing accuracy.
+According to Figure 5 (the detailed results are in Table 4 of Appendix A), we can see that using
+two contrastive losses together (i.e., λ = 1) achieves better overall performance than using the
+sample-LLM contrastive loss alone (i.e., λ = 0). Moreover, the overall performance of RouterDC is
+insensitive to a wide range of λ ∈ [0.5, 5], making it easy to choose the value of λ in practice.
+Effects of #clusters N . We conduct an experiment to study the effect of the number of clusters (i.e.,
+N ) used in the sample-sample contrastive loss w.r.t. the testing accuracy. According to Figure 6, we
+can find that RouterDC is insensitive to a wide range of N ∈ [4, 9]. Moreover, increasing N leads to
+higher average accuracy when N is small (≤ 4), but the accuracy saturates quickly.
+Effects of #out-group queries H. Figure 7 shows the testing accuracy with different H’s. When H =
+0, Lsample-sample is a constant, which means using Lsample-LLM alone and is not the best configuration.
+Moreover, the values of H ≥ 1 play a negligible influence on the average performance of RouterDC.
+
+3
+2
+1
+
+58.06 57.30 58.72 57.35
+55.87 57.49 59.07 58.06 57.07
+55.96 56.54 56.99 57.64 56.44 55.22
+1
+
+2
+
+3
+
+K
+
+4
+
+5
+
+6
+
+Figure 8: Average
+testing accuracy w.r.t.
+K+ and K− on five
+in-distribution tasks.
+Lighter color indicates
+higher accuracy.
+
+0.37 0.00 0.00 0.00 0.06 0.01 0.05 0.00
+0.02 0.96 0.00 0.06 0.00 0.63 0.00 0.00
+0.02 0.00 0.00 0.93 0.00 0.00 0.00 0.00
+0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00
+0.04 0.00 0.00 0.00 0.00 0.01 0.05 0.00
+0.14 0.00 1.00 0.00 0.04 0.08 0.07 1.00
+0.41 0.04 0.00 0.01 0.90 0.28 0.83 0.00
+
+Figure 9: Distribution of testing
+queries over LLMs. Lighter color
+indicates higher percentage.
+
+8
+
+-v0.1
+al-7B
+Mistr
+l-7B
+a
+tr
+-Mis
+Math
+Meta
+ta
+-b
+b e
+yr-7
+zeph -v0.1
+7B
+la
+istr
+ese-M
+7b
+Chin
+tral-mis
+-2.6
+in
+h
+B
+dolp
+-8
+a-3
+-Llam
+Meta
+3-8b
+a
+m
+.9-lla
+hin-2
+dolp
+
+0.08 -0.30 -0.17 -0.20 0.02 -0.34 -0.13 -0.19
+-0.12 0.68 -0.13 0.01 -0.23 0.45 -0.02 -0.13
+-0.15 -0.34 -0.05 0.46 -0.12 -0.31 -0.24 -0.05
+-0.15 -0.07 0.09 -0.25 -0.26 -0.16 -0.21 0.07
+0.12 -0.12 0.06 0.28 0.22 0.04 0.18 0.08
+0.03 -0.10 0.33 -0.10 -0.05 -0.03 0.08 0.33
+0.14 0.32 -0.10 -0.17 0.37 0.38 0.29 -0.08
+
+MM
+LU
+GS
+M8
+K
+CM
+ML
+U
+AR
+C_
+C
+Hu
+ma
+nE
+va
+l
+Pre
+Alg
+eb
+ra
+MB
+PP
+C-E
+VA
+L
+
+57.98 56.86 58.49
+
+-v0.1
+al-7B
+Mistr
+l-7B
+a
+tr
+-Mis
+Math
+Meta
+ta
+-b
+b e
+yr-7
+zeph -v0.1
+7B
+la
+istr
+ese-M
+l-7b
+Chin
+istra
+.6-m
+-2
+in
+h
+B
+dolp
+a-3-8
+-Llam
+Meta
+-8b
+3
+a
+m
+.9-lla
+hin-2
+dolp
+
+MM
+LU
+GS
+M8
+K
+CM
+ML
+U
+AR
+C_
+C
+Hu
+ma
+nE
+va
+l
+Pre
+Alg
+eb
+ra
+MB
+PP
+C-E
+VA
+L
+
+57.41 57.06
+
+K+
+
+5
+
+57.77
+
+4
+
+6
+
+Effects of K+ and K− . To investigate the sensitivity of K+ and K− , we conduct an experiment
+using the setting in Section 4.1. Figure 8 shows the average testing accuracy w.r.t. K+ and K−
+within the in-distribution setting. As can be seen, for all the configurations, RouterDC outperforms
+the best individual LLM (i.e., 54.56% for dolphin-2.9-llama3-8b in Table 1). Note that among all the
+configurations, RouterDC (with K+ = 1 and K− = 6) performs worse, showing that selecting only
+the top-1 LLM as positive and other LLMs as negative is inappropriate for learning the router.
+
+Figure 10: Average cosine similarity between LLMs and query
+embeddings. Lighter color indicates higher similarity.
+
+80
+70
+60
+50
+40 0
+
+Figure 11:
+Visualization
+of embeddings of training
+queries.
+4.4
+
+w/ sample sample, training
+w/ sample sample, testing
+w/o sample sample, training
+w/o sample sample, testing
+
+200 400 600 800 1000
+#Iteration
+
+Figure 12: Training and testing accuracy curves of RouterDC on GSM8K.
+
+Testing Accuracy (%)
+
+90
+Accuracy (%)
+
+MMLU
+GSM8K
+CMMLU
+ARC-C
+HumanEval
+
+80
+70
+60
+50
+40
+30
+
+MMLU
+GSM8K
+
+1
+
+2
+
+CMMLU
+ARC-C
+
+3
+
+4 5
+#LLMs
+
+HumanEval
+Avg
+
+6
+
+7
+
+Figure 13: Testing accuracy
+with different numbers of
+LLMs.
+
+Analysis
+
+Does RouterDC select the suitable LLM for each query? To answer this question, we analyze
+the assignment of testing queries to LLMs in each task. Figure 9 shows the distribution, which has
+a clear structure on both in-distribution and out-distribution tasks. For example, most GSM8K and
+PreAlgebra queries are assigned to MetaMath-Mistral-7B and dolphin-2.9-llama3-8b, which have
+strong mathematical ability (Tables 1 and 2). To further investigate the routing rule of RouterDC, we
+compute the average cosine similarity between LLMs and the query embeddings for each task. As
+shown in Figure 10, the similarity matrix is roughly aligned with the assignment matrix in Figure 9.
+For example, embeddings of GSM8K and PreAlgrebra queries are more similar to MetaMath-Mistral7B and dolphin-2.9-llama3-8b than to other LLMs.
+Visualization of Training Queries. Figure 11 shows the t-SNE visualization [45] of the embeddings
+of training queries using a pre-trained encoder mDeBERTaV3-base [14]. As shown, except for
+HumanEval, all tasks have a clear clustering structure, confirming that using unsupervised clustering
+in Section 3.4 is reasonable.
+Effectiveness of Lsample-sample . We conduct experiments to study the effectiveness of Lsample-sample
+(Eq. (5)). Figure 12 shows the training and testing accuracy curves of RouterDC (w/ or w/o
+Lsample-sample ) on GSM8K. As can be seen, the training curve of RouterDC (w/o Lsample-sample ) exhibits
+considerable oscillation, whereas that of RouterDC is much more stable. Figure 14(a) in Appendix B
+shows t-SNE visualization of training query embeddings extracted by the trained encoder of RouterDC (w/o Lsample-sample ). As can be seen, query embeddings belonging to different tasks are roughly
+mixed together. Example 2 in Appendix B provides two similar GSM8K queries, which both require
+basic calculation of shopping costs. Their embeddings have very low similarity (only −0.4589) when
+the router is trained by Lsample-LLM alone. After integrating Lsample-sample , training query embeddings
+have a clear cluster structure (Figure 14(b)) with the similarity between these two example queries
+increases to 0.9982. Furthermore, RouterDC achieves higher testing accuracy than its counterpart,
+verifying the effectiveness of Lsample-sample .
+Routing to Different Numbers of LLMs. We evaluate the performance of RouterDC when the
+number of LLMs increases. Figure 13 shows the testing accuracy on five in-distribution tasks. As can
+be seen, adding LLMs consistently enhances the average accuracy. Table 7 in Appendix A shows the
+detailed results and configurations.
+Robustness to LLM Losses during Inference. In a production environment, the loss of model
+servers is sometimes unavoidable due to various reasons such as network problems, thus placing
+crucial requirements on the robustness of the router. We conduct an experiment to validate the
+robustness of RouterDC by removing an LLM during inference. Table 3 shows the testing accuracy
+on five in-distribution tasks. We can see that RouterDC reliably withstands the loss of any single
+LLM. The robustness is attributed to the fact that multiple LLMs (with top scores) are chosen as
+positive labels in the sample-LLM contrastive loss, and they can be regarded as each other’s backup.
+
+5
+
+Conclusions
+
+In this paper, we study the problem of training a router to assemble LLMs. We propose RouterDC
+to learn a query-based router using two novel contrastive losses (i.e., the sample-LLM and samplesample contrastive losses). Experimental results show that RouterDC effectively assembles LLMs
+and outperforms individual top-performing LLMs as well as existing routing methods on both in9
+
+Table 3: Robustness of RouterDC to LLM losses during inference.
+MMLU
+
+GSM8K
+
+CMMLU
+
+ARC-C
+
+HumanEval
+
+Avg
+
+All
+
+61.07
+
+70.32
+
+51.77
+
+58.52
+
+51.02
+
+58.54
+
+w/o Mistral-7B
+w/o MetaMath-Mistral-7B
+w/o zephyr-7b-beta
+w/o Chinese-Mistral-7B
+w/o dolphin-2.6-mistral-7b
+w/o meta-llama/Meta-Llama-3-8B
+w/o dolphin-2.9-llama3-8b
+
+62.26
+60.93
+61.19
+61.07
+60.95
+60.95
+61.36
+
+70.32
+69.81
+70.32
+70.32
+70.32
+70.32
+69.41
+
+51.77
+51.77
+51.77
+51.77
+51.77
+46.30
+51.74
+
+58.52
+57.67
+53.13
+58.52
+58.52
+58.52
+57.95
+
+50.41
+51.02
+51.02
+51.02
+51.02
+51.02
+46.53
+
+58.66
+58.24
+57.49
+58.54
+58.52
+57.42
+57.40
+
+distribution and out-distribution tasks. As the proposed two contrastive losses are general, we consider
+applying them to other routing problems in future work.
+
+Acknowledgements
+This work is supported by NSFC key grant under grant no. 62136005, NSFC general grant under
+grant no. 62076118, Shenzhen fundamental research program JCYJ20210324105000003, and the
+Research Grants Council of the Hong Kong Special Administrative Region (Grants C7004-22G-1
+and 16202523).
+
+References
+[1] J. Austin, A. Odena, M. Nye, M. Bosma, H. Michalewski, D. Dohan, E. Jiang, C. Cai, M. Terry, Q. Le,
+and C. Sutton, “Program synthesis with large language models,” Preprint arXiv:2108.07732, 2021.
+[2] L. Chen, M. Zaharia, and J. Zou, “FrugalGPT: How to use large language models while reducing cost and
+improving performance,” Preprint arXiv:2305.05176, 2023.
+[3] M. Chen, J. Tworek, H. Jun, Q. Yuan, H. P. de Oliveira Pinto, J. Kaplan, H. Edwards, Y. Burda, N. Joseph,
+G. Brockman, A. Ray, R. Puri, G. Krueger, M. Petrov, H. Khlaaf, G. Sastry, P. Mishkin, B. Chan, S. Gray,
+N. Ryder, M. Pavlov, A. Power, L. Kaiser, M. Bavarian, C. Winter, P. Tillet, F. P. Such, D. Cummings,
+M. Plappert, F. Chantzis, E. Barnes, A. Herbert-Voss, W. H. Guss, A. Nichol, A. Paino, N. Tezak, J. Tang,
+I. Babuschkin, S. Balaji, S. Jain, W. Saunders, C. Hesse, A. N. Carr, J. Leike, J. Achiam, V. Misra,
+E. Morikawa, A. Radford, M. Knight, M. Brundage, M. Murati, K. Mayer, P. Welinder, B. McGrew,
+D. Amodei, S. McCandlish, I. Sutskever, and W. Zaremba, “Evaluating large language models trained on
+code,” Preprint arXiv:2107.03374, 2021.
+[4] T. Chen, S. Kornblith, M. Norouzi, and G. Hinton, “A simple framework for contrastive learning of visual
+representations,” in International Conference on Machine Learning, 2020.
+[5] Z. Chen, Y. Deng, H. Yuan, K. Ji, and Q. Gu, “Self-play fine-tuning converts weak language models to
+strong language models,” in International Conference on Machine Learning, 2024.
+[6] P. Clark, I. Cowhey, O. Etzioni, T. Khot, A. Sabharwal, C. Schoenick, and O. Tafjord, “Think you have
+solved question answering? Try ARC, the AI2 reasoning challenge,” Preprint arXiv:1803.05457, 2018.
+[7] K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton,
+R. Nakano, H. Christopher, and S. John, “Training verifiers to solve math word problems,” Preprint
+arXiv:2110.14168, 2021.
+[8] C.
+Computations,
+“cognitivecomputations/dolphin-2.6-mistral-7b,”
+cognitivecomputations/dolphin-2.6-mistral-7b, 2024.
+
+https://huggingface.co/
+
+[9] C.
+Computations,
+“cognitivecomputations/dolphin-2.9-llama3-8b,”
+cognitivecomputations/dolphin-2.9-llama3-8b, 2024.
+
+https://huggingface.co/
+
+[10] L. Gao, J. Tow, B. Abbasi, S. Biderman, S. Black, A. DiPofi, C. Foster, L. Golding, J. Hsu, A. Le Noac’h,
+H. Li, K. McDonell, N. Muennighoff, C. Ociepa, J. Phang, L. Reynolds, H. Schoelkopf, A. Skowron,
+L. Sutawika, E. Tang, A. Thite, B. Wang, K. Wang, and A. Zou, “A framework for few-shot language
+model evaluation,” https://zenodo.org/records/10256836, 2023.
+[11] T. Gao, X. Yao, and D. Chen, “SimCSE: Simple contrastive learning of sentence embeddings,” Preprint
+arXiv:2104.08821, 2021.
+
+10
+
+[12] N. Gupta, H. Narasimhan, W. Jitkrittum, A. S. Rawat, A. K. Menon, and S. Kumar, “Language model
+cascades: Token-level uncertainty and beyond,” in International Conference on Learning Representations,
+2024.
+[13] K. He, H. Fan, Y. Wu, S. Xie, and R. Girshick, “Momentum contrast for unsupervised visual representation
+learning,” in IEEE/CVF Conference on Computer Vision and Pattern Recognition, 2020.
+[14] P. He, J. Gao, and W. Chen, “DeBERTaV3: Improving DeBERTa using electra-style pre-training with
+gradient-disentangled embedding sharing,” Preprint arXiv:2111.09543, 2021.
+[15] P. He, X. Liu, J. Gao, and W. Chen, “DeBERTa: Decoding-enhanced BERT with disentangled attention,”
+in International Conference on Learning Representations, 2021.
+[16] D. Hendrycks, C. Burns, S. Basart, A. Zou, M. Mazeika, D. Song, and J. Steinhardt, “Measuring massive
+multitask language understanding,” in International Conference on Learning Representations, 2021.
+[17] D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. Song, and J. Steinhardt, “Measuring
+mathematical problem solving with the MATH dataset,” in Neural Information Processing Systems:
+Datasets and Benchmarks, 2021.
+[18] Q. J. Hu, J. Bieker, X. Li, N. Jiang, B. Keigwin, G. Ranganath, K. Keutzer, and S. K. Upadhyay,
+“RouterBench: A benchmark for multi-llm routing system,” Preprint arXiv:arXiv:2403.12031, 2024.
+[19] B. Huang, “Vigogne: French instruction-following and chat models,” https://github.com/bofenghuang/
+vigogne, 2023.
+[20] Y. Huang, Y. Bai, Z. Zhu, J. Zhang, J. Zhang, T. Su, J. Liu, C. Lv, Y. Zhang, J. Lei, Y. Fu, M. Sun, and
+J. He, “C-Eval: A multi-level multi-discipline chinese evaluation suite for foundation models,” in Neural
+Information Processing Systems, 2023.
+[21] G. Ilharco, M. T. Ribeiro, M. Wortsman, L. Schmidt, H. Hajishirzi, and A. Farhadi, “Editing models with
+task arithmetic,” in International Conference on Learning Representations, 2023.
+[22] G. Izacard, M. Caron, L. Hosseini, S. Riedel, P. Bojanowski, A. Joulin, and E. Grave, “Unsupervised
+dense information retrieval with contrastive learning,” Transactions on Machine Learning Research, 2022.
+[23] A. Q. Jiang, A. Sablayrolles, A. Mensch, C. Bamford, D. S. Chaplot, D. de las Casas, F. Bressand,
+G. Lengyel, G. Lample, L. Saulnier, L. R. Lavaud, M.-A. Lachaux, P. Stock, T. L. Scao, T. Lavril,
+T. Wang, T. Lacroix, and W. E. Sayed, “Mistral 7B,” Preprint arXiv:2310.06825, 2023.
+[24] D. Jiang, X. Ren, and B. Y. Lin, “LLM-Blender: Ensembling large language models with pairwise ranking
+and generative fusion,” in Annual Meeting of the Association for Computational Linguistics, 2023.
+[25] X. Jin, X. Ren, D. Preotiuc-Pietro, and P. Cheng, “Dataless knowledge fusion by merging weights of
+language models,” in International Conference on Learning Representations, 2023.
+[26] S. Kullback and R. A. Leibler, “On information and sufficiency,” The Annals of Mathematical Statistics,
+1951.
+[27] H. Li, Y. Zhang, F. Koto, Y. Yang, H. Zhao, Y. Gong, N. Duan, and T. Baldwin, “CMMLU: Measuring
+massive multitask language understanding in Chinese,” Preprint arXiv:2306.09212, 2023.
+[28] J. Li, Q. Zhang, Y. Yu, Q. Fu, and D. Ye, “More agents is all you need,” Preprint arXiv:2402.05120, 2024.
+[29] I. Loshchilov and F. Hutter, “Decoupled weight decay regularization,” in International Conference on
+Learning Representations, 2019.
+[30] K. Lu, H. Yuan, R. Lin, J. Lin, Z. Yuan, C. Zhou, and J. Zhou, “Routing to the expert: Efficient
+reward-guided ensemble of large language models,” in North American Chapter of the Association for
+Computational Linguistics, 2024.
+[31] H. Luo, Q. Sun, C. Xu, P. Zhao, J. Lou, C. Tao, X. Geng, Q. Lin, S. Chen, and D. Zhang, “WizardMath:
+Empowering mathematical reasoning for large language models via reinforced Evol-Instruct,” Preprint
+arXiv:2308.09583, 2023.
+[32] J. MacQueen et al., “Some methods for classification and analysis of multivariate observations,” in
+Berkeley Symposium on Mathematical Statistics and Probability, 1967.
+[33] M. S. Matena and C. A. Raffel, “Merging models with fisher-weighted averaging,” in Neural Information
+Processing Systems, 2022.
+
+11
+
+[34] J. Ni, G. H. Abrego, N. Constant, J. Ma, K. B. Hall, D. Cer, and Y. Yang, “Sentence-T5: Scalable
+sentence encoders from pre-trained text-to-text models,” in Findings of the Association for Computational
+Linguistics, 2021.
+[35] L. Nie, Z. Ding, E. Hu, C. Jermaine, and S. Chaudhuri, “Online cascade learning for efficient inference
+over streams,” in International Conference on Machine Learning, 2024.
+[36] A. Radford, J. W. Kim, C. Hallacy, A. Ramesh, G. Goh, S. Agarwal, G. Sastry, A. Askell, P. Mishkin,
+J. Clark, G. Krueger, and I. Sutskever, “Learning transferable visual models from natural language
+supervision,” in International Conference on Machine Learning, 2021.
+[37] R. Rafailov, A. Sharma, E. Mitchell, C. D. Manning, S. Ermon, and C. Finn, “Direct preference optimization: Your language model is secretly a reward model,” in Neural Information Processing Systems,
+2023.
+[38] B. Roziere, J. Gehring, F. Gloeckle, S. Sootla, I. Gat, X. E. Tan, Y. Adi, J. Liu, T. Remez, J. Rapin et al.,
+“Code LLaMA: Open foundation models for code,” Preprint arXiv:2308.12950, 2023.
+[39] Y. Seonwoo, G. Wang, C. Seo, S. Choudhary, J. Li, X. Li, P. Xu, S. Park, and A. Oh, “Ranking-enhanced
+unsupervised sentence representation learning,” Preprint arXiv:2209.04333, 2022.
+[40] T. Shnitzer, A. Ou, M. Silva, K. Soule, Y. Sun, J. Solomon, N. Thompson, and M. Yurochkin, “Large
+language model routing with benchmark datasets,” Preprint arXiv:2309.15789, 2023.
+[41] K. Srivatsa, K. K. Maurya, and E. Kochmar, “Harnessing the power of multiple minds: Lessons learned
+from LLM routing,” Preprint arXiv:2405.00467, 2024.
+[42] Llama Team. “The LLaMA 3 herd of models.” Preprint arXiv:2407.21783, 2024.
+[43] H. Touvron, L. Martin, K. Stone, P. Albert, A. Almahairi, Y. Babaei, N. Bashlykov, S. Batra, P. Bhargava, S. Bhosale, D. Bikel, L. Blecher, C. C. Ferrer, M. Chen, G. Cucurull, D. Esiobu, J. Fernandes,
+J. Fu, W. Fu, B. Fuller, C. Gao, V. Goswami, N. Goyal, A. Hartshorn, S. Hosseini, R. Hou, H. Inan,
+M. Kardas, V. Kerkez, M. Khabsa, I. Kloumann, A. Korenev, P. S. Koura, M.-A. Lachaux, T. Lavril,
+J. Lee, D. Liskovich, Y. Lu, Y. Mao, X. Martinet, T. Mihaylov, P. Mishra, I. Molybog, Y. Nie, A. Poulton,
+J. Reizenstein, R. Rungta, K. Saladi, A. Schelten, R. Silva, E. M. Smith, R. Subramanian, X. E. Tan,
+B. Tang, R. Taylor, A. Williams, J. X. Kuan, P. Xu, Z. Yan, I. Zarov, Y. Zhang, A. Fan, M. Kambadur,
+S. Narang, A. Rodriguez, R. Stojnic, S. Edunov, and T. Scialom, “LLaMA 2: Open foundation and
+fine-tuned chat models,” Preprint arXiv:2307.09288, 2023.
+[44] L. Tunstall, E. Beeching, N. Lambert, N. Rajani, K. Rasul, Y. Belkada, S. Huang, L. von Werra, C. Fourrier,
+N. Habib, N. Sarrazin, O. Sanseviero, A. M. Rush, and T. Wolf, “Zephyr: Direct distillation of LM
+alignment,” Preprint arXiv:2310.16944, 2023.
+[45] L. Van der Maaten and G. Hinton, “Visualizing data using t-SNE,” Journal of Machine Learning Research,
+2008.
+[46] J. Van Gael, Y. Saatci, Y. W. Teh, and Z. Ghahramani, “Beam sampling for the infinite hidden markov
+model,” in International Conference on Machine Learning, 2008.
+[47] H. Wang, F. M. Polo, Y. Sun, S. Kundu, E. Xing, and M. Yurochkin, “Fusing models with complementary
+expertise,” in International Conference on Learning Representations, 2024.
+[48] X. Wang, J. Wei, D. Schuurmans, Q. V. Le, E. H. Chi, S. Narang, A. Chowdhery, and D. Zhou, “Selfconsistency improves chain of thought reasoning in language models,” in International Conference on
+Learning Representations, 2023.
+[49] Z. Wu, S. Wang, J. Gu, M. Khabsa, F. Sun, and H. Ma, “CLEAR: Contrastive learning for sentence
+representation,” Preprint arXiv:2012.15466, 2020.
+[50] L. Yu, W. Jiang, H. Shi, J. Yu, Z. Liu, Y. Zhang, J. T. Kwok, Z. Li, A. Weller, and W. Liu, “MetaMath:
+Bootstrap your own mathematical questions for large language models,” in International Conference on
+Learning Representations, 2024.
+[51] M. Yue, J. Zhao, M. Zhang, L. Du, and Z. Yao, “Large language model cascades with mixture of thought
+representations for cost-efficient reasoning,” in International Conference on Learning Representations,
+2024.
+[52] Z. Zhao, L. Gan, G. Wang, W. Zhou, H. Yang, K. Kuang, and F. Wu, “LoraRetriever: Input-aware LoRA
+retrieval and composition for mixed tasks in the wild,” Preprint arXiv:2402.09997, 2024.
+
+12
+
+[53] Q. Zheng, X. Xia, X. Zou, Y. Dong, S. Wang, Y. Xue, L. Shen, Z. Wang, A. Wang, Y. Li et al., “CodeGeeX:
+A pre-trained model for code generation with multilingual benchmarking on humaneval-x,” in ACM
+SIGKDD Conference on Knowledge Discovery and Data Mining, 2023.
+[54] C. Zhou and B. Yuqi, “Chinese-Mistral: An efficient and effective chinese large language model,”
+https://github.com/THU-ESIS/Chinese-Mistral, 2024.
+[55] K. Zhou, J. Yang, C. C. Loy, and Z. Liu, “Learning to prompt for vision-language models,” International
+Journal of Computer Vision, 2022.
+
+13
+
+A
+
+Full Results of Figures 5, 6, 7, and 13
+
+Table 4 is the full results of Figure 5 (i.e., the testing accuracy with different λ’s). As can be seen,
+RouterDC is insensitive to a wide range of λ ∈ [0.5, 5].
+
+λ
+
+Table 4: Testing accuracy (%) with different λ’s.
+MMLU GSM8K CMMLU ARC-C HumanEval
+
+Avg
+
+0
+0.1
+0.2
+0.5
+1
+2
+5
+10
+
+63.21
+61.14
+60.41
+62.33
+61.07
+61.07
+61.22
+60.48
+
+56.52
+56.47
+56.81
+58.02
+58.54
+58.11
+58.72
+57.47
+
+68.87
+70.00
+69.20
+71.16
+70.32
+70.55
+69.91
+70.07
+
+49.27
+47.28
+47.14
+50.88
+51.77
+51.77
+51.77
+51.74
+
+49.43
+49.43
+54.83
+53.69
+58.52
+57.95
+58.24
+58.52
+
+51.84
+54.49
+52.45
+52.04
+51.02
+49.18
+52.45
+46.53
+
+Table 5 is the full results of Figure 6 (i.e., the testing accuracy with different #clusters N ’s). We can
+see that RouterDC is insensitive to a wide range of N ∈ [4, 9].
+
+#Clusters
+
+Table 5: Testing accuracy (%) with different N ’s.
+MMLU GSM8K CMMLU ARC-C HumanEval
+
+Avg
+
+2
+3
+4
+5
+6
+7
+8
+9
+10
+15
+20
+25
+30
+
+59.58
+59.96
+60.43
+61.07
+61.67
+61.78
+62.02
+62.14
+61.90
+60.41
+61.55
+61.33
+61.62
+
+53.48
+56.74
+58.56
+58.54
+58.28
+59.13
+58.47
+58.84
+57.61
+57.48
+56.72
+56.64
+56.26
+
+69.70
+71.98
+70.61
+70.32
+70.40
+70.05
+70.32
+69.63
+70.84
+70.14
+70.00
+69.63
+69.65
+
+43.88
+48.78
+51.19
+51.77
+51.10
+51.60
+51.28
+51.74
+51.74
+51.77
+51.77
+51.71
+51.74
+
+48.30
+49.72
+59.37
+58.52
+56.82
+57.10
+55.68
+58.24
+58.24
+57.95
+58.24
+57.67
+57.67
+
+45.92
+53.27
+51.22
+51.02
+51.42
+55.10
+53.06
+52.45
+45.31
+47.14
+42.04
+42.85
+40.61
+
+Table 6 is the full results of Figure 7 (i.e., the testing accuracy with different #out-group queries H’s).
+As we can see, RouterDC is robust across various H’s, except for H = 0, which is equivalent to
+using Lsample-sample alone.
+
+H
+
+Table 6: Testing accuracy (%) with different H’s.
+MMLU GSM8K CMMLU ARC-C HumanEval
+
+Avg
+
+0
+1
+2
+3
+4
+5
+
+63.21
+61.67
+62.26
+61.07
+60.98
+61.31
+
+56.52
+58.87
+58.38
+58.54
+58.66
+58.83
+
+68.87
+71.43
+70.24
+70.32
+70.36
+70.49
+
+49.27
+49.64
+51.60
+51.77
+51.74
+51.74
+
+14
+
+49.43
+57.10
+58.24
+58.52
+57.95
+57.95
+
+51.84
+54.49
+49.59
+51.02
+52.24
+52.65
+
+Table 7 is the full results of Figure 13 (i.e., the testing accuracy with #LLMs). As can be seen, adding
+LLMs consistency enhances the average accuracy.
+Table 7: Testing accuracy (%) with #LLMs.
+#LLMs
+
+MMLU
+
+GSM8K
+
+CMMLU
+
+ARC-C
+
+HumanEval
+
+Avg
+
+1
+2
+3
+4
+5
+6
+7
+
+62.14
+61.07
+59.98
+60.63
+60.65
+62.64
+61.07
+
+36.71
+69.63
+69.63
+69.42
+69.33
+69.34
+70.32
+
+43.83
+43.83
+42.82
+49.67
+49.67
+51.71
+51.77
+
+49.43
+48.30
+57.67
+57.67
+57.95
+57.95
+58.52
+
+28.98
+30.62
+28.78
+28.98
+45.10
+44.49
+51.02
+
+44.22
+50.69
+51.78
+53.27
+56.54
+57.23
+58.54
+
+Mistral-7B
++MetaMath-Mistral-7B
++zephyr-7b-beta
++Chinese-Mistral-7B
++dolphin-2.6-mistral-7b
++meta-llama/Meta-Llama-3-8B
++dolphin-2.9-llama3-8b
+
+B
+
+Detailed Results for Section 4.4
+
+Example 2
+Query 1: Mary does her grocery shopping on Saturday. She does her shopping only at a specific
+store where she is allowed a credit of $100, which must be paid in full before her next shopping
+trip. That week she spent the full credit limit and paid $15 of it on Tuesday and $23 of it on
+Thursday. How much credit will Mary need to pay before her next shopping trip?
+Query 2: Betty is saving money for a new wallet which costs $100. Betty has only half
+of the money she needs. Her parents decided to give her $15 for that purpose, and her grandparents
+twice as much as her parents. How much more money does Betty need to buy the wallet?
+MMLU
+GSM8K
+CMMLU
+ARC-C
+HumanEval
+
+MMLU
+GSM8K
+CMMLU
+ARC-C
+HumanEval
+
+(a) w/o Lsample-sample .
+
+(b) w/ Lsample-sample .
+
+Figure 14: t-SNE visualization of training query embeddings extracted by the learned encoder.
+
+C
+
+Effectiveness of #training samples
+
+To further investigate the sensitivity of the number of training samples used RouterDC, we conduct
+an experiment to study the performance of RouterDC with different numbers of training samples per
+task. As can be seen from Figure 15, the testing accuracy saturates quickly, indicating that a small
+number of samples is sufficient for learning the router (e.g., 100 samples per task). Moreover, with
+only 30 samples per task, RouterDC already outperforms the previous SOTA overall (57.21 vs 55.77),
+demonstrating that our RouterDC does not require a large amount of labeled data for training.
+
+D
+
+Discussions on Availability of Task Identity
+
+In Section 3.4, we cluster samples into N groups and apply the sample-sample contrastive training
+to encourage similar queries with similar embeddings. However, when the task identity is available
+15
+
+Testing Accuracy (%)
+
+80
+75
+70
+65
+60
+55
+50
+45
+40
+
+MMLU
+GSM8K
+
+10
+
+20
+
+30
+
+CMMLU
+ARC-C
+
+HumanEval
+Avg
+
+40
+
+100 RouterDC
+
+50
+
+Training samples per task
+
+Figure 15: Testing accuracy with different numbers of training samples.
+
+in the training dataset, the samples can be naturally grouped into different tasks. To explore the
+performance of RouterDC with additional task identity, we replace the {K1 , . . . , KN } with the groups
+of different tasks and conduct experiments on five in-distribution tasks. Table 8 shows the testing
+accuracy comparison between RouterDC and its variant. As can be seen, RouterDC is comparable to
+RouterDC (w/ task identity), showing the effectiveness of the unsupervised clustering.
+Table 8: Testing accuracy of RouterDC w/ or w/o task identity.
+MMLU GSM8K CMMLU ARC-C HumanEval
+RouterDC
+RouterDC (w/ task identity)
+
+E
+
+61.07
+64.49
+
+70.32
+69.63
+
+51.77
+51.77
+
+58.52
+57.95
+
+51.02
+49.39
+
+Avg
+58.54
+58.65
+
+Discussions on Single Task Setting
+
+To validate that RouterDC is a queried-based router rather than a task-wise router, we conduct an
+experiment in a single task setting, i.e., we train the router on the training set of HumanEval and
+evaluate it on the testing set. The single task setting is an edge case where all queries may contain
+the same task information. Hence, the router needs to learn how to route queries appropriately
+based on the query itself instead of some possible task information contained in the query. Table 9
+reports the testing accuracy. As can be seen, RouterDC largely outperforms the best candidate LLM
+(i.e., dolphin-2.9-llama3-8b) and existing routing methods, demonstrating that the router can select
+appropriate LLMs for queries based on query characteristics.
+Table 9: Testing accuracy (%) on HumanEval task. The best is in bold.
+Method
+HumanEval
+Mistral-7B
+MetaMath-Mistral-7B
+zephyr-7b-beta
+Chinese-Mistral-7B
+dolphin-2.6-mistral-7b
+Meta-Llama-3-8B
+dolphin-2.9-llama3-8b
+
+28.98
+29.80
+22.04
+21.43
+45.10
+26.73
+49.39
+
+ZOOTER
+CosineClassifier
+RouterDC
+
+39.38
+52.45
+56.32
+
+16
+
+F
+
+Discussions on the Distant OOD Task
+
+To further explore the generalization ability of RouterDC, we evaluate the learned router on one more
+OOD task: JavaScript [53], which aims to generate JavaScript code to solve problems. Different from
+HumanEval, which generates Python code to solve problems, JavaScript can be viewed as a distant
+OOD task. Table 10 reports the testing accuracy. As can be seen, RouterDC outperforms existing
+routing methods by a large margin, demonstrating that our RouterDC is more effective in routing
+queries of the distant OOD task.
+Table 10: Testing accuracy (%) on JavaScript task. The best is in bold.
+JavaScript
+
+G
+
+Mistral-7B
+MetaMath-Mistral-7B
+zephyr-7b-beta
+Chinese-Mistral-7B
+dolphin-2.6-mistral-7b
+Meta-Llama-3-8B
+dolphin-2.9-llama3-8b
+
+29.88
+31.83
+11.71
+17.68
+45.00
+37.07
+53.84
+
+ZOOTER
+CosineClassifier
+RouterDC
+
+41.64
+37.32
+48.66
+
+Effectiveness of Lsample-sample for ZOOTER
+
+We conduct experiments to study whether the proposed sample-sample contrastive loss is useful for
+ZOOTER. Table 11 and Table 12 shows the testing accuracy for the ID and OOD scenarios. As
+can be seen, integrating Lsample-sample into ZOOTER leads to improvements of +1.52% and +0.81%
+for ID and OOD, respectively, demonstrating that the proposed sample-sample contrastive loss is
+beneficial for ZOOTER.
+Table 11: Testing accuracy (%) of ZOOTER w/ Lsample-sample on in-distribution tasks.
+ZOOTER
+ZOOTER (w/ Lsample-sample )
+
+MMLU
+
+GSM8K
+
+CMMLU
+
+ARC-C
+
+HumanEval
+
+60.48
+60.15
+
+66.69
+69.71
+
+45.27
+46.59
+
+53.13
+54.26
+
+44.29
+46.73
+
+Avg
+53.97
+55.49 (+1.52)
+
+Table 12: Testing accuracy (%) of ZOOTER w/ Lsample-sample on out-of-distribution tasks.
+Pre-Algebra MBPP C-EVAL Avg
+ZOOTER
+ZOOTER (w/ Lsample-sample )
+
+H
+
+34.44
+36.05
+
+41.10
+39.84
+
+44.95
+47.03
+
+40.16
+40.97 (+0.81)
+
+(t)
+
+Effectiveness of punishing si
+(t)
+
+As mentioned in Section 3.2, we set si = 0 when the LLM Mt generates a wrong option for the
+multiple-choice question xi . We perform an experiment to verify the effectiveness of such a design.
+(t)
+Table 13 shows the testing accuracy on five in-distribution tasks. As can be seen, punishing si
+performs better on average.
+
+I
+
+Disccusions on Incorporating Cost
+
+As costs can also be an important metric to evaluate LLMs, we conduct experiments on two tasks
+(i.e., GSM8K and MBPP) of RouterBench [18] to consider the LLM costs. Specifically, we modify
+17
+
+Testing Accuracy (%)
+
+MBPP
+
+GSM8K
+
+WizardLM/WizardLM-13B-V1.2
+zero-one-ai/Yi-34B-Chat
+meta/code-llama-instruct-34b-chat
+mistralai/mixtral-8x7b-chat
+claude-v1
+
+65
+
+Testing Accuracy (%)
+
+Testing Accuracy (%)
+
+70
+
+0.50 0.75 1.00 1.25
+Total Cost ($)
+
+uterDC
+ine Classifier
+OTER
+ta/llama-2-70b-chat
+tralai/mistral-7b-chat
+
+RouterDC
+Cosine Classifier
+ZOOTER
+meta/llama-2-70b-chat
+mistralai/mistral-7b-chat
+
+60
+55
+50
+45
+40
+
+0
+
+5
+
+10
+15
+Total Cost ($)
+
+20
+
+75
+70
+65
+60
+55
+50
+45
+40
+35
+
+claude-instant-v1
+claude-v2
+gpt-3.5-turbo-1106
+gpt-4-1106-preview
+
+MBPP
+
+0.00 0.25 0.50 0.75 1.00 1.25
+Total Cost ($)
+
+RouterDC
+WizardLM/WizardLM-13B-V1.2 (a) GSM8K.
+claude-instant-v1
+(b) MBPP.
+Cosine Classifier
+zero-one-ai/Yi-34B-Chat
+claude-v2
+Figure
+16:
+Testing
+accuracy
+with
+different
+costs
+on
+RouterBench.
+ZOOTER
+meta/code-llama-instruct-34b-chat
+gpt-3.5-turbo-1106
+meta/llama-2-70b-chat
+mistralai/mixtral-8x7b-chat
+gpt-4-1106-preview
+mistralai/mistral-7b-chat
+claude-v1
+
+J
+
+60
+55
+50
+45
+40
+
+10
+Total Cos
+
+WizardLM/WizardLM-13B-V1.2
+zero-one-ai/Yi-34B-Chat
+meta/code-llama-instruct-34b-chat
+mistralai/mixtral-8x7b-chat
+claude-v1
+
+clau
+clau
+gptgpt-
+
+Due to the limited computational resources, we only evaluate RouterDC with candidate LLMs that
+have relatively small numbers of parameters (i.e., 8B for LLaMA-based LLMs and 7B for Mistralbased LLMs). However, there are many LLMs with more parameters and stronger capabilities
+available for public use (e.g., LLaMA-2-70B [43] and Mistral-8x7B [23]), making it reasonable to
+apply the RouterDC to these more capable but expensive models.
+Moreover, though RouterDC is designed as a query-based router, the framework can be extended to
+the chat context, e.g., selecting LLMs based on the recent conversation.
+
+18
+
+65
+
+5
+
+Limitations
+
+We leave the investigation of such scenarios to future work.
+
+GSM8
+
+70
+Testing Accuracy (%)
+
+Testing Accuracy (%)
+
+MBPP
+GSM8K
+75
+70
+70
+65
+65
+(t)
+Table
+or without setting si to 0 for incorrect LLMs.
+60 13: Testing accuracy (%) of RouterDC with 60
+MMLU GSM8K CMMLU
+ARC-C HumanEval
+Avg
+55
+55
+(t)
+61.05
+70.32
+49.67
+56.53
+52.45
+58.00
+50w/o punishing si
+50
+(t)
+61.07
+70.32
+51.77
+58.52
+51.02
+58.54
+45w/ punishing si
+45
+40
+(t)
+(t)
+(t)
+(t)
+40 query xi using the tth LLM. Figure 16 shows
+the 35
+score si to si + ci , where ci is the cost of the
+0.00
+0.25
+0.50
+0.75
+1.25
+0 and ZOOTER
+5
+10
+15
+20
+that RouterDC is more cost-effective1.00
+than CosineClassifier
+in both tasks.
+Total Cost ($)
+Total Cost ($)
+
+0

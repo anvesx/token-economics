@@ -1,0 +1,2203 @@
+TITLE: Analyzing and Mitigating Cost-Inefficient Behaviors in Coding Agents
+URL: https://arxiv.org/abs/2609.30725
+ORG: arXiv  TYPE: paper  DATE: 2026-09
+
+This paper is a preprint currently under review for publication
+
+A NALYZING AND M ITIGATING C OST-I NEFFICIENT B E HAVIORS IN C ODING AGENTS
+Yiran Hu, Nan Jiang† , Shanchao Liang, Anik Dey, Yi Wu, and Lin Tan
+Purdue University
+{hu954, liang422, dey58, wu1827, lintan}@purdue.edu, † nan.nathan.jiang@gmail.com
+
+arXiv:2609.30725v3 [cs.AI] 12 Oct 2026
+
+A BSTRACT
+Although effective, coding agents often incur substantial monetary costs. Their recurring cost-inefficient behaviors remain underexplored. We conduct a systematic
+study of behavioral cost inefficiencies in coding agents, analyzing 1,200 trajectories from Claude Code and Mini-SWE-Agent across four configurations on SWEbench Verified. We identify three cost-inefficient behaviors: subsumed retrieval,
+similar script generation, and test re-execution. We then evaluate three mitigation strategies: structure-aware retrieval, agent-synthesized skills, and developerdesigned skills, over 10k trajectories on held-out SWE-bench Verified and Pro
+tasks. Our main findings are: (1) The three behaviors affect 79.00–98.00% of
+coding tasks and account for up to 22.75% of task cost. (2) Structure-aware retrieval can introduce retrieval overhead and alter agent delegation, causing inconsistent improvements in retrieval efficiency and cost increases of up to 28.14%.
+(3) Agent-synthesized skills tend to produce low-level, trace-specific guidance,
+limiting their effectiveness and generality. (4) In contrast, developer-designed
+skills provide high-level, trace-agnostic guidance, reducing cost by up to 41.73%,
+roughly twice the maximum gain from agent-synthesized skills.
+
+1
+
+I NTRODUCTION
+
+Coding agents have become increasingly capable, with systems such as Claude Code, Codex, and
+Cursor combining LLMs with tools and reusable skills (Anthropic, 2025b; OpenAI, 2025; Anysphere, 2026). Yet, this capability comes at a steep cost. Token spending can reach millions of dollars annually (Bai et al., 2026), and Uber reportedly exhausted its annual AI coding budget within
+four months (Angelo, 2026). The pressure also affects model providers: subscribers can consume
+tens of thousands of dollars of model usage on a monthly plan, leaving OpenAI losing money on
+subscriptions and Anthropic rate-limiting Claude Code (TechCrunch, 2025; Zeff, 2025). In addition,
+higher spending does not reliably improve performance (Kapoor et al., 2024). These trends make the
+cost efficiency of coding agents a growing concern for both individual developers and enterprises.
+Despite the effectiveness of existing cost-reduction approaches (Wang et al., 2026; Su et al., 2025;
+Liu et al., 2026a), recurring cost-inefficient behaviors during agent execution remain largely undetected, accumulating substantial end-to-end cost. Figure 1 illustrates this problem using Claude
+Code on SWE-bench Verified task Django-13158 (Jimenez et al., 2024; Chowdhury et al., 2024),
+which requires fixing QuerySet.none() to return an empty result on combined querysets. Claude
+Code delegates code exploration to a subagent, retrieves additional context, applies a patch, and
+validates it with generated and repository tests. Although the task passes, three cost-inefficient behaviors account for 17.25% of its cost1 . First, the main agent retrieves 20 lines from query.py
+and 85 lines from compiler.py already covered by subagent retrievals. This subsumed retrieval
+accounts for 6.96% of task cost. Second, it generates four similar inline test scripts sharing 21 lines
+of logic with minor variations. This similar script generation consumes another 7.10%. Third,
+it incorrectly executes test_qs_combinators eight times in the same way without updating the
+patch, repeatedly hitting the same module error. This test re-execution costs 3.19%. These observations motivate our first research question (RQ1): What cost-inefficient behavior patterns occur in
+coding agents?
+Among the detected behaviors, subsumed retrieval is the most prevalent. A promising remedy is
+structure-aware retrieval (Ouyang et al., 2025b; Liu et al., 2025b; Chen et al., 2025), which enables
+1
+Behavior cost is computed from the input, output, and cache tokens consumed by each flagged action using
+the corresponding model token prices (Appendix A.1.2).
+
+1
+
+This paper is a preprint currently under review for publication
+
+Claude Code
+Django-13158:
+Calling .none() on a
+combined queryset
+fails to return an
+empty result.
+Inefficient behavior
+cost: 17.25%
+
+Agent Execution
+
+(6.96% of task cost)
+sql/query.py
+sql/compiler.py
+1771 |
+| 1870 434 |
+| 568
+
+1. Subsumed Retrieval
+Subagent Retrieval:
+Main Agent Retrieval:
+
+2. Similar Script Generation
+regenerating scripts with
+substantially similar content
+(7.10% of task cost)
+
+Delegate subagent
+
+Common Script Logic (21 lines)
+
+Context retrieval
+Patch application
+
+Initialize test env & database
+
+Validation with
+agent-generated tests
+Validation with
+repository tests
+
+Configure Django settings
+Create test data
+Construct combined queries
+Verify .none() behavior
+
+Final validation
+
+1776 |
+
+| 1795
+
+434 |
+
+| 518
+
+Inline Script 1
+Change: 2 lines
+Update database initialization
+Inline Script 2
+Change: 2 lines
+Update test-environment setup
+Inline Script 3
+Change: 8 lines
+Expand combined-query test scenarios
+Inline Script 4
+Change: 3 lines
+Clear ordering before query combination
+
+3. Test Re-Execution (3.19% of task cost)
+python -m django test queries.test_qs_combinators ... × 8
+
+No module: queries
+
+Figure 1: Cost-inefficient behaviors of Claude Code on SWE-bench Verified task Django-13158.
+direct access to complete code entities and explicit dependencies, reducing broad-to-narrow re-reads
+that cause subsumed retrieval. Although prior work reports improved localization accuracy and
+efficiency, whether these benefits generalize across agent architectures and translate into end-to-end
+cost savings remains unclear. We therefore ask RQ2: How does structure-aware retrieval affect
+cost-inefficient behaviors and the cost efficiency of coding agents?
+While structure-aware retrieval primarily targets retrieval-related inefficiencies, agent skills (Anthropic, 2025a) offer a lightweight intervention for addressing broader cost-inefficient behaviors.
+Such skills provide guidance that agents can apply adaptively throughout execution. We therefore
+study two complementary approaches: agent-synthesized skills and developer-designed skills. We
+ask RQ3: How do agent-synthesized skills (SynSkills) and developer-designed skills (DevSkills)
+affect cost-inefficient behaviors and the cost efficiency of coding agents?
+To answer these RQs, we study cost-inefficient behaviors and their mitigation across four configurations: Claude Code (CC) with Sonnet 4.6 (S46) (Anthropic, 2026b), and Mini-SWE-Agent
+(MSA) (Yang et al., 2024) with S46, MiniMax-M3 (MM3) (MiniMax, 2026), or Qwen-3.5 Plus
+(Q35+) (Qwen Team, 2026). For RQ1, we analyze 1,200 trajectories on 300 SWE-bench Verified
+tasks. For RQ2–RQ3, we evaluate CodeGraph (Mchenry, 2026) as a representative structure-aware
+retrieval tool, alongside SynSkills and DevSkills, on 200 held-out Verified and 100 SWE-bench Pro
+tasks (Deng et al., 2025), with repeated runs to account for execution stochasticity.
+Our paper makes the following contributions:
+• We conduct a systematic study of behavioral cost inefficiencies in coding agents, analyzing 1,200
+trajectories from four agent configurations on SWE-bench Verified. Our findings include:
+– We identify three recurring cost-inefficient behaviors: subsumed retrieval (SubRetrv), retrieving code fully covered by prior retrievals; similar script generation (SimScrpt), regenerating
+highly similar scripts with only minor changes; and test re-execution (ReTest), rerunning identical tests without an updated patch. Together, they cover 79.00–98.00% of tasks and account
+for 6.86–22.75% of task monetary cost.
+– SubRetrv is the most prevalent behavior, affecting up to 92.33% of tasks and 11.41% of cost.
+SubRetrv in Claude Code mainly stems from re-reading subagent-retrieved code; in Mini-SWEAgent, it arises from low-feedback editing, zoom-in localization, and long debugging loops.
+– SimScrpt affects up to 68.00% of tasks and occurs 5.91–9.98× more often in Mini-SWE-Agent
+than in Claude Code. Built-in guidance in Claude Code largely confines SimScrpt to ephemeral
+scripts, while Mini-SWE-Agent also regenerates similar files for testing and editing.
+– ReTest affects 49.67–83.00% of tasks and contributes up to 5.39% of task cost. It primarily
+arises from repository-specific test knowledge gaps, test-signal recovery, and progress stalls.
+• We address a key gap in the evaluation of structure-aware retrieval by examining whether it consistently improves retrieval efficiency and whether such gains translate into end-to-end cost savings.
+– Structure-aware retrieval is not inherently cost-efficient. Depending on agent architecture
+and model, its verbose feedback and altered agent delegation can introduce retrieval overhead,
+yielding inconsistent SubRetrv reductions and end-to-end cost increases of up to 28.14%.
+2
+
+This paper is a preprint currently under review for publication
+
+• We design and evaluate a lightweight agent-driven framework that synthesizes behavioral optimization skills from diagnosed cost-inefficient behaviors.
+– Agent-synthesized skills tend to produce low-level, trace-specific guidance, limiting their
+effectiveness and generality. They yield no robust cost increase and reduce cost by at most
+22.32%, roughly half the maximum achieved by developer-designed skills.
+• We develop a compact set of behavior-targeted optimization skills. Our high-level, traceagnostic developer-designed skills achieve the largest cost savings, reducing task cost by 7.88–
+41.73%, with maximum reductions of 38.57–88.91% across the three behaviors. These results
+highlight the value of human insights in agent behavioral optimization.
+Our implementation and analysis are available in this anonymous repository.
+
+2 S TUDY S ETUP
+Research Questions. For RQ1, we analyze 1,200 trajectories across four agent configurations
+and 300 tasks. We normalize trajectories and label actions using an author-defined taxonomy with
+rule-based and LLM-assisted labeling (Appendix A.1.1). We then define and manually calibrate
+detectors to identify three cost-inefficient behaviors and examine their underlying mechanisms. For
+RQ2–RQ3, we evaluate three approaches for mitigating the cost-inefficient behaviors, comparing
+each with its baseline on Pass@1, task monetary cost (cost), cost-of-pass (CoP) (Erol et al., 2026),
+and behavior changes. In RQ2, we equip agents with CodeGraph for structure-aware retrieval. CC
+accesses this through an MCP tool, while MSA uses command-line wrappers. For SynSkills in RQ3,
+we build a lightweight analysis agent using each configuration’s backbone model to distill corrective
+rules from its RQ1 trajectories and apply Trace2Skill (Ni et al., 2026) to consolidate them into a
+configuration-specific skill set. For DevSkills, we manually derive a shared skill set from the RQ1
+findings under two principles: (1) generalize across configurations and (2) mitigate cost-inefficient
+behaviors without sacrificing task performance. Following Trace2Skill, all skill sets are preloaded
+into the agent system prompt for evaluation (Appendix A.4).
+Agent Configuration. To disentangle the effects of agent framework and backbone model on costinefficient behaviors, we study two agent frameworks and vary the model within one of them. CC
+is a proprietary, production-grade framework with structured Read/Edit tools and subagent delegation, whereas MSA is an open-source, single-agent framework that interacts with repositories
+through shell commands. We evaluate four agent configurations: CC with S46 as the main model
+and Haiku 4.5 (H45) for subagents, and MSA with S46, MM3, or Q35+. Comparing CC with MSAS46
+captures framework-associated differences under the same main model; comparing the three MSA
+configurations reveals model-associated differences under a fixed framework.
+Benchmarks & Task Split. To separate behavior discovery from mitigation evaluation, we split
+the 500 SWE-bench Verified tasks within each repository by creation date: the earliest 300 tasks
+form the RQ1 analysis set and the remaining 200 form the held-out set Verified-200 for RQ2–RQ3,
+while preserving repository distribution. For cross-benchmark evaluation, we sample 100 tasks from
+SWE-bench Pro (Pro-100), covering all 11 repositories and favoring costlier tasks (Appendix A.1.3).
+Together, Verified-200 and Pro-100 form the 300-task mitigation evaluation set for RQ2–RQ3.
+Controlling Execution Randomness. To account for run-to-run noise in RQ2–RQ3, we run eight
+baselines (four configurations × two benchmarks) three times and estimate noise floors using the
+standard deviation of Pass@1 and coefficients of variation of cost and CoP. For unreplicated approaches, we transfer the matching baseline’s noise floor, following the standard equal-variance
+assumption that our mitigations do not alter the sampling and infrastructure nondeterminism driving
+run-to-run noise (Ouyang et al., 2025a). We validate this assumption on nine replicated approach
+cells spanning approaches, agent frameworks, and benchmarks; eight show no distinguishable noise
+amplification, while we use the larger observed noise for the exception (Appendix A.1.4). We classify an effect as robust at one-sided p < 0.05, imposing a stricter threshold on single-run effects.
+Because behavior-level metrics are noisier, we report their changes only as mechanistic evidence.
+
+3
+
+RQ1: A NALYZING C OST-I NEFFICIENT B EHAVIORS IN C ODING AGENTS
+
+We identify three cost-inefficient behaviors across information retrieval, script management, and
+solution validation in coding agent execution. (1) Subsumed Retrieval: retrieving code fully covered by previous retrievals. (2) Similar Script Generation: regenerating highly similar scripts with
+minor changes. (3) Test Re-Execution: re-executing identical tests without updated patches.
+3
+
+This paper is a preprint currently under review for publication
+
+Table 1: Prevalence, frequency, and cost contribution of cost-inefficient behaviors across agent configurations. Tasks: percentage of tasks exhibiting the behavior; Freq.: average number of behaviors
+per task; Cost: average share of per-task monetary cost attributable to the behavior.
+CC
+
+MSAS46
+Tasks Freq.
+
+Cost
+
+SubRetrv
+SimScrpt
+ReTest
+
+64.33%
+20.67%
+49.67%
+
+2.15 5.01% 87.33%
+0.43 1.02% 51.33%
+2.09 0.83% 69.00%
+
+3.45
+2.54
+2.51
+
+Tasks Freq.
+
+Total
+
+79.00%
+
+4.67 6.86% 97.33%
+
+8.50 21.16% 98.00% 14.72 22.12% 96.67% 11.68 22.75%
+
+8.42% 92.33%
+9.57% 68.00%
+3.17% 83.00%
+
+Table 1 reveals that the three behaviors are both
+prevalent and costly, collectively affecting at least
+79.00% of tasks and accounting for up to 22.75%
+of task cost, and CC consistently exhibits the lowest overall level of inefficiency (Appendix A.2.1).
+Figure 2 further shows their temporal patterns: SubRetrv concentrates in the first half of the trajectory,
+coinciding with the retrieval-heavy stage; ReTest
+shifts toward the middle-to-late stages, where the
+trajectory becomes more test-heavy for patch validation; and SimScrpt is distributed more broadly
+rather than confined to a specific phase. We next
+formalize each behavior and analyze its detection,
+severity, and underlying mechanisms.
+3.1
+
+MSAQ35+
+
+Tasks Freq.
+
+Behavior Occurrences (%)
+
+Cost
+
+MSAMM3
+
+Behaviors
+
+Cost
+
+5.14
+4.29
+5.29
+
+7.88% 89.33%
+8.85% 57.67%
+5.39% 66.00%
+
+CC
+
+SubRetrv
+SimScrpt
+ReTest
+
+25
+20
+
+Tasks Freq.
+
+Cost
+
+6.37 11.41%
+3.20 7.91%
+2.10 3.43%
+
+MSAS46
+
+MSAMM3
+
+40
+
+60
+
+MSAQ35 +
+
+15
+10
+5
+0
+
+0
+
+20
+
+80
+
+100
+
+Normalized Trajectory Position (%)
+
+Figure 2: Temporal distribution of the
+cost-inefficient behaviors. Bold curves
+aggregate configurations; thin curves show
+individual ones.
+
+S UBSUMED R ETRIEVAL
+
+Detection and Severity. For each retrieval b returning at least five non-empty lines of content,
+we scan preceding retrieval actions backward and identify the first action a whose returned context
+fully covers that of b. We treat (a, b) as a SubRetrv pair and flag b as one SubRetrv action. Table 1
+shows that SubRetrv is the most prevalent cost-inefficient behavior, affecting 64.33–92.33% of tasks,
+occurring 2.15–6.37 times per task, and accounting for 5.01–11.41% of task cost.
+Underlying Mechanisms. To study when
+Table 2: SubRetrv actions by scenario, assigned
+and why SubRetrv occurs and how its mechin top-to-bottom priority order. Subscripts
+anisms differ between CC and MSA, we clasindicate the percentage of SubRetrv actions.
+sify each SubRetrv action into different sceSubRetrv Actions
+narios in Table 2. The results reveal substantial
+Occurrence Scenario
+CC MSAS46 MSAMM3 MSAQ35+
+differences across agent architectures. CrossSubRetrv
+32450.15%
+—
+—
+—
+Agent SubRetrv, where a main-agent retrieval Cross-Agent
+Patch-Adjacent SubRetrv
+568.67% 27426.47% 27717.96% 37419.56%
+Within-Sequence
+SubRetrv
+171
+311
+255
+897
+26.47%
+16.54%
+30.05%
+46.91%
+is subsumed by a previous subagent retrieval, Long-Distance SubRetrv
+7311.30% 27526.57% 80852.40% 47224.69%
+is unique to CC and accounts for 50.15% of Other
+223.41% 17516.91% 20213.10% 1698.84%
+its SubRetrv. CC offloads exploration to subagents, which return summaries rather than the retrieved code. So the main agent may re-retrieve
+the same region when needed later, as illustrated in Figure 1.
+Patch-Adjacent SubRetrv occurs when the SubRetrv immediately precedes or follows a patch. It
+is more common in MSA (274–374 actions) than in CC (56) due to different editing interfaces.
+MSA’s shell-based editing, such as sed -i or generated scripts, may provide little feedback or fail
+silently, prompting agents to re-read code for localization or post-edit inspection. In contrast, CC’s
+retrieval tools provide line numbers, while its editing tools report detailed edit outcomes, including
+the updated code, reducing such scenarios.
+Within-Sequence SubRetrv occurs when both retrievals in a SubRetrv pair fall within an uninterrupted retrieval sequence. It typically follows a locate-then-zoom pattern, where the agent first reads
+a broad region and then retrieves a subregion for precise localization. This is common in MSA,
+where commands such as cat omit line numbers and often trigger follow-up grep -n or sed -n
+calls; CC’s Read already returns line-numbered code, reducing this need (171 vs. 255–897 actions).
+Long-Distance SubRetrv occurs when both retrievals in a SubRetrv pair are separated by at least
+10 steps. Manual inspection shows that it typically reflects longer debugging loops, where earlier
+4
+
+# Tasks
+
+100
+
+Ephemeral scripts
+File-based scripts
+Both
+
+80
+60
+40
+20
+0
+
+CC
+MSAS46
+MSAMM3
+MSAQ35 +
+
+60
+
+3–5
+
+6–14
+
+Assertion test
+Other
+File-based
+
+100
+
+40
+
+75
+50
+
+20
+25
+0
+
+0
+1–2
+
+Patch script
+Inspection probe
+Ephemeral
+
+Ephemeral scripts
+File-based scripts
+
+Scripts (%)
+
+CC
+MSAS46
+MSAMM3
+MSAQ35 +
+
+120
+
+SimScrpt Instances (%)
+
+This paper is a preprint currently under review for publication
+
+≥ 15
+
+SimScrpt Occurrences per Task
+
+1
+
+2
+
+3-5
+
+≥6
+
+Step Distance of each SimScrpt pair
+
+CC
+
+MSAS46
+
+MSAMM3 MSAQ35 +
+
+Agent Configurations
+
+Figure 3: Distribution of Sim- Figure 4: Distribution of Sim- Figure 5: Functions of ephemeral
+Scrpt occurrences per task.
+Scrpt pair step distances.
+and file-based SimScrpt scripts.
+context becomes less salient and is re-retrieved. It is most prominent in MSAMM3 (52.40%), which
+is consistent with its longest average trajectory length (77.99 steps vs. 29.99–58.06 for others).
+Finding 1. Subsumed Retrieval is the most prevalent behavior, affecting 64.33–92.33% of
+tasks and contributing 5.01–11.41% of task cost. Its causes are architecture-dependent: CrossAgent SubRetrv dominates in CC, while MSA mainly suffers from low-feedback editing,
+zoom-in localization, and long debugging loops.
+3.2
+
+S IMILAR S CRIPT G ENERATION
+
+Behavior Detection. We define SimScrpt as regenerating near-duplicate scripts with minor differences rather than editing existing scripts, wasting output tokens and forgoing artifact reuse. We
+extract ephemeral scripts (e.g., python -c and heredocs) and file-based scripts (.py files) from
+agent actions, remove blank and comment-only lines, and retain scripts with at least five lines. For
+each generation action b, we identify the nearest preceding action a whose script has line-level Jaccard similarity2 of at least 0.60. We treat (a, b) as a SimScrpt pair and count b as one occurrence.
+Prevalence and Severity. Table 1 shows that SimScrpt affects up to 68.00% of tasks and contributes
+up to 9.57% of task cost. Interestingly, SimScrpt is substantially more severe in MSA, affecting
+51.33–68.00% of tasks and contributing 7.91–9.57% of task cost, versus 20.67% and 1.02% in CC.
+It also occurs 5.91–9.98× more frequently in MSA (2.54–4.29 vs. 0.43). Figure 3 further reveals a
+pronounced high-frequency tail in MSA: 42–66 tasks per configuration exhibit at least six SimScrpt
+occurrences, compared with only two in CC.
+Underlying Mechanisms. When and why SimScrpt occurs. SimScrpt arises during issue reproduction, code editing, and patch validation, explaining its broad distribution in Figure 2. Figure 4
+further reveals two patterns: 39.89–48.84% of occurrences immediately follow a similar script, typically reflecting minor revisions with full-script regeneration, while 21.71–34.60% occur at a step
+distance of at least six. The underlying causes differ by script form. Ephemeral scripts leave no
+reusable artifact, requiring agents to regenerate similar code when needed again. File-based scripts
+persist on disk, but become less salient to the agent as its trajectory grows. Reusing them requires
+re-reading files for precise editing, while shell-based edits such as sed -i are error-prone, as discussed in Patch-Adjacent SubRetrv. Regenerating a near-duplicate script can therefore become the
+easier immediate choice.
+Ephemeral vs. file-based SimScrpt scripts. To understand their differences, we classify SimScrpt
+scripts by their functionalities using abstract syntax tree (AST) analysis (Figure 5). A patch script
+modifies source files; an assertion test performs explicit pass/fail validation; and an inspection probe
+queries or prints runtime information, such as object values, attributes, or program state. Scripts are
+assigned by priority: patch, test, then probe. Ephemeral SimScrpt scripts overwhelmingly consist
+of inspection probes (81.03–93.45%). Agents commonly use python -c and heredocs as disposable probes: they generate a script, inspect certain output, and discard it, then regenerate a similar
+probe when the information is needed again. File-based SimScrpt scripts are more functionally diverse: inspection probes decrease, while assertion tests and, in MSA, patch scripts account for larger
+2
+We select 0.60 by manually inspecting 20 SimScrpt pairs per configuration. Lower thresholds often match
+generic scaffolding, while 0.60 retains highly similar task-specific logic.
+
+5
+
+This paper is a preprint currently under review for publication
+
+shares. Because these files persist and encode reusable validation or editing logic, regenerating them
+represents a clearer missed opportunity for artifact reuse.
+Why SimScrpt script forms differ across architectures. Figures 3 and 4 show that CC primarily exhibits ephemeral SimScrpt, whereas MSA exhibits both script forms. This difference is consistent
+with CC’s built-in instruction: “NEVER create files unless they’re absolutely necessary for achieving your goal.” This discourages persistent script creation and shifts toward ephemeral generation,
+whereas MSA has no such constraint. Patch scripts are rare in CC because its built-in Edit and
+Write tools directly support modification action, whereas MSA’s poor feedback of shell-based editing more often triggers agents to generate their own editing scripts.
+Finding 2. Similar Script Generation affects up to 68.00% of tasks and contributes up to
+9.57% of task cost, occurring 5.91–9.98× more frequently in MSA than in CC. CC’s builtin guidance largely confines SimScrpt to ephemeral scripts, whereas MSA also repeatedly
+regenerates file-based testing and editing scripts. These patterns suggest that an ideal agent
+should persist reusable logic and use inline scripts for simple one-off probes.
+3.3
+
+T EST R E -E XECUTION
+
+Detection and Severity. We partition trajectories into inter-patch windows because a new patch may
+justify rerunning tests, whereas repeated executions without a patch update validate the same code
+state. Within each window, we group executions by the executed tests, retain the final execution as
+potentially decision-relevant, and flag preceding ones as ReTest. Table 1 shows that ReTest affects
+49.67–83.00% of tasks and contributes up to 5.39% of task cost. MSAMM3 has the highest prevalence
+and frequency, averaging 5.29 occurrences per task, over twice that of any other configuration.
+Underlying Mechanisms. We identify three common causes of ReTest. (1) Repository-specific
+test knowledge gaps arise when agents are unfamiliar with the proper test runner or configuration,
+causing repeated failures. (2) Test-signal recovery occurs when test output is truncated, ambiguous,
+or poorly captured by the agent, prompting reruns to recover debugging information. (3) Progress
+stalls arise when agents enter long reasoning loops without updating the patch, repeatedly reconsidering the same diagnosis and rerunning tests despite sufficient prior signals. Such behavior reflects
+stalled decision-making without advancing the solution.
+Finding 3. Test Re-Execution affects 49.67–83.00% of tasks and accounts for up to 5.39% of
+task cost, with MSAMM3 exhibiting the highest prevalence and frequency. ReTest commonly
+arises from repository-specific test knowledge gaps, test-signal recovery, and progress stalls.
+More detection details, analysis, and examples for RQ1 are provided in Appendix A.2.
+
+4
+
+M ITIGATING C OST-I NEFFICIENT B EHAVIORS IN C ODING AGENTS
+
+This section evaluates the effectiveness of the three mitigation approaches in optimizing cost efficiency and the identified cost-inefficient behaviors (Table 3). Figure 6 further relates changes in
+behavior-attributed cost to task cost. We first compare the three approaches across all settings, then
+examine each in depth.
+4.1 C ROSS -A PPROACH C OMPARISON
+We compare all three approaches across agent configurations and benchmarks. Three patterns emerge. First, mitigation effectiveness generally increases from CodeGraph to agentsynthesized skills to developer-designed skills. CodeGraph reduces SubRetrv inconsistently and
+even increases cost robustly in four of eight settings. SynSkills achieve moderate savings, whereas
+DevSkills produce the broadest reductions in both task cost and diagnosed behaviors. Second,
+mitigation benefits depend on agent architecture and benchmark. Improvements are generally
+larger under MSA, while CC’s system prompt and tool abstractions already suppress several inefficient behaviors, leaving less room for improvement. All approaches also perform better overall on
+Verified-200 than Pro-100 in identified behaviors. For skill-based approaches, this partly reflects
+a generalization challenge, as the skills are derived from Verified trajectories and applied to Pro.
+Third, task cost changes are amplified relative to the changes in behavior-attributed cost. In
+Figure 6, the fitted slopes are 2.83 on Verified-200 and 1.33 on Pro-100. Two effects can amplify the
+savings. (1) Preventing an inefficient action shortens the trajectory, reducing repeated cache-reading
+6
+
+This paper is a preprint currently under review for publication
+
+Table 3: Effects of the three approaches on Pass@1, average cost, CoP, and the occurrence of identified behaviors. Subscripts show changes from baseline. For Pass@1, cost, and CoP, blue / red
+indicate robust improvements/regressions, while uncolored cells indicate changes within noise; for
+behaviors, blue/red indicate fewer/more instances.
+Approach
+
+CodeGraph
+
+SynSkills
+
+Δ task cost (%)
+
+DevSkills
+
+20
+
+Metric
+CC
+74.17-0.83
+Pass@1 (pp)
+Cost ($)
+0.596+8.30%
+0.804+10.22%
+CoP
+
+Verified-200
+MSAS46
+MSAMM3
+MSAQ35+
+CC
+72.50+0.00
+75.50+0.33 72.50+5.33
+55.17+1.92
+0.619-3.03% 0.591+28.14% 0.112-3.29% 1.061+12.19%
+0.854-3.04% 0.782+27.52% 0.155-10.63% 1.923+8.69%
+
+SubRetrv
+SimScrpt
+ReTest
+
+0.16-84.18%
+0.26-25.85%
+1.75+13.85%
+
+2.87-25.33%
+2.90-17.01%
+2.05-8.07%
+
+Pass@1 (pp)
+Cost ($)
+CoP
+
+74.50-0.50
+72.00-0.50
+0.541-1.38% 0.496-22.32%
+0.726-0.12% 0.689-21.79%
+
+75.50+0.33 69.67+2.50
+0.462+0.15% 0.115-0.70%
+0.611-0.33% 0.166-4.40%
+
+55.00+0.67
+0.826-8.86%
+1.503-9.48%
+
+SubRetrv
+SimScrpt
+ReTest
+
+0.56-44.62%
+0.20-41.85%
+1.75+13.20%
+
+4.17-22.56%
+3.98-13.43%
+4.67-9.86%
+
+0.98-34.31% 2.67+2.50%
+0.08-11.28% 1.60+79.32%
+0.62+25.44% 1.22-26.88%
+
+3.40-11.38%
+1.92-45.10%
+1.46-34.53%
+
+6.36+18.01%
+5.90+28.49%
+5.55+7.34%
+
+4.65-24.25%
+2.68-39.61%
+2.21+0.30%
+
+Pro-100
+MSAS46
+MSAMM3
+MSAQ35+
+51.72+1.92
+57.47-1.15
+39.08-3.45
+1.132-0.25% 0.985+8.39% 0.150+12.99%
+2.188-4.32% 1.715+10.20% 0.388+23.20%
+
+0.38-75.72% 2.90+3.33%
+0.10-0.21% 1.64+63.26%
+0.56-0.89% 2.13+11.27%
+
+5.83-5.05%
+3.66-17.63%
+2.03-7.58%
+
+6.34+34.74%
+1.99-1.33%
+4.49+25.45%
+
+4.51+13.01%
+0.79-53.46%
+0.78+6.90%
+
+52.00+0.00
+62.00+2.00
+1.006-6.13% 0.766-11.90%
+1.936-6.40% 1.235-15.09%
+
+46.00+1.00
+0.132-2.22%
+0.286-4.51%
+
+3.76-14.29%
+1.19-35.44%
+3.19+0.84%
+
+3.86+3.21%
+1.41-5.87%
+0.78+22.80%
+
+Pass@1 (pp)
+73.50-1.50 73.00+0.50
+73.00-2.17 69.83+2.67
+Cost ($)
+0.473-13.94% 0.372-41.73% 0.387-16.03% 0.103-11.34%
+CoP
+0.643-11.83% 0.510-42.13% 0.530-13.61% 0.148-14.83%
+
+52.00-2.33 52.00+0.00
+62.00+2.00
+46.00+1.00
+0.894-1.51% 0.733-33.00% 0.801-7.88% 0.140+3.57%
+1.718+3.58% 1.409-33.19% 1.291-11.21% 0.305+1.28%
+
+SubRetrv
+SimScrpt
+ReTest
+
+0.60-59.78%
+0.01-88.91%
+0.72+45.68%
+
+y = 2.83 x + 6.83
+
+0.35-64.89%
+0.15-54.93%
+1.47-4.75%
+
+1.86-51.52%
+1.18-66.17%
+1.37-38.57%
+
+Verified-200
+
+4.05-24.82%
+4.02-12.45%
+3.62-30.05%
+
+5.08-17.25%
+4.42-0.49%
+2.04-7.13%
+
+y = 1.33 x − 1.67
+
+1.47-43.57%
+0.55-38.36%
+1.28-23.29%
+
+4.02-8.36%
+1.85+0.36%
+3.00-5.16%
+
+4.23+12.92%
+1.43-4.02%
+0.66+3.71%
+
+Pro-100
+CodeGraph
+SynSkills
+DevSkills
+CC
+MSAS46
+MSAMM3
+MSAQ35 +
+
+0
+
+-20
+-40
+-15
+
+-10
+
+-5
+
+0
+
+Δ behavior-attributed cost (%)
+
+5
+
+-15
+
+-10
+
+-5
+
+0
+
+Δ behavior-attributed cost (%)
+
+5
+
+Figure 6: Changes in average task cost versus behavior-attributed cost, both relative to baseline task
+cost. The shaded quadrant indicates joint improvement, and the lines show the fitted linear trends.
+of earlier context in later LLM calls. (2) It can also prevent additional unflagged actions triggered
+by certain cost-inefficient behaviors. For example, eliminating a ReTest can also avoid subsequent
+reasoning that interprets its output or diagnoses the same failure.
+4.2
+
+RQ2: E FFECTIVENESS OF S TRUCTURE - AWARE R ETRIEVAL
+
+Table 3 shows that CodeGraph neither consistently reduces SubRetrv nor improves task cost
+efficiency.3 Under CC, SubRetrv drops by over 75% on both benchmarks, yet cost rises by 8.30%
+on Verified-200 and robustly by 12.19% on Pro-100. Under MSA, SubRetrv increases in four of
+six settings. Overall, CodeGraph yields no robust cost reduction but four robust increases of 8.39–
+28.14%, and Pass@1 remains largely unchanged except for MSAQ35+ on Verified-200 (+5.33 pp).
+Thus, substantial SubRetrv reduction does not guarantee lower end-to-end cost.
+Table 4 explains why. For CC, verbose CodeGraph feedback and reduced use of cheaper subagents offset the savings from fewer SubRetrv actions. CodeGraph cuts LLM and tool calls by
+19.72–23.21% and 26.61–31.47%, respectively, but each query returns 8.2–16.6× more tokens than
+other retrieval actions. Total token usage therefore remains nearly unchanged. Meanwhile, H45
+subagent calls drop from 4.81 and 11.03 per task to zero on both benchmarks, while S46 mainagent calls change only slightly (−0.42% and +8.17%). Thus, roughly the same token volume shifts
+to S46, whose token price is 3× that of H45, increasing CC’s cost by 8.30% on Verified-200 and
+robustly by 12.19% on Pro-100.
+For MSA, cost rises because agents use CodeGraph additively, stacking CodeGraph queries
+and their verbose feedback on top of ordinary retrieval rather than replacing it. For MSAMM3
+3
+CodeGraph cannot run on 13 Pro-100 tasks (Appendix A.3.1). Its Pro-100 results are therefore measured
+and compared on the remaining 87 tasks.
+
+7
+
+This paper is a preprint currently under review for publication
+
+Table 4: Effects of CodeGraph on average task token usage, average output tokens per CodeGraph
+and other retrieval call, and LLM/tool calls. Subscripts show percentage changes from the baselines.
+Metric
+
+CC
+
+Verified-200
+MSAS46
+MSAMM3
+
+MSAQ35+
+
+CC
+
+Pro-100
+MSAS46
+MSAMM3
+
+MSAQ35+
+
+Task tokens (M)
+0.91-1.70% 1.09-0.37% 4.13+29.29% 1.63-1.15% 1.70-0.36% 2.20-0.32%
+7.28+9.11% 2.39+13.39%
+Output tokens / call 777+140.96% 233+5.98%
+251+5.94%
+292-3.39% 955+55.74% 354+9.81%
+302-5.64%
+370-5.56%
+CodeGraph
+5,199
+876
+1,205
+1,122
+5,273
+1,111
+1,007
+1,111
+Other retrieval
+313
+258
+277
+350
+643
+395
+789
+541
+LLM calls
+19.91-19.72% 40.79-7.22% 95.39+13.60% 60.15-2.94% 29.18-23.21% 56.17-5.27% 143.91+8.20% 71.05+5.68%
+Main agent (S46) 19.91-0.42%
+–
+–
+–
+29.18+8.17%
+–
+–
+–
+Subagent (H45) 0.00-100.00%
+–
+–
+–
+0.00-100.00%
+–
+–
+–
+Tool calls
+19.43-26.61% 42.98-8.44% 94.66+12.97% 59.57-3.87% 32.74-31.47% 66.94-5.63% 143.37+8.07% 71.52+6.39%
+CodeGraph
+2.23
+5.07
+6.75
+6.31
+3.60
+8.13
+6.33
+5.65
+Other retrieval
+7.16-53.66% 14.20-34.13% 35.38-2.92% 22.30-23.22% 15.68-53.68% 35.34-23.87% 75.01+3.16% 39.34-3.44%
+
+on both benchmarks and MSAQ35+ on Pro-100, ordinary retrieval remains nearly unchanged while
+agents add 5.65–6.75 CodeGraph calls per task; these extra calls and their verbose outputs raise total
+token usage by 9.11–29.29% and cost robustly by 8.39–28.14%. In the remaining settings, agents
+do replace ordinary retrieval with CodeGraph queries: ordinary retrieval drops by over 20%, but
+the verbose CodeGraph feedback keeps total token usage nearly unchanged, leaving cost savings
+indistinguishable from the baseline.
+Finding 4. Structure-aware retrieval, as exemplified by CodeGraph, is not inherently costefficient. Verbose feedback and tool integration can add retrieval overhead and alter agent
+delegation, leading to inconsistent SubRetrv reduction and higher cost. It should therefore be
+evaluated with explicit attention to feedback volume, tool integration, and model orchestration.
+More details on CodeGraph integration and usage are provided in Appendix A.3.
+4.3
+
+RQ3: AGENT-S YNTHESIZED VS . D EVELOPER -D ESIGNED S KILLS
+
+Unlike CodeGraph, which changes how agents access code and targets only retrieval inefficiencies,
+skills can address broader cost-inefficient behaviors. SynSkills are configuration-specific sets of
+23–41 operational rules. They target the three cost-inefficient behaviors through concrete, scenariospecific instructions, such as handling failed string substitutions, shell quoting issues, and permission
+errors. In contrast, DevSkills are seven general behavioral principles shared by all configurations.
+They require agents to state a concrete hypothesis before retrieval, reuse available context, and
+justify necessary re-reads (SubRetrv); to persist and revise scripts instead of creating similar variants
+(SimScrpt); to understand the test harness, capture test output, and rerun tests only when code
+changes or new evidence warrant it (ReTest); and to break unproductive loops (general).
+DevSkills are substantially more effective and consistent than SynSkills. SynSkills robustly reduce average cost in three of eight settings by 8.86–22.32%, with no robust cost increase or Pass@1
+degradation (Table 3). In comparison, DevSkills robustly reduce cost in six settings by 7.88–41.73%,
+nearly twice the maximum saving from SynSkills, with only one small Pass@1 drop (−1.50 pp for
+CC on Verified-200). The behavior-level results show the same pattern. For example, DevSkills reduce all three behaviors in MSAS46 on both benchmarks, including SubRetrv by 51.52% and 43.57%,
+compared with 11.38% and a 2.50% increase under SynSkills.
+One possible mechanism is that DevSkills encode higher-level, trace-agnostic guidance,
+whereas SynSkills retain low-level, trace-specific instructions. For example, to mitigate SimScrpt, the MSAS46 SynSkills specify when to use ephemeral scripts or overwrite scripts, and how
+to handle non-ASCII shell content. Such rules depend on specific tasks and repositories, limiting
+generalization. In contrast, DevSkills cover the same cases with one principle: persist and reuse artifacts rather than regenerate similar variants. The principle applies to any task, which helps explain
+the stronger and more consistent effectiveness of DevSkills and the value of human abstraction in
+behavioral optimization.
+Finding 5. Agent-synthesized skills tend to produce low-level, trace-specific guidance, limiting their effectiveness and generality. In contrast, developer-designed skills provide highlevel, trace-agnostic guidance and achieve broader cost savings, robustly reducing cost by
+7.88–41.73% in six of eight settings.
+More analysis and specific skill content for RQ3 are in Appendix A.4.
+8
+
+This paper is a preprint currently under review for publication
+
+5
+
+R ELATED W ORK
+
+Agent Trajectory Analysis. Observability platforms support execution tracing and cost monitoring (LangChain, 2026; Langfuse, 2026; AgentOps, 2026). Trajectory analyses further examine how
+agents approach tasks, where execution goes wrong, and how costs accumulate (Ceka et al., 2025;
+Bouzenia & Pradel, 2025; Majgaonkar et al., 2025; Zhang et al., 2025; Kim et al., 2025; Bai et al.,
+2026; Salim et al., 2026), identifying issues such as repeated actions and loss of coherence (Liu
+et al., 2026a; Kim et al., 2026). However, how recurring inefficient behaviors contribute to agent
+costs, why they occur, and whether they can be mitigated remain underexplored. To address this
+gap, we define and detect three cost-inefficient behaviors and analyze their prevalence, monetary
+impact, and underlying mechanisms across coding agents.
+Agent Cost Reduction. Existing approaches improve agent cost efficiency through four strategies.
+Context compression and interaction reduction decrease the token usage of each step and the number
+of interactions (Gao & Peng, 2025; Pan et al., 2025; Nayab et al., 2026; Wang et al., 2026; Luk et al.,
+2026; Xiao et al., 2026; Li et al., 2026c; Jia et al., 2026). Agent orchestration allocates work across
+suitable models and tools (Shekhar et al., 2024; Wang et al., 2025; Su et al., 2025; Liu et al., 2025a;
+Ong et al., 2024). Runtime supervision intervenes when agents make errors, enter loops, or deviate
+from expected workflows (Lin et al., 2026; Liu et al., 2026a). However, their effects on specific costinefficient behaviors remain underexplored. We complement them by using diagnosed behaviors to
+guide optimizations and evaluating their effects on these behaviors, cost, and task performance. A
+fourth strategy improves agent toolsets. Structure-aware retrieval, for example, uses code graphs
+to guide repository navigation (Ouyang et al., 2025b; Liu et al., 2025b). Despite reported gains in
+localization accuracy and efficiency (Chen et al., 2025), whether these gains consistently translate
+into end-to-end cost savings remains unclear. We therefore examine its effects on retrieval efficiency
+and task cost across agent configurations.
+Agent Skills. Agent skills (Anthropic, 2025a) provide reusable instructions and optional resources
+to guide task executions. Recent systems build skills from execution experience (Ni et al., 2026;
+Alzubi et al., 2026; Ma et al., 2026; Yang et al., 2026; Xia et al., 2026b; Liu et al., 2026b), incorporating reinforcement learning (Xia et al., 2026a; Li et al., 2026b), across web, multimodal, and
+generalist-agent settings (Zheng et al., 2025; Jiang et al., 2026; Zhou et al., 2026). Prior work evaluates skill effectiveness (Li et al., 2026a) and optimizes skills for both task success and inference
+cost (Gong et al., 2026). We derive skills from diagnosed cost-inefficient behaviors and compare
+our agent-synthesized and developer-designed skills in terms of agent cost efficiency.
+
+6
+
+T HREATS TO VALIDITY
+
+Agent and Task Coverage. Budget limits our study to four agent configurations, SWE-bench
+Verified, and 100 SWE-bench Pro tasks. Behaviors and intervention effects may differ elsewhere.
+Behavior Identification. Parsing, labeling, and detection mechanisms may introduce detection errors despite explicit implementations and manual calibration. Cost and Outcome Measurement.
+We measure LLM inference monetary cost, excluding execution time and hardware costs. Pass@1
+may miss regressions beyond test satisfaction. Execution Randomness. We triplicate baselines
+and nine intervention settings; budget limits others to single runs. Robustness estimates rely on
+baseline-derived variability, which may not fully establish statistical significance. Structure-Aware
+Retrieval. CodeGraph’s popularity and robust structural retrieval implementations motivate its selection, but this may limit generalization to other tools. Skill Design and Scope. Findings depend
+on our agent-synthesis pipeline and developer-skill design. Script-based or other skill formats may
+differ from our prompt-based interventions.
+
+7
+
+C ONCLUSIONS & F UTURE W ORK
+
+We analyze Claude Code and Mini-SWE-Agent trajectories on SWE-bench Verified, identifying
+three prevalent cost-inefficient behaviors: subsumed retrieval, similar script generation, and test reexecution. Evaluating three mitigation approaches on Verified and Pro shows that structure-aware retrieval can increase cost due to its verbose feedback and altered agent delegation. Agent-synthesized
+skills offer low-level, trace-specific guidance and moderate savings, while developer-designed skills
+provide high-level, trace-agnostic guidance and achieve the strongest and most consistent savings.
+Future work will extend this analysis to longer-horizon, interactive tasks and more diverse agents,
+examining inefficiencies beyond monetary cost. One could also use behavior diagnoses to guide
+optimizations and generate more efficient trajectories for agent training.
+9
+
+This paper is a preprint currently under review for publication
+
+8
+
+AI U SE S TATEMENT
+
+AI within our experimental methods. Analyzing and mitigating the cost-inefficient behaviors of
+the coding agents is the object of our study, and their benchmark execution trajectories are used as
+our experimental data. We combine rule-based parsing with LLM-based action labeling under an
+author-defined taxonomy (Section 2). The authors design the labeling rules and thresholds, manually
+calibrate them, and examine their application to agent trajectories. In RQ3 (Section 4.3), an LLMbased pipeline generates agent-synthesized skills as a mitigating approach for evaluation.
+AI assistance in research and writing. We use generative AI assistants to help debug and refactor
+author-written code, refine manuscript structure and wording, and improve table and figure layouts.
+The authors independently design the research questions, metrics, detection rules, analysis, findings,
+and conclusions. We review the AI-assisted work and take responsibility for the final manuscript,
+code, analysis, and results.
+
+ACKNOWLEDGMENTS
+This research was supported in part by NSF 1901242 and 2006688. Any opinions, findings, and
+conclusions in this paper are those of the authors only and do not necessarily reflect the views of our
+sponsors.
+
+R EFERENCES
+AgentOps. Agentops documentation. https://docs.agentops.ai/v2/introduction,
+2026. Accessed: 2026-08.
+Salaheddin Alzubi, Noah Provenzano, Jaydon Bingham, Weiyuan Chen, and Tu Vu. EvoSkill:
+Automated skill discovery for multi-agent systems, 2026. URL https://arxiv.org/abs/
+2603.02766.
+Jake Angelo. Uber burned through its entire 2026 AI budget in four months. now its COO is questioning whether it’s worth it. https://fortune.com/2026/05/26/uber-coo-ai-s
+pending-tokens-claude-code/, May 2026. Fortune. Accessed: 2026-08.
+Anthropic. Agent skills. https://platform.claude.com/docs/en/agents-and-t
+ools/agent-skills/overview, 2025a. Accessed: 2026-08.
+Anthropic. Claude Code: Anthropic’s agentic coding tool. https://claude.com/product
+/claude-code, 2025b. Accessed: 2026-08.
+Anthropic. Claude Code v2.1.169. https://www.npmjs.com/package/@anthropic
+-ai/claude-code/v/2.1.169, June 2026a. npm package; the system prompt and tool
+descriptions are shipped with the package. Accessed: 2026-09.
+Anthropic. Introducing Claude Sonnet 4.6. https://www.anthropic.com/news/claud
+e-sonnet-4-6, 2026b. Accessed: 2026-08.
+Anysphere. Cursor: The AI code editor. https://cursor.com, 2026. Accessed: 2026-08.
+Longju Bai, Zhemin Huang, Xingyao Wang, Jiao Sun, Rada Mihalcea, Erik Brynjolfsson, Alex
+Pentland, and Jiaxin Pei. How do AI agents spend your money? analyzing and predicting token
+consumption in agentic coding tasks, 2026. URL https://arxiv.org/abs/2604.227
+50.
+Islem Bouzenia and Michael Pradel. Understanding software engineering agents: A study of
+thought-action-result trajectories. In 2025 IEEE/ACM 40th International Conference on Automated Software Engineering (ASE), pp. 2846–2857, 2025. doi: 10.1109/ASE63991.2025.00234.
+URL https://doi.org/10.1109/ASE63991.2025.00234.
+Ira Ceka, Hailie Mitchell, Saurabh Pujar, Luca Buratti, Shyam Ramji, Junfeng Yang, Gail Kaiser,
+and Baishakhi Ray. Understanding automated program repair agents through the lens of traceability: An empirical study, 2025. URL https://arxiv.org/abs/2506.08311. Accepted
+at ISSTA 2026.
+10
+
+This paper is a preprint currently under review for publication
+
+Zhaoling Chen, Robert Tang, Gangda Deng, Fang Wu, Jialong Wu, Zhiwei Jiang, Viktor Prasanna,
+Arman Cohan, and Xingyao Wang. LocAgent: Graph-guided LLM agents for code localization.
+In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics
+(Volume 1: Long Papers), pp. 8697–8727. Association for Computational Linguistics, 2025. doi:
+10.18653/v1/2025.acl-long.426. URL https://aclanthology.org/2025.acl-lon
+g.426/.
+Neil Chowdhury, James Aung, Chan Jun Shern, Oliver Jaffe, Dane Sherburn, Giulio Starace, Evan
+Mays, Rachel Dias, Marwan Aljubeh, and Mia Glaese. Introducing SWE-bench verified. https:
+//openai.com/index/introducing- swe- bench- verified/, August 2024.
+OpenAI Blog. Accessed: 2026-08.
+Xiang Deng, Jeff Da, Edwin Pan, Yannis Yiming He, Charles Ide, Kanak Garg, Niklas Lauffer,
+Andrew Park, Nitin Pasari, Chetan Rane, Karmini Sampath, Maya Krishnan, Srivatsa Kundurthy,
+Sean Hendryx, Zifan Wang, Vijay Bharadwaj, Jeff Holm, Raja Aluri, Chen Bo Calvin Zhang,
+Noah Jacobson, Bing Liu, and Brad Kenstler. SWE-bench pro: Can AI agents solve long-horizon
+software engineering tasks?, 2025. URL https://arxiv.org/abs/2509.16941.
+Mehmet Hamza Erol, Batu El, Mirac Suzgun, Mert Yuksekgonul, and James Y Zou. Cost-ofpass: An economic framework for evaluating language models. In International Conference on
+Learning Representations, volume 2026, pp. 34103–34127, 2026.
+Pengfei Gao and Chao Peng. More with less: An empirical study of turn-control strategies for
+efficient coding agents, 2025. URL https://arxiv.org/abs/2510.16786.
+Andy Georges, Dries Buytaert, and Lieven Eeckhout. Statistically rigorous Java performance evaluation. In Proceedings of the 22nd Annual ACM SIGPLAN Conference on Object-Oriented Programming, Systems, Languages, and Applications (OOPSLA), pp. 57–76, 2007. doi: 10.1145/12
+97027.1297033.
+Jingzhi Gong, Ruizhen Gu, Zhiwei Fei, Yazhuo Cao, Lukas Twist, Alina Geiger, Shuo Han, Dominik
+Sobania, Federica Sarro, and Jie M. Zhang. SkillMOO: Multi-objective optimization of agent
+skills for software engineering. In Proceedings of the 41st IEEE/ACM International Conference
+on Automated Software Engineering (ASE 2026), New Ideas and Emerging Results (NIER) Track,
+2026. doi: 10.1145/3832783.3834550. URL https://arxiv.org/abs/2604.09297.
+To appear.
+Steven N. Goodman. A comment on replication, P-values and evidence. Statistics in Medicine, 11
+(7):875–879, 1992. doi: 10.1002/sim.4780110705. URL https://doi.org/10.1002/si
+m.4780110705.
+Haoxiang Jia, Earl T. Barr, and Sergey Mechtaev. Compressing code context for LLM-based issue
+resolution, 2026. URL https://arxiv.org/abs/2603.28119.
+Guanyu Jiang, Zhaochen Su, Xiaoye Qu, and Yi R. Fung. XSkill: Continual learning from experience and skills in multimodal agents, 2026. URL https://arxiv.org/abs/2603.120
+56. Accepted at ICML 2026.
+Carlos E. Jimenez, John Yang, Alexander Wettig, Shunyu Yao, Kexin Pei, Ofir Press, and Karthik R.
+Narasimhan. SWE-bench: Can language models resolve real-world GitHub issues? In The
+Twelfth International Conference on Learning Representations, 2024. URL https://openre
+view.net/forum?id=VTF8yNQM66.
+Tomas Kalibera and Richard Jones. Rigorous benchmarking in reasonable time. In Proceedings
+of the 2013 International Symposium on Memory Management (ISMM), pp. 63–74, 2013. doi:
+10.1145/2464157.2464160.
+Sayash Kapoor, Benedikt Stroebl, Zachary S. Siegel, Nitya Nadgir, and Arvind Narayanan. AI
+agents that matter, 2024. URL https://arxiv.org/abs/2407.01502.
+Myeongsoo Kim, Dingmin Wang, Siwei Cui, Farima Farmahinifarahani, Terry Yue Zhuo, Shweta
+Garg, Baishakhi Ray, Rajdeep Mukherjee, and Varun Kumar. Coherence collapse: Diagnosing
+why code agents fail after reaching the right code, 2026. URL https://arxiv.org/abs/
+2603.24631.
+11
+
+This paper is a preprint currently under review for publication
+
+Wonjoong Kim, Sangwu Park, Yeonjun In, Sein Kim, Dongha Lee, and Chanyoung Park. Beyond
+the final answer: Evaluating the reasoning trajectories of tool-augmented agents, 2025. URL
+https://arxiv.org/abs/2510.02837.
+LangChain. LangSmith observability. https://docs.langchain.com/langsmith/obs
+ervability, 2026. Accessed: 2026-08.
+Langfuse. Langfuse observability overview. https://langfuse.com/docs/observabil
+ity/overview, 2026. Accessed: 2026-08.
+Xiangyi Li, Wenbo Chen, Yimin Liu, Shenghan Zheng, Xiaokun Chen, Yifeng He, Yubo Li, Bingran You, Haotian Shen, Jiankai Sun, Shuyi Wang, Binxu Li, Qunhong Zeng, Di Wang, Xuandong Zhao, Yuanli Wang, Roey Ben Chaim, Zonglin Di, Yipeng Gao, Junwei He, Yizhuo He,
+Liqiang Jing, Luyang Kong, Xin Lan, Jiachen Li, Songlin Li, Yijiang Li, Yueqian Lin, Xinyi
+Liu, Xuanqing Liu, Haoran Lyu, Ze Ma, Bowei Wang, Runhui Wang, Tianyu Wang, Wengao Ye, Yue Zhang, Hanwen Xing, Yiqi Xue, Steven Dillmann, and Han chung Lee. SkillsBench: Benchmarking how well agent skills work across diverse tasks, 2026a. URL https:
+//arxiv.org/abs/2602.12670.
+Yu Li, Rui Miao, Zhengling Qi, and Tian Lan. ARISE: Agent reasoning with intrinsic skill evolution
+in hierarchical reinforcement learning, 2026b. URL https://arxiv.org/abs/2603.1
+6060.
+Zheng Li, Qingxiu Dong, Jingyuan Ma, Di Zhang, Kai Jia, and Zhifang Sui. SelfBudgeter: Adaptive
+token allocation for efficient LLM reasoning. In Findings of the Association for Computational
+Linguistics: ACL 2026, pp. 21135–21156. Association for Computational Linguistics, 2026c. doi:
+10.18653/v1/2026.findings-acl.1063. URL https://aclanthology.org/2026.find
+ings-acl.1063/.
+Fulin Lin, Shaowen Chen, Ruishan Fang, Hongwei Wang, and Tao Lin. Stop wasting your tokens:
+Towards efficient runtime multi-agent systems. In The Fourteenth International Conference on
+Learning Representations, 2026. URL https://openreview.net/forum?id=pzFhtp
+kabh.
+Shuyang Liu, Yang Chen, Rahul Krishna, Saurabh Sinha, Jatin Ganhotra, and Reyhaneh Jabbarvand.
+Process-centric analysis of agentic software systems. Proceedings of the ACM on Programming
+Languages, 10(OOPSLA1), April 2026a. doi: 10.1145/3798271. URL https://doi.org/
+10.1145/3798271. Article 163, 28 pages.
+Tengxiao Liu, Zifeng Wang, Jin Miao, I-Hung Hsu, Jun Yan, Jiefeng Chen, Rujun Han, Fangyuan
+Xu, Yanfei Chen, Ke Jiang, Samira Daruki, Yi Liang, William Yang Wang, Tomas Pfister, and
+Chen-Yu Lee. Budget-aware tool-use enables effective agent scaling, 2025a. URL https:
+//arxiv.org/abs/2511.17006.
+Xiangyan Liu, Bo Lan, Zhiyuan Hu, Yang Liu, Zhicheng Zhang, Fei Wang, Michael Qizhe Shieh,
+and Wenmeng Zhou. CodexGraph: Bridging large language models and code repositories via
+code graph databases. In Proceedings of the 2025 Conference of the Nations of the Americas
+Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers), pp. 142–160. Association for Computational Linguistics, 2025b. doi:
+10.18653/v1/2025.naacl-long.7. URL https://aclanthology.org/2025.naacl-l
+ong.7/.
+Xingyan Liu, Xiyue Luo, Linyu Li, Ganghong Huang, Jianfeng Liu, and Honglin Qiao. SkillForge:
+Forging domain-specific, self-evolving agent skills in cloud technical support. In Proceedings
+of the 49th International ACM SIGIR Conference on Research and Development in Information
+Retrieval, 2026b. doi: 10.1145/3805712.3808466. URL https://doi.org/10.1145/38
+05712.3808466.
+Chiwang Luk, Matin Mohammad Najafi, Zhifeng Jia, Wei Yang, Xiuchang Li, Jinwei Zhu, Yang
+Ren, Lei Chen, and Gao Cong. ContextSniper: AntTrail’s token-efficient code memory for
+repository-level program repair, 2026. URL https://arxiv.org/abs/2607.01916.
+12
+
+This paper is a preprint currently under review for publication
+
+Ziyu Ma, Shidong Yang, Yuxiang Ji, Xucong Wang, Yong Wang, Yiming Hu, Tongwen Huang,
+and Xiangxiang Chu. SkillClaw: Let skills evolve collectively with agentic evolver, 2026. URL
+https://arxiv.org/abs/2604.08377.
+Oorja Majgaonkar, Zhiwei Fei, Xiang Li, Federica Sarro, and He Ye. Understanding code agent
+behaviour: An empirical study of success and failure trajectories, 2025. URL https://arxi
+v.org/abs/2511.00197.
+Colby Mchenry. CodeGraph: Semantic code intelligence for AI coding agents. https://gith
+ub.com/colbymchenry/codegraph, 2026. Accessed: 2026-08.
+Evan Miller. Adding error bars to evals: A statistical approach to language model evaluations. arXiv
+preprint arXiv:2411.00640, 2024. URL https://arxiv.org/abs/2411.00640.
+MiniMax. MiniMax M3: Frontier coding, 1M context, native multimodality—all in one model.
+https://www.minimax.io/blog/minimax-m3, 2026. Accessed: 2026-08.
+Sania Nayab, Giulio Rossolini, Marco Simoni, Andrea Saracino, Giorgio Buttazzo, Nicolamaria
+Manes, and Fabrizio Giacomelli. Concise thoughts: Impact of output length on LLM reasoning
+and cost. Information Sciences, 757:123939, 2026. doi: 10.1016/j.ins.2026.123939. URL
+https://doi.org/10.1016/j.ins.2026.123939.
+Jingwei Ni, Yihao Liu, Xinpeng Liu, Yutao Sun, Mengyu Zhou, Pengyu Cheng, Dexin Wang, Erchao Zhao, Xiaoxi Jiang, and Guanjun Jiang. Trace2Skill: Distill trajectory-local lessons into
+transferable agent skills, 2026. URL https://arxiv.org/abs/2603.25158.
+Isaac Ong, Amjad Almahairi, Vincent Wu, Wei-Lin Chiang, Tianhao Wu, Joseph E. Gonzalez,
+M Waleed Kadous, and Ion Stoica. RouteLLM: Learning to route LLMs with preference data,
+2024. URL https://arxiv.org/abs/2406.18665.
+OpenAI. Introducing codex. https://openai.com/index/introducing-codex/,
+2025. Accessed: 2026-08.
+Shuyin Ouyang, Jie M. Zhang, Mark Harman, and Meng Wang. An empirical study of the nondeterminism of ChatGPT in code generation. ACM Transactions on Software Engineering and
+Methodology, 34(2):1–28, 2025a. doi: 10.1145/3697010. URL https://doi.org/10.114
+5/3697010. Article 42.
+Siru Ouyang, Wenhao Yu, Kaixin Ma, Zilin Xiao, Zhihan Zhang, Mengzhao Jia, Jiawei Han, Hongming Zhang, and Dong Yu. RepoGraph: Enhancing AI software engineering with repositorylevel code graph. In International Conference on Learning Representations, 2025b. URL
+https://proceedings.iclr.cc/paper_files/paper/2025/hash/4a4a
+3c197deac042461c677219efd36c-Abstract-Conference.html.
+Dangfeng Pan, Zhensu Sun, Cenyuan Zhang, David Lo, and Xiaoning Du. The hidden cost of
+readability: How code formatting silently consumes your LLM budget, 2025. URL https:
+//arxiv.org/abs/2508.13666.
+Piebald AI. Claude code system prompts. https://github.com/Piebald-AI/claude
+-code-system-prompts/tree/06bfbc6, 2026. Prompts extracted from Claude Code
+v2.1.169. Accessed: 2026-09.
+Qwen Team. Qwen3.5: Towards native multimodal agents. https://qwen.ai/blog?id=qw
+en3.5, 2026. Accessed: 2026-08.
+Mohamad Salim, Jasmine Latendresse, SayedHassan Khatoonabadi, and Emad Shihab. Tokenomics: Quantifying where tokens are used in agentic software engineering, 2026. URL
+https://arxiv.org/abs/2601.14470.
+Jun Shao and Shein-Chung Chow. Reproducibility probability in clinical trials. Statistics in
+Medicine, 21(12):1727–1742, 2002. doi: 10.1002/sim.1177. URL https://doi.org/
+10.1002/sim.1177.
+13
+
+This paper is a preprint currently under review for publication
+
+Shivanshu Shekhar, Tanishq Dubey, Koyel Mukherjee, Apoorv Saxena, Atharv Tyagi, and Nishanth
+Kotla. Towards optimizing the costs of LLM usage, 2024. URL https://arxiv.org/ab
+s/2402.01742.
+Hongjin Su, Shizhe Diao, Ximing Lu, Mingjie Liu, Jiacheng Xu, Xin Dong, Yonggan Fu, Peter
+Belcak, Hanrong Ye, Hongxu Yin, Yi Dong, Evelina Bakhturina, Tao Yu, Yejin Choi, Jan Kautz,
+and Pavlo Molchanov. ToolOrchestra: Elevating intelligence via efficient model and tool orchestration, 2025. URL https://arxiv.org/abs/2511.21689.
+TechCrunch. OpenAI is losing money on its pricey ChatGPT Pro plan, CEO Sam Altman says.
+https://techcrunch.com/2025/01/05/openai-is-losing-money-on-its
+-pricey-chatgpt-pro-plan-ceo-sam-altman-says/, January 2025. Accessed:
+2026-09.
+Fali Wang, Hui Liu, Zhenwei Dai, Jingying Zeng, Zhiwei Zhang, Zongyu Wu, Chen Luo, Zhen
+Li, Xianfeng Tang, Qi He, and Suhang Wang. AgentTTS: Large language model agent for testtime compute-optimal scaling strategy in complex tasks. In Advances in Neural Information
+Processing Systems, volume 38, 2025. doi: 10.52202/085713-3288. URL https://papers
+.neurips.cc/paper_files/paper/2025/hash/8d9bbba8cac9cabb54e85ee7
+f21441c8-Abstract-Conference.html.
+Yuhang Wang, Yuling Shi, Mo Yang, Rongrui Zhang, Shilin He, Heng Lian, Yuting Chen, Siyu Ye,
+Kai Cai, and Xiaodong Gu. SWE-Pruner: Self-adaptive context pruning for coding agents, 2026.
+URL https://arxiv.org/abs/2601.16746.
+Peng Xia, Jianwen Chen, Hanyang Wang, Jiaqi Liu, Kaide Zeng, Yu Wang, Siwei Han, Yiyang
+Zhou, Xujiang Zhao, Haifeng Chen, Zeyu Zheng, Cihang Xie, and Huaxiu Yao. SkillRL:
+Evolving agents via recursive skill-augmented reinforcement learning, 2026a. URL https:
+//arxiv.org/abs/2602.08234.
+Peng Xia, Jianwen Chen, Xinyu Yang, Haoqin Tu, Jiaqi Liu, Kaiwen Xiong, Siwei Han, Shi Qiu,
+Haonian Ji, Yuyin Zhou, Zeyu Zheng, Cihang Xie, and Huaxiu Yao. MetaClaw: Just talk – an
+agent that meta-learns and evolves in the wild, 2026b. URL https://arxiv.org/abs/26
+03.17187.
+Yuan-An Xiao, Pengfei Gao, Chao Peng, and Yingfei Xiong. Reducing cost of LLM agents with
+trajectory reduction. Proceedings of the ACM on Software Engineering, 3(FSE):1241–1263, 2026.
+doi: 10.1145/3797084. URL https://doi.org/10.1145/3797084.
+John Yang, Carlos E. Jimenez, Alexander Wettig, Kilian Lieret, Shunyu Yao, Karthik Narasimhan,
+and Ofir Press. SWE-agent: Agent-computer interfaces enable automated software engineering.
+In Advances in Neural Information Processing Systems, volume 37, 2024. doi: 10.52202/07901
+7-1601. URL https://proceedings.neurips.cc/paper_files/paper/2024/
+hash/5a7c947568c1b1328ccc5230172e1e7c-Abstract-Conference.html.
+Yutao Yang, Junsong Li, Qianjun Pan, Bihao Zhan, Yuxuan Cai, Lin Du, Jie Zhou, Kai Chen, Qin
+Chen, Xin Li, Bo Zhang, and Liang He. AutoSkill: Experience-driven lifelong learning via skill
+self-evolution, 2026. URL https://arxiv.org/abs/2603.01145.
+Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik R. Narasimhan, and Yuan Cao.
+ReAct: Synergizing reasoning and acting in language models. In International Conference on
+Learning Representations, 2023. URL https://openreview.net/forum?id=WE_vlu
+YUL-X.
+Maxwell Zeff. Anthropic unveils new rate limits to curb Claude Code power users. https:
+//techcrunch.com/2025/07/28/anthropic-unveils-new-rate-limits-t
+o-curb-claude-code-power-users/, July 2025. TechCrunch. Accessed: 2026-09.
+Guibin Zhang, Junhao Wang, Junjie Chen, Wangchunshu Zhou, Kun Wang, and Shuicheng Yan.
+AgenTracer: Who is inducing failure in the LLM agentic systems?, 2025. URL https://ar
+xiv.org/abs/2509.03312.
+14
+
+This paper is a preprint currently under review for publication
+
+Boyuan Zheng, Michael Y. Fatemi, Xiaolong Jin, Zora Zhiruo Wang, Apurva Gandhi, Yueqi Song,
+Yu Gu, Jayanth Srinivasa, Gaowen Liu, Graham Neubig, and Yu Su. SkillWeaver: Web agents
+can self-improve by discovering and honing skills, 2025. URL https://arxiv.org/abs/
+2504.07079.
+Huichi Zhou, Siyuan Guo, Anjie Liu, Zhongwei Yu, Ziqin Gong, Bowen Zhao, Zhixun Chen, Menglong Zhang, Yihang Chen, Jinsong Li, Runyu Yang, Qiangbin Liu, Xinlei Yu, Jianmin Zhou,
+Na Wang, Chunyang Sun, and Jun Wang. Memento-Skills: Let agents design agents, 2026. URL
+https://arxiv.org/abs/2603.18743.
+
+15
+
+This paper is a preprint currently under review for publication
+
+Table 5: Action-label taxonomy.
+Category
+
+Label
+
+Description
+
+Retrieval
+
+Retrieve_Structure
+Retrieve_Code
+Retrieve_Tests
+Retrieve_Docs
+
+Searches or explores the repository structure or current location.
+Reads or searches source code files, except test files or documents.
+Reads or searches test files specifically.
+Reads documentation (non-code references such as README).
+
+Modification
+
+Generate_Patch
+Generate_Tests
+Generate_Tools
+Create_Files_Directories
+Remove_Content
+
+Modifies a file inside the working tree (e.g., /testbed) to fix the issue.
+Writes tests or reproduction scripts (e.g., python -c).
+Creates custom tools for the agent’s own use.
+Creates new files or directories (e.g., touch, mkdir).
+Removes code or files the agent previously created.
+
+Verification
+
+Execute_Existing_Tests
+Execute_Generated_Tests
+Review_Patch
+
+Runs existing repository tests.
+Executes agent-generated code.
+Reviews the applied patch (e.g., git diff).
+
+Git
+
+Other
+
+A
+
+Execute_Git
+
+Runs git commands other than git diff.
+
+Finish_Task
+Env_Inspection
+Pure_Reasoning
+Delegate_Subagent
+Other
+
+Submits the final solution.
+Checks or installs packages; inspects environment variables or resources.
+The step contains only reasoning, without calling any tool.
+Dispatches a subagent via the Agent tool (CC only).
+Does not fit any label above.
+
+A PPENDIX
+
+This appendix provides supplementary details for our study. First, we describe additional study setup
+details, including the versions and configurations of Claude Code and Mini-SWE-Agent, actionlabeling procedures, benchmark task split, and how we handle the agent execution randomness.
+Second, we provide additional results and analysis for RQ1, including the performance of the four
+agent configurations on the 300-task RQ1 analysis set, extra detection details, analysis, and examples
+of the three cost-inefficient behaviors. Third, we provide CodeGraph integration details and further
+results analysis for RQ2. Finally, we detail the implementation of agent-synthesized skills and
+provide the full content of both agent-synthesized and developer-designed skills in RQ3.
+A.1
+
+A DDITIONAL D ETAILS FOR S TUDY S ETUP
+
+In this section, we will provide the specific version and configuration details of the agents included
+in our study, and then we will introduce the agent action labeling process, benchmark task split, and
+the details of handling agent execution randomness.
+We use the same agent versions and configurations across all RQs. CC uses CLI v2.1.169 (Anthropic, 2026a) with a $3.00 per-task cost limit for SWE-bench Verified tasks and a $5.00 per-task
+cost limit for SWE-bench Pro tasks; the backbone model temperature is not exposed through the
+CLI. MSA uses v2.3.0 with temperature 0.0, a 250-step limit, and the same per-task cost limit as CC.
+We next elaborate on the action-labeling procedure, benchmark split details, and our treatment of
+execution randomness described in Section 2.
+A.1.1
+
+ACTION L ABELING
+
+Why label actions. The action labels serve four purposes. First, the two agent frameworks expose actions in different surface forms: CC issues named tool calls while MSA issues raw shell
+commands. We therefore assign every step one or two semantic action labels before any detection,
+which projects both frameworks onto a shared vocabulary and makes their trajectories comparable. Second, they restrict each detector to its relevant step population: SubRetrv compares returned
+context only across retrieval steps, SimScrpt mines scripts only from script-generation or scriptexecution steps, and ReTest groups only test-execution steps. Third, they provide the structural
+boundaries the detections rely on. For example, a step labeled Generate_Patch closes the current
+ReTest group, so re-running a test after an updated patch is never flagged. Finally, they support
+the aggregate analysis, such as the retrieval-action accounting in Table 2 (Patch-Adjacent SubRetrv
+and Within-Sequence SubRetrv). The same labeling pipeline is applied uniformly to every run in
+RQ1–RQ3.
+Label taxonomy.
+
+We use 18 labels in five categories, summarized in Table 5.
+
+Action
+
+Delegate_Subagent arises only in CC’s tool set. A tool call may carry up to two labels. For
+example, an inline python -c reproduction script both authors and executes agent-generated code
+(Generate_Tests & Execute_Generated_Tests).
+
+16
+
+This paper is a preprint currently under review for publication
+
+CC
+MSAS46
+MSAMM3
+MSAQ35 +
+
+Actions (%)
+
+30
+20
+10
+0
+
+t
+t
+s
+s
+e
+k
+g
+h
+ls
+ts
+ts
+ts
+ts
+re
+nt
+on
+tch
+Gi
+as
+oc
+od
+r ie
+es
+es
+es
+es
+ten
+atc
+oo
+ge
+nin
+cti
+ctu
+Pa
+on
+hT
+ba
+so
+cto
+e T ing T
+eT
+eD
+ute
+e C ted T
+ru
+eP
+eT
+pe
+t
+s
+a
+u
+t
+w
+t
+C
+v
+c
+v
+v
+i
+s
+a
+e
+e
+e
+a
+e
+e
+e
+S
+S
+ire
+n
+t
+n
+i
+e
+i
+i
+r
+a
+rat
+i
+i
+x
+I
+R
+s
+er
+r
+r
+r
+r
+v
+v
+e
+e
+e
+e
+D
+i
+t
+t
+F
+t
+t
+n
+e
+E
+e
+o
+n
+n
+v
+a
+re
+n
+ev
+R
+m
+Ex
+Re
+Re
+Re
+les
+Ge
+En
+Ge
+Ge
+tr i
+Pu
+leg
+Ge
+te
+Fi
+Re
+Re
+De
+cu
+te
+ute
+xe
+ea
+ec
+r
+E
+x
+C
+E
+
+he
+Ot
+
+r
+
+Figure 7: Distribution of action labels over the RQ1 trajectories.
+Table 6: Task selection by repository on SWE-bench Verified and SWE-bench Pro.
+SWE-bench Verified (500 tasks)
+Repository
+Analysis
+Eval.
+astropy/astropy
+13
+9
+django/django
+139
+92
+matplotlib/matplotlib
+20
+14
+mwaskom/seaborn
+1
+1
+pallets/flask
+1
+0
+psf/requests
+5
+3
+pydata/xarray
+13
+9
+pylint-dev/pylint
+6
+4
+pytest-dev/pytest
+12
+7
+scikit-learn/scikit-learn
+19
+13
+sphinx-doc/sphinx
+26
+18
+sympy/sympy
+45
+30
+Total
+300
+200
+
+SWE-bench Pro (731 public tasks)
+Repository
+Pool
+Eval.
+ansible/ansible
+96
+12
+element-hq/element-web
+56
+8
+flipt-io/flipt
+85
+10
+future-architect/vuls
+62
+9
+gravitational/teleport
+76
+10
+internetarchive/openlibrary
+91
+11
+navidrome/navidrome
+57
+8
+NodeBB/NodeBB
+44
+8
+protonmail/webclients
+65
+9
+qutebrowser/qutebrowser
+79
+10
+tutao/tutanota
+20
+5
+Total
+
+731
+
+100
+
+Rule-based labeling. Steps are first labeled by deterministic rules, with one rule family per
+harness. For MSA, whose actions are raw shell commands, each command is split into atomic
+sub-commands (&&, ;, and pipes) after unwrapping prefixes such as timeout; navigation-only
+fragments (cd, export) are dropped. Read-only verbs (cat, head, sed -n, grep, ls, find,
+. . . ) map to Retrieval, with test-path, documentation-path, and source-extension patterns selecting the sub-label. Write channels (heredocs, sed -i, tee, output redirection) map to Modification. Modifying an existing file inside the working directory yields Generate_Patch; a testlooking file yields Generate_Tests; ephemeral script generations (python -c, python <<EOF)
+are labeled as Generate_Tests + Execute_Generated_Tests, unless they call an existing test
+API or open a working-tree file for writing. Test runners map to Execute_Existing_Tests or
+Execute_Generated_Tests depending on their target; git diff maps to Review_Patch; other
+git commands map to Execute_Git; the submission marker (MSA only) maps to Finish_Task
+; and steps without any command map to Pure_Reasoning. For CC, whose actions are named
+tool calls, tools map directly (Read/Grep to Retrieval by path, Glob to Retrieve_Structure,
+Edit/Write to Modification by path, Agent to Delegate_Subagent), and Bash calls are routed
+through the same command classifier as MSA.
+LLM fallback. A step is forwarded to an LLM judge (GPT-5.1) whenever any of its atomic commands matches no rule. The judge receives the step’s thought and commands together with the
+taxonomy definitions and returns at most two labels with a brief justification. Among the RQ1 trajectories, the fallback handles 0.94% of CC steps, 31.17% of MSAS46 steps, 1.62% of MSAMM3 steps,
+and 1.18% of MSAQ35+ steps, accounting for 7.26% of the total steps of four agent configurations on
+300 Verified tasks. By submitting all LLM-labeling requests through the batch mode, the labeling
+cost is less than 0.2 cents per trajectory.
+Resulting distribution. Figure 7 shows the label distribution over the RQ1 trajectories
+among four agent configurations. The pattern is consistent across configurations: reading
+source code (Retrieve_Code, 25.65–33.12%) together with generating and executing scripts
+(Generate_Tests + Execute_Generated_Tests, 23.66–34.07%) dominate every configuration, followed by existing-test execution (12.15–13.57%). Architecture differences appear in the
+tail: only CC delegates work to subagents (Delegate_Subagent, 1.83% of its actions), while
+MSA configurations review patches through git diff more often (3.57–5.04% vs. 0.32%).
+
+17
+
+This paper is a preprint currently under review for publication
+
+Table 7: Noise floor of the eight baselines. The floor s is the standard deviation of Pass@1 (pp) and
+the coefficient of variation of cost and CoP (%). The last two columns give the smallest single-run
+|∆| classified as robust (1.90 s). Per-run cost is averaged over the tasks completed in all three runs.
+Pass@1
+Benchmark Config
+
+CoP Min. robust |∆|, R=1
+
+Cost
+spass (pp)
+
+Run 1 / 2 / 3 ($)
+
+scost (%) sCoP (%)
+
+Cost
+
+Pass@1 (pp)
+
+Verified-200
+Verified-200
+Verified-200
+Verified-200
+
+CC
+MSAS46
+MSAMM3
+MSAQ35+
+
+74.00 / 75.50 / 75.50
+72.00 / 71.50 / 74.00
+78.00 / 71.50 / 76.00
+65.00 / 70.50 / 66.00
+
+0.87
+1.32
+3.33
+2.93
+
+0.598 / 0.525 / 0.515
+0.674 / 0.605 / 0.636
+0.463 / 0.442 / 0.477
+0.123 / 0.110 / 0.115
+
+8.35
+5.40
+3.80
+5.70
+
+9.56 15.87%
+5.49 10.25%
+2.85 7.21%
+9.68 10.82%
+
+1.65
+2.51
+6.33
+5.57
+
+Pro-100
+Pro-100
+Pro-100
+Pro-100
+
+CC
+MSAS46
+MSAMM3
+MSAQ35+
+
+55.00 / 56.00 / 52.00
+55.00 / 49.00 / 52.00
+60.00 / 64.00 / 56.00
+47.00 / 41.00 / 47.00
+
+2.08
+3.00
+4.00
+3.46
+
+0.917 / 0.922 / 0.881
+1.037 / 1.067 / 0.983
+0.859 / 0.852 / 0.896
+0.126 / 0.126 / 0.132
+
+2.44
+4.14
+2.70
+2.83
+
+1.94
+8.43
+9.32
+7.22
+
+3.95
+5.70
+7.60
+6.58
+
+A.1.2
+
+Run 1 / 2 / 3 (%)
+
+4.64%
+7.87%
+5.13%
+5.38%
+
+B EHAVIOR C OST ATTRIBUTION
+
+For each action flagged as cost-inefficient, we use the o200k base tokenizer from tiktoken
+to count the tokens in its reasoning, commands, and tool output. We then attribute costs using the
+corresponding model’s token prices. Generated content is charged at the output-token price, while
+both generated content and tool output incur input-token or cache-token charges when carried into
+subsequent LLM requests. We sum these charges to obtain the action’s attributed cost.
+A.1.3
+
+B ENCHMARKS & TASK S PLIT
+
+Table 6 lists the tasks per repository used for analysis in RQ1 and for evaluation in RQ2–RQ3. For
+SWE-bench Verified, we order the tasks of each repository by creation date and assign the earliest
+tasks, about 60% per repository, to the analysis set and the remaining ones to Verified-200. pallets
+/flask has a single task, which falls into the analysis set.
+For SWE-bench Pro, we draw a stratified random sample of 100 tasks from the 731 public tasks with
+a fixed seed. The Pool column gives the public tasks available in each repository. Each repository
+receives a quota that grows with the square root of its pool size, with a minimum of four tasks, so that
+all 11 repositories are represented, and repositories with more tasks do not crowd out smaller ones.
+Within each repository, tasks are ranked by their cost in the public SWE-bench Pro leaderboard run
+of SWE-agent (Yang et al., 2024) with Claude Sonnet 4.5 (250-turn limit, no cost cap)4 and split
+into three equal-sized terciles. The low, mid, and high terciles are sampled at 20%, 30%, and 50%,
+since costlier tasks are expected to expose more cost-inefficient behaviors.
+A.1.4
+
+C ONTROLLING AGENT E XECUTION R ANDOMNESS
+
+This section describes how the run-to-run noise floors in RQ2–RQ3 are measured, how the effect
+of single-run approach cells is judged, and how the underlying equal-variance assumption was validated. All numbers are produced by the same pipeline that generates Table 3.
+Design Overview. Re-running every (benchmark, configuration, approach, and baseline) cell three
+times (2 × 4 × (3 + 1) × 3 = 96 runs in total) would cost about $7,500 at the per-run costs
+we observed, so we proceed in three steps with selective re-running 8 baseline settings and 9 approach cells. First, every baseline setting (two benchmarks × four agent configurations) is executed
+three times to estimate the run-to-run noise floors in Table 7, following standard practice in performance benchmarking (Georges et al., 2007; Kalibera & Jones, 2013) and LLM evaluations (Miller,
+2024). Second, 15 approach cells are executed once, and their effects are judged against the noise
+floors transferred from their corresponding baseline, under the equal-variance assumption that our
+approaches do not materially alter the sampling and infrastructure nondeterminism driving runto-run noise. We further verify this assumption directly on the nine replicated cells in Table 8,
+selected to cover both benchmarks, all three approaches, and both agent frameworks at low replication cost. Here are the nine approach cells we select to replicate: six cells run all three approaches
+on both benchmarks with MSAQ35+ , the cheapest configuration to replicate; one cell runs developerdesigned skills on Verified-200 with MSAMM3 , the noisiest configuration based on its baseline noise
+4
+When we selected the tasks on June 26, 2026, this was the best-performing leaderboard run whose released
+trajectories include cost information (43.70% resolved). The share of resolved tasks in Pro-100 matches that of
+this run, with 44 passed tasks.
+
+18
+
+This paper is a preprint currently under review for publication
+
+Table 8: Approach cells executed three times to verify the equal-variance assumption. Each metric
+lists the approach and baseline noise (sappr / sbase ) and their ratio. The remaining 15 approach cells
+are single runs.
+Pass@1 (pp)
+Benchmark Config
+
+Approach
+
+Per run
+
+Verified-200
+Verified-200
+Verified-200
+Verified-200
+Verified-200
+Verified-200
+Pro-100
+Pro-100
+Pro-100
+
+DevSkills
+CodeGraph
+DevSkills
+DevSkills
+SynSkills
+CodeGraph
+DevSkills
+SynSkills
+CodeGraph
+
+73.00 / 73.50 / 74.00
+73.50 / 73.50 / 75.50
+72.00 / 72.50 / 74.50
+67.50 / 72.00 / 70.00
+70.00 / 66.00 / 73.00
+73.00 / 72.00 / 72.50
+48.00 / 42.00 / 48.00
+49.00 / 45.00 / 44.00
+41.38 / 35.63 / 40.23
+
+CC
+CC
+MSAMM3
+MSAQ35+
+MSAQ35+
+MSAQ35+
+MSAQ35+
+MSAQ35+
+MSAQ35+
+
+Cost ($)
+
+sappr / sbase Ratio
+0.50 / 0.87
+1.15 / 0.87
+1.32 / 3.33
+2.25 / 2.93
+3.51 / 2.93
+0.50 / 2.93
+3.46 / 3.46
+2.65 / 3.46
+3.04 / 4.14
+
+0.58
+1.33
+0.40
+0.77
+1.20
+0.17
+1.00
+0.76
+0.73
+
+Per run
+0.497 / 0.487 / 0.435
+0.590 / 0.613 / 0.587
+0.371 / 0.381 / 0.410
+0.107 / 0.099 / 0.103
+0.119 / 0.112 / 0.115
+0.109 / 0.115 / 0.113
+0.140 / 0.139 / 0.142
+0.130 / 0.132 / 0.133
+0.146 / 0.164 / 0.141
+
+CoP
+
+sappr / sbase Ratio Ratio
+7.06 / 8.35
+2.36 / 8.35
+5.23 / 3.80
+3.83 / 5.70
+3.01 / 5.70
+3.01 / 5.70
+1.38 / 2.83
+1.33 / 2.83
+8.19 / 3.43
+
+0.84
+0.28
+1.38
+0.67
+0.53
+0.53
+0.49
+0.47
+2.39
+
+0.80
+0.36
+1.19
+0.73
+0.48
+0.38
+0.97
+1.03
+1.51
+
+floor; the remaining two cells, whose single-run effects are borderline, run developer-designed skills
+and CodeGraph on Verified-200 with CC. In total, the RQ2–RQ3 evaluation comprises over 10k
+trajectories in SWE-bench Verified and Pro. For RQ1, each agent configuration is only executed
+once on 300 Verified tasks. The remainder of this section details these steps in turn: the measured
+noise floors, the decision rule that classifies an observed effect as robust, the validation of the equalvariance assumption together with a stress test showing that the verdicts hold even if it were violated,
+and the reason behavior metrics carry no robustness verdicts.
+Noise floors. Table 7 lists the three baseline runs of eight settings. The noise floor s is the standard
+deviation (SD) of Pass@1 (in pp), and the coefficients of variation (CV) of cost (in %) and CoP (in
+%). Pass@1 floors range from 0.87 pp (CC on Verified-200) to 4.00 pp (MSAMM3 on Pro-100). The
+stability order within each benchmark is CC > MSAS46 > MSAQ35+ > MSAMM3 . Cost floors range
+from 2.44% to 8.35%. CoP floors are generally wider than cost floors (up to 3.45×, MSAMM3 on
+Pro-100) because CoP inherits the variance of the Pass@1 in its denominator. For CodeGraph on
+Pro-100, which runs on 87 tasks (Appendix A.3.1), all noise floors are re-estimated on the same
+87 tasks: 3.51, 3.51, 3.45, and 4.14 pp for Pass@1, 2.59%, 3.99%, 2.67%, and 3.43% for cost, and
+5.91%, 9.20%, 8.28%, and 10.81% for CoP, for CC, MSAS46 , MSAMM3 , and MSAQ35+ , respectively.
+Robust decision rule. Cost and CoP changes (∆) are computed on the tasks completed in every
+run of both the approach and its baseline. For an approach
+cell with R runs compared to its threep
+run baseline, the standard error of ∆ is σ∆ = s 1/R + 1/3. We classify ∆ as robust when
+|∆|/σ∆ ≥ 1.645, i.e., when a replication would reproduce its sign with probability at least 95%
+under a normal model (Goodman, 1992; Shao & Chow, 2002). For a single-run cell this reduces
+to |∆| ≥ 1.90 s, which is a stricter bar than a replicated cell’s. The resulting thresholds for each
+setting are given in the last two columns of Table 7.
+Validating the equal-variance assumption. Table 8 reports nine approach cells executed three
+times. All other 15 approach cells are single runs. Across the nine replicated cells, the approachside Pass@1 SD is 0.17–1.33× the baseline’s, and the cost SD is 0.28–1.38× the baseline’s in
+eight of the nine cells. However, these ratios are themselves imprecise: for three normal runs,
+the
+satisfies 2s2 /σ 2 ∼ χ22 , so an estimated s carries a relative standard error of
+p sample variance
+√
+1 − π/4 / ( π/2) ≈ 52%, and ratios moderately above one are expected even under equal noise.
+Approach runs are thus not systematically noisier than baseline runs, which is what the transfer of
+baseline noise floors requires. The single exception is CodeGraph with MSAQ35+ on Pro-100, whose
+cost noise is 2.39× its baseline’s (8.19% vs. 3.43%). For this cell we use its own observed noise
+floor (8.19% for cost and 16.34% for CoP). Its cost and CoP increases remain robust. The same
+amplification is not observed for CodeGraph with CC on Verified-200 (cost ratio 0.28), so we do not
+widen CodeGraph floors elsewhere.
+Moreover, the verdicts in Table 3 carry a safety margin beyond this validation: even if the equalvariance assumption were violated at the largest magnitude we observed outside the exception, none
+of these verdicts would change for two reasons. First, every single-run effect classified as robust
+remains robust even after its transferred noise floor is inflated by 1.5×, whereas the largest amplification observed among the replicated cells outside the exception is only 1.38× ( the cost of
+DevSkills with MSAMM3 on Verified-200, in Table 8). Second, though each robust effect retains a
+residual probability of reversing its sign in a replication, summing these probabilities over the 13
+robust cost effects yields only 0.06 expected sign reversals if the entire study were rerun.
+
+19
+
+This paper is a preprint currently under review for publication
+
+Behavior metrics. The per-task behavior frequencies reported in Table 3 are considerably noisier
+than cost. Across the eight baselines, the CV of a behavior’s per-task frequency over the three runs
+averages 15.68% and reaches 44.47% (SimScrpt of MSAQ35+ on Pro-100), whereas cost floors range
+from 2.44% to 8.35%; it exceeds the cost floor of the same setting in 20 of the 24 baseline-behavior
+combinations. We therefore report behavior changes in Table 3 as mechanistic evidence and do not
+attach robustness verdicts to them.
+A.2 A DDITIONAL R ESULTS FOR RQ1
+In this section, we provide additional results and analysis for RQ1. We first report Pass@1, task
+cost, and CoP for the four agent configurations on the 300 RQ1 tasks. We further provide additional
+statistics, analysis, and illustrative examples for the three identified cost-inefficient behaviors.
+Task performance and cost. Table 9 reports Table 9: Pass@1, cost, and CoP of the four
+Pass@1, average task cost, and CoP of the four agent configurations in RQ1.
+agent configurations on the RQ1 analysis set.
+Config
+Pass@1 Cost ($)
+CoP
+CC achieves the highest Pass@1 (76.67%) at
+CC
+76.67%
+0.520 0.679
+a per-task cost slightly below MSAS46 ($0.52
+MSAS46
+74.33%
+0.554 0.745
+MSAMM3 72.67%
+0.365 0.502
+vs. $0.55). MSAMM3 trades 1.67 pp of Pass@1
+MSAQ35+ 65.67%
+0.102 0.156
+against MSAS46 for a 34.04% lower task cost,
+and MSAQ35+ is the cheapest configuration ($0.10 per task) but also the least accurate (65.67%).
+A.2.1
+
+W HY CC E XHIBITS F EWER C OST-I NEFFICIENT B EHAVIORS THAN MSA
+
+A large part of CC’s advantage lies in its built-in system prompt and tool descriptions (Anthropic,
+2026a; Piebald AI, 2026). They already contain instructions that mitigate inefficient behaviors before any external optimization approach is applied, as listed below.
+SubRetrv:
+• Bash tool description: “IMPORTANT: Avoid using this tool to run commands, unless . . . a dedicated tool cannot accomplish your task. Instead, use the appropriate dedicated tool. . . ”, with an
+explicit mapping: file search via Glob instead of find, content search via Grep instead of grep,
+file reading via Read instead of cat.
+• Agent tool (used for delegating subagents) description: “Launch up to N agents IN PARALLEL
+(single message, multiple tool calls) to efficiently explore the codebase. Use 1 agent when the task
+is isolated to known files. . . ” However, this is double-edged: it keeps the main context compact,
+but the summaries omit the exact code, so the main agent sometimes re-reads the same region later.
+This causes the Cross-Agent SubRetrv that accounts for 50.15% of CC’s SubRetrv (Table 2).
+However, no built-in instructions contain context like “do not re-read what you already retrieved”,
+which is one of the reasons why CC still has SubRetrv, and other mitigation approaches can still
+optimize such behavior.
+SimScrpt:
+• System prompt: “NEVER create files unless they’re absolutely necessary for achieving your goal.
+ALWAYS prefer editing an existing file to creating a new one.” It suppresses scratch file creation
+at the source, making file-based SimScrpt rare on CC. CC creates 0.21 draft files per task versus
+2.72 to 7.07 for MSA, and file-based SimScrpt appears in only two CC tasks.
+• Edit tool description: “ALWAYS prefer editing existing files. NEVER write new files unless
+explicitly required.” The rich feedback of the Edit tool and such descriptions make CC barely
+generate scripts for code editing, which is a major category in MSA’s file-based SimScrpt.
+Since creating an issue reproduction script can still help solve the task, CC achieves this with inline
+python -c one-shots. This explains why its SimScrpt is almost entirely ephemeral rather than
+file-based.
+ReTest: we find no built-in instruction that discourages re-running tests without updated patches
+or asks the agent to reuse previous test output. Consistently, ReTest is the one behavior where CC
+shows no clear advantage in frequency: 2.09 executions per task, the same magnitude as MSAS46
+(2.51) and MSAQ35+ (2.10).
+20
+
+This paper is a preprint currently under review for publication
+
+Other instructions improve cost efficiency but are not tied to the specific cost-inefficient behaviors we identified. “You have the capability to call multiple tools in a single response. When
+multiple independent pieces of information are requested and all commands are likely to succeed,
+run multiple tool calls in parallel for optimal performance.” helps reduce round trips; “Your responses should be short and concise.” reduces output tokens.
+A.2.2
+
+S UBSUMED R ETRIEVAL
+
+Our detection mechanisms for SubRetrv do not consider code clones beyond whitespace differences,
+which may underestimate SubRetrv; we leave clone-aware detection to future work.
+Table 10: Total retrieved context and the lines
+Table 10 quantifies the retrieved context bere-read by SubRetrv actions.
+hind SubRetrv: across configurations, agents
+re-read 11.05–18.10% of all retrieved code Metric
+CC MSAS46 MSAMM3 MSAQ35+
+lines through SubRetrv actions. Notably, re- Avg. total lines read
+1,032
+573
+912
+1,051
+trieval volume alone does not determine Sub- Avg. lines re-read by SubRetrv
+114
+96
+137
+190
+Overlapping
+rate
+11.05%
+16.69%
+15.00%
+18.10%
+Retrv severity. MSAS46 reads the fewest lines
+per task (573) yet re-reads a larger share
+(16.69%) than CC, which reads almost twice as many (1,032) with the lowest share (11.05%). How
+the architecture manages the retrieved context therefore matters more than how much it retrieves.
+Below, we illustrate SubRetrv occurrence scenarios with concrete examples.
+Patch-Adjacent SubRetrv. As illustrated in
+Agent Execution
+Patch-Adjacent SubRetrv
+...
+Update set_empty using "sed -i ..."
+Failed Silently
+Figure 8, on django-13158, MSAQ35+ atStep 29: Context retrieval
+tempts to modify set_empty at step 40
+...
+sql/query.py
+|1790 def set_empty(self):
+using sed -i, but the edit silently fails. Step 40: Patch application 1775 |
+|1790 self.where.add(NothingNode(), AND)
+1775 |
+Step 41: Context retrieval
+The agent then re-reads the target region at
+...
+...
+step 41, detects that the function remains
+unchanged, and subsequently generates a Figure 8: Patch-Adjacent SubRetrv of MSA
+Q35+ on
+Python script to apply the patch success- SWE-bench Verified task django-13158.
+fully. However, the step-41 retrieval is
+fully covered by an earlier retrieval at step 29, making it a SubRetrv instance. This example illustrates how limited and error-prone editing support can induce Patch-Adjacent SubRetrv: when
+an editing tool is difficult to use reliably or provides insufficient feedback about the resulting code
+state, the agent may re-read previously retrieved code to verify or recover from the edit.
+Within-Sequence SubRetrv. As illustrated
+Within-Sequence SubRetrv
+Agent Execution
+in Figure 9, on astropy-8707, MSAQ35+
+fits/header.py
+Step 1-12: Context retrieval
+| 2243
+Step 2: 1 |
+reads the entire fits/header.py (2,243
+...
+lines) with cat at step 2. The agent then
+Step 25: Patch application
+Step 3: 74 lines Step 10: 79 lines Step 11: 47 lines
+...
+zooms back into the same file for specific
+functions and precise localization during
+the following retrieval sequence: steps 3, Figure 9: Within-Sequence SubRetrv of MSAQ35+ on
+10, and 11 re-read 74, 79, and 47 lines SWE-bench Verified task astropy-8707.
+respectively, each fully contained in the
+step-2 read.
+Long-Distance SubRetrv. As illustrated in
+Figure 10, on matplotlib-24627, MSAMM3
+Long-Distance SubRetrv
+Agent Execution
+artist.py
+reads lines 150–200 of artist.py at step 22
+...
+Step 22: 150 |
+| 200
+and re-retrieves lines 184–196 of the same file
+Step 22: Context retrieval
+| 196
+Step 194: 184 |
+at step 194, after a 172-step gap. The re172-step gap
+read is triggered by a long debugging loop
+Step 184-193: Progress stalls
+Let me think... Wait, let me check ... But
+and a progress stall: at steps 184–193 the
+the test passes without my fix ... Let me
+Step 194: Context retrieval
+see ... Wait, ... Let me check ... Actually,
+agent runs the same pickle test six times while
+...
+let me check ... Let me think ... Hmm, the
+(249 steps in total)
+test ... Maybe the difference is ...
+its reasoning repeatedly reverses itself (“Wait,
+let me check. . . ”, “Actually, let me check. . . ”,
+“Hmm, the test. . . ”). To re-anchor its analy- Figure 10: Long-Distance SubRetrv of MSAMM3 on
+sis, the agent re-reads the previously retrieved SWE-bench Verified task matplotlib-24627.
+region, along with regions of test_pickle
+.py and _version.py that it had also retrieved before.
+21
+
+This paper is a preprint currently under review for publication
+
+A.2.3 S IMILAR S CRIPT G ENERATION
+Classifying script functionalities. We classify each SimScrpt script by its function using AST
+analysis. A script is a patch script if it opens a file for writing and transforms its content, through
+re.sub, str.replace, or a read-modify-write sequence. A script is classified as an assertion test
+if it contains assert statements, imports pytest or unittest, or calls self.assert* methods.
+A script is an inspection probe if it only queries or prints runtime information, such as print, repr,
+and dir calls, without producing a pass or fail verdict. Scripts matching several signals are assigned
+by priority: patch, then test, then probe. Scripts that cannot be parsed by AST (0.61–5.54%) are
+classified using pattern matching.
+Ephemeral SimScrpt. The motivating example in Figure 1 already contains this behavior. To reproduce the union().none() issue on django-13158, CC emits four inline python -c scripts of
+23 to 29 lines. Every script re-emits the same logic: 1 configuring Django settings, 2 initializing
+the test environment and database, 3 creating test data, 4 building the querysets, and 5 verifying the .none() behavior that the issue asks to fix. Yet the four scripts differ by only a few lines
+each: after a missing-table failure in earlier probes, the first script updates the database initialization
+with migrate --run-syncdb; the second updates the test-environment setup; the third expands
+the combined-query test scenarios, replacing count() with list() after Django rejects count
+() on combined querysets; and the fourth clears the query ordering with order_by(’’) after a
+default-ordering conflict in the union qu

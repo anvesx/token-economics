@@ -1,0 +1,3461 @@
+[
+ {
+  "id": "RQ-A-001",
+  "text": "The system MUST route every harness that allows a base URL through the gateway and treat the gateway log as the source of truth, with hooks and OpenTelemetry (OTel) as supplements.",
+  "src": [
+   "A:193",
+   "C:074",
+   "A:234"
+  ],
+  "comps": [
+   "gw",
+   "a_cc",
+   "a_cx",
+   "a_ai",
+   "a_sdk"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-002",
+  "text": "The system MUST NOT rely on a client hook for enforcement; budgets are enforced at the gateway or in managed settings.",
+  "src": [
+   "A:234",
+   "C:074",
+   "C:136"
+  ],
+  "comps": [
+   "gw",
+   "hookr",
+   "fmode",
+   "a_cc"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Developers can disable unmanaged hooks."
+ },
+ {
+  "id": "RQ-A-003",
+  "text": "Each adapter MUST emit one UsageEvent with harness, session_id, prompt_id, agent, model, input, output, cache_read, cache_write, cost_estimate_usd, cost_source and auth_mode.",
+  "src": [
+   "A:216",
+   "A:217",
+   "C:074"
+  ],
+  "comps": [
+   "a_cc",
+   "a_cx",
+   "a_ai",
+   "a_sdk",
+   "a_cli",
+   "a_obs",
+   "tee"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Field list comes from the R4 adapter rule."
+ },
+ {
+  "id": "RQ-A-004",
+  "text": "Every cost figure MUST carry cost_source of client, gateway or bill; client and gateway figures are list-price estimates, only the invoice is a bill.",
+  "src": [
+   "C:076",
+   "C:094",
+   "A:232"
+  ],
+  "comps": [
+   "tee",
+   "joiner",
+   "trans",
+   "a_sdk",
+   "a_obs",
+   "a_cli"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-005",
+  "text": "The capability registry MUST hold eight flags per harness (baseUrl, oauthPassthrough, hooksBlocking, otel, budgetFlag, headless, modelRewrite, transcriptPath), and the policy engine MUST degrade to observe-only when a flag is false.",
+  "src": [
+   "C:104",
+   "A:193",
+   "C:074"
+  ],
+  "comps": [
+   "cap",
+   "a_cc",
+   "a_cx",
+   "a_ai",
+   "a_obs"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "The flag names are an R4 design rule; the facts behind each value are sourced."
+ },
+ {
+  "id": "RQ-A-006",
+  "text": "An unknown capability MUST be stored as unknown and treated as false until a test proves it.",
+  "src": [
+   "C:104"
+  ],
+  "comps": [
+   "cap",
+   "a_cx",
+   "a_ai"
+  ],
+  "phase": "P1",
+  "label": "proposal",
+  "note": "DevX proposal. Codex hook schema and ChatGPT sign-in behaviour are not in the corpus."
+ },
+ {
+  "id": "RQ-A-007",
+  "text": "The system MUST pin the route so a developer cannot bypass the gateway: allowedProviders customEndpoint in Claude Code managed settings, model_provider in user-level or managed Codex config.",
+  "src": [
+   "A:193",
+   "C:104"
+  ],
+  "comps": [
+   "a_cc",
+   "a_cx",
+   "authk"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "allowedProviders value is quoted in R4 from notes, not from a primary page."
+ },
+ {
+  "id": "RQ-A-008",
+  "text": "The gateway MUST match each client protocol: Anthropic format with anthropic-beta forwarded for Claude Code, Responses API for Codex (wire_api responses), Chat Completions for Aider.",
+  "src": [
+   "A:193",
+   "C:104",
+   "C:037"
+  ],
+  "comps": [
+   "gw",
+   "a_cc",
+   "a_cx",
+   "a_ai"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Codex wire_api accepts only responses."
+ },
+ {
+  "id": "RQ-A-009",
+  "text": "The gateway MUST forward cache_control and every anthropic-beta value unchanged, and cache reads MUST be re-checked after each Claude Code upgrade.",
+  "src": [
+   "C:052",
+   "C:054",
+   "A:193",
+   "C:088"
+  ],
+  "comps": [
+   "gw",
+   "tee",
+   "a_cc",
+   "p_anth"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "A stripping gateway bills the whole history uncached."
+ },
+ {
+  "id": "RQ-A-010",
+  "text": "The gateway MUST keep one provider endpoint per session, because a provider or model switch mid-session loses the cache.",
+  "src": [
+   "A:231",
+   "A:247"
+  ],
+  "comps": [
+   "gw",
+   "p_rtr",
+   "fb",
+   "p_oai"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-011",
+  "text": "Gateway, hook and OTel rows MUST be joined on session_id and prompt_id.",
+  "src": [
+   "C:074",
+   "A:217"
+  ],
+  "comps": [
+   "joiner",
+   "hookr",
+   "otelr",
+   "gw"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Hook prompt_id equals OTel prompt.id. Gateway spans cannot join the client trace unless CLAUDE_CODE_PROPAGATE_TRACEPARENT is set."
+ },
+ {
+  "id": "RQ-A-012",
+  "text": "Observation paths MUST fail open and budget paths MUST fail closed with HTTP 402 when the budget is exhausted.",
+  "src": [
+   "C:074",
+   "C:001"
+  ],
+  "comps": [
+   "fmode",
+   "gw",
+   "hookr",
+   "tee"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Claude Code behaviour on 402 is not in the corpus; test it."
+ },
+ {
+  "id": "RQ-A-013",
+  "text": "Prompt, tool and response content logging MUST stay off by default and only metadata is stored.",
+  "src": [
+   "A:217",
+   "C:104"
+  ],
+  "comps": [
+   "otelr",
+   "hookr",
+   "trans",
+   "a_obs",
+   "tee"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Opt-ins are the OTEL_LOG_* variables and otel.log_user_prompt."
+ },
+ {
+  "id": "RQ-A-014",
+  "text": "Headless runs MUST pass --max-budget-usd and --max-turns, and interactive runs MUST be capped by gateway virtual-key budgets.",
+  "src": [
+   "C:094",
+   "C:080"
+  ],
+  "comps": [
+   "a_cli",
+   "b_cc",
+   "b_cx",
+   "gw"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "--max-turns flag text appears only in C:080."
+ },
+ {
+  "id": "RQ-A-015",
+  "text": "The OAuth passthrough guard MUST forward the Authorization header and the OAuth capability in anthropic-beta, and MUST NOT store or log tokens.",
+  "src": [
+   "A:193"
+  ],
+  "comps": [
+   "b_oauth",
+   "gw",
+   "a_cc"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Non-storage is a design rule; the corpus states only that the capability must be forwarded."
+ },
+ {
+  "id": "RQ-A-016",
+  "text": "Subscription traffic MUST be tracked as percentage windows from rate_limits, because no dollar figure exists for it.",
+  "src": [
+   "C:076",
+   "A:193",
+   "C:010"
+  ],
+  "comps": [
+   "a_cc",
+   "a_obs",
+   "b_oauth"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-017",
+  "text": "The stream tee MUST pass response bytes to the client unchanged and read usage from a copy.",
+  "src": [
+   "A:233",
+   "A:199"
+  ],
+  "comps": [
+   "tee",
+   "gw"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-018",
+  "text": "The system MUST flag a usage object with unknown extra keys instead of converting it silently.",
+  "src": [
+   "A:233"
+  ],
+  "comps": [
+   "tee",
+   "p_anth",
+   "p_oai",
+   "p_xai",
+   "p_gem",
+   "p_rtr"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-019",
+  "text": "Each model call MUST be counted once whether it arrives through SDK telemetry or the gateway.",
+  "src": [
+   "A:216",
+   "A:217"
+  ],
+  "comps": [
+   "a_sdk",
+   "otelr",
+   "joiner",
+   "tee"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Dual reporting trap."
+ },
+ {
+  "id": "RQ-A-020",
+  "text": "Subagent spend MUST be attributed separately using query_source; result.usage alone is not enough.",
+  "src": [
+   "A:216",
+   "A:217"
+  ],
+  "comps": [
+   "otelr",
+   "joiner",
+   "a_cc",
+   "a_sdk"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-021",
+  "text": "Resumed sessions MUST NOT be summed again, because resumed totals already include earlier spend.",
+  "src": [
+   "A:216",
+   "C:094"
+  ],
+  "comps": [
+   "a_sdk",
+   "a_cli",
+   "b_cc",
+   "trans"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-022",
+  "text": "The hook receiver MUST use last_assistant_message on Stop and SubagentStop, and the replayer MUST copy transcripts, because transcript_path lags and local retention is 30 days.",
+  "src": [
+   "C:074",
+   "C:003"
+  ],
+  "comps": [
+   "hookr",
+   "trans"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "The 30-day figure comes from one source."
+ },
+ {
+  "id": "RQ-A-023",
+  "text": "Policy hooks MUST block with exit code 2 and keep each output string under 10,000 characters.",
+  "src": [
+   "C:074"
+  ],
+  "comps": [
+   "hookr"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "PermissionRequest ignores exit 2."
+ },
+ {
+  "id": "RQ-A-024",
+  "text": "A model, effort, speed or tool-set change mid-session MUST be priced for cache loss first, and the hook receiver SHOULD gate PreModelSwitch.",
+  "src": [
+   "A:204",
+   "C:055",
+   "C:074",
+   "A:192"
+  ],
+  "comps": [
+   "hookr",
+   "a_cc",
+   "fb",
+   "rl"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "No hook rewrites the model of an ordinary request."
+ },
+ {
+  "id": "RQ-A-025",
+  "text": "Model downgrade for Claude Code MUST stay inside the Claude family; a gateway body rewrite is a risk because it is not documented as supported.",
+  "src": [
+   "A:193",
+   "C:073"
+  ],
+  "comps": [
+   "gw",
+   "a_cc",
+   "cap"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "modelRewrite flag defaults to false."
+ },
+ {
+  "id": "RQ-A-026",
+  "text": "Each provider connector MUST return usage fields exactly as the provider names them so the normaliser can apply the per-provider table.",
+  "src": [
+   "A:199",
+   "A:233",
+   "A:221",
+   "A:143",
+   "A:157",
+   "A:231"
+  ],
+  "comps": [
+   "p_anth",
+   "p_oai",
+   "p_xai",
+   "p_gem",
+   "p_rtr"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-027",
+  "text": "The Anthropic connector MUST send cache_control with ttl 5m or 1h, at most 4 breakpoints, longer TTL entries first, and system as an array of blocks.",
+  "src": [
+   "A:199",
+   "A:283"
+  ],
+  "comps": [
+   "p_anth"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-028",
+  "text": "The OpenAI connector MUST send prompt_cache_key per session and cap each prefix and key near 15 requests per minute.",
+  "src": [
+   "A:202",
+   "A:148"
+  ],
+  "comps": [
+   "p_oai"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Hit rate 60% to 87% with the key is self-reported."
+ },
+ {
+  "id": "RQ-A-029",
+  "text": "The OpenAI connector MUST use prompt_cache_options mode and ttl (30m or 12h) on GPT-5.6 and later, and prompt_cache_retention before it.",
+  "src": [
+   "A:201",
+   "A:204"
+  ],
+  "comps": [
+   "p_oai"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Azure bills 12h writes from Nov 1 2026 [A:148]."
+ },
+ {
+  "id": "RQ-A-030",
+  "text": "Connectors MUST NOT add reasoning tokens to output, because they already sit inside output_tokens.",
+  "src": [
+   "A:197",
+   "A:251"
+  ],
+  "comps": [
+   "p_oai",
+   "p_xai",
+   "p_gem"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-031",
+  "text": "The xAI connector MUST send x-grok-conv-id per session and report the 200K band so the calculator can reprice all tokens.",
+  "src": [
+   "A:221",
+   "A:224",
+   "A:225"
+  ],
+  "comps": [
+   "p_xai"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "At 200K and above, cached tokens reprice at 2x too."
+ },
+ {
+  "id": "RQ-A-032",
+  "text": "The Gemini connector MUST read cachedContentTokenCount (REST) or cached_content_token_count (SDK) and record explicit-cache storage use.",
+  "src": [
+   "A:143",
+   "A:280",
+   "A:121"
+  ],
+  "comps": [
+   "p_gem"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Implicit discount 75% [A:121] versus 90% [A:280]; the price book decides. Storage rate not in corpus."
+ },
+ {
+  "id": "RQ-A-033",
+  "text": "The aggregator connector MUST sum inputTokens, cacheReadInputTokens and cacheWriteInputTokens for Bedrock, send cachePoint, and never send ttl to 5-minute-only Bedrock models.",
+  "src": [
+   "A:157",
+   "A:159",
+   "A:160"
+  ],
+  "comps": [
+   "p_rtr"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Bedrock batch has no caching."
+ },
+ {
+  "id": "RQ-A-034",
+  "text": "The aggregator connector MUST send session_id or x-session-id (max 256 characters) to OpenRouter and set provider order, allow_fallbacks, require_parameters and data_collection explicitly.",
+  "src": [
+   "A:231",
+   "A:227",
+   "A:229"
+  ],
+  "comps": [
+   "p_rtr"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Provider fallbacks can break the cache. Default router costs 6.0% more per request."
+ },
+ {
+  "id": "RQ-A-035",
+  "text": "Connectors MUST NOT add volatile values such as timestamps to the prompt top; stable content comes first.",
+  "src": [
+   "A:224"
+  ],
+  "comps": [
+   "p_anth",
+   "p_oai",
+   "p_xai",
+   "p_gem",
+   "gw"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "A timestamp gave 87% versus 3% cache reuse."
+ },
+ {
+  "id": "RQ-A-036",
+  "text": "The connector MUST skip cache_control when the prefix is below the model minimum, and the catalogue MUST hold the larger of two conflicting minimums.",
+  "src": [
+   "A:199",
+   "C:051",
+   "A:201"
+  ],
+  "comps": [
+   "cat",
+   "p_anth",
+   "p_oai"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Sonnet 4.6: 1,024 [A:199] versus 2,048 [C:051]. Opus 4.7: 2,048 versus 4,096."
+ },
+ {
+  "id": "RQ-A-037",
+  "text": "The catalogue MUST match exact model ids and MUST NOT match partial names.",
+  "src": [
+   "A:232"
+  ],
+  "comps": [
+   "cat"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Partial-name matching gives a silent wrong price."
+ },
+ {
+  "id": "RQ-A-038",
+  "text": "The catalogue and rate-limit tracker MUST hold rpm, tpm, rpd and a 429_billed flag per model and tier; flex and batch 429 responses are not charged.",
+  "src": [
+   "A:195",
+   "A:150",
+   "A:219"
+  ],
+  "comps": [
+   "cat",
+   "rl"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "OpenAI flex discount percentage is not stated in the source."
+ },
+ {
+  "id": "RQ-A-039",
+  "text": "A fallback hop MUST be priced and logged with its reason, never silent, and batch or flex work retries on the standard tier after a 429.",
+  "src": [
+   "A:195",
+   "A:281",
+   "A:219",
+   "A:192"
+  ],
+  "comps": [
+   "fb",
+   "rl",
+   "cat"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-040",
+  "text": "After an error the fallback chain SHOULD default to the same model unless the saving exceeds the cache-rewrite cost.",
+  "src": [
+   "A:008",
+   "A:204",
+   "C:030"
+  ],
+  "comps": [
+   "fb"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "A:008 retained the same model after an error 90.2% and 80.9% of the time."
+ },
+ {
+  "id": "RQ-A-041",
+  "text": "The gateway MUST return 402 when the virtual key budget is spent, and in-flight requests MAY finish, so soft-cap overshoot is recorded.",
+  "src": [
+   "C:001",
+   "A:234",
+   "A:242",
+   "A:245"
+  ],
+  "comps": [
+   "gw",
+   "authk",
+   "fmode"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Overshoot size is not quantified in the corpus."
+ },
+ {
+  "id": "RQ-A-042",
+  "text": "The key resolver MUST map each virtual key to tenant, team and agent and MUST count BYOK (bring your own key) spend.",
+  "src": [
+   "C:060",
+   "C:001",
+   "A:245"
+  ],
+  "comps": [
+   "authk"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "A:245 reports BYOK spend was not counted by one gateway."
+ },
+ {
+  "id": "RQ-A-043",
+  "text": "Provider keys MUST be fetched from the secrets vault at call time and never stored in configuration.",
+  "src": [
+   "A:193"
+  ],
+  "comps": [
+   "p_anth",
+   "p_oai",
+   "p_xai",
+   "p_gem",
+   "p_rtr",
+   "authk"
+  ],
+  "phase": "P3",
+  "label": "proposal",
+  "note": "DevX proposal. R4 names no source for the vault rule."
+ },
+ {
+  "id": "RQ-A-044",
+  "text": "For harnesses with no base URL, hook or OTel surface (Gemini CLI, Copilot CLI, Cursor, Amp, Kiro, others), the system MUST read vendor dashboards, exports or local files and label the result observe-only.",
+  "src": [
+   "C:003",
+   "A:056",
+   "C:057",
+   "C:117",
+   "C:119",
+   "A:263"
+  ],
+  "comps": [
+   "a_obs",
+   "cap"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-045",
+  "text": "The gateway MUST own Aider cost, because Aider assumes zero cost for an unknown model.",
+  "src": [
+   "C:040",
+   "C:037"
+  ],
+  "comps": [
+   "a_ai",
+   "gw"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-046",
+  "text": "The Codex adapter MUST test hook stdin and exit-code behaviour, OTel event names and ChatGPT sign-in through a custom provider before relying on them.",
+  "src": [
+   "C:104"
+  ],
+  "comps": [
+   "a_cx",
+   "hookr",
+   "otelr",
+   "cap"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "All three are not in the corpus. Managed Work Cloud ignores model_provider."
+ },
+ {
+  "id": "RQ-A-047",
+  "text": "The OTel receiver MUST ingest claude_code.token.usage, claude_code.cost.usage and claude_code.api_request, and MUST set cardinality options deliberately.",
+  "src": [
+   "A:217",
+   "C:002"
+  ],
+  "comps": [
+   "otelr",
+   "a_cc"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Gateway cannot join client traces by default."
+ },
+ {
+  "id": "RQ-A-048",
+  "text": "The gateway log MUST carry cache fields per caller so per-caller hit rate can be computed.",
+  "src": [
+   "C:052",
+   "C:054"
+  ],
+  "comps": [
+   "tee",
+   "joiner",
+   "gw"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Account rate 77% hid a cron near 0%."
+ },
+ {
+  "id": "RQ-A-049",
+  "text": "Replayed transcript rows MUST be labelled client estimate.",
+  "src": [
+   "C:003",
+   "C:076"
+  ],
+  "comps": [
+   "trans",
+   "a_obs"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-050",
+  "text": "The headless adapter MUST parse claude -p --output-format json for session id, usage and structured_output, and treat exit 0 as success.",
+  "src": [
+   "C:094"
+  ],
+  "comps": [
+   "a_cli",
+   "b_cc"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Piped stdin cap is 10MB."
+ },
+ {
+  "id": "RQ-A-051",
+  "text": "The claude -p runner MUST account for --bare skipping hooks, skills, MCP, plugins, memory and CLAUDE.md, and MUST pass hooks explicitly with --settings if needed.",
+  "src": [
+   "C:094"
+  ],
+  "comps": [
+   "b_cc"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-052",
+  "text": "The codex exec runner MUST put model_provider in user-level config and MUST rely on gateway budgets because no Codex budget flag appears in the corpus.",
+  "src": [
+   "C:035",
+   "C:104"
+  ],
+  "comps": [
+   "b_cx",
+   "a_cx",
+   "a_cli"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-A-053",
+  "text": "Spend limits MUST live outside the model.",
+  "src": [
+   "C:136"
+  ],
+  "comps": [
+   "gw",
+   "b_cc",
+   "b_cx",
+   "a_cli"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Agents never reference a budget in 14,000+ messages."
+ },
+ {
+  "id": "RQ-A-054",
+  "text": "The gateway SHOULD add under 50 ms at the 95th percentile (p95) before the first byte on the pass-through path.",
+  "src": [],
+  "comps": [
+   "gw",
+   "tee",
+   "authk"
+  ],
+  "phase": "P3",
+  "label": "proposal",
+  "note": "DevX proposal. No corpus latency figure."
+ },
+ {
+  "id": "RQ-B-001",
+  "text": "The system MUST normalise every provider response to five mutually exclusive token buckets (fresh_input, cache_read, cache_write_5m, cache_write_1h, output), subtracting cached tokens where the provider counts them inside input.",
+  "src": [
+   "A:233",
+   "A:199",
+   "A:190"
+  ],
+  "comps": [
+   "norm"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "OpenAI example: 17,903 prompt tokens with 17,817 cached becomes 86 fresh. Anthropic input_tokens already excludes cache."
+ },
+ {
+  "id": "RQ-B-002",
+  "text": "The system MUST count reasoning tokens as output and MUST NOT add reasoning_tokens on top of output_tokens.",
+  "src": [
+   "A:197",
+   "A:251",
+   "A:065"
+  ],
+  "comps": [
+   "norm",
+   "calc"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-B-003",
+  "text": "The normaliser MUST reject a usage object with unknown extra keys instead of converting it silently.",
+  "src": [
+   "A:233"
+  ],
+  "comps": [
+   "norm"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Rejected rows are quarantined and alerted, not dropped."
+ },
+ {
+  "id": "RQ-B-004",
+  "text": "The bucket schema and price rows MUST allow a cache write rate of 1x, because some providers charge no write premium.",
+  "src": [
+   "A:201",
+   "A:182"
+  ],
+  "comps": [
+   "norm",
+   "pb"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Pre-5.6 OpenAI has no write fee. DeepSeek is listed at 1x write."
+ },
+ {
+  "id": "RQ-B-005",
+  "text": "The system MUST write one ledger row per provider response id, MUST collapse parallel tool calls that share a message id, and MUST ignore placeholder per-step output_tokens in favour of the final result.",
+  "src": [
+   "A:216"
+  ],
+  "comps": [
+   "dedupe"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-B-006",
+  "text": "The system MUST count each call once, whether it arrives through SDK telemetry or through the gateway.",
+  "src": [
+   "A:216",
+   "A:217"
+  ],
+  "comps": [
+   "dedupe",
+   "attr"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Dual reporting trap."
+ },
+ {
+  "id": "RQ-B-007",
+  "text": "The system MUST NOT re-sum totals when a session resumes, because resumed totals already include earlier spend.",
+  "src": [
+   "A:216"
+  ],
+  "comps": [
+   "dedupe",
+   "led"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-B-008",
+  "text": "The system MUST attribute subagent spend separately and MUST NOT rely on result.usage alone.",
+  "src": [
+   "A:216",
+   "A:217"
+  ],
+  "comps": [
+   "attr"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "result.usage excludes subagents. OTel carries query_source."
+ },
+ {
+  "id": "RQ-B-009",
+  "text": "The ledger key MUST include the exact model id (no partial-name matching), service tier, speed, effort, inference geo, caller id, session id and TTL class.",
+  "src": [
+   "A:232",
+   "A:055",
+   "A:217"
+  ],
+  "comps": [
+   "led",
+   "calc"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Partial-name matching gives a silently wrong price."
+ },
+ {
+  "id": "RQ-B-010",
+  "text": "Ledger rows MUST be append-only, and a price change MUST NOT rewrite past rows.",
+  "src": [
+   "A:232",
+   "A:233"
+  ],
+  "comps": [
+   "led",
+   "pb"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Langfuse does not recalculate historical cost after a price change."
+ },
+ {
+  "id": "RQ-B-011",
+  "text": "A correction to a ledger row SHOULD be written as a new row that names the row it supersedes.",
+  "src": [],
+  "comps": [
+   "led"
+  ],
+  "phase": "P1",
+  "label": "proposal",
+  "note": "Mechanism is a DevX proposal. Corpus only says history stays frozen."
+ },
+ {
+  "id": "RQ-B-012",
+  "text": "The system MUST compute cost from a versioned price table keyed by provider, model, effective date and tier, MUST store provider-reported cost when present, and MUST prefer it over the computed value.",
+  "src": [
+   "A:232",
+   "A:233"
+  ],
+  "comps": [
+   "pb",
+   "calc",
+   "led"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-B-013",
+  "text": "The system MUST cost each request against the price row valid at request time and MUST store price_row_id on the ledger row.",
+  "src": [
+   "A:214",
+   "A:069"
+  ],
+  "comps": [
+   "pb",
+   "led",
+   "calc"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Promos expire. 32 percent of 336 price comparisons reversed rank."
+ },
+ {
+  "id": "RQ-B-014",
+  "text": "The price lookup MUST match the exact model id and MUST NOT fall back to a partial-name match.",
+  "src": [
+   "A:232"
+  ],
+  "comps": [
+   "pb",
+   "calc"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-B-015",
+  "text": "Each price row MUST carry the flags band_scope, input_includes_cached, reasoning_in_output, batch_stacks_with_cache and billed_units_source.",
+  "src": [
+   "A:225",
+   "A:233",
+   "A:197",
+   "A:252",
+   "A:177"
+  ],
+  "comps": [
+   "pb",
+   "norm"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-B-016",
+  "text": "The system MUST decide batch and cache stacking per provider and model, with the value true, false or unknown.",
+  "src": [
+   "A:252",
+   "A:255",
+   "A:281"
+  ],
+  "comps": [
+   "pb",
+   "calc"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Groq no, Fireworks yes, Gemini 3+ yes, Gemini 2.5 no."
+ },
+ {
+  "id": "RQ-B-017",
+  "text": "Gemini implicit-cache discount MUST be stored per model and date, because sources disagree between 75 percent and 90 percent.",
+  "src": [
+   "A:121",
+   "A:280",
+   "A:281"
+  ],
+  "comps": [
+   "pb"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Conflict kept open: 75 percent [A:121, A:231, A:237] against 90 percent [A:143, A:280, A:281]. Row stores the value with a confidence field."
+ },
+ {
+  "id": "RQ-B-018",
+  "text": "The calculator MUST re-band on total prompt tokens, MUST reprice every bucket when band_scope is all_tokens, and MUST apply Priority and regional multipliers after the cache discount.",
+  "src": [
+   "A:225",
+   "A:270",
+   "A:176",
+   "C:010"
+  ],
+  "comps": [
+   "calc",
+   "pb"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Threshold is 200K for Anthropic, Gemini and xAI, and 100K for Haiku 5.5."
+ },
+ {
+  "id": "RQ-B-019",
+  "text": "The calculator MUST use vendor billed units, not local token counts, where the vendor reports them.",
+  "src": [
+   "A:177",
+   "C:010"
+  ],
+  "comps": [
+   "calc",
+   "norm"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Cohere billed_units differ from tokens: 6,772 against 7,596 in."
+ },
+ {
+  "id": "RQ-B-020",
+  "text": "The calculator MUST treat an unknown price as unpriced and MUST NOT record it as zero cost.",
+  "src": [
+   "A:242",
+   "A:234"
+  ],
+  "comps": [
+   "calc"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "A 0 cents budget row means price unknown and not counted."
+ },
+ {
+  "id": "RQ-B-021",
+  "text": "The calculator MUST bill a failed or expired batch or flex request at zero.",
+  "src": [
+   "A:219",
+   "A:195"
+  ],
+  "comps": [
+   "calc"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-B-022",
+  "text": "The calculator SHOULD use the expected cache hit rate, not the ideal one, when estimating batch cost.",
+  "src": [
+   "A:219"
+  ],
+  "comps": [
+   "calc"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Anthropic batch hit rate is best-effort, typically 30 to 98 percent."
+ },
+ {
+  "id": "RQ-B-023",
+  "text": "Every cost MUST carry a cost_source of client, gateway or bill and an auth_mode, because only the provider invoice is a bill.",
+  "src": [
+   "A:232",
+   "A:216",
+   "C:002"
+  ],
+  "comps": [
+   "calc",
+   "led"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Label values come from the R4 UsageEvent design."
+ },
+ {
+  "id": "RQ-B-024",
+  "text": "The calculator SHOULD run off the request path and, when pricing fails, SHOULD write the row as unpriced and keep the reservation as the spend bound.",
+  "src": [],
+  "comps": [
+   "calc"
+  ],
+  "phase": "P0",
+  "label": "proposal",
+  "note": "DevX proposal. No corpus source for this failure behaviour."
+ },
+ {
+  "id": "RQ-B-025",
+  "text": "The price book SHOULD check each stored cache rate against its vendor multiplier on insert and flag a mismatch.",
+  "src": [
+   "A:199"
+  ],
+  "comps": [
+   "pb"
+  ],
+  "phase": "P0",
+  "label": "proposal",
+  "note": "Multipliers are sourced. The insert check is a DevX proposal."
+ },
+ {
+  "id": "RQ-B-026",
+  "text": "A daily job MUST flag price rows within 30 days of expires_at or unverified for 30 days, and expired promos MUST fall back to the list price with an alert.",
+  "src": [
+   "A:214"
+  ],
+  "comps": [
+   "plife",
+   "pb"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Job design is from R5. Evidence for expiry: Copilot promos end Dec 1 and Dec 31 2026."
+ },
+ {
+  "id": "RQ-B-027",
+  "text": "The system MUST block billing decisions on price rows older than 30 days or past expiry.",
+  "src": [
+   "A:121",
+   "A:280",
+   "A:148"
+  ],
+  "comps": [
+   "plife",
+   "pb"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Evidence: Gemini cache 75 against 90 percent. Azure 12h write charge from Nov 1 2026."
+ },
+ {
+  "id": "RQ-B-028",
+  "text": "Plan rows MUST hold plan, fee, unit, included_qty (nullable), credit_usd, reset_rule, overage_rate and model_weighting (nullable).",
+  "src": [
+   "C:010",
+   "C:119",
+   "C:116",
+   "C:114",
+   "C:011"
+  ],
+  "comps": [
+   "pplan"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Plan figures are approximate and short-lived. Claude limits have no published token conversion."
+ },
+ {
+  "id": "RQ-B-029",
+  "text": "Plan rows MUST carry expires_at and the plan table MUST be re-verified when a promo ends.",
+  "src": [
+   "A:214",
+   "C:115",
+   "C:011"
+  ],
+  "comps": [
+   "pplan",
+   "plife"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Examples: Copilot promos end Dec 1 and Dec 31 2026. Codex Pro promo ended 31 May 2026."
+ },
+ {
+  "id": "RQ-B-030",
+  "text": "The system MUST track plan quota in native units (credits, premium requests, messages per 5 hours, pool multiples) and MUST NOT convert them to tokens.",
+  "src": [
+   "C:010",
+   "C:119",
+   "C:057",
+   "C:116"
+  ],
+  "comps": [
+   "pplan",
+   "planq"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-B-031",
+  "text": "For plan billing the system MUST record marginal dollars as zero inside the pool, overage after it, and MUST report shadow API cost plus amortised fee.",
+  "src": [
+   "C:010"
+  ],
+  "comps": [
+   "pplan",
+   "planq",
+   "calc"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Formula step 6 in R5."
+ },
+ {
+  "id": "RQ-B-032",
+  "text": "The quota tracker SHOULD fit dollars per plan unit, with a band, from one developer-week per plan.",
+  "src": [
+   "C:010"
+  ],
+  "comps": [
+   "planq"
+  ],
+  "phase": "P3",
+  "label": "proposal",
+  "note": "R5 experiment 4. No corpus measurement exists."
+ },
+ {
+  "id": "RQ-B-033",
+  "text": "The reconciler MUST compute the ratio of client estimate to provider invoice per provider, at least monthly.",
+  "src": [
+   "A:216",
+   "C:002",
+   "C:004"
+  ],
+  "comps": [
+   "rec"
+  ],
+  "phase": "P3",
+  "label": "sourced",
+  "note": "Tolerance is not in the corpus."
+ },
+ {
+  "id": "RQ-B-034",
+  "text": "The reconciler SHOULD compare per provider key and per day, with a tolerance set from the first pilot.",
+  "src": [],
+  "comps": [
+   "rec"
+  ],
+  "phase": "P3",
+  "label": "proposal",
+  "note": "Skeleton says per key. Tolerance and grain are DevX proposals."
+ },
+ {
+  "id": "RQ-B-035",
+  "text": "The canary MUST compare computed cost with vendor usage or invoice weekly, per provider and tier, with a target error under 1 percent.",
+  "src": [
+   "A:216",
+   "C:002"
+  ],
+  "comps": [
+   "canary"
+  ],
+  "phase": "P3",
+  "label": "proposal",
+  "note": "Cadence and 1 percent target come from the R5 design and experiment 1, not from a corpus measurement."
+ },
+ {
+  "id": "RQ-B-036",
+  "text": "Drift above 1 percent SHOULD mark the affected price row stale and raise an alert.",
+  "src": [],
+  "comps": [
+   "canary",
+   "plife"
+  ],
+  "phase": "P3",
+  "label": "proposal",
+  "note": "DevX proposal."
+ },
+ {
+  "id": "RQ-B-037",
+  "text": "The system MUST attribute cost per caller, task, repo and model.",
+  "src": [
+   "C:052",
+   "C:028"
+  ],
+  "comps": [
+   "attr",
+   "meta"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-B-038",
+  "text": "The system MUST join gateway, hook and OTel rows on session_id and prompt_id.",
+  "src": [
+   "C:074",
+   "A:217"
+  ],
+  "comps": [
+   "attr"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "Hook prompt_id equals OTel prompt.id."
+ },
+ {
+  "id": "RQ-B-039",
+  "text": "The system MUST record failed and retried attempts as spend against the task and MUST report cost per successful task as total spend over all attempts divided by successes.",
+  "src": [
+   "C:122",
+   "C:028",
+   "A:207"
+  ],
+  "comps": [
+   "attr",
+   "dash"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-B-040",
+  "text": "The system MUST track failed-run waste share and spend after the first repeated failure signature.",
+  "src": [
+   "C:028"
+  ],
+  "comps": [
+   "attr",
+   "dash"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Baselines in C:028: 32 percent of spend in failed runs, 51 percent after the first repeated failure."
+ },
+ {
+  "id": "RQ-B-041",
+  "text": "The metadata store MUST hold the UsageEvent fields (harness, session_id, prompt_id, agent, model, input, output, cache_read, cache_write, cost_estimate_usd, cost_source, auth_mode) plus price_row_id and no content.",
+  "src": [
+   "A:217",
+   "C:074"
+  ],
+  "comps": [
+   "meta"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": "UsageEvent shape is from the R4 adapter design."
+ },
+ {
+  "id": "RQ-B-042",
+  "text": "The system MUST default to metadata only and MUST treat prompt, tool and response logging as opt-in.",
+  "src": [
+   "A:217"
+  ],
+  "comps": [
+   "meta",
+   "logp"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-B-043",
+  "text": "Content logging MUST default to off for OTEL_LOG_USER_PROMPTS, OTEL_LOG_TOOL_DETAILS, OTEL_LOG_TOOL_CONTENT, OTEL_LOG_ASSISTANT_RESPONSES and OTEL_LOG_RAW_API_BODIES.",
+  "src": [
+   "A:217"
+  ],
+  "comps": [
+   "logp"
+  ],
+  "phase": "P0",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-B-044",
+  "text": "A content-logging opt-in SHOULD be per tenant, written to the audit log and given an expiry date.",
+  "src": [],
+  "comps": [
+   "logp"
+  ],
+  "phase": "P1",
+  "label": "proposal",
+  "note": "DevX proposal. Corpus says opt-in only."
+ },
+ {
+  "id": "RQ-B-045",
+  "text": "Metadata rows SHOULD carry an expiry date set by the retention policy, and usage derived from transcripts SHOULD be persisted because Claude Code keeps transcripts about 30 days.",
+  "src": [
+   "C:003"
+  ],
+  "comps": [
+   "meta"
+  ],
+  "phase": "P3",
+  "label": "sourced",
+  "note": "The 30 day figure is one source. Expiry mechanism is a DevX proposal."
+ },
+ {
+  "id": "RQ-B-046",
+  "text": "The system MUST measure cache hit rate per caller, per model and per prefix hash as cache_read over fresh plus read plus write, and MUST alert when a caller falls below its own baseline.",
+  "src": [
+   "C:052",
+   "C:054"
+  ],
+  "comps": [
+   "dash",
+   "meta"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Account rate 77 percent hid a cron near 0 percent."
+ },
+ {
+  "id": "RQ-B-047",
+  "text": "A cache miss event SHOULD be defined as more than 5 percent and at least 2,000 tokens reprocessed.",
+  "src": [
+   "C:076"
+  ],
+  "comps": [
+   "dash",
+   "meta"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Definition is the Claude Code status-line one. Other providers may differ."
+ },
+ {
+  "id": "RQ-B-048",
+  "text": "The system MUST report mean, median and 95th percentile (P95) spend per user and MUST alert on the tail.",
+  "src": [
+   "C:054",
+   "C:101"
+  ],
+  "comps": [
+   "dash"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Baseline in C:054: median $23, P95 $291, gateway selection bias."
+ },
+ {
+  "id": "RQ-B-049",
+  "text": "Reports MUST lead with cost per successful task and MUST NOT present token savings alone.",
+  "src": [
+   "C:024",
+   "A:069"
+  ],
+  "comps": [
+   "dash"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-B-050",
+  "text": "The anomaly detector SHOULD alert on cost and token series outliers per caller and per model.",
+  "src": [],
+  "comps": [
+   "anom"
+  ],
+  "phase": "P2",
+  "label": "proposal",
+  "note": "No anomaly method exists in the corpus. Only budget alerts at 75, 90 and 100 percent are sourced [A:213, C:116]."
+ },
+ {
+  "id": "RQ-B-051",
+  "text": "The anomaly detector MUST only alert and MUST NOT block traffic, because blocking belongs to budgets.",
+  "src": [
+   "C:136"
+  ],
+  "comps": [
+   "anom"
+  ],
+  "phase": "P2",
+  "label": "proposal",
+  "note": "Enforcement outside the agent is sourced. Alert-only scope is a DevX proposal."
+ },
+ {
+  "id": "RQ-C-001",
+  "text": "The system MUST enforce budgets at the gateway in hard-cap mode, outside the agent, and return an error when a key is exhausted.",
+  "src": [
+   "C:136",
+   "A:234",
+   "C:062"
+  ],
+  "comps": [
+   "bst",
+   "bres"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Agents ignored budgets across 14,000+ messages (C:136). Prompt-only limits are on the Never list."
+ },
+ {
+  "id": "RQ-C-002",
+  "text": "The system MUST store per virtual key a max_budget and a budget_duration, and allow stacked windows such as $10 per day and $100 per month.",
+  "src": [
+   "C:060",
+   "C:061"
+  ],
+  "comps": [
+   "bst"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Overshoot and 402 behaviour of LiteLLM are not quantified in the sources."
+ },
+ {
+  "id": "RQ-C-003",
+  "text": "The system MUST reserve a worst-case cost before dispatch (max_tokens times output price plus a reasoning reserve of at least 25,000 tokens) and reconcile with the true cost after the response.",
+  "src": [
+   "A:197"
+  ],
+  "comps": [
+   "bres"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "The reservation pattern comes from the thealirazadev/llm-gateway repo named in R1; the 25,000 token reserve is the OpenAI figure."
+ },
+ {
+  "id": "RQ-C-004",
+  "text": "The system MUST price every model and every path, and MUST block a request for a model with no price row instead of counting it as zero cost.",
+  "src": [
+   "A:191",
+   "A:242",
+   "A:245"
+  ],
+  "comps": [
+   "bres",
+   "bst"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Portkey unpriced models escape budgets (A:242). Vercel does not count bring-your-own-key traffic (A:245)."
+ },
+ {
+  "id": "RQ-C-005",
+  "text": "The system MUST treat any eventually consistent spend limit as a soft cap and MUST apply an explicit overshoot margin.",
+  "src": [
+   "A:191",
+   "A:234",
+   "A:246"
+  ],
+  "comps": [
+   "bst",
+   "bres"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Overshoot size is not quantified in the corpus. In-flight requests finish after the cap is crossed."
+ },
+ {
+  "id": "RQ-C-006",
+  "text": "The system SHOULD set the default overshoot margin to the reserved amount of in-flight requests, and report it per key.",
+  "src": [],
+  "comps": [
+   "bst",
+   "bres"
+  ],
+  "phase": "P1",
+  "label": "proposal",
+  "note": "DevX proposal. No corpus source gives a margin value."
+ },
+ {
+  "id": "RQ-C-007",
+  "text": "The system MUST raise budget alerts at 75, 90 and 100 percent of each window.",
+  "src": [
+   "A:213",
+   "C:116"
+  ],
+  "comps": [
+   "alert",
+   "bst"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-C-008",
+  "text": "The system SHOULD size per-user budgets around the 95th percentile of spend, not the mean.",
+  "src": [
+   "C:054",
+   "C:101"
+  ],
+  "comps": [
+   "alert",
+   "bst"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Claude Code active-user spend: mean $108, median $23, P95 $291 (C:054, gateway selection bias)."
+ },
+ {
+  "id": "RQ-C-009",
+  "text": "The system MUST cap per-task turns at a per-model percentile of baseline turns, starting at the 75th and never at the 25th, with a remaining-turns reminder and a fallback when the cap hits.",
+  "src": [
+   "C:025"
+  ],
+  "comps": [
+   "tcap"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "C:025 ran with caching off, one run, 100 tasks. Re-measure with caching on (experiment E6)."
+ },
+ {
+  "id": "RQ-C-010",
+  "text": "The system MUST keep one turn baseline per model, because baselines differ across models.",
+  "src": [
+   "C:025"
+  ],
+  "comps": [
+   "tcap"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-C-011",
+  "text": "The system MUST pass --max-budget-usd and --max-turns on headless Claude runs, and use gateway virtual-key budgets for interactive runs.",
+  "src": [
+   "C:080",
+   "C:094"
+  ],
+  "comps": [
+   "tcap",
+   "bst"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Codex has no budget flag in the corpus, so the gateway cap is the only control there."
+ },
+ {
+  "id": "RQ-C-012",
+  "text": "The system MUST detect repeated failure signatures and redirect or stop the run, and MUST log the spend after the first repeated failure.",
+  "src": [
+   "C:028",
+   "A:246"
+  ],
+  "comps": [
+   "loop"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Baseline: 51 percent of spend happens after the first repeated failure (C:028)."
+ },
+ {
+  "id": "RQ-C-013",
+  "text": "The system MUST run a rate-based loop breaker for repeated reads, unchanged test reruns and repeated failures.",
+  "src": [
+   "A:059",
+   "C:028",
+   "C:062"
+  ],
+  "comps": [
+   "loop"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "R6 cites the 79 to 98 percent waste study as C059 while R3 cites it as R:059. The corpus file for A:059 is the cost-inefficient behaviours paper, so A:059 is used."
+ },
+ {
+  "id": "RQ-C-014",
+  "text": "The system MUST NOT rely on a client hook for loop detection alone, because developers can disable hooks.",
+  "src": [
+   "A:234",
+   "C:074"
+  ],
+  "comps": [
+   "loop"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Hook events feed the guard when present. The gateway keeps its own request-level detector."
+ },
+ {
+  "id": "RQ-C-015",
+  "text": "The system MUST carry one affinity key per session (prompt_cache_key, x-grok-conv-id or session_id) and cap each key near 15 requests per minute per prefix on OpenAI.",
+  "src": [
+   "A:202",
+   "A:148",
+   "A:221",
+   "A:231"
+  ],
+  "comps": [
+   "stick"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "The 15 per minute figure is self-reported by OpenAI."
+ },
+ {
+  "id": "RQ-C-016",
+  "text": "The system MUST keep one provider endpoint per session and MUST NOT switch provider mid-session without pricing the cache loss.",
+  "src": [
+   "A:231",
+   "A:247",
+   "A:149"
+  ],
+  "comps": [
+   "stick",
+   "swp"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Azure session affinity does not guarantee cache hits (A:149)."
+ },
+ {
+  "id": "RQ-C-017",
+  "text": "The system MUST treat effort, fast mode, tool set and model as cache keys and change them only at session start or at a priced boundary.",
+  "src": [
+   "C:055",
+   "C:086",
+   "A:204",
+   "A:282"
+  ],
+  "comps": [
+   "swp",
+   "stick"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Effort changes keep the cache on Opus 5.5, Sonnet 5.5, Haiku 5.5 and Fable 5.1 (R1). Check per provider."
+ },
+ {
+  "id": "RQ-C-018",
+  "text": "The system MUST switch models mid-session only if the expected saving exceeds the cache-rewrite cost of the incoming model, and MUST log the reason.",
+  "src": [
+   "A:192",
+   "C:030",
+   "A:204",
+   "C:055"
+  ],
+  "comps": [
+   "swp",
+   "rules"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "The measured cost of a real mid-session switch is not in the corpus (experiment E2)."
+ },
+ {
+  "id": "RQ-C-019",
+  "text": "The system SHOULD stay on the current model after an error by default.",
+  "src": [
+   "A:008"
+  ],
+  "comps": [
+   "swp",
+   "rules"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "MTRouter retained the same model after an error 90.2 and 80.9 percent of the time."
+ },
+ {
+  "id": "RQ-C-020",
+  "text": "The system MUST prefer an effort change over a model switch when the provider keeps the cache on effort change.",
+  "src": [
+   "A:228",
+   "A:282"
+  ],
+  "comps": [
+   "rules",
+   "swp"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Check effort invalidation per provider (C:055)."
+ },
+ {
+  "id": "RQ-C-021",
+  "text": "The system MUST ship a best-single-model baseline before any router, and MUST report every router result against Best Single and an oracle in dollars per solved task.",
+  "src": [
+   "A:006",
+   "A:002",
+   "A:001",
+   "C:026"
+  ],
+  "comps": [
+   "rules",
+   "srt",
+   "casc"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Savings against a random router are not savings (A:001)."
+ },
+ {
+  "id": "RQ-C-022",
+  "text": "The system MUST classify with rules plus atomic yes or no questions at session start or at tier boundaries, and escalate on a verifiable failure.",
+  "src": [
+   "A:052",
+   "A:018",
+   "A:245",
+   "C:031"
+  ],
+  "comps": [
+   "rules"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Agreement fell from 0.742 to 0.60 on blind labels (A:018). Re-measure on blind labels."
+ },
+ {
+  "id": "RQ-C-023",
+  "text": "The system MUST route tool-bearing requests and requests with a failed verifiable check to the strong tier.",
+  "src": [
+   "C:031",
+   "A:245"
+  ],
+  "comps": [
+   "rules",
+   "srt"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "C:031 used 125 requests."
+ },
+ {
+  "id": "RQ-C-024",
+  "text": "The system MUST NOT use a broad single-question classifier or a regex-only heuristic as the router.",
+  "src": [
+   "A:052"
+  ],
+  "comps": [
+   "rules"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "A regex heuristic lost 23.2 points held out."
+ },
+ {
+  "id": "RQ-C-025",
+  "text": "The system MUST train any step-level router on execution-verified counterfactual labels with class balance.",
+  "src": [
+   "C:030",
+   "A:019",
+   "A:013",
+   "A:001"
+  ],
+  "comps": [
+   "srt"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Preference-only labels need 100 to 1,000 gold samples (A:013). C:030 reports no confidence intervals."
+ },
+ {
+  "id": "RQ-C-026",
+  "text": "The system MUST check router quality on blind labels and out-of-distribution tasks before rollout.",
+  "src": [
+   "A:018",
+   "C:032",
+   "A:052"
+  ],
+  "comps": [
+   "srt",
+   "rules"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Static classifiers fell to 8.93 to 21.43 percent out of distribution (C:032)."
+ },
+ {
+  "id": "RQ-C-027",
+  "text": "The system MUST NOT prompt a frontier model as the router, MUST NOT train on logs from one dominant model, and MUST keep the model pool small and complementary.",
+  "src": [
+   "C:030",
+   "A:228",
+   "A:019",
+   "A:006"
+  ],
+  "comps": [
+   "srt",
+   "rules"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "A prompted Opus 4.6 router failed all 40 trajectories (C:030)."
+ },
+ {
+  "id": "RQ-C-028",
+  "text": "The system MUST log per request: caller, model, effort, prefix size, cache read and write, turns, outcome, router reason, router latency and router cost.",
+  "src": [
+   "C:026",
+   "C:052",
+   "A:192"
+  ],
+  "comps": [
+   "rules",
+   "srt",
+   "swp"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-C-029",
+  "text": "The system MUST enable a cascade for a model pair only when measured tier-1 acceptance exceeds c1 over c2, with an Always-Strong fallback.",
+  "src": [
+   "A:028",
+   "C:031",
+   "A:123"
+  ],
+  "comps": [
+   "casc"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Break-even skip rate was 13.3 percent in C:031. A cascade loses above a $0.10 error price (A:123)."
+ },
+ {
+  "id": "RQ-C-030",
+  "text": "The system MUST NOT use a sum log-probability deferral score without length normalisation.",
+  "src": [
+   "A:022"
+  ],
+  "comps": [
+   "casc"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Use a min-quantile score or a post-hoc check such as tests or a schema."
+ },
+ {
+  "id": "RQ-C-031",
+  "text": "The system MUST price every fallback hop and judge call, and MUST NOT make fallbacks silent.",
+  "src": [
+   "A:021",
+   "A:002"
+  ],
+  "comps": [
+   "casc"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Cascade quality collapses once judge error exceeds 0.2 (A:002)."
+ },
+ {
+  "id": "RQ-C-032",
+  "text": "The system MUST size per-task budgets from one probe run with a 1.9x multiplier, not from agent self-estimates.",
+  "src": [
+   "C:027",
+   "C:110"
+  ],
+  "comps": [
+   "probe",
+   "bres"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Kimi K3 only, 5 tasks, 2,700 runs. Re-fit the multiplier on our own models."
+ },
+ {
+  "id": "RQ-C-033",
+  "text": "The system MUST cap each tenant's strong-model share, with drift alerts.",
+  "src": [
+   "A:010"
+  ],
+  "comps": [
+   "share"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "The ceiling value is a DevX proposal. A short gadget raised strong-model routing by 73 to 100 percent."
+ },
+ {
+  "id": "RQ-C-034",
+  "text": "The system SHOULD set the default strong-share ceiling at 1.5 times the tenant's own 30-day baseline share.",
+  "src": [],
+  "comps": [
+   "share"
+  ],
+  "phase": "P2",
+  "label": "proposal",
+  "note": "DevX proposal. No corpus source gives a ceiling value."
+ },
+ {
+  "id": "RQ-C-035",
+  "text": "The system MUST enable caching only when the prefix meets the model minimum and the expected reads repay the write premium.",
+  "src": [
+   "A:199",
+   "A:201"
+  ],
+  "comps": [
+   "cplan"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Anthropic minimums conflict across sources (1,024 vs 2,048; 2,048 vs 4,096). Take the larger until tested."
+ },
+ {
+  "id": "RQ-C-036",
+  "text": "The system MUST choose the cache TTL per caller from the observed reuse gap, not globally.",
+  "src": [
+   "C:052"
+  ],
+  "comps": [
+   "cplan"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "A blanket 1-hour TTL made the bill 8.6 percent worse. 98 percent of reuse came within about 34 seconds."
+ },
+ {
+  "id": "RQ-C-037",
+  "text": "The system MUST keep stable content first and volatile content such as timestamps last in the prefix.",
+  "src": [
+   "A:224"
+  ],
+  "comps": [
+   "cplan"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "A timestamp at the top gave 3 percent cache hits versus 87 percent."
+ },
+ {
+  "id": "RQ-C-038",
+  "text": "The system MUST forward cache_control and the anthropic-beta header unchanged, and MUST NOT send ttl to 5-minute-only Bedrock models.",
+  "src": [
+   "C:052",
+   "C:054",
+   "A:157"
+  ],
+  "comps": [
+   "cplan"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "A stripped header bills the whole history uncached."
+ },
+ {
+  "id": "RQ-C-039",
+  "text": "The system MUST NOT rely on cache for Bedrock batch inference or Nova reads.",
+  "src": [
+   "A:160",
+   "A:157"
+  ],
+  "comps": [
+   "cplan",
+   "tsel"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-C-040",
+  "text": "The system MUST measure hit rate per caller, per model and per prefix hash as cache_read over fresh plus read plus write, and alert on any caller below its own baseline.",
+  "src": [
+   "C:052",
+   "C:054"
+  ],
+  "comps": [
+   "hit"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "An account rate of 77 percent hid a cron job near 0 percent (C:052)."
+ },
+ {
+  "id": "RQ-C-041",
+  "text": "The system SHOULD flag a cache miss as more than 5 percent and 2,000 or more tokens re-processed, and record the miss cause.",
+  "src": [
+   "C:076"
+  ],
+  "comps": [
+   "hit"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Definition comes from the Claude Code status-line object."
+ },
+ {
+  "id": "RQ-C-042",
+  "text": "The system SHOULD alert when a caller's hit rate falls more than 3 standard deviations below its 14-day mean.",
+  "src": [],
+  "comps": [
+   "hit"
+  ],
+  "phase": "P1",
+  "label": "proposal",
+  "note": "DevX proposal. The corpus gives per-caller baselines but no alert method."
+ },
+ {
+  "id": "RQ-C-043",
+  "text": "The system MUST send only latency-tolerant, non-streaming, non-SLA work to batch or flex, and MUST retry on standard after a 429 from flex.",
+  "src": [
+   "A:195",
+   "A:281",
+   "A:219"
+  ],
+  "comps": [
+   "tsel"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Flex has no automatic fallback at OpenAI or Azure."
+ },
+ {
+  "id": "RQ-C-044",
+  "text": "The system MUST decide batch and cache stacking per provider and model, and MUST bill cache reads at the batch input rate where stacking is false.",
+  "src": [
+   "A:252",
+   "A:255",
+   "A:281",
+   "A:219"
+  ],
+  "comps": [
+   "tsel",
+   "cplan"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Groq no, Fireworks yes, Gemini 3 and later yes, Gemini 2.5 no."
+ },
+ {
+  "id": "RQ-C-045",
+  "text": "The system MUST NOT change tier or model mid-conversation without costing a cold cache; fast mode mid-conversation bills the whole context uncached.",
+  "src": [
+   "C:086",
+   "A:176"
+  ],
+  "comps": [
+   "tsel",
+   "swp"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-C-046",
+  "text": "The system SHOULD recommend reserved capacity only when steady load exceeds about 40 percent of the on-demand cost.",
+  "src": [
+   "A:159"
+  ],
+  "comps": [
+   "tsel"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Bedrock figure. Reserved saves 30 to 50 percent."
+ },
+ {
+  "id": "RQ-C-047",
+  "text": "The system MUST gate small-model routing on per-task eval parity with rollback triggers.",
+  "src": [
+   "A:129",
+   "C:050"
+  ],
+  "comps": [
+   "tsel",
+   "rules"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Sample triggers (schema validity -2 pp, p95 +20 percent) come from a survey and are placeholders (C:063)."
+ },
+ {
+  "id": "RQ-C-048",
+  "text": "The system MUST route to a small model only if cost_small plus P(fail) times cost_escalation is below cost_big, with P(fail) taken from our own labelled slice.",
+  "src": [
+   "A:129",
+   "A:186"
+  ],
+  "comps": [
+   "tsel"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "No default failure rate exists in the corpus."
+ },
+ {
+  "id": "RQ-C-049",
+  "text": "The system MUST rank models by cost per solved task, not list price.",
+  "src": [
+   "A:069",
+   "A:065",
+   "A:135"
+  ],
+  "comps": [
+   "tsel",
+   "rules"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "32 percent of 336 price comparisons reversed."
+ },
+ {
+  "id": "RQ-C-050",
+  "text": "The system MUST fail open for observation paths and fail closed for budget paths.",
+  "src": [
+   "C:074"
+  ],
+  "comps": [
+   "bst",
+   "bres",
+   "alert"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "A timed-out hook gives no decision on most Claude events."
+ },
+ {
+  "id": "RQ-C-051",
+  "text": "The system SHOULD disable each optimisation per tenant through the kill-switch, and MUST report guard metrics for the policy components.",
+  "src": [
+   "C:063"
+  ],
+  "comps": [
+   "tcap",
+   "loop",
+   "rules",
+   "srt",
+   "casc",
+   "cplan",
+   "tsel",
+   "share"
+  ],
+  "phase": "P3",
+  "label": "sourced",
+  "note": "Rollback thresholds are survey placeholders."
+ },
+ {
+  "id": "RQ-D-001",
+  "text": "The system MUST defer tool schemas above about 20 tools or 10 percent of the context window, and MUST provide a schema lookup path.",
+  "src": [
+   "C:019",
+   "C:021",
+   "C:022"
+  ],
+  "comps": [
+   "schema"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Billed saving is not in corpus. Quoted per-turn overhead for one 93-tool server ranges 8,000 to 55,000 tokens across C:019, C:022, C:020, C:107."
+ },
+ {
+  "id": "RQ-D-002",
+  "text": "The system MUST decide tool deferral at session start and MUST NOT add or remove tools mid-session, because a tool change invalidates the prompt cache.",
+  "src": [
+   "C:055",
+   "A:204"
+  ],
+  "comps": [
+   "schema"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-D-003",
+  "text": "The system MUST NOT prune tools without a recovery path to the full catalogue.",
+  "src": [
+   "C:021",
+   "C:028"
+  ],
+  "comps": [
+   "schema"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "C:021 is an illustrative simulation. C:028 reports -13.2 and -17.7 percent from pruning, with re-audit against the full catalogue."
+ },
+ {
+  "id": "RQ-D-004",
+  "text": "The gateway MUST cap every tool result at 25,000 tokens for interactive routes and 6,000 to 12,000 tokens for batch routes.",
+  "src": [
+   "A:284",
+   "C:106",
+   "C:036"
+  ],
+  "comps": [
+   "ocap"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Claude Code caps at 25,000 [A:284]. Codex default is 12,000 with 6,000 for CI [C:106]."
+ },
+ {
+  "id": "RQ-D-005",
+  "text": "The output cap MUST NOT truncate tracebacks, test failures or edit anchors.",
+  "src": [
+   "C:024",
+   "C:128"
+  ],
+  "comps": [
+   "ocap"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Pytest filter kept 56.1 percent recall at 31.9 percent savings; the fix kept 99.2 percent recall at 15.3 percent savings [C:024]."
+ },
+ {
+  "id": "RQ-D-006",
+  "text": "The system MUST NOT pipe compressed tool output into shell counting or parsing.",
+  "src": [
+   "C:024"
+  ],
+  "comps": [
+   "ocap"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Compressed search piped to shell counting gave silently wrong answers [C:024]."
+ },
+ {
+  "id": "RQ-D-007",
+  "text": "The system MUST NOT enable any output compressor without a per-workload A/B on cost per successful task and at least 99 percent marker recall.",
+  "src": [
+   "C:024",
+   "C:028"
+  ],
+  "comps": [
+   "ocap",
+   "evalh"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Conflict: C:060 and C:107 vendor claims of 60-95 percent and 45,000 to 12,000 tokens per turn. Chosen: C:024 and C:028 measured results."
+ },
+ {
+  "id": "RQ-D-008",
+  "text": "History edits MUST happen only at a trigger, never on every turn, because an edit breaks the exact-prefix cache from the first changed block.",
+  "src": [
+   "C:066",
+   "C:130",
+   "C:055"
+  ],
+  "comps": [
+   "mask",
+   "clear",
+   "compact"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-D-009",
+  "text": "The system MUST NOT condense history below about 10 events.",
+  "src": [
+   "C:133"
+  ],
+  "comps": [
+   "mask",
+   "compact"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Masking at 7 events or fewer cost 45 to 149 percent more [C:133]."
+ },
+ {
+  "id": "RQ-D-010",
+  "text": "The system MUST prefer observation masking over LLM summaries for tool observations.",
+  "src": [
+   "C:130",
+   "C:133"
+  ],
+  "comps": [
+   "mask"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Conflict: C:122 reports condensation up to 2x lower per-turn cost without a threshold. Chosen: C:130 and C:133, which state window and quality."
+ },
+ {
+  "id": "RQ-D-011",
+  "text": "Context clearing MUST start at trigger 30,000 to 40,000 tokens, keep 5 tool results, clear at least 3,000 to 5,000 tokens, then be tuned per scaffold.",
+  "src": [
+   "C:066",
+   "C:065",
+   "C:130"
+  ],
+  "comps": [
+   "clear"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Other value: API defaults are trigger 100,000 and keep 3 [C:065, C:066]. Chosen: the production guidance."
+ },
+ {
+  "id": "RQ-D-012",
+  "text": "The system MUST protect non-re-fetchable tool results with exclude_tools and MUST persist state to a handoff or memory file before clearing.",
+  "src": [
+   "C:067",
+   "C:035",
+   "C:065"
+  ],
+  "comps": [
+   "clear"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Cleared content is unrecoverable [C:065]."
+ },
+ {
+  "id": "RQ-D-013",
+  "text": "Clearing MUST fire only when the tokens removed repay the cache re-write of the retained suffix.",
+  "src": [
+   "C:066",
+   "C:065"
+  ],
+  "comps": [
+   "clear"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "The break-even formula is a DevX derivation from list prices. R3 only states \"yield exceeds the cache re-write\"."
+ },
+ {
+  "id": "RQ-D-014",
+  "text": "The system MUST compact only near the window limit, MUST count compactions per session, and MUST recommend a restart at 3.",
+  "src": [
+   "A:224",
+   "C:112",
+   "C:106"
+  ],
+  "comps": [
+   "compact"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Conflict on trigger: about 50 percent [C:112], about 90 percent [C:106], window minus 33,000 [C:007]. No head-to-head test; Token Economics defers to the harness setting and only warns."
+ },
+ {
+  "id": "RQ-D-015",
+  "text": "The gateway MUST set a hard max_tokens on every call, because effort does not cap tokens.",
+  "src": [
+   "C:073",
+   "C:093",
+   "A:197"
+  ],
+  "comps": [
+   "mtok"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "OpenAI guidance is to reserve at least 25,000 tokens for reasoning [A:197]."
+ },
+ {
+  "id": "RQ-D-016",
+  "text": "The max_tokens policy MUST have a per-class floor so the cap does not break hard tasks.",
+  "src": [
+   "A:052"
+  ],
+  "comps": [
+   "mtok"
+  ],
+  "phase": "P1",
+  "label": "proposal",
+  "note": "A cap of 300 output tokens broke 7 of 25 hard tasks [A:052]. The floor values are a DevX proposal."
+ },
+ {
+  "id": "RQ-D-017",
+  "text": "The gateway MUST NOT dispatch a request without a max_tokens value, because the budget reserve needs it.",
+  "src": [
+   "A:197",
+   "C:136"
+  ],
+  "comps": [
+   "mtok"
+  ],
+  "phase": "P1",
+  "label": "proposal",
+  "note": "DevX proposal. Ties to the worst-case reserve rule in R1."
+ },
+ {
+  "id": "RQ-D-018",
+  "text": "The linter MUST flag CLAUDE.md above 200 lines and AGENTS.md above 32 KiB, and MUST flag stale skills.",
+  "src": [
+   "C:077",
+   "C:036",
+   "C:028"
+  ],
+  "comps": [
+   "ilint"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "AGENTS.md is silently truncated at 32 KiB [C:036]. The saving is not in corpus."
+ },
+ {
+  "id": "RQ-D-019",
+  "text": "The linter MUST warn when MEMORY.md exceeds 200 lines or 25 KB, and when skill descriptions exceed 1,536 characters.",
+  "src": [
+   "A:269",
+   "C:075",
+   "C:079"
+  ],
+  "comps": [
+   "ilint"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-D-020",
+  "text": "The linter MUST flag default wording that asks for multiple approaches or deep thinking.",
+  "src": [
+   "C:026"
+  ],
+  "comps": [
+   "pwl"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Multiple approaches cost 2.4 to 7.4x reasoning tokens at similar success. Deep thinking cost 1.6 to 2.2x."
+ },
+ {
+  "id": "RQ-D-021",
+  "text": "The linter MUST flag volatile values, such as timestamps, near the top of a prompt.",
+  "src": [
+   "A:224",
+   "A:204",
+   "C:055"
+  ],
+  "comps": [
+   "pwl"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "A timestamp at the prompt top dropped reuse from 87 to 3 percent [A:224]."
+ },
+ {
+  "id": "RQ-D-022",
+  "text": "The linter MUST NOT recommend generic brevity wording such as \"be concise\" as a default.",
+  "src": [
+   "A:104"
+  ],
+  "comps": [
+   "pwl"
+  ],
+  "phase": "P2",
+  "label": "proposal",
+  "note": "\"Be concise\" cut cost 22.67 percent but accuracy 27.69 percent for GPT-3.5 on math [A:104]. Applying this to agent work is a DevX proposal."
+ },
+ {
+  "id": "RQ-D-023",
+  "text": "The headline metric MUST be cost per successful task including failed attempts, and the system MUST NOT report token savings alone.",
+  "src": [
+   "A:122",
+   "A:069",
+   "C:026",
+   "C:024"
+  ],
+  "comps": [
+   "cpsc"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Token reduction and cost correlate weakly (r 0.154) [C:024]."
+ },
+ {
+  "id": "RQ-D-024",
+  "text": "The calculator MUST record failed and retried attempts as spend against the task.",
+  "src": [
+   "C:028",
+   "A:122"
+  ],
+  "comps": [
+   "cpsc"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "R1 cites C:122 for cost-of-pass; R6 cites A:122. Chosen: A:122, because C:122 is the OpenHands condenser source in R3 and R6."
+ },
+ {
+  "id": "RQ-D-025",
+  "text": "The system MUST report failed-run waste share and spend after the first repeated failure signature.",
+  "src": [
+   "C:028"
+  ],
+  "comps": [
+   "cpsc"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Baseline: failed runs are 17 percent of tasks and 32 percent of spend; 51 percent of spend falls after the first repeated failure."
+ },
+ {
+  "id": "RQ-D-026",
+  "text": "The system MUST report cost dispersion per task and arm as a geometric standard deviation.",
+  "src": [
+   "C:027",
+   "C:023"
+  ],
+  "comps": [
+   "cpsc",
+   "stats"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Baseline x1.34 on one model (C:027); same-task runs differ up to 30x [C:023]."
+ },
+ {
+  "id": "RQ-D-027",
+  "text": "The system MUST log tokens by category per task and judge each change on billed cost per success.",
+  "src": [
+   "C:024"
+  ],
+  "comps": [
+   "cpsc",
+   "evalh"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-D-028",
+  "text": "The calculator MUST output the quality floor set: pass rate, patch-apply rate, empty-patch rate, format validity and fix-commit ratio.",
+  "src": [
+   "C:025",
+   "C:024",
+   "C:053"
+  ],
+  "comps": [
+   "cpsc",
+   "evalh"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Fix-commit ratio comes from one developer [C:053]."
+ },
+ {
+  "id": "RQ-D-029",
+  "text": "Comparisons MUST be paired by task with repeats and MUST report task-clustered confidence intervals.",
+  "src": [
+   "C:027",
+   "C:023",
+   "C:026"
+  ],
+  "comps": [
+   "stats",
+   "evalh"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-D-030",
+  "text": "A non-inferiority bound on success MUST be declared before the test, and a breach MUST trigger automatic revert.",
+  "src": [
+   "C:025",
+   "C:024",
+   "A:052"
+  ],
+  "comps": [
+   "stats",
+   "canr",
+   "rollb"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Margin size is not in corpus. C:025 accepted about -4 points for -23.6 percent cost; the margin is a business call."
+ },
+ {
+  "id": "RQ-D-031",
+  "text": "The stats component SHOULD size the run from the standard deviation of a pilot.",
+  "src": [
+   "C:027"
+  ],
+  "comps": [
+   "stats"
+  ],
+  "phase": "P2",
+  "label": "proposal",
+  "note": "Power formulas and minimum test duration are not in corpus. Bootstrap resample count is a DevX proposal."
+ },
+ {
+  "id": "RQ-D-032",
+  "text": "No optimisation MUST ship without a same-task baseline arm and isolated cache state per arm.",
+  "src": [
+   "C:024",
+   "A:006"
+  ],
+  "comps": [
+   "evalh"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Cache carryover is a validity threat: median gap between arms was 10.8 seconds inside the 5-minute TTL [C:024]."
+ },
+ {
+  "id": "RQ-D-033",
+  "text": "The harness MUST record a verifiable success flag on every attempt.",
+  "src": [
+   "C:026"
+  ],
+  "comps": [
+   "evalh"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-D-034",
+  "text": "The harness MUST charge each optimisation own overhead to the task.",
+  "src": [
+   "C:026",
+   "C:028",
+   "C:024"
+  ],
+  "comps": [
+   "evalh",
+   "cpsc"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-D-035",
+  "text": "The harness SHOULD log prompt variant, effort, harness version, tool surface, retries, compaction and whether the optimisation fired for every attempt.",
+  "src": [
+   "C:026"
+  ],
+  "comps": [
+   "evalh"
+  ],
+  "phase": "P2",
+  "label": "proposal",
+  "note": "Listed in R6 section 2 without a single source id."
+ },
+ {
+  "id": "RQ-D-036",
+  "text": "The system MUST NOT enable voting, ensembles or agent teams without a measured gain in cost per successful task.",
+  "src": [
+   "A:122",
+   "C:132",
+   "C:081"
+  ],
+  "comps": [
+   "evalh"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Agent-team multiplier: 7x quoted [C:001, C:010], \"significantly more\" [C:081], 3-5x [C:062]. None is measured; Token Economics measures its own."
+ },
+ {
+  "id": "RQ-D-037",
+  "text": "Every router result MUST be reported against Best Single and an oracle, in dollars per solved task.",
+  "src": [
+   "A:006",
+   "A:002",
+   "A:001",
+   "C:026"
+  ],
+  "comps": [
+   "evalh",
+   "stats"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Savings against a random router are not savings [A:001]."
+ },
+ {
+  "id": "RQ-D-038",
+  "text": "The harness SHOULD track AI-generated defect burden next to cost.",
+  "src": [
+   "C:053"
+  ],
+  "comps": [
+   "evalh"
+  ],
+  "phase": "P3",
+  "label": "sourced",
+  "note": "One developer, 2x28 days. Treat as a weak signal."
+ },
+ {
+  "id": "RQ-D-039",
+  "text": "The system MUST keep a private eval set with hard cases and a Lite subset.",
+  "src": [
+   "A:060",
+   "C:024"
+  ],
+  "comps": [
+   "gold"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "An 80-task subset tracked all 350 tasks within 0.81 pp at 25.3 percent of the cost. Public sets saturate at 96-98 percent baseline [C:024]."
+ },
+ {
+  "id": "RQ-D-040",
+  "text": "Tasks used for tuning MUST be held out from the eval split.",
+  "src": [
+   "A:052"
+  ],
+  "comps": [
+   "gold"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "A regex router fell 23.2 points on held-out tasks [A:052]."
+ },
+ {
+  "id": "RQ-D-041",
+  "text": "Router training labels MUST come from execution-verified counterfactual outcomes with class balance, or from preference labels debiased with 100 to 1,000 gold samples; the system MUST NOT train a router on logs from one dominant model.",
+  "src": [
+   "C:030",
+   "A:019",
+   "A:013",
+   "A:001"
+  ],
+  "comps": [
+   "gold",
+   "pol"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Near-random until about 1,500 gold samples in A:001 versus 100 to 1,000 in A:013. Chosen: the larger figure as the pilot target, and measure."
+ },
+ {
+  "id": "RQ-D-042",
+  "text": "Router quality MUST be checked on blind labels and out-of-distribution tasks before rollout.",
+  "src": [
+   "A:018",
+   "C:032",
+   "A:052"
+  ],
+  "comps": [
+   "gold",
+   "evalh",
+   "canr"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Agreement fell 0.742 to 0.60 on blind Opus labels [A:018]; static classifiers 8.93-21.43 percent out of distribution [C:032]."
+ },
+ {
+  "id": "RQ-D-043",
+  "text": "Rollout MUST use shadow runs on mirrored traffic with write isolation.",
+  "src": [
+   "C:063"
+  ],
+  "comps": [
+   "shadow"
+  ],
+  "phase": "P3",
+  "label": "sourced",
+  "note": "Placeholder survey values, not measured production results."
+ },
+ {
+  "id": "RQ-D-044",
+  "text": "Shadow runs MUST NOT delay or alter the live response, and MUST run under a separate shadow budget because shadow doubles spend.",
+  "src": [
+   "C:063"
+  ],
+  "comps": [
+   "shadow"
+  ],
+  "phase": "P3",
+  "label": "sourced",
+  "note": "The separate budget cap is a DevX proposal."
+ },
+ {
+  "id": "RQ-D-045",
+  "text": "The system SHOULD score routers on static labelled traces before any live shadow.",
+  "src": [
+   "C:030"
+  ],
+  "comps": [
+   "shadow",
+   "evalh"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-D-046",
+  "text": "The canary MUST advance only on a passing verdict from the CPS calculator, in stages with guard metrics.",
+  "src": [
+   "C:063",
+   "C:024"
+  ],
+  "comps": [
+   "canr",
+   "cpsc"
+  ],
+  "phase": "P3",
+  "label": "sourced",
+  "note": "Stage shares and soak time are a DevX proposal. Perplexity ran a 2-week A/B [A:272]; minimum duration is not in corpus."
+ },
+ {
+  "id": "RQ-D-047",
+  "text": "The canary MUST assign arms per session, never per request, because a mid-run change breaks the cache.",
+  "src": [
+   "A:204",
+   "C:055"
+  ],
+  "comps": [
+   "canr"
+  ],
+  "phase": "P3",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-D-048",
+  "text": "Small-model routing MUST be gated on per-task eval parity with rollback triggers.",
+  "src": [
+   "A:129",
+   "C:050",
+   "C:063"
+  ],
+  "comps": [
+   "canr",
+   "rollb",
+   "evalh"
+  ],
+  "phase": "P3",
+  "label": "sourced",
+  "note": "Placeholder thresholds: schema validity -2 pp, p95 +20 percent [C:063]."
+ },
+ {
+  "id": "RQ-D-049",
+  "text": "The system MUST provide a kill-switch per tenant and per optimisation that reverts to the unchanged default path.",
+  "src": [
+   "C:063",
+   "A:204"
+  ],
+  "comps": [
+   "kill"
+  ],
+  "phase": "P3",
+  "label": "sourced",
+  "note": "P2 optimisations ship behind a static off flag in policy until this component exists."
+ },
+ {
+  "id": "RQ-D-050",
+  "text": "Kill-switch state MUST be enforced at the gateway through policy and MUST NOT depend on a client hook.",
+  "src": [
+   "A:234",
+   "C:074"
+  ],
+  "comps": [
+   "kill",
+   "pol"
+  ],
+  "phase": "P3",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-D-051",
+  "text": "When the policy bundle is missing or unreadable, every optimisation MUST resolve to off.",
+  "src": [
+   "C:074"
+  ],
+  "comps": [
+   "kill",
+   "pol"
+  ],
+  "phase": "P3",
+  "label": "proposal",
+  "note": "DevX proposal built on the fail-open and fail-closed rule in R4."
+ },
+ {
+  "id": "RQ-D-052",
+  "text": "Auto-rollback MUST watch six triggers: success below floor, CPS above baseline interval, per-caller hit rate below baseline, empty-patch or apply-failure spike, p95 latency up 20 percent, billed versus estimate divergence.",
+  "src": [
+   "C:063",
+   "C:025",
+   "C:052",
+   "C:076"
+  ],
+  "comps": [
+   "rollb"
+  ],
+  "phase": "P3",
+  "label": "sourced",
+  "note": "p95 +20 percent, schema validity -2 pp and ExecRate -3 pp are survey placeholders [C:063]."
+ },
+ {
+  "id": "RQ-D-053",
+  "text": "The divergence trigger MUST compare ledger estimate to invoice per provider.",
+  "src": [
+   "A:216",
+   "C:002"
+  ],
+  "comps": [
+   "rollb"
+  ],
+  "phase": "P3",
+  "label": "proposal",
+  "note": "Tolerance is not in corpus. DevX proposal."
+ },
+ {
+  "id": "RQ-D-054",
+  "text": "The hit-rate trigger MUST compare each caller to its own baseline, never the account rate.",
+  "src": [
+   "C:052",
+   "C:076"
+  ],
+  "comps": [
+   "rollb"
+  ],
+  "phase": "P3",
+  "label": "sourced",
+  "note": "Account hit rate 77 percent hid a cron job near 0 percent [C:052]."
+ },
+ {
+  "id": "RQ-D-055",
+  "text": "Budgets set through the admin API MUST be enforced outside the agent, in hard-cap mode, at the gateway or in managed settings.",
+  "src": [
+   "C:136",
+   "A:234",
+   "A:191"
+  ],
+  "comps": [
+   "api",
+   "tenant"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Gateway budgets can overshoot; assume in-flight requests complete after the limit is crossed [A:234, A:191]. Overshoot is not quantified in corpus."
+ },
+ {
+  "id": "RQ-D-056",
+  "text": "Budget paths MUST fail closed and return HTTP 402 when the budget is exhausted; observe paths MUST fail open.",
+  "src": [
+   "C:001",
+   "C:074"
+  ],
+  "comps": [
+   "api",
+   "tenant",
+   "pol"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Claude Code behaviour on a 402 is not in corpus; test it."
+ },
+ {
+  "id": "RQ-D-057",
+  "text": "Every admin write MUST produce an audit record with actor, time, before and after.",
+  "src": [],
+  "comps": [
+   "api",
+   "audit"
+  ],
+  "phase": "P1",
+  "label": "proposal",
+  "note": "DevX proposal."
+ },
+ {
+  "id": "RQ-D-058",
+  "text": "The admin API SHOULD expose keys, budgets, policies, reports and kill state as versioned REST resources.",
+  "src": [],
+  "comps": [
+   "api"
+  ],
+  "phase": "P1",
+  "label": "proposal",
+  "note": "DevX proposal. Endpoint list is in the card."
+ },
+ {
+  "id": "RQ-D-059",
+  "text": "Policy changes MUST be versioned, reviewed before apply, and published as a signed bundle.",
+  "src": [],
+  "comps": [
+   "pol"
+  ],
+  "phase": "P1",
+  "label": "proposal",
+  "note": "DevX proposal."
+ },
+ {
+  "id": "RQ-D-060",
+  "text": "Managed settings MUST pin the route: allowedProviders for Claude Code, and model_provider in user or managed config for Codex, never project config.",
+  "src": [
+   "C:001",
+   "A:193",
+   "C:104"
+  ],
+  "comps": [
+   "pol"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Managed settings are highest precedence for Claude Code [C:081, C:074]."
+ },
+ {
+  "id": "RQ-D-061",
+  "text": "Enforcement MUST live at the gateway or in managed settings and MUST NOT rely on a client hook.",
+  "src": [
+   "A:234",
+   "C:074"
+  ],
+  "comps": [
+   "pol",
+   "api"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": ""
+ },
+ {
+  "id": "RQ-D-062",
+  "text": "The gateway MUST keep the last good bundle; with no bundle it MUST pass observe paths and reject budget paths with 503.",
+  "src": [
+   "C:074"
+  ],
+  "comps": [
+   "pol",
+   "api"
+  ],
+  "phase": "P1",
+  "label": "proposal",
+  "note": "DevX proposal."
+ },
+ {
+  "id": "RQ-D-063",
+  "text": "Virtual keys MUST carry max_budget and a duration, and windows MUST stack.",
+  "src": [
+   "C:060",
+   "C:061",
+   "C:001"
+  ],
+  "comps": [
+   "tenant"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Example: $10 per day and $100 per month on one key [C:060]."
+ },
+ {
+  "id": "RQ-D-064",
+  "text": "A key MUST NOT allow a model that has no price-book row.",
+  "src": [
+   "A:242",
+   "A:245",
+   "A:191"
+  ],
+  "comps": [
+   "tenant"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Unpriced models and bring-your-own-key spend escape budgets [A:242, A:245]."
+ },
+ {
+  "id": "RQ-D-065",
+  "text": "The tenant record MUST hold a ceiling on strong-model share, with drift alerts.",
+  "src": [
+   "A:010"
+  ],
+  "comps": [
+   "tenant",
+   "pol"
+  ],
+  "phase": "P2",
+  "label": "sourced",
+  "note": "Router attack raised strong-model upgrades to 73-100 percent in white-box tests [A:010]."
+ },
+ {
+  "id": "RQ-D-066",
+  "text": "Key revocation MUST take effect on the next request at the gateway.",
+  "src": [],
+  "comps": [
+   "tenant"
+  ],
+  "phase": "P1",
+  "label": "proposal",
+  "note": "DevX proposal."
+ },
+ {
+  "id": "RQ-D-067",
+  "text": "The audit log MUST store metadata only, never prompt or response content.",
+  "src": [
+   "A:217",
+   "C:104"
+  ],
+  "comps": [
+   "audit",
+   "ret"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "Content logging is opt-in in Claude Code and Codex."
+ },
+ {
+  "id": "RQ-D-068",
+  "text": "The audit log MUST be append-only and tamper-evident.",
+  "src": [],
+  "comps": [
+   "audit"
+  ],
+  "phase": "P1",
+  "label": "proposal",
+  "note": "DevX proposal."
+ },
+ {
+  "id": "RQ-D-069",
+  "text": "Provider keys MUST live in a secrets vault and MUST be fetched at call time, never stored in config.",
+  "src": [
+   "C:104"
+  ],
+  "comps": [
+   "secrets"
+  ],
+  "phase": "P1",
+  "label": "proposal",
+  "note": "Codex auth.command and Claude Code apiKeyHelper show the helper-command pattern [C:104, A:193]. The vault itself is a DevX proposal."
+ },
+ {
+  "id": "RQ-D-070",
+  "text": "The system MUST forward OAuth tokens and anthropic-beta values unchanged and MUST NOT store them.",
+  "src": [
+   "A:193",
+   "C:088"
+  ],
+  "comps": [
+   "secrets"
+  ],
+  "phase": "P1",
+  "label": "proposal",
+  "note": "Forwarding is sourced; the no-store rule is a DevX proposal."
+ },
+ {
+  "id": "RQ-D-071",
+  "text": "A secret fetch failure MUST fail the request closed and MUST NOT fall back to another tenant key.",
+  "src": [],
+  "comps": [
+   "secrets"
+  ],
+  "phase": "P1",
+  "label": "proposal",
+  "note": "DevX proposal."
+ },
+ {
+  "id": "RQ-D-072",
+  "text": "Admin access MUST use scoped tokens and roles with deny by default.",
+  "src": [
+   "C:088"
+  ],
+  "comps": [
+   "authz"
+  ],
+  "phase": "P1",
+  "label": "proposal",
+  "note": "C:088 shows group-based access in Anthropic apps gateway. Role set is a DevX proposal."
+ },
+ {
+  "id": "RQ-D-073",
+  "text": "Tripping a kill-switch SHOULD need a lower role than clearing it.",
+  "src": [],
+  "comps": [
+   "authz",
+   "kill"
+  ],
+  "phase": "P3",
+  "label": "proposal",
+  "note": "DevX proposal."
+ },
+ {
+  "id": "RQ-D-074",
+  "text": "Content logging MUST default to off and MUST require an explicit opt-in per tenant.",
+  "src": [
+   "A:217",
+   "C:104"
+  ],
+  "comps": [
+   "ret"
+  ],
+  "phase": "P1",
+  "label": "sourced",
+  "note": "OTEL_LOG_* variables in Claude Code; otel.log_user_prompt in Codex."
+ },
+ {
+  "id": "RQ-D-075",
+  "text": "Retention windows MUST be set per tenant in policy and enforced by an expiry job.",
+  "src": [
+   "C:003"
+  ],
+  "comps": [
+   "ret"
+  ],
+  "phase": "P3",
+  "label": "proposal",
+  "note": "Claude Code transcript retention is 30 days per one source [C:003]. Token Economics window values are a DevX proposal."
+ },
+ {
+  "id": "RQ-D-076",
+  "text": "Retention MUST NOT delete price rows referenced by a retained ledger row.",
+  "src": [
+   "A:232"
+  ],
+  "comps": [
+   "ret"
+  ],
+  "phase": "P3",
+  "label": "proposal",
+  "note": "Historical costs are not recalculated after a price change [A:232]."
+ },
+ {
+  "id": "RQ-D-077",
+  "text": "Redaction MUST drop unknown content fields on write.",
+  "src": [],
+  "comps": [
+   "ret"
+  ],
+  "phase": "P3",
+  "label": "proposal",
+  "note": "DevX proposal."
+ }
+]

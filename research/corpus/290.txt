@@ -1,0 +1,1320 @@
+TITLE: Chance-Constrained Personalized LLM Routing with Online Preference Learning
+URL: https://arxiv.org/abs/2610.22695
+ORG: arXiv  TYPE: paper  DATE: 2026-10
+
+                                              Chance-Constrained Personalized LLM Routing with Online Preference
+                                                                           Learning
+
+
+                                                                           Ameya Anjarlekar 1 Rasoul Etesami 1 2 R Srikant 1
+
+
+                                                                 Abstract                                   tion (Li et al., 2010; Xu et al., 2020), and recent work has
+                                                                                                            begun to explore personalized and online LLM routing (Dai
+                                              We study personalized LLM routing, where a
+                                                                                                            et al., 2025; Xie et al., 2025; Zeng et al., 2026). These
+
+
+
+
+arXiv:2610.22695v1 [cs.LG] 15 Oct 2026
+                                              router selects among heterogeneous models with
+                                                                                                            developments motivate an online routing problem in which
+                                              different costs and capabilities. The router must
+                                                                                                            user preferences are unknown and must be learned from the
+                                              minimize cumulative inference cost while ensur-
+                                                                                                            outcomes of the models selected by the router.
+                                              ing reliable realized response quality, even though
+                                              user preferences are unknown and must be learned              Learning user preferences, however, is only part of the chal-
+                                              from feedback during deployment. We formulate                 lenge. In many deployments, consistently poor responses
+                                              this problem as a constrained contextual bandit               may be unacceptable even if average satisfaction is high.
+                                              and develop a primal-dual GLM-UCB algorithm                   A router may instead need to ensure that at least a (1 − ϵ)
+                                              that learns preferences while balancing cost and              fraction of responses satisfy a desired quality criterion over
+                                              quality. Under a logistic preference model and                a horizon of T requests, with probability at least 1 − δ.
+                                              a strict-feasibility condition, we establish sublin-          If Yt ∈ {0, 1} indicates whether the response at round t
+                                              ear expected cost regret relative to an optimal               satisfies the user’s requirements, this requirement is
+                                              stationary randomized contextual oracle and a                                                       !
+                                                                                                                            T
+                                              high-probability guarantee on realized cumula-                                X
+                                              tive satisfaction. The framework extends beyond                           P         Yt ≥ (1 − ϵ)T       ≥ 1−δ           (1)
+                                                                                                                            t=1
+                                              LLM routing to broader online model-selection
+                                              problems with reliability requirements.                       Here, the satisfaction outcome depends on both the selected
+                                                                                                            model and the user’s preferences. Therefore, the router must
+                                                                                                            learn the preferences governing satisfaction likelihood while
+                                         1. Introduction                                                    ensuring that the resulting sequence of outcomes remains
+                                                                                                            sufficiently reliable by satisfying the chance constraint.
+                                         Modern machine learning systems increasingly rely on col-
+                                         lections of models with different capabilities and inference       This leads to a challenging online decision problem. The
+                                         costs. Rather than using the same model for every input,           router must learn from the limited feedback generated by its
+                                         a system can route each request to an appropriate model,           own model choices, keep cumulative inference cost low, and
+                                         using inexpensive models when they are sufficient and re-          ensure that the realized number of satisfactory responses
+                                         serving more expensive models for difficult inputs. This           does not fall too far below the target. This differs from an
+                                         model-routing paradigm is particularly relevant for large          expectation-level constraint, which can balance expected
+                                         language models (LLMs), whose costs and capabilities can           cost and expected satisfaction through a Lagrangian objec-
+                                         differ substantially across models (Chen et al., 2024a; Hu         tive. Here, controlling expected satisfaction alone does not
+                                         et al., 2024; Ong et al., 2025).                                   directly control the probability of falling below the desired
+                                                                                                            level in the realized sequence. The router must therefore
+                                         The challenge becomes more subtle when the appropriate
+                                                                                                            account for both uncertainty in what it has learned about the
+                                         model depends not only on the request but also on the user.
+                                                                                                            user’s preferences and randomness in the resulting satisfac-
+                                         Different users may prefer different models for the same
+                                                                                                            tion outcomes.
+                                         request, and these preferences may not be known before de-
+                                         ployment. A router must therefore learn a user’s preferences       We formulate this setting as a constrained contextual bandit
+                                         from feedback while making routing decisions, gradually            with known model costs and unknown preference parame-
+                                         discovering which model is more likely to satisfy that user        ters. At each round, the learner observes the request context,
+                                         for a given request. This connection between personal-             selects one model, incurs its cost, and observes only the
+                                         ization and online learning has long been studied through          satisfaction feedback from that model. The goal is to mini-
+                                         contextual-bandit methods for personalized recommenda-             mize cumulative cost while satisfying the high-probability
+
+                                                                                                        1
+                                        Online Algorithm for Personalised LLM Routing
+
+requirement in (1).
+                                                                              Table 1. Comparison of LLM routing approaches.
+Our solution follows a simple principle: learn what the user              Method                  Online Personalized Safety
+prefers while continuously monitoring whether the routing
+decisions are keeping pace with the desired satisfaction level.           FrugalGPT                 ×            ×            ×
+The router maintains optimistic estimates of how likely each              RouteLLM                  ×            ×            ×
+model is to satisfy the user, allowing it to explore uncertain            PersonalizedRouter        ×            ✓            ×
+choices while favoring cost-effective ones. At the same                   MetaRouter                ✓            ✓            ×
+time, it keeps track of any accumulated deficit in satisfaction.          BaRP                      ✓            ✓            ×
+When the router begins to fall behind, it shifts toward models            Conformal Routing         ×            ×            ✓
+that are more likely to satisfy the user. We use this idea to             SLARouter                 ✓            ×            ✓
+propose an algorithm and provide sublinear regret bounds                  Ours                      ✓            ✓            ✓
+with respect to a stationary routing policy while ensuring              References:        1) FrugalGPT (Chen et al., 2024a); 2)
+that the chance constraints are met.                                    RouteLLM (Ong et al., 2025); 3) PersonalizedRouter (Dai
+                                                                        et al., 2025); 4) MetaRouter (Zeng et al., 2026); 5) BaRP (Wei
+Although personalized LLM routing motivates our study,                  et al., 2025a); 6) Conformal Routing (Uddin & Bauer, 2026); 7)
+the framework applies more broadly. It applies whenever a               SLARouter (Woisetschläger et al., 2026).
+system repeatedly chooses among heterogeneous models,
+services, or alternatives with different costs, while learning
+an unknown preference or satisfaction model from feed-                 2. Related Work
+back and seeking to maintain a reliability requirement. This
+                                                                       LLM routing and personalization. LLM routing reduces
+includes, for example, personalized recommendation and on-
+                                                                       inference costs by selecting among models with different
+line advertising under resource or budget constraints (Zhao
+                                                                       capabilities and prices. Early approaches, such as Fru-
+& Yang, 2024), cloud or edge service selection subject to
+                                                                       galGPT (Chen et al., 2024a), use cascades to balance re-
+cost, quality-of-service, and reliability requirements (Ma
+                                                                       sponse quality and cost, while subsequent methods learn
+et al., 2026), and dynamic procurement among suppliers
+                                                                       routing policies from offline model evaluations, preferences,
+with heterogeneous costs and uncertain quality under opera-
+                                                                       or task information. Examples include RouteLLM (Ong
+tional constraints (Vassos et al., 2023).
+                                                                       et al., 2025), RouterDC (Chen et al., 2024b), and CAR-
+These considerations lead to the following contributions:              ROT (Somerstep et al., 2025). Benchmarks such as Router-
+                                                                       Bench (Hu et al., 2024) support systematic evaluation of
+                                                                       these approaches. However, conventional routing methods
+   • We formulate personalized online LLM routing as a
+                                                                       primarily learn cost-effective model selection from available
+     contextual bandit with unknown user preferences and a
+                                                                       data; they do not jointly learn user preferences online and
+     cumulative requirement on realized satisfaction, going
+                                                                       enforce a chance constraint on realized outcomes.
+     beyond the usual expectation-level cost-quality formu-
+     lation.                                                           Personalized routing addresses the additional challenge
+                                                                       that different users may prefer different models. Per-
+   • We develop a primal-dual GLM-UCB algorithm that                   sonalizedRouter (Dai et al., 2025) models heterogeneous
+     combines optimistic preference learning with a virtual            user preferences, while GMTRouter (Xie et al., 2025) and
+     satisfaction-deficit queue and a safety buffer.                   MetaRouter (Zeng et al., 2026) explore learning-based ap-
+                                                                       proaches to personalized routing. BaRP (Wei et al., 2025a)
+                                                                       further studies routing under bandit feedback. These meth-
+   • Under a logistic preference model and a uniform strict-           ods move closer to our setting, where user preferences
+     feasibility condition, we establish sublinear expected            are learned through interaction rather than assumed to be
+     cost regret relative to an optimal stationary random-             known in advance. However, our work differs from these
+     ized contextual oracle while guaranteeing the required            approaches by combining online personalization with an
+     realized cumulative satisfaction with high probability.           explicit high-probability guarantee on realized cumulative
+                                                                       satisfaction.
+   • Finally, we provide numerical experiments to demon-
+     strate the effectiveness of our algorithm. We evaluate            Online learning with constraints. Primal–dual methods
+     its performance through synthetic experiments and a               provide a general framework for online learning under cumu-
+     real-world LLM routing case study, examining chance               lative constraints. Prior work studies long-term constraints
+     constraint satisfaction, routing cost, personalization,           in online convex optimization (Mahdavi et al., 2012), con-
+     and finite-horizon behavior.                                      strained Markov decision processes (Cardoso et al., 2019),
+                                                                       and contextual bandits with knapsacks (Agrawal & Deva-
+
+                                                                   2
+                                          Online Algorithm for Personalised LLM Routing
+
+nur, 2016; Badanidiyuru et al., 2018; Balseiro et al., 2020).             After the response is generated, the router observes bi-
+These methods typically regulate resource consumption                     nary satisfaction feedback Yt ∈ {0, 1}, where Yt = 1
+or optimize expected performance under cumulative con-                    indicates that the response satisfies the user’s require-
+straints. In contrast, our method uses a virtual queue to                 ments.
+track the realized satisfaction deficit and learns unknown
+satisfaction probabilities from contextual bandit feedback.
+                                                                     The router therefore observes the features of every candi-
+This enables a high-probability guarantee on realized cumu-
+                                                                     date model but only observes satisfaction feedback for the
+lative satisfaction, rather than merely controlling expected
+                                                                     selected model.
+performance or constraint violation.
+Table 1 summarizes how representative routing approaches             3.2. User Satisfaction Model
+compare along three dimensions: online learning, person-
+alization, and explicit satisfaction or safety guarantees.           We model the probability that a response satisfies the user
+Among the approaches considered, our method is the only              through a generalized linear model with a logistic link:
+one that combines all three.                                         Let Gt denote the information available before observing
+                                                                     Yt , including the current context and selected action. We
+3. Problem Formulation                                               assume
+
+We study personalized LLM routing in which a router se-                              Yt | Gt ∼ Bernoulli(p∗at ,t ),
+lects one of K candidate models for each incoming prompt.                                                                      (4)
+                                                                             p∗a,t := µ(x⊤    ∗
+                                                                                         t,a θ ),    µ(z) := (1 + e−z )−1 .
+The models may differ in computational cost, and a user’s
+preferred model may depend on the prompt. Since these
+                                                                     Here, θ∗ ∈ Rd is unknown and captures how the observed
+preferences are unknown, the router must learn them from
+                                                                     prompt-model features relate to the user’s satisfaction.
+user feedback while keeping inference cost low and main-
+taining a desired level of satisfaction.                             Assumption 3.1 (Boundedness). For every t ∈ [T ] and
+                                                                     a ∈ A,
+We formulate this problem as a contextual bandit with gen-
+eralized linear feedback and a cumulative chance constraint                         ∥xt,a ∥2 ≤ L,        ∥θ∗ ∥2 ≤ S,           (5)
+(also referred to as Quality constraint). The router observes
+                                                                     where L, S > 0 are known. Moreover, the model costs are
+the prompt and features of all candidate models, but receives
+                                                                     normalized so that they satisfy c(a) ∈ [0, 1] for all a ∈ A.
+satisfaction feedback only from the selected model.
+                                                                     To ensure that the cumulative satisfaction requirement re-
+3.1. Online Routing Model                                            mains feasible, we assume the availability of a reliable fall-
+Consider a routing system operating over a horizon of T              back model with known satisfaction performance.
+rounds, indexed by t ∈ [T ] := {1, . . . , T }. At each round:       Assumption 3.2 (Fallback). There exists a baseline model
+                                                                     ã ∈ A that is exempt from the generalized linear model and
+                                                                                                               ∗
+  1. Context. The router observes a prompt pt ∈ P, drawn             has a known satisfaction probability pã,t   = ν, ∀t ∈ [T ].
+     independently from the prompt distribution.                     We additionally assume ν > 1 − ϵ, so the fallback is strictly
+                                                                     feasible; its feedback is not used to estimate θ∗ .
+  2. Model selection. After observing pt , the router selects
+                                                                     This assumption does not imply that every LLM routing
+                     at ∈ A := {1, . . . , K}.                       problem necessarily admits such an action. In practice,
+                                                                     the fallback may correspond to a more expensive model
+  3. Features. A known feature map ϕ assigns a feature               that provides sufficiently reliable responses to user queries
+     vector to each prompt-model pair:                               or a validated service with a known satisfaction guarantee
+                                                                     exceeding the target.
+               xt,a := ϕ(pt , a) ∈ Rd ,       a ∈ A.       (2)
+                                                                     We use the following slack factor to quantify this margin.
+     Thus, the router can compute the features of all candi-         Definition 3.3 (Slack Factor). For ϵ > 0 and fallback satis-
+     date models before making its selection.                        faction probability ν, define the slack factor ξ by
+
+  4. Cost and feedback. Selecting model at incurs a                                                  1−ν
+     known deterministic cost                                                                 ξ :=       .                     (6)
+                                                                                                      ϵ
+
+                          c(at ) ∈ [0, 1].                 (3)       The strict-feasibility assumption ν > 1−ϵ ensures 0 ≤ ξ < 1.
+
+                                                                 3
+                                         Online Algorithm for Personalised LLM Routing
+
+3.3. Chance-Constrained Routing Objective                             where Φ denotes the cumulative distribution function (CDF)
+                                                                      of the standard normal distribution, and Φ−1 denotes its
+The router seeks to minimize cumulative inference cost
+                                                                      inverse (quantile) function.
+while maintaining a prescribed level of cumulative user
+satisfaction. Rather than constraining only the expected              Remark 3.7. This lemma shows that, to meet the satisfac-
+satisfaction, we require the realized satisfaction over the           tion requirement with high probability, the oracle’s expected
+entire horizon to meet the target with high probability.              satisfaction must be slightly above the target 1 − ϵ. Fur-
+                                                                      ther, the
+                                                                             √ corollary shows that this required gap decreases as
+Definition 3.4 (Quality Constraint). For a target level 1 −
+                                                                      O(1/ T ) and becomes smaller as the horizon T grows.
+ϵ ∈ (1/2, 1), failure probability δ ∈ (0, 1/2), and a known
+time horizon T , the routing policy must satisfy
+                                    !                                 3.5. Cost Regret
+                      T
+                  1X                                                  We measure the additional cost incurred while learning rela-
+              P          Yt ≥ 1 − ϵ ≥ 1 − δ.             (7)
+                  T t=1                                               tive to the oracle.
+                                                                      Definition 3.8 (Cumulative Cost Regret). Let a∗t denote
+Equivalently, at least (1 − ϵ)T responses must satisfy the
+                                                                      the model selected by the oracle at round t. The expected
+user with probability at least 1 − δ. This chance constraint
+                                                                      cumulative cost regret is
+directly captures the reliability requirement of the routing
+system.                                                                                        " T                        #
+                                                                                                X
+                                                                                                       c(at ) − c(a∗t )
+                                                                                                                      
+                                                                                RegretT = E                                   .   (10)
+3.4. Stationary Contextual Oracle                                                                t=1
+
+To measure the cost of online learning, we compare the
+router with a stationary randomized contextual policy that            Our goal is therefore to achieve sublinear cost regret while
+knows the true satisfaction model.                                    satisfying the chance constraint in (7).
+Definition 3.5 (Stationary Contextual Oracle). Let Π denote
+the class of stationary randomized contextual policies
+                                                                      Algorithm 1 Primal-Dual GLM-UCB Router
+                                                                      Require: Time horizon T ; action set A; parameters ϵ, δ;
+                       π : P → ∆(A),                                      regularization parameter β ≥ L2 ; stepsize η; safety
+                                                                          buffer ρ.
+where π(a | p) is the probability of selecting model a for             1: Initialize V1 ← βId , λ1 ← 0.
+prompt p. The oracle is any solution to                                2: for t = 1, . . . , T do
+                               " T
+                                X
+                                           #                           3:    Observe prompt pt and compute {xa,t }a∈A .
+                ∗
+              π ∈ arg min E          c(At )            (8)             4:    Compute θbt according to (11).
+                          π∈Π
+                                   t=1                                 5:    for all a ∈ A do
+subject to                                                             6:       Compute UCBt (a) according to (14) with confi-
+                                       !                                        dence radius αt given by (15).
+                    T
+                 1X                                                    7:    end for
+             P         Yt (At ) ≥ 1 − ϵ ≥ 1 − δ,            (9)        8:    Select
+                 T t=1
+
+where At ∼ π ∗ (· | pt ), and the probability is taken over the                     at ← arg min [c(a) − λt UCBt (a)] .
+                                                                                               a∈A
+prompts, model selections, and satisfaction outcomes.
+                                                                       9:    Route pt using model at and observe Yt .
+The oracle represents the minimum expected cost that could            10:    if at ̸= ã
+be achieved by a stationary router with complete knowledge
+of the user’s satisfaction model.                                                          Vt+1 ← Vt + xat ,t x⊤
+                                                                                                               at ,t .
+Lemma 3.6 (Necessary Expectation Condition). Under the
+stationary contextual oracle, for ϵ ∈ (0.01, 0.5) and δ ∈             11:    else
+(0, 0.49),                                  ∗                         12:    Vt+1 ← Vt .
+      √ there exists a maximum margin ρmax (T, ϵ, δ) =                13:    end if
+O(1/ T ) such that
+                        !                                             14:    Update
+        T
+     1X
+           Yt ≥ 1 − ϵ ≥ 1−δ =⇒ E[p∗a∗t ,t ] ≥ 1−ϵ+ρ∗
+                                                                                           
+P                                                                                λt+1 ← max 0, λt + η(1 − ϵ + ρ − Yt ) .
+     T t=1
+                                                                      15: end for
+for every 0 ≤ ρ∗ ≤ ρ∗max (T, ϵ, δ).
+
+                                                                  4
+                                         Online Algorithm for Personalised LLM Routing
+
+4. Primal-Dual GLM-UCB Router                                        Here, αt is the confidence radius defined by
+                                                                             " s
+The router must address several challenges simultaneously.
+                                                                                                                       #
+                                                                                                tL2
+                                                                                                             
+                                                                           1 1                                   2  p
+It must learn which models are likely to satisfy the user            αt =           d log 1 +         + 2 log      + βS ,
+                                                                           κ 2                  dβ              δE
+while preventing cumulative satisfaction from falling below
+its target and keeping the cost as low as possible.                                                                   (15)
+                                                                     where κ is a constant defined by,1
+We now propose our main algorithm that achieves sublin-
+ear regret while satisfying the chance constraint (1). The                              κ := inf µ′ (z) > 0.                       (16)
+                                                                                               |z|≤LS
+algorithm proceeds in the following steps:
+                                                                                               1
+                                                                                       δE :=      , ζ ∈ (2.5, ∞).                  (17)
+                                                                                               Tζ
+ 1. At each round, the router first uses the observed feed-
+    back from previous rounds to estimate the unknown                Moreover, for a = ã, we set
+    GLM parameter θ∗ .
+                                                                                               UCBt (ã) = ν                       (18)
+ 2. Next, it selects a model by balancing its inference              The confidence-based formula is used for a ̸= ã; the fall-
+    cost against its estimated satisfaction, with the tradeoff       back is handled separately by its known value ν. Thus, the
+    determined by the current dual variable.                         router can explore potentially useful models without treating
+                                                                     an uncertain model as poor simply because it has not yet
+ 3. After observing the realized satisfaction, the router
+                                                                     received enough feedback.
+    updates the dual variable according to the resulting
+    satisfaction deficit.
+                                                                     4.3. Model Selection and Virtual Satisfaction Queue
+
+The overall algorithm is summarized in Algorithm 1.                  To balance inference cost against the cumulative satisfaction
+                                                                     requirement, we maintain a nonnegative virtual satisfaction
+4.1. Learning User Satisfaction                                      queue λt ≥ 0, initialized with λ1 = 0. The variable λt can
+                                                                     equivalently be viewed as a dual variable associated with
+The router estimates θ∗ using all feedback observed so far.          the satisfaction requirement. After selecting model at and
+At round t, it computes the constrained regularized logistic         observing the realized satisfaction Yt , the queue is updated
+estimator                                                            according to
+                   t−1                                                                   
+                   X                      β                               λt+1 = max 0, λt + η (1 − ϵ + ρ − Yt ) ,           (19)
+   θbt = arg min       l Yτ , µ(x⊤
+                                 aτ ,τ θ) +   ∥θ∥22 ,    (11)
+         θ∈B2 (S) τ =1                      2
+                   aτ ̸=ã
+                                                                     where η > 0 is the step size and ρ > 0 is a safety buffer.
+                                                                     Thus, the queue increases when the realized satisfaction falls
+where l(y, p) := −y log p − (1 − y) log(1 − p) and                   below the buffered target 1 − ϵ + ρ and decreases otherwise.
+                                                                     At round t, given the current queue λt , the router selects the
+             B2 (S) = {θ ∈ Rd : ∥θ∥2 ≤ S}.               (12)        model according to
+
+After observing the selected model’s feedback, the design                        at = arg min [c(a) − λt UCBt (a)] .               (20)
+                                                                                              a∈A
+matrix is updated if at ̸= ã according to
+                                                                     The queue λt therefore determines how strongly the router
+                   Vt+1 = Vt + xat ,t x⊤                             prioritizes satisfaction relative to cost. When λt is small, the
+                                       at ,t .           (13)
+                                                                     router places greater emphasis on cost, whereas a larger λt
+                                                                     favors models with higher optimistic satisfaction estimates.
+The parameter constraint ensures that both the true and
+estimated parameters lie in the same bounded domain. Since           We choose
+                                                                                          Cη                   Cρ
+the logistic link has positive derivative on any bounded                                η=√ ,               ρ= √                   (21)
+interval, this gives the uniform curvature needed for the                                  T                     T
+                                                                                                                         p
+confidence analysis.                                                 where Cη =               √1            and Cρ = 5       2 log(4/δ).
+                                                                                     (1−ξ)ϵ    2 log(4/δ)
+                                                                     The safety buffer ρ provides additional slack to account
+4.2. Optimistic Satisfaction Estimates                               for the random deviation between expected and realized
+For every candidate model, we form                                   cumulative satisfaction.
+                                                                         1
+                                                                           We note that under Assumption 3.1, all relevant linear predic-
+   UCBt (a) = min{1, µ(x⊤
+                        a,t θt ) + αt ∥xa,t ∥V −1 }.
+                            b                            (14)        tors satisfy |x⊤
+                                                                                    t,a θ| ≤ LS.
+                                                 t
+
+
+                                                                 5
+                                            Online Algorithm for Personalised LLM Routing
+
+
+
+
+Figure 1. Comparison of the proposed routing algorithm with alternative routing strategies as the satisfaction tolerance ϵ varies. In the
+third panel, the green and orange curves overlap.
+
+
+5. Theoretical Guarantees                                                    Lemma 5.3 (High-Probability Queue Bound). Suppose As-
+                                                                             sumptions 3.1 and 3.2 hold. For any δ ∈ (0, 1), there exist
+We now establish theoretical guarantees for the algorithm,
+including a sublinear regret bound. We first derive a high-                                             6           √
+                                                                                            Bλ =              + O(1/
+                                                                                                                e     T)
+probability confidence bound for the estimated satisfaction                                          (1 − ξ)ϵ
+model, which is then used to control the UCBt (a) terms.
+Building on these results, we analyze the evolution of the                   such that, with probability at least 1 − δ,
+virtual queue and establish the main theoretical guarantees
+                                                                                                     max       λt ≤ Bλ .             (26)
+of the algorithm.                                                                                   1≤t≤T +1
+
+We begin with the following lemma, which provides a high-
+                                                                             The queue bound in (26) establishes that the dual queue
+probability bound on the estimation error of θ∗ .
+                                                                             remains bounded throughout the execution of the algorithm.
+Lemma 5.1 (Uniform GLM Confidence Bound). Under                              This result is then used to show that the desired quality
+Assumption 3.1, with probability at least 1 − δE , simultane-                constraint is satisfied with high probability.
+ously for all t ∈ [T ] and a ∈ A \ {ã},
+                                                                             5.2. Main Guarantee
+                        ∥θbt − θ∗ ∥Vt ≤ αt                       (22)
+                                                                             We can now state the main result.
+and
+           µ(x⊤             ⊤ ∗                                              Theorem 5.4 (Cost Regret and Satisfaction Guarantee).
+              a,t θt ) − µ(xa,t θ ) ≤ αt ∥xa,t ∥V −1 .           (23)
+                  b
+                                                       t
+                                                                             Suppose Assumptions 3.1 and 3.2 hold, ξ < 1 and the con-
+Next, the following lemma establishes that the router’s sat-                 stants in Algorithm 1 are chosen as specified in Section 4.
+isfaction estimate is optimistic, providing an upper bound                   Then, there exists a constant T0 such that for T ≥ T0 the
+on the true satisfaction probability. As more feedback is col-               proposed router satisfies
+lected, the estimate becomes increasingly accurate, which                                     XT
+                                                                                                                !
+plays a key role in the subsequent regret analysis.                                       P       Yt ≥ (1 − ϵ)T ≥ 1 − δ,            (27)
+Lemma 5.2 (UCB Bounds). On the confidence event of                                            t=1
+Lemma 5.1, for every t ∈ [T ] and a ∈ A \ {ã},2                             and its expected cumulative cost regret relative to the opti-
+                                                                             mal stationary contextual oracle satisfies
+  1. The UCB is optimistic:
+                                                                                                           p             √ !
+                                                                                                      (d + log(4/δ)) T
+                           p∗a,t ≤ UCBt (a).                     (24)                  RegretT ≤ O e                                 (28)
+                                                                                                            κ(1 − ξ)ϵ
+  2. The optimism gap satisfies
+                                                                             Proof Sketch. The proof has two main steps. First, Lem-
+                 UCBt (a) − p∗a,t ≤ 2αt ∥xa,t ∥V −1 .            (25)        mas 5.1 and 5.2 establish the accuracy of the router’s op-
+                                                      t
+                                                                             timistic satisfaction estimates, with estimation errors de-
+5.1. Control of the Satisfaction Queue                                       creasing as more feedback is collected. Under the decision
+                                                                             rule in Eq. (20), the router balances cost against these es-
+Next, we show that the virtual satisfaction queue remains
+                                                                             timates, allowing the cost regret to be bounded in terms
+controlled with high probability.
+                                                                             of the estimation errors weighted by the virtual queue λt .
+   2
+     For the fallback action, the UCB is set to its known satisfaction       Lemma 5.3 plays a crucial role by establishing a bound on
+probability ν.                                                               the queue, thereby limiting the impact of estimation errors
+
+                                                                         6
+                                         Online Algorithm for Personalised LLM Routing
+
+
+
+
+Figure 2. Overall performance and ablation results. Error bars denote 95% confidence intervals. The dotted lines indicate the required
+satisfaction level 1 − ϵ = 0.8 and constraint probability 1 − δ = 0.95, respectively.
+
+
+on regret. Summing these errors over time yields the regret           gent. At the same time, its empirical constraint satisfaction
+bound in Eq. (28). Second, the queue update in Eq. (19)               probability remains close to the target 1−δ. We observe that
+tracks accumulated satisfaction deficits and increases the            the SLARouter does not exploit contextual information and
+queue when realized satisfaction falls below the buffered             therefore has a higher average cost, while the BaRP-style
+target. The boundedness of the queue, together with the               router and the expectation-constrained primal-dual router
+safety buffer ρ and a concentration argument, ensures that            fail to satisfy the chance constraint.
+the cumulative satisfaction requirement in Eq. (27) holds
+with probability at least 1 − δ. The detailed proofs are              6.2. Ablation
+provided in Appendices A.4 and A.5.
+                                                                      Next, we examine the contributions of the dual queue and
+                                                                      safety margin in the proposed algorithm. We compare Ours
+Theorem 5.4 shows that the router can learn user preferences
+                                                                      with No-Queue, which removes the λ update equation, and
+while maintaining the required satisfaction level, incurring
+                                                                      No-ρ, which sets the safety margin to ρ = 0. All meth-
+only sublinear additional cost relative to an oracle. More-
+                                                                      ods are evaluated with ϵ = 0.2 and δ = 0.05. We report
+over, the dependence of our regret bounds on the slack
+                                                                      the average routing cost, the average satisfaction, and the
+factor ξ indicates that achieving lower routing costs be-
+                                                                      probability of empirical constraint satisfaction with 95%
+comes increasingly challenging as the fallback performance
+                                                                      confidence intervals.
+ν approaches the target satisfaction level 1 − ϵ.
+                                                                      As shown in Figure 2, Ours satisfies the empirical
+6. Experimental Results                                               chance constraint in almost all trials. No-Queue and No-ρ
+                                                                      achieve lower routing costs, but their empirical constraint-
+We evaluate the proposed algorithm through five experi-               satisfaction probabilities are close to zero. These results
+ments and a real-LLM case study, examining routing base-              suggest that the dual queue helps adapt routing decisions
+lines, ablations, real-world performance, personalization,            to accumulated constraint violations, while the safety mar-
+and scalability with the decision horizon. Details are pro-           gin provides additional protection against uncertainty in the
+vided in Appendix B.                                                  learned satisfaction estimates.
+
+6.1. Comparison with Alternative Routing Strategies                   6.3. Real-LLM Routing
+We first compare the proposed method with three repre-                We next evaluate the proposed method on real LLMs using
+sentative routing strategies: a SLARouter-style global con-           100 queries from WildBench v2 and five available LLMs 3
+strained router (Woisetschläger et al., 2026), a BaRP-style          as routing actions. For each query–model pair, the response
+unconstrained personalized router (Wei et al., 2025b), and            is represented by a six-dimensional quality vector measuring
+an expectation-constrained primal-dual router (Yang et al.,           correctness, relevance, completeness, clarity, conciseness,
+2025). We vary the satisfaction tolerance ϵ while fixing              and safety, evaluated by a lightweight judge model. We
+δ = 0.05, T = 1000, and all methods are evaluated over                then apply a fixed parameter θ∗ in the logistic model of
+the same 1000 replay trials.                                          Section 3.2 to generate simulated satisfaction outcomes.
+Figure 1 shows the resulting cost, average satisfaction, and          Figure 3 illustrates the routing cost and model selection
+empirical constraint satisfaction probability. As ϵ increases,        as the satisfaction tolerance ϵ varies. The average routing
+the proposed method reduces its average routing cost be-                 3
+cause the required satisfaction level 1 − ϵ becomes less strin-              Additional details are in Appendix B
+
+
+                                                                  7
+                                          Online Algorithm for Personalised LLM Routing
+
+
+
+
+Figure 3. Real-LLM routing POC: (a) average routing cost as a function of ϵ and (b) model-selection composition as a function of ϵ.
+
+
+                                                                         have different preference parameters. We compare a person-
+                                                                         alized learner, which maintains separate model estimates
+                                                                         and safety queues for each user, with a global learner that
+                                                                         pools observations across users. Both methods use the same
+                                                                         requests and counterfactual outcomes.
+                                                                         Figure 4 reports the average routing cost for each user. The
+                                                                         personalized learner achieves lower routing cost while main-
+                                                                         taining satisfaction above the required level. We omit a
+                                                                         separate satisfaction plot because all methods satisfy the
+                                                                         constraint in this experiment; therefore, the cost comparison
+Figure 4. Personalized and global routing costs for Users 1–3.           more clearly illustrates the benefit of personalization.
+
+                                                                         6.5. Finite-Horizon Scaling
+                                                                         Finally, we examine how the proposed method performs
+                                                                         as the number of routing decisions increases. We consider
+                                                                         horizons T ∈ {100, 250, 500, 1000, 2000} and compare the
+                                                                         cumulative cost of the proposed method with that of an
+                                                                         oracle policy that knows the true model parameters.
+                                                                         As shown in Fig. 5, the cumulative cost gap relative to the
+                                                                         oracle grows sublinearly over the evaluated horizons. This
+Figure 5. Per-round and cumulative cost gap relative to the oracle       empirical behavior is consistent with the sublinear regret
+across horizons.                                                         guarantee established in our analysis. Satisfaction results
+                                                                         are omitted for brevity.
+
+cost decreases as ϵ increases, since it permits more frequent            7. Conclusion
+selection of inexpensive models. In particular, the router
+increasingly selects Qwen3.8-27B, the lowest-cost model,                 We presented a framework for online personalized LLM
+as the constraint is relaxed. Conversely, for smaller ϵ, it              routing that learns user preferences, minimizes inference
+places greater weight on higher-satisfaction models such                 costs, and enforces a high-probability quality constraint.
+as DeepSeek-V4-Flash despite their higher cost. This illus-              Our primal-dual GLM-UCB algorithm combines optimistic
+trates how the routing policy adapts model selection to the              preference learning with a satisfaction-deficit queue and
+quality–cost trade-off imposed by the chance constraint.                 achieves sublinear cost regret while ensuring satisfaction
+                                                                         with high probability. Experimental results demonstrate
+6.4. Personalization                                                     that the proposed method can reduce routing costs through
+                                                                         personalization while maintaining the required quality level,
+We next evaluate whether explicitly modeling user-specific               including in a real-world LLM routing task.
+preferences can improve routing efficiency. We consider
+three users who receive the same sequence of requests but                Future research directions include accommodating nonsta-
+
+                                                                     8
+                                     Online Algorithm for Personalised LLM Routing
+
+tionary user preferences and incorporating richer feedback           national Conference on World Wide Web, pp. 661–670,
+signals. Additionally, the current analysis assumes a uni-           2010.
+form fallback satisfaction level. Extending the analysis to
+accommodate context-dependent or uncertain fallback guar-          Ma, Q., Chen, Z., Wang, Z., Gao, L., and Chen, X. Efficient
+antees is another interesting direction for future work.            service selection and pricing in edge-cloud computing
+                                                                    markets. IEEE Transactions on Networking, 34:471–485,
+                                                                    2026.
+References
+Agrawal, S. and Devanur, N. R. Linear contextual ban-              Mahdavi, M., Jin, R., and Yang, T. Trading regret for
+  dits with knapsacks. In Advances in Neural Information            efficiency: Online convex optimization with long term
+ Processing Systems, volume 29, 2016.                               constraints. Journal of Machine Learning Research, 13
+                                                                    (81):2503–2528, 2012.
+Badanidiyuru, A., Kleinberg, R., and Slivkins, A. Bandits
+  with knapsacks. Journal of the ACM, 65(3):1–55, 2018.            NVIDIA. Nvidia nemotron 3: Efficient and open intel-
+  doi: 10.1145/3164539.                                             ligence, 2025. URL https://arxiv.org/abs/
+                                                                    2512.20856. White Paper.
+Balseiro, S., Lu, H., and Mirrokni, V. Dual mirror descent
+  for online allocation problems. In Proceedings of the 37th       Ong, I., Almahairi, A., Wu, V., Chiang, W.-L., Wu, T., Gon-
+  International Conference on Machine Learning, volume               zalez, J. E., Kadous, M. W., and Stoica, I. Routellm:
+  119 of Proceedings of Machine Learning Research, pp.               Learning to route llms from preference data. In Interna-
+  613–628. PMLR, 2020.                                               tional Conference on Learning Representations, 2025.
+Cardoso, A. R., Wang, H., and Xu, H. Large scale markov
+                                                                   Qwen Team. Qwen3.6-35B-A3B: Agentic coding power,
+  decision processes with changing rewards. In Advances
+                                                                    now open to all, April 2026a. URL https://qwen.
+  in Neural Information Processing Systems, volume 32,
+                                                                    ai/blog?id=qwen3.6-35b-a3b.
+  2019.
+Chen, L., Zaharia, M., and Zou, J. Frugalgpt: How to use           Qwen Team. Qwen3.8-Max: A new bar for coding and
+  large language models while reducing cost and improv-             cowork, August 2026b. URL https://qwen.ai/
+  ing performance. Transactions on Machine Learning                 blog?id=qwen3.8.
+  Research, 2024a.
+                                                                   Somerstep, S., Polo, F. M., Melo de Oliveira, A. F., Mangal,
+Chen, S., Jiang, W., Lin, B., Kwok, J. T., and Zhang, Y.             P., Silva, M., Bhardwaj, O., Yurochkin, M., and Maity, S.
+  Routerdc: Query-based router by dual contrastive learn-            Carrot: A cost aware rate optimal router. arXiv preprint
+  ing for assembling large language models. In Advances              arXiv:2502.03261, 2025.
+  in Neural Information Processing Systems, volume 37,
+  2024b.                                                           Team, G. Gemma 4 technical report, 2026. URL https:
+                                                                     //arxiv.org/abs/2607.02770.
+Dai, Z., Feng, T., and You, J. Personalizedrouter: Per-
+  sonalized llm routing via graph-based user preference            Uddin, I. and Bauer, A. Conformal LLM routing with
+  modeling. arXiv preprint arXiv:2511.16883, 2025.                   distribution-free safety guarantees. In Proceedings of
+                                                                     the 64th Annual Meeting of the Association for Com-
+DeepSeek-AI. Deepseek-v4: Towards highly efficient                   putational Linguistics (Volume 4: Student Research
+  million-token context intelligence, 2026.                         Workshop), pp. 791–799, San Diego, California, United
+Hu, Q. J., Bieker, J., Li, X., Jiang, N., Keigwin, B., Ran-          States, 2026. Association for Computational Linguis-
+  ganath, G., Keutzer, K., and Upadhyay, S. K. Router-               tics. doi: 10.18653/v1/2026.acl-srw.70. URL https:
+  bench: A benchmark for multi-llm routing system. arXiv            //aclanthology.org/2026.acl-srw.70/.
+  preprint arXiv:2403.12031, 2024.
+                                                                   Vassos, G., Holst, K. K., Pinson, P., and Lusby, R. M.
+Labs, M. S. Muse-glimmer-30b: An open-weight dense mul-              A simulation framework of procurement operations in
+  timodal causal transformer. https://huggingface.                   the container logistics industry, 2023. URL https:
+  co/meta-models/Muse-Glimmer-30B, 2026.                             //arxiv.org/abs/2303.12765.
+  Apache 2.0 License.
+                                                                   Wei, W., Yang, T., Chen, H., Zhao, Y., Dernoncourt, F.,
+Li, L., Chu, W., Langford, J., and Schapire, R. E. A                Rossi, R. A., and Eldardiry, H. Learning to route llms
+  contextual-bandit approach to personalized news arti-             from bandit feedback: One policy, many trade-offs. arXiv
+  cle recommendation. In Proceedings of the 19th Inter-             preprint arXiv:2510.07429, 2025a.
+
+                                                               9
+                                       Online Algorithm for Personalised LLM Routing
+
+Wei, W., Yang, T., Chen, H., Zhao, Y., Dernoncourt, F.,                where
+ Rossi, R. A., and Eldardiry, H. Learning to route llms                                   ST ∼ Binomial(T, µT,δ ).
+ from bandit feedback: One policy, many trade-offs,
+                                                                       Define the maximum expectation margin
+ 2025b.
+Woisetschläger, H., Mammadli, A., Zhang, R., and Wang,                                ρ∗max (T, ϵ, δ) ≡ µT,δ − (1 − ϵ).          (30)
+ S. Cost-optimal LLM routing with limited user feedback
+                                                                       Then, for any
+ under user satisfaction guarantees, 2026. URL https:
+ //arxiv.org/abs/2606.19376.                                                               0 ≤ ρ∗ ≤ ρ∗max (T, ϵ, δ),
+Woisetschläger, H., Mammadli, A., Zhang, R., and Wang,
+                                                                       satisfying the chance constraint
+ S. Cost-optimal llm routing with limited user feedback
+ under user satisfaction guarantees, 2026.                                                      T
+                                                                                                                   !
+                                                                                           1X
+                                                                                     P           Yt ≥ 1 − ϵ             ≥1−δ      (31)
+Xie, E., Sun, Y., Feng, T., and You, J. Gmtrouter: Personal-                               T t=1
+  ized llm router over multi-turn user interactions. arXiv
+  preprint arXiv:2511.08590, 2025.                                     necessarily requires
+Xu, X., Dong, F., Li, Y., He, S., and Li, X. Contextual-bandit
+                                                                                          h       i
+                                                                                        E p∗a∗t ,t ≥ 1 − ϵ + ρ∗ .                 (32)
+  based personalized recommendation with time-varying
+  user interests. In Proceedings of the AAAI Conference on
+                                                                       In particular, ρ∗max (T, ϵ, δ) is the largest expectation margin
+ Artificial Intelligence, volume 34, pp. 6518–6525, 2020.
+                                                                       implied by the chance constraint.
+Yang, S., Li, X., and Lan, G. Data-driven minimax optimiza-
+  tion with expectation constraints. Operations Research,              Proof. Let
+  73(3):1345–1365, 2025. doi: 10.1287/opre.2022.0110.                                               µ∗ ≡ E[p∗a∗t ,t ]
+Zeng, J., Tang, M., and Ding, N. Learning to route llms                and define
+  from implicit cost-performance preferences via meta-
+  learning, 2026. URL https://arxiv.org/abs/                                             q ≡ 1 − ϵ,           mT ≡ ⌈T q⌉.
+  2606.06178.
+                                                                       Under the stated assumptions, the random variables p∗a∗t ,t
+Zhao, Y. and Yang, L. Constrained contextual ban-                      are i.i.d., and
+  dit algorithm for limited-budget recommendation
+  system. Engineering Applications of Artificial In-                                    Yt | p∗a∗t ,t ∼ Bernoulli(p∗a∗t ,t ).
+  telligence, 128:107558, 2024.      ISSN 0952-1976.
+  doi: https://doi.org/10.1016/j.engappai.2023.107558.                 Consequently, the marginal outcomes are i.i.d. Bernoulli
+  URL        https://www.sciencedirect.com/                            with mean µ∗ , so that
+  science/article/pii/S0952197623017426.
+                                                                                             T
+                                                                                             X
+                                                                                    ST ≡            Yt ∼ Binomial(T, µ∗ ).
+                                                                                             t=1
+A. Proofs
+A.1. Necessary Expectation Condition                                   The chance constraint can therefore be written as
+Lemma A.1 (Necessary Expectation Condition). Suppose                                      Pµ∗ (ST ≥ mT ) ≥ 1 − δ.
+the stationary contextual oracle generates i.i.d. satisfaction
+outcomes under the model described in Section 3. In partic-
+                                                                       Let µT,δ be defined by (29). The binomial upper-tail proba-
+ular, prompts are i.i.d., the oracle randomizes independently
+                                                                       bility
+across rounds according to π ∗ (· | pt ), and satisfaction ran-
+                                                                                             Pµ (ST ≥ mT )
+domness is conditionally independent across rounds. Given
+ϵ ∈ (0, 1), δ ∈ (0, 1), and T , define                                 is continuous and strictly increasing in µ ∈ (0, 1). There-
+                                                                       fore, if
+               q ≡ 1 − ϵ,       mT ≡ ⌈T q⌉.                                                    µ∗ < µT,δ ,
+Let µT,δ ∈ (0, 1) denote the unique value satisfying                   then
+
+                PµT ,δ (ST ≥ mT ) = 1 − δ,                (29)                 Pµ∗ (ST ≥ mT ) < PµT ,δ (ST ≥ mT ) = 1 − δ.
+
+                                                                  10
+                                           Online Algorithm for Personalised LLM Routing
+
+Thus the chance constraint cannot hold when µ∗ < µT,δ .                 A.2. Proof of Regret Bounds
+Hence, satisfying the chance constraint necessarily requires
+                                                                        Before proving the regret bounds, we first list and prove the
+                            ∗                                           results needed for the main theorem.
+                          µ ≥ µT,δ .
+
+By the definition of ρ∗max ,                                            A.2.1. P ROOF OF L EMMA 5.1
+                                                                        Define
+                µT,δ = 1 − ϵ + ρ∗max (T, ϵ, δ).
+                                                                                             κ ≡ inf µ′ (z) > 0.                   (35)
+                                                                                                      |z|≤LS
+Therefore,
+
+          E[p∗a∗t ,t ] = µ∗ ≥ 1 − ϵ + ρ∗max (T, ϵ, δ).                  For a given confidence parameter δE , define
+                                                                                 " s                                      #
+Since                                                                                             tL2
+                                                                                                                
+                                                                               1 1                                  2  p
+                     ρ∗ ≤ ρ∗max (T, ϵ, δ),                              αt =          d log 1 +         + 2 log       + βS .
+                                                                              κ 2                 dβ               δE
+we obtain
+                    E[p∗a∗t ,t ] ≥ 1 − ϵ + ρ∗ .                         Let E denote the event on which the corresponding confi-
+This proves the result.                                                 dence inequality holds uniformly over all rounds.
+Corollary A.2 (Large-Horizon Approximation). For fixed                  Lemma A.3 (Uniform GLM Confidence Bound). Under
+ϵ ∈ (0, 1) and δ ∈ (0, 1), as T → ∞, the maximum expec-                 Assumption 3.1, with probability at least 1 − δE , simultane-
+tation margin defined in Lemma 3.6 satisfies                            ously for all t ∈ [T ] and a ∈ A \ {ã},
+
+                                                                                                ∥θbt − θ∗ ∥Vt ≤ αt
+                                p
+                    Φ−1 (1 − δ) ϵ(1 − ϵ)
+                                                    
+    ∗                                             1                                                                                (36)
+   ρmax (T, ϵ, δ) =           √            +o √         ,
+                                T                  T
+                                                       (33)             and
+where Φ−1 denotes the inverse cumulative distribution func-                       µ(x⊤             ⊤ ∗
+                                                                                     a,t θt ) − µ(xa,t θ ) ≤ αt ∥xa,t ∥V −1 .
+                                                                                         b                                         (37)
+                                                                                                                              t
+tion of the standard normal distribution. Thus, for suffi-
+ciently large T ,                                                       Proof. Define the regularized negative log-likelihood at
+                                           r                            round t as
+                                               ϵ(1 − ϵ)
+         ρ∗max (T, ϵ, δ) ≈ Φ−1 (1 − δ)                  .   (34)                            t−1
+                                                  T                                         X                       β
+                                                                                 Lt (θ) =        l Yτ , µ(x⊤
+                                                                                                           aτ ,τ θ) +   ∥θ∥22 .    (38)
+                                                                                            τ =1
+                                                                                                                      2
+Proof. By Lemma 3.6, ρ∗max (T, ϵ, δ) is defined through the                                 aτ ̸=ã
+binomial threshold µT,δ satisfying
+                    
+                      ST
+                                                                       The estimator θbt is obtained via constrained minimization
+             PµT ,δ      ≥ 1 − ϵ = 1 − δ,                               over the ball B2 (S) = {θ ∈ Rd : ∥θ∥2 ≤ S}:
+                      T
+where ST ∼ Binomial(T, µT,δ ). Write                                                        θbt = arg min Lt (θ).                  (39)
+                                                                                                         θ∈B2 (S)
+                µT,δ = 1 − ϵ + ρ∗max (T, ϵ, δ).
+
+For fixed ϵ and δ, the central limit theorem gives                      Since Lt is convex and B2 (S) is a closed convex set, θbt
+                                                                        satisfies the first-order optimality condition:
+                   ST − T µT,δ
+                                     ⇒ N (0, 1).
+                                                                                   ⟨∇Lt (θbt ), θ − θbt ⟩ ≥ 0       ∀θ ∈ B2 (S).
+              p
+                  T µT,δ (1 − µT,δ )                                                                                               (40)
+
+Since ρ∗max (T, ϵ, δ) → 0 as T → ∞, we have
+                                                                        Since θ∗ ∈ B2 (S) by Assumption 3.1, setting θ = θ∗ yields:
+                µT,δ (1 − µT,δ ) → ϵ(1 − ϵ).
+                                                                                            ⟨∇Lt (θbt ), θbt − θ∗ ⟩ ≤ 0.           (41)
+Consequently,
+                            √
+             ρ∗max (T, ϵ, δ) T                                          Using the fundamental theorem of calculus along the line
+                p              → Φ−1 (1 − δ),                           segment connecting θ∗ and θbt , we obtain:
+                    ϵ(1 − ϵ)
+which yields (33).                                                                 ∇Lt (θbt ) − ∇Lt (θ∗ ) = H̄t (θbt − θ∗ ),       (42)
+
+                                                                   11
+                                                       Online Algorithm for Personalised LLM Routing
+
+where                                                                                   Dividing both sides by κ∥θbt − θ∗ ∥Vt yields:
+                    Z 1                        
+         H̄t =             ∇2 Lt θ∗ + s θbt − θ∗    ds.                     (43)                                          t−1
+                      0                                                                                          1        X
+                                                                                           ∥θbt − θ∗ ∥Vt ≤                      ητ xaτ ,τ − βθ∗
+                                                                                                                 κ     τ =1
+Taking the inner product with (θbt − θ∗ ) on both sides:                                                              aτ ̸=ã                               Vt−1
+
+∥θbt − θ∗ ∥2H̄t = ⟨∇Lt (θbt ) − ∇Lt (θ∗ ), θbt − θ∗ ⟩
+                                                                                                                                                                     
+                                                                                                                            t−1
+                                                                                                                 1         X                                   p      
+                  = ⟨∇Lt (θbt ), θbt − θ∗ ⟩ − ⟨∇Lt (θ∗ ), θbt − θ∗ ⟩                                        ≤                       ητ xaτ ,τ              +          .
+                                                                                                                                                                    βS 
+                                                                                                                 κ         τ =1
+                  ≤ −⟨∇Lt (θ∗ ), θbt − θ∗ ⟩,                    (44)                                                       aτ ̸=ã                   Vt−1
+
+where the final step applies the variational inequality (41).
+                                                                                        Since Yτ ∈ {0, 1}, the noise ητ is conditionally 1/2-sub-
+Evaluating the gradient at θ∗ gives:
+                                                                                        Gaussian. Applying the self-normalized vector martingale
+                                       t−1
+                                       X                                                inequality, with probability at least 1 − δE /2, uniformly for
+                −∇Lt (θ∗ ) =                    ητ xaτ ,τ − βθ∗ ,           (45)        all t:
+                                       τ =1
+                                      aτ ̸=ã
+                                                                                                t−1
+where ητ = Yτ − µ(x⊤          ∗
+                       aτ ,τ θ ) is a conditionally zero-mean
+                                                                                                X
+                                                                                                         ητ xaτ ,τ
+martingale difference.                                                                          τ =1
+                                                                                               aτ ̸=ã                Vt−1
+The Hessian at any point θ is:                                                                        s
+                                                                                                                                          (t − 1)L2
+                                                                                                                                                 
+                      t−1                                                                         1                   2
+                      X                                                                       ≤          2 log                + d log 1 +            . (50)
+    ∇2 Lt (θ) =                µ′ (x⊤               ⊤
+                                    aτ ,τ θ)xaτ ,τ xaτ ,τ + βId .           (46)                  2                  δE                       βd
+                      τ =1
+                     aτ ̸=ã
+                                                                                        Combining these results establishes that ∥θbt − θ∗ ∥Vt ≤ αt .
+            ∗
+Because θ , θbt ∈ B2 (S) and B2 (S) is convex, any point
+                                                                                        Finally, by the Mean Value Theorem on the link function
+on the line segment θ(s) = θ∗ + s(θbt − θ∗ ) for s ∈ [0, 1]
+                                                                                        µ(·) and Cauchy-Schwarz:
+satisfies ∥θ(s)∥2 ≤ S. Under Assumption 3.1, ∥xaτ ,τ ∥2 ≤
+L, which guarantees:
+                                                                                         µ(x⊤             ⊤ ∗            ′       ⊤ b        ∗
+                                                                                            a,t θt ) − µ(xa,t θ ) ≤ sup µ (z) · xa,t (θt − θ )
+                                                                                                b
+                 |x⊤
+                   aτ ,τ θ(s)| ≤ LS                ∀s ∈ [0, 1].             (47)                                                |z|≤LS
+
+                                                                                                                              ≤ Lµ ∥xa,t ∥V −1 ∥θbt − θ∗ ∥Vt
+Consequently, µ (x⊤   ′                         ′
+                  aτ ,τ θ(s)) ≥ κ ≡ inf |z|≤LS µ (z) > 0.
+                                                                                                                                                 t
+
+
+Therefore, using the fact that κ ≤ 1:                                                                                         ≤ αt ∥xa,t ∥V −1 ,
+                                                                                                                                                 t
+
+                      t−1
+                      X                                                                                                                                                   (51)
+        H̄t ⪰ κ                xaτ ,τ x⊤
+                                       aτ ,τ + βId
+                      τ =1
+                     aτ ̸=ã
+                                                                                        where Lµ = sup|z|≤LS µ′ (z) ≤ 1, completing the proof.
+                                                            
+                                     t−1
+                                     X
+            ⪰ κ βId +                         xaτ ,τ x⊤
+                                                       aτ ,τ  = κVt .      (48)
+                                                            
+                                                                                        Next, using this result, we bound the UCB terms.
+                                      τ =1
+                                     aτ ̸=ã
+                                                                                        A.3. UCB Bounds
+Applying H̄t ⪰ κVt to (44) along with the Cauchy-Schwarz
+inequality in the dual norms gives:                                                     Lemma A.4 (UCB Bounds). On the event E, for every
+                                                                                        a ∈ A:
+        κ∥θbt − θ∗ ∥2Vt ≤ ∥θbt − θ∗ ∥2H̄t
+           * t−1                            +
+              X
+                                  ∗ b     ∗
+                                                                                         1. The prediction error satisfies
+        ≤          ητ xa ,τ − βθ , θt − θ
+                                 τ
+                 τ =1
+                aτ ̸=ã                                                                                    µ(x⊤           ∗
+                                                                                                              a,t θt ) − pa,t ≤ αt ∥xa,t ∥V −1 .
+                                                                                                                  b                                                       (52)
+                                                                                                                                                             t
+
+                t−1
+                X
+        ≤                 ητ xaτ ,τ − βθ∗                 ∥θbt − θ∗ ∥Vt .   (49)         2. The UCB is optimistic:
+                 τ =1
+                aτ ̸=ã                            Vt−1                                                                   UCBt (a) ≥ p∗a,t .                              (53)
+
+                                                                                   12
+                                             Online Algorithm for Personalised LLM Routing
+
+ 3. The optimism gap is bounded by                                             Let Ft := σ(Gt , Yt ). Since Ft−1 ⊆ Gt , we have E[Xt |
+                                                                               Ft−1 ] = 0, so (Xt , Ft ) is a martingale-difference sequence.
+               UCBt (a) − p∗a,t ≤ 2αt ∥xa,t ∥V −1 .                (54)        Since Yt ∈ {0, 1},
+                                                       t
+
+                                                                                                          |Xt | ≤ 1.
+Proof. Under the confidence event,
+                                                                               On the confidence event, Assumption 3.2 implies
+                      ∥θbt − θ∗ ∥Vt ≤ αt .                                                                       ∗
+                                                                                                    UCBt (ã) ≥ pã,t =ν
+By the mean-value theorem and the fact that µ′ (z) ≤ 1,                        By the primal minimization rule,
+                                 ⊤ b        ∗
+     µ(x⊤             ⊤ ∗
+        a,t θt ) − µ(xa,t θ ) ≤ xa,t (θt − θ )
+            b                                                                          c(at ) − λt UCBt (at ) ≤ c(ã) − λt UCBt (ã).
+
+                                ≤ ∥xa,t ∥V −1 ∥θbt − θ∗ ∥Vt                    Consequently,
+                                              t
+
+                                ≤ αt ∥xa,t ∥V −1 .                 (55)                                                      Cmax
+                                                   t                                          UCBt (at ) ≥ UCBt (ã) −            ,
+                                                                                                                              λt
+This proves the prediction error bound.
+                                                                               where
+For optimism, the preceding inequality gives                                                 Cmax ≡ max
+                                                                                                     ′
+                                                                                                        |c(a) − c(a′ )| ≤ 1.
+                                                                                                       a,a ∈A
+
+                                                                               Therefore,
+             µ(x⊤                            ∗
+                a,t θt ) + αt ∥xa,t ∥V −1 ≥ pa,t .
+                    b                                                                                                    Cmax
+                                         t
+                                                                                                  UCBt (at ) ≥ ν −            .
+                                                                                                                          λt
+Since p∗a,t ≤ 1, taking the minimum with 1 preserves the
+inequality, and hence                                                          Using the confidence bound,
+
+                                                                                            p∗at ,t ≥ UCBt (at ) − 2αt ∥xat ,t ∥V −1 ,
+                       UCBt (a) ≥ p∗a,t .                                                                                         t
+
+
+                                                                               and hence
+Finally,
+                                                                                  µt = 1 − ϵ + ρ − p∗at ,t                               (57)
+  UCBt (a) − p∗a,t ≤     µ(x⊤           ∗
+                            a,t θt ) − pa,t
+                                b                 + αt ∥xa,t ∥V −1                     Cmax
+                                                               t                     ≤       + 2αt ∥xat ,t ∥V −1 + ρ − ϵ + (1 − ν)       (58)
+                                                                                         λt                  t
+                      ≤ 2αt ∥xa,t ∥V −1 .
+                                     t
+                                                                               Now, we consider the case where ρ + (1 − ν) ≤ c1 ϵ where
+                                                                               1 > c1 ≥ ξ. Therefore, we choose c1 = ξ + ρ/ϵ. Also, note
+                                                                                        C
+                                                                               that ρ = √Tρ and ξ < 1. Therefore, for sufficiently large T ,
+A.3.1. B OUNDING THE DUAL VARIABLE
+                                                                               c1 < 1.
+Lemma A.5 (Uniform Boundedness of the Dual Variable).
+                                                                                               Cmax
+Suppose Assumptions 3.1 and 3.2√hold. For any δ ∈ (0, 1),                               µt ≤        + 2αt ∥xat ,t ∥V −1 − (1 − c1 )ϵ     (59)
+                    6                                                                           λt                  t
+there exist Bλ = (1−ξ)ϵ   + O(1/
+                             e     T ) such that for a suffi-
+ciently large T > T0 , with probability at least 1 − δ,                        In particular, whenever
+
+                    λt ≤ Bλ ,      ∀t ∈ [T ].                      (56)                                             Cmax
+                                                                                                         λt ≥            ,
+                                                                                                                     ϵc2
+                                                                               for 0 < c2 < 1 − c1 we have
+Proof. We first establish a high-probability bound on the                                 µt ≤ 2αt ∥xat ,t ∥V −1 − (1 − c1 − c2 )ϵ.      (60)
+                                                                                                                t
+dual variable. Define
+
+                     gt ≡ 1 − ϵ + ρ − Yt ,                                     Define an exceptional round to be a round satisfying
+
+and let                                                                                       2αt ∥xat ,t ∥V −1 > (1 − c1 − c2 )ϵ
+                                                                                                            t
+
+
+We condition on the pre-outcome information Gt defined in                      On every non-exceptional round for which we have λt ≥
+Section 3.2:                                                                   Cmax /(c2 ϵ), equation (60) gives
+
+µt = E[gt | Gt ],       Xt = gt − µt ,             E[Xt | Gt ] = 0.                                         µt ≤ 0.
+
+                                                                          13
+                                         Online Algorithm for Personalised LLM Routing
+
+Let                                                                    Every interval sum is a difference of two prefix sums, so on
+                      αT ≡ max αt .                                    the same event,
+                             1≤t≤T
+                                                                                                         s
+                                                                                             t−1                    
+Every exceptional round satisfies                                                           X                         2
+                                                                                    max          Xs ≤ 2 2T log            .
+                                                                                1≤k<t≤T +1                           δ′
+                                                                                               s=k
+                                (1 − c1 − c2 )ϵ
+              ∥xat ,t ∥V −1 >                   .
+                       t             2αT                               Combining this inequality with (65), we obtain
+                                                                                                            s
+By the elliptical potential count lemma, the number NT of                                                            
+                                                                                                                                2
+                                                                                                                                     
+exceptional rounds satisfies                                                  max λt ≤ a + η + ηNT + 2η              2T log
+                                                                             t≤T +1                                             δ′
+                 2d(2αT )2           det(VT )                          with probability at least 1 − δ ′ − δE .
+        NT ≤                     log                      (61)
+              (1 − c1 − c2 )2 ϵ2     det(V1 )                                          √
+                                                                       Using η = Cη / T and the bound in (62), it follows that
+                       2
+                                          T L2
+                                              
+                   8dαT
+            ≤                    log 1 +         ,        (62)
+              (1 − c1 − c2 )2 ϵ2
+                                                                                                            s
+                                           βd                                            1       Cη
+                                                                                                                  
+                                                                                                                   2
+                                                                            max λt ≤         + √ + 2Cη 2 log
+where we used V1 = βI and ∥xat ,t ∥2 ≤ L.                                  t≤T +1       c2 ϵ      T                δ′
+                                                                                               8dCη αT2               T L2
+                                                                                                                          
+We now control excursions of the dual process above the                             +                      √ log 1 +
+threshold                                                                               (1 − c1 − c2 )2 ϵ2 T           βd
+                          Cmax                                                       ≡ Bλ (T, δ)
+                     a≡         .
+                           c2 ϵ
+                                                                       with probability at least 1 − δ ′ − δE .
+Suppose that λt > a, and let
+                                                                       We choose δE = T −ζ and δ ′ = δ − δE , with ζ > 2.
+                 k = max{s < t : λs ≤ a}
+                                                                        Choose instead c2 = (1 − c1 )/2. Then 1 − c1 − c2 =
+be the most recent time before t at which √
+                                          the process was at           (1 − c1 )/2 stays bounded away from zero
+                                                                                                              √ for fixed ξ < 1,
+or below a. Since |gk | ≤ 1 and η = Cη / T ,                           so the exceptional-round term is O(1/ T ). Therefore,
+                                                                                                        e
+                                                                                                s
+                                                                                                                      √
+                                                                                                         
+                       λk+1 ≤ a + η.                                                2                     2
+                                                                         Bλ =              + 2Cη 2 log      ′
+                                                                                                                O(1/ T ). (66)
+                                                                                                               + e
+                                                                                (1 − c1 )ϵ                δ
+During the excursion, λs > a, and hence the conditional
+drift is non-positive on all non-exceptional rounds. On an             For sufficiently large T , c1 = ξ + ρ/ϵ = ξ + O(T −1/2 )
+exceptional round, we use the crude bound                              and δ ′ = δ − T −ζ → δ. Now, for a sufficiently large
+                                                                       T > T0 , 1−c1
+                                                                                       ≤ 1−ξ2
+                                                                                               and δ ′ ≥ δ/2. Substituting Cη =
+                                                                                   p1
+                           µs ≤ 1.                                     1/((1 − ξ)ϵ 4 log(2/δ)) gives
+                                                                                                  6           √
+Therefore, writing Iex for the set of exceptional rounds,                               Bλ =            + O(1/
+                                                                                                          e     T ).                     (67)
+                                                                                               (1 − ξ)ϵ
+                            t−1
+                            X                t−1
+                                             X
+          λt ≤ a + η + η           µs + η           Xs    (63)
+                           s=k+1            s=k+1
+                                       t−1
+                                       X                               A.4. Proof of the Cost Regret Bound
+             ≤ a + η + η|Iex | + η            Xs          (64)
+                                      s=k+1                            Proof of Theorem 5.4, regret bound. We first define Ft ≡
+                                      t−1
+                                      X                                σ(p1 , a1 , Y1 , . . . , pt−1 , at−1 , Yt−1 , pt ), so that at (hence
+             ≤ a + η + ηNT + η               Xs .         (65)         xat ,t and λt ) is Ft -measurable, while Yt and a∗t ∼ π ∗ (· | pt )
+                                     s=k+1                             (drawn with independent external randomness) are not. Let
+                                                                       also Ht−1 ≡ σ(p1 , a1 , Y1 , . . . , pt−1 , at−1 , Yt−1 ) denote
+          Pn
+Let Sn = s=1 Xs and S0 = 0. Since (Xt ) is a martingale-               the history up to the end of round t − 1. Then θbt , Vt , αt and
+difference sequence with |Xt | ≤ 1, the maximal Azuma–                 λt are Ht−1 -measurable, while pt and a∗t are independent
+Hoeffding inequality gives, with probability at least 1 − δ ′ ,        of Ht−1 .
+                            s                                        Fix the failure level δ ′ = 1/T , used only in this proof,
+                                        2                              and let Bλ = Bλ (T, 1/T ) be the bound of Lemma 5.3 on
+              max |Sn | ≤ 2T log             .
+             0≤n≤T                      δ′                             max1≤t≤T +1 λt at this level.
+
+                                                                  14
+                                                 Online Algorithm for Personalised LLM Routing
+
+Define                                                                               Since (A)t = −λt gt + λt Xt , summing (74) over t =
+                  n                                                                  1, . . . , T ′ and using λ1 = 0,
+     τ ≡ min     t ∈ {1, . . . , T + 1} : E fails at round t,                                           ′                 ′
+                                                                                                     T               T
+                       o                                                                            X          ηT X
+           or λt > Bλ ,                                                                                 (A)t ≤    +     λt Xt .              (75)
+                                                                                                    t=1
+                                                                                                                2   t=1
+                                                                         (68)
+                                                                                     Since λt is Ft -measurable and |λt Xt | ≤ Bλ for t ≤ T ′ ,
+                                                                                       Pn∧(τ −1)       
+with τ = T + 1 if neither event occurs. Therefore,                                       t=1      λt Xt n≥0 is a bounded martingale, so by op-
+                                                                                     tional stopping,
+                                                       1
+                 P(τ ≤ T ) ≤ δE + δ ′ = δE +             .               (69)            T′                             T′
+                                                       T                                hX       i                    hX       i  ηT
+                                                                                       E    λt Xt = 0           =⇒   E     (A)t ≤    . (76)
+By definition of τ as the first crossing time, λt ≤ Bλ holds                                t=1                        t=1
+                                                                                                                                   2
+only for t < τ , not at t = τ itself; we therefore work with
+T ′ ≡ (τ − 1) ∧ T throughout, rather than τ ∧ T .                                    Step 5: Term (B). By the proof of Lemma 3.6, feasibil-
+Step 1: Primal comparison. By the selection rule of Algo-                            ity of π ∗ implies µ∗ ≡ E[p∗a∗t ,t ] ≥ µT,δ = 1 − ϵ + ρ∗max .
+rithm 1, for every t,                                                                Because pt and a∗t are independent of Ht−1 (prompts are
+                                                                                     i.i.d. and π ∗ is stationary with external randomization),
+       c(at ) − λt UCBt (at ) ≤ c(a∗t ) − λt UCBt (a∗t ),                            E[p∗a∗t ,t | Ht−1 ] = µ∗ . Hence
+
+                                                                                        E 1 − ϵ + ρ − p∗a∗t ,t Ht−1 = ρ − (µ∗ − (1 − ϵ))
+                                                                                                                     
+so
+                                                                                                                   ≤ ρ − ρ∗max
+     c(at ) − c(a∗t )   ≤   λt UCBt (at ) − UCBt (a∗t )              .   (70)
+                                                                                                                     ≤ (ρ − ρ∗max )+ .       (77)
+                                                                                     Since 1{t ≤ T ′ }λt is Ht−1 -measurable with 0 ≤ λt ≤ Bλ
+Step 2: Replacing UCB by the true satisfaction probabil-
+                                                                                     on {t ≤ T ′ },
+ities. By Lemma 5.2, on E, for every a ∈ A,
+                                                                                         T′
+                                                                                        hX       i
+         p∗a,t ≤ UCBt (a) ≤ p∗a,t + 2αt ∥xa,t ∥V −1 .                                  E    (B)t
+                                                             t
+                                                                                            t=1
+             ′
+For t ≤ T , E holds at round t by definition of τ , so                                      T
+                                                                                            X  h               h                            ii
+                                                                                        =     E 1{t ≤ T ′ }λt E 1 − ϵ + ρ − p∗a∗t ,t | Ht−1
+UCBt (at )−UCBt (a∗t ) ≤ p∗at ,t −p∗a∗t ,t +2αt ∥xat ,t ∥V −1 .
+                                            
+                                                                                            t=1
+                                                               t
+                                                              (71)                      ≤ T Bλ (ρ − ρ∗max )+
+Combining (70)–(71), for t ≤ T ′ ,                                                                                                           (78)
+
+ c(at ) − c(a∗t ) ≤ λt p∗at ,t − p∗a∗t ,t + 2λt αt ∥xat ,t ∥V −1 .                   (If ρ ≤ ρ∗max this is 0)
+                                         
+                                                             t
+                                                              (72)
+                                                                                     Step 6: Term (C). For t ≤ T ′ , λt ≤ Bλ and αt ≤
+Step 3: Decomposition. With gt ≡ 1 − ϵ + ρ − Yt , µt ≡                               αT . By Cauchy–Schwarz and the elliptical potential lemma
+E[gt | Ft ] = 1 − ϵ + ρ − p∗at ,t , Xt ≡ gt − µt = p∗at ,t − Yt ,                    (with β ≥ L2 ),
+and νt∗ ≡ 1 − ϵ + ρ − p∗a∗t ,t , adding and subtracting 1 − ϵ + ρ                          T′
+                                                                                                            s
+                                                                                          X                                   T L2 
+in (72) gives, for t ≤ T ′ ,                                                                  (C)t ≤ 2Bλ αT 2dT log 1 +               .    (79)
+                                                                                          t=1
+                                                                                                                                βd
+c(at ) − c(a∗t ) ≤ −λt µt + λt νt∗ + 2λt αt ∥xat ,t ∥V −1 .
+                                                      t
+                                                                                     Step 7: Cost of the bad event. Rounds T ′ + 1, . . . , T
+                   | {z }   |{z}     |       {z         }
+                            (A)t          (B)t           (C)t
+                                                                                     (nonempty only if τ ≤ T , i.e. the stopping round τ itself
+                                                                   (73)
+             PT ′                  PT ′                  PT ′                        plus everything after) each contribute at most 1, so
+We bound          t=1 E[(A)t ],      t=1 E[(B)t ], and       t=1 (C)t in
+Steps 4–6.                                                                                  T
+                                                                                          h X                           i
+                                                                                         E              c(at ) − c(a∗t ) ≤ T · P(τ ≤ T )
+                                                                                             t=T ′ +1
+Step 4: Term (A). From λt+1 = max{0, λt + ηgt } and
+|gt | ≤ 1,                                                                                                              ≤ T δE + 1
+                                                                                                                        ≤ 2                  (80)
+                 λ2 − λ2t+1   η
+        −λt gt ≤ t          +                    (pathwise).             (74)        using δE = T −ζ , ζ ≥ 1.
+                    2η        2
+
+                                                                                15
+                                        Online Algorithm for Personalised LLM Routing
+
+Step 8: Combining. Summing (73) and splitting at T ′ ,                  Rearranging,
+then applying (76), (78), (79), (80),                                                T
+                                                                                     X                                λT +1
+                                                                                             Yt ≥ (1 − ϵ + ρ)T −            .    (83)
+                                 s
+                 ηT                       T L2                                                                        η
+   RegretT ≤          + 2Bλ αT 2dT log 1 +                                             t=1
+                  2                         βd
+            + T Bλ (ρ − ρ∗max )+ + 2.              (81)                 On the event where the dual variable is uniformly bounded,
+             √
+With η = Cη / T and, from the crude (Azuma-based) form
+of Lemma 5.3 at δ ′ = 1/T ,                                                                         λT +1 ≤ Bλ .
+
+                                                                        Therefore,
+                                                  √d log T                           T
+                                                                                                                        Bλ
+                         
+  Bλ = O(1/ ϵ(1 − ξ) ),             αT = O                                             X
+                                                        κ                                    Yt ≥ (1 − ϵ)T + ρT −          .     (84)
+                                                                                       t=1
+                                                                                                                        η
+            ′
+(the log(1/δ ) = √                                  O(·)).
+                  log T dependence is absorbed into e
+Choose ρ = Cρ / T . Then (ρ − ρ∗max )+ ≤ ρ and                          Finally, we have
+                            √         plog(4/δ)√T 
+             ∗    +
+  T Bλ (ρ − ρmax ) ≤ Cρ Bλ T = O    e                  .                                       Cη               Cρ
+                                          (1 − ξ)ϵ                                           η=√ ,           ρ= √ .
+                                                                                                T                T
+Therefore (81) gives
+    RegretT                                                             Choose
+                                                                                                            Bλ
+                            √      !                                                                 Cρ >      .
+         Cη √              d T                                                                              Cη
+      ≤        T +O  e
+          2              κ(1 − ξ)ϵ                                      Then
+                                                                                                           Bλ √
+                                                                                                              
+                         √ !                                                              Bλ
+             p
+                log(4/δ)   T                                                       ρT −        = Cρ −              T > 0,
+      +O e                      +2                                                          η              Cη
+                 (1 − ξ)ϵ                                               which is sufficient for the satisfaction guarantee.
+                   p              p                √ !
+             (d + log(4/δ) + 1/ log(4/δ)) T                             Using the queue bound above with δ ′ = δ − δE and δE =
+      =O e
+                             κ(1 − ξ)ϵ                                  T −ζ , its leading terms satisfy
+                   p            √ !                                                                       s
+             (d  +    log(4/δ))   T
+                                                                                                                  
+                                                                                  Bλ           1                  4
+      =O e                                                                             ≤              + 2 log          + o(1).
+                    κ(1 − ξ)ϵ                                                     Cη      (1 − ξ)ϵCη              δ
+                                 √                 √                                            p
+We can show that for δ ≤ 1, Cη T /2 ≤ Cρ Bλ T , there-                                                         −1
+                                                                        For Cη = ((1 −    pξ)ϵ 2 log(4/δ)) , the right-hand side
+fore, we can simplify the expression to get the last term.              converges     to 2 2 log(4/δ) as T → ∞. Since Cρ =
+                                                                         p
+                                                                        5 2 log(4/δ), the strict inequality Cρ > Bλ /Cη there-
+A.5. Proof of High-Probability Quality Constraint                       fore holds for all sufficiently large T under the stated queue
+     Satisfaction                                                       bound. Hence there exists T0 such that, for T ≥ T0 , the
+Proof. Consider the dual update                                         chance constraint holds with probability at least 1 − δ.
+                                                                        Consequently,
+       λt+1 = max {0, λt + η (1 − ϵ + ρ − Yt )} .
+                                                                                               T
+                                                                                               X
+Since max{0, x} ≥ x,                                                                                 Yt ≥ (1 − ϵ)T.
+                                                                                               t=1
+           λt+1 ≥ λt + η(1 − ϵ) + ηρ − ηYt .
+                                                                        Since this conclusion holds on an event of probability at
+Summing this inequality from t = 1 to T and using λ1 = 0                least 1 − δ, we obtain
+gives
+                                                                                                T
+                                                                                                                !
+                       T
+                       X                                                                     1X
+           λT +1 ≥ η         (1 − ϵ + ρ − Yt )                                       P             Yt ≥ 1 − ϵ       ≥ 1 − δ.
+                                                                                             T t=1
+                       t=1
+                                          T
+                                          X                             This establishes that our algorithm satisfies the quality con-
+                 = η(1 − ϵ + ρ)T − η             Yt .       (82)
+                                                                        straint.
+                                          t=1
+
+
+                                                                   16
+                                          Online Algorithm for Personalised LLM Routing
+
+                                                                           B. Additional Experiments
+                                                                           B.1. Experimental Details
+                                                                           All experiments are implemented in Python. For the syn-
+                                                                           thetic experiments, we consider feature dimensions d = 8
+                                                                           and K = 5 routing actions. Unless otherwise stated, we
+                                                                           use T = 1000 rounds, ϵ = 0.2, δ = 0.05, and initialize the
+                                                                           model parameters and covariance matrix as specified in the
+                                                                           algorithm. Results are averaged over multiple independent
+                                                                           runs, with confidence intervals computed across runs.
+                                                                           For our experiments, for T = 100, we fix η = 0.5, ρ = 0.15
+                                                                                                                                    √
+                                                                           for T = 100 and further scale them with respect to 1/ T
+                                                                           for other values of T . Similarly, in the experiments we
+                                                                           multiply the theoretical confidence radius αt by 0.005 as
+                                                                           an empirical calibration. This calibrated radius is used only
+Figure 6. Sensitivity to the satisfaction tolerance ϵ. Dashed lines
+                                                                           for the experiments. We report their constraint-satisfaction
+indicate the corresponding satisfaction and constraint thresholds.
+                                                                           performance empirically.
+                                                                           All experiments were conducted on a CPU-based machine
+                                                                           equipped with an Intel Core i5-14600KF processor and 32
+                                                                           GB of RAM. The total runtime for all experiments was
+                                                                           approximately six hours.
+                                                                           For the real-LLM experiments, we use 100 queries from
+                                                                           WildBench v2 and five LLMs as the available routing ac-
+                                                                           tions. The LLMs are mentioned as follows:
+
+                                                                             1. nemotron-3-super-120b-a12b (NVIDIA, 2025)
+
+                                                                             2. deepseek-v4-flash (DeepSeek-AI, 2026)
+
+                                                                             3. qwen3.6-35b-a3b (Qwen Team, 2026a)
+
+                                                                             4. gemma-4-31b-it (Team, 2026)
+                Figure 7. Confidence Calibration
+                                                                             5. qwen3.8-27b (Qwen Team, 2026b)
+
+                                                                           Each response is evaluated by an independent lightweight
+                                                                           judge model (muse-glimmer-30b (Labs, 2026)) using six
+                                                                           quality dimensions: correctness, relevance, completeness,
+                                                                           clarity, conciseness, and safety. The resulting quality
+                                                                           scores are used to compute the satisfaction outcome and
+                                                                           routing cost. All methods use the same queries, models,
+                                                                           costs, and evaluation procedure to ensure a fair compar-
+                                                                           ison. The code for all the experiments can be found at
+                                                                           https://github.com/ameyanjarlekar/LLM-Routing, and the
+                                                                           models are hosted at https://lumen.ncsa.illinois.edu/.
+
+                                                                           B.2. Sensitivity to the Satisfaction Tolerance
+                                                                           We study how the routing performance changes with the
+                                                                           satisfaction tolerance ϵ. A smaller ϵ imposes a stricter sat-
+Figure 8. Empirical probability of satisfying the chance constraint        isfaction requirement, while a larger ϵ allows greater flexi-
+over 5000 independent trials.                                              bility in model selection. We vary ϵ over a range of values
+                                                                           and evaluate the resulting routing cost, satisfaction, and
+                                                                           chance-constraint probability.
+
+                                                                      17
+                                      Online Algorithm for Personalised LLM Routing
+
+B.3. Confidence Width Calibration
+We evaluate the tightness of the theoretical confidence width
+for the predicted satisfaction probabilities. At T = 1000,
+the raw theoretical width is highly conservative in our eval-
+uated data. We also evaluate a calibrated width obtained
+by applying a fixed scaling factor of 0.005. The calibrated
+width covers 83.4% of the observed errors in this experi-
+ment, which justifies our choice of multiplying the theoreti-
+cal confidence radius αt by 0.005.
+
+B.4. Quality-Constraint Satisfaction
+We next evaluate the reliability of constraint satisfaction
+across independent trials. For each independent trial, we
+run the algorithm for T = 1000 rounds and record whether
+the realized average satisfaction meets the target 1−ϵ = 0.8.
+We repeat this procedure over 5000 independent trials and
+report the empirical constraint-satisfaction frequency with
+95% confidence intervals. Figure 8 compares this empirical
+frequency with the target 1 − δ = 0.95
+
+
+
+
+                                                                18
+

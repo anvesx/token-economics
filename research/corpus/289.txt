@@ -1,0 +1,870 @@
+TITLE: Rethinking Quality in LLM Routing: Security-Conditioned Model-and-Budget Selection (SCRouter)
+URL: https://arxiv.org/abs/2610.18566
+ORG: arXiv  TYPE: paper  DATE: 2026-10
+
+                                                         Rethinking Quality in Large Language Model Routing:
+                                                          Security-Conditioned Model-and-Budget Selection
+
+                                                            Yichi Zhang1 , Zhenxiang Huang1 * , Yuyang Zhang1 , Yuchen Yang1
+                                                                            1
+                                                                              The Pennsylvania State University
+                                                             {yichi.zhang, zbh5285, yuyang.zhang, yuchen.yang}@psu.edu
+
+
+
+                                                                                                                               SCRouter-L             SCRouter-M    SCRouter-S
+                                                                 Abstract                                                      R2-Router              RADAR         CARROT-KNN
+                                                                                                                               CARROT-RoBERTa         NIRT          MIRT
+                                              Large language model (LLM) routers reduce
+
+
+
+
+arXiv:2610.18566v2 [cs.AI] 15 Oct 2026
+                                                                                                                                   60.9
+                                              serving cost by choosing which model to call                                    60
+
+
+
+
+                                                                                                       Oracle Gap Recovered
+                                                                                                                                                          50.2
+                                              and how many output tokens to grant it for each
+                                              query. Existing routers rank model-budget ac-                                   45
+
+                                              tions using a single quality metric. This does                                  30
+                                              not work for mixed workloads. For ordinary
+                                              queries, a good answer is correct and useful                                    15
+                                              (utility); for security-sensitive queries, a good
+                                                                                                                              0
+                                              answer refuses harmful requests or resists mali-                                            In-Domain        Out-of-Domain
+                                              cious instructions (security). These two objec-
+                                              tives prefer different models and budgets.               Figure 1: Overall routing performance under in-domain
+                                                                                                       and out-of-domain settings. SCRouter achieves the high-
+                                              We propose SCRouter, a router that learns when
+                                                                                                       est Oracle Gap Recovery (OGR) across both settings.
+                                              to prioritize security and how to allocate the to-
+                                                                                                       OGR denotes the fraction of the gap between random
+                                              ken budget. For each model-budget pair, it esti-
+                                                                                                       selection and the oracle that a router recovers.
+                                              mates the probability that the response finishes
+                                              within budget. It uses this probability to predict
+                                              utility and security separately. A small probe
+                                              determines how to weight these two predic-
+                                                                                                       tion space to model-budget pairs: it picks both the
+                                              tions for each query. SCRouter then selects the          model and its output token budget for each query.
+                                              model and budget by balancing the weighted                  These methods improve routing performance by
+                                              utility and security against cost. We also build         refining the action space, but they overlook that
+                                              SCRouterBench, a benchmark of 38,869 util-               what makes a response good depends on the query.
+                                              ity and security queries spanning nine security          For ordinary queries, a good response correctly ad-
+                                              dimensions, each answered under all 144 com-
+                                                                                                       dresses the request, which we refer to as utility. For
+                                              binations of 12 models and 12 budgets, plus
+                                              2,753 out-of-domain queries. SCRouter im-                harmful requests or queries containing malicious
+                                              proves the baselines by 13-29 points in-domain           instructions, a good response refuses the harmful
+                                              and 19-23 points out-of-domain.                          request or resists the malicious instructions, which
+                                                                                                       we refer to as security. We call these utility and
+                                         1    Introduction                                             security queries, respectively.
+                                                                                                          The problem is that utility and security often
+                                         LLM routers are widely used in modern LLM in-
+                                                                                                       favor different routing actions, both in model selec-
+                                         frastructure (Yu et al., 2022; Kwon et al., 2023; Lu
+                                                                                                       tion and token budget allocation. Figure 2 ranks 12
+                                         et al., 2026). They reduce serving cost by selecting
+                                                                                                       LLMs at their best budgets and shows that their util-
+                                         a suitable model configuration for each query. Most
+                                                                                                       ity and security rankings differ substantially. For
+                                         existing routers use a model-only action space: the
+                                                                                                       example, Foundation-Sec-8B ranks 1st in security
+                                         router selects only which model should answer
+                                                                                                       but 9th in utility, while Qwen3.5-27B ranks 4th
+                                         each query, as in RouterBench (Hu et al., 2024),
+                                                                                                       in utility but 9th in security. Figure 3 shows the
+                                         RouteLLM (Ong et al., 2025), CARROT (Somer-
+                                                                                                       same mismatch across token budgets. For Qwen3-
+                                         step et al., 2025), and UniRoute (Jitkrittum et al.,
+                                                                                                       Coder-30B, utility rises from 10.4% to 79.4% as
+                                         2026). R2-Router (Xue et al., 2026) extends the ac-
+                                                                                                       the budget grows to about 4,000 tokens. In contrast,
+                                             * Work done during an internship at Penn State.           its security performance peaks at only 120 tokens,
+
+                                                                                                   1
+        Utility Rank                   Security Rank
+                                                                                       81.0                      79.4
+ Qwen3-Coder-30B                       Foundation-Sec-8B
+                                                                            80
+     Llama-3.1-70B                     Qwen3-Coder-30B
+         Phi-4-mini                    Phi-4-mini
+
+
+
+                                                               Mean Score
+      Qwen3.5-27B                      Llama-3.1-8B                         60
+      Llama-3.1-8B                     Llama-3.1-70B
+  DS-R1-Qwen3-8B                       DS-R1-Qwen3-8B                       40
+       Qwen3.5-9B                      Qwen3.5-0.8B
+       Qwen3.5-4B                      Gemma-3-1B
+                                                                            20
+ Foundation-Sec-8B                     Qwen3.5-27B                                                    Utility
+     Qwen3.5-0.8B                      Mistral-7B-v0.3                                                Security
+    Mistral-7B-v0.3                    Qwen3.5-9B                           0
+                                                                                 10    100            1k                def.
+      Gemma-3-1B                       Qwen3.5-4B                                        Token Budget
+
+
+Figure 2: Model rankings differ between utility and            Figure 3: Utility and security of Qwen3-Coder-30B
+security: strong utility need not imply strong security.       under different token budgets. Utility and security peak
+                                                               at different token budgets.
+
+where utility remains at 40.5%. These observations
+show that models and budgets that improve utility                 Our contributions are as follows: (a) we find a
+need not improve security. A router that ignores               utility-security asymmetry in LLM routing across
+this distinction may send security queries to mod-             both model choice and budget allocation; (b) we
+els with strong utility but weak security, or allocate         propose SCRouter, a security-conditioned model-
+larger budgets without a security benefit.                     budget router that adapts its routing objective to
+   We propose SCRouter, the first Security-                    each query; (c) we release SCRouterBench to eval-
+Conditioned model-budget Router. First, a small                uate model and budget selection on mixed utility
+probe estimates the probability that a query is                and security workloads; and (d) we demonstrate
+security-sensitive. Second, for each model-budget              gains over existing routers in both settings.
+pair, a shared budget model predicts the probability
+of finishing within budget and the expected token              2             Related Work
+use. Two quality predictors use this completion                LLM Routing. LLM routers direct queries to
+probability to account for truncated responses when            candidate models to balance response quality and
+estimating utility and security separately. This               inference cost. Cascade routers try a small model
+lets the two objectives favor different models and             first and move to larger ones if the answer is
+budgets while sharing the same completion esti-                poor (Chen et al., 2024a; Aggarwal et al., 2024).
+mate. Third, SCRouter uses the probe’s estimate                Predictive routers pick a model before generation
+to weight the two quality scores, then selects the             from query features, preference data, or learned em-
+model-budget pair that best balances the combined              beddings (Ding et al., 2024; Ong et al., 2025; Chen
+score against the cost estimated from token use.               et al., 2024b; Feng et al., 2025; Song et al., 2025;
+The predictors share parameters across actions,                Somerstep et al., 2025; Jitkrittum et al., 2026).
+avoiding a separate predictor for each pair.                   Benchmarks such as RouterBench (Hu et al., 2024)
+   We also build SCRouterBench, a routing bench-               and RouterArena (Lu et al., 2026) have standard-
+mark with mixed utility and security workloads. It             ized model routing evaluation. R2-Router (Xue
+has 38,869 queries, covering utility tasks and nine            et al., 2026) and RADAR (Fernandez et al., 2026)
+security dimensions, plus an out-of-domain test set            extend routing to choose both the model and the
+of 2,753 queries. We run all 144 actions per query,            token budget. Unlike these routers, which use one
+yielding about 6 million labeled responses.                    quality metric and ignore security, SCRouter pre-
+   On SCRouterBench, SCRouter recovers 60.9%                   dicts utility and security separately for each model-
+of the gap between random selection and the per-               budget action. We also build SCRouterBench to
+query oracle, compared with 48.0% for the best                 evaluate routers under mixed workloads.
+baseline, R2-Router, a gain of 12.9 percentage
+points. As shown in Figure 1, all three encoder                Attacks on LLMs. Despite safety alignment,
+variants of SCRouter beat every baseline, even the             LLMs remain vulnerable to adversarial inputs such
+smallest one, which has a 4M-parameter encoder                 as jailbreaks (Wei et al., 2023; Zou et al., 2023;
+and 0.25M trainable parameters. SCRouter-M also                Chao et al., 2025) and prompt injections (Perez and
+leads out-of-domain with 50.2% OGR.                            Ribeiro, 2022; Greshake et al., 2023; Schulhoff
+
+                                                           2
+                   Query \(x\)                                                                                                            \(w(x)\)       Surface Fusion                 Cost
+                                                                                                                                                     \((1-w)Q_U+wQ_S\)              Preference \(\mu\)
+
+
+                                                \(Q_U\)                                                     \(Q_S\)
+                                                                                                                                                           \(Q\)                           \(\mu\)
+          Frozen Text Encoder
+            4M-0.6B params                                                       \(\pi(x, a)\)
+                                                          Utility Predictor                                         Security Predictor                    Cost-Aware Action Scoring
+                                                                                                                                                           \((1-\mu)Q-\mu E[\text{cost}]\)
+    Linear Probe
+                                                             \(z(x)\)                                                        \(z(x)\)
+
+                                                                              Budget Model
+   Security                   Query
+ Emphasis \(w(x)\)         Embedding \(z(x)\)                                                                                                                      Action \((m^*, b^*)\)
+                                                                                        \(z(x)\)
+
+
+
+
+Figure 4: Overview of the SCRouter pipeline. (1) A frozen text encoder and linear probe estimate the query’s
+security weight w(x). (2) A shared budget model predicts the probability π(x, a) that the response finishes within
+budget, and two quality models predict the utility and security surfaces Q̂U and Q̂S for all actions. (3) The two
+surfaces are combined with weight w(x) and traded off against cost with the cost coefficient µ.
+
+
+                                                                                                                     SCRouter-L                      SCRouter-M                  SCRouter-S
+et al., 2023). Safety benchmarks (Mazeika et al.,
+                                                                                                                     R2-Router                       RADAR                       CARROT-KNN
+2024; Chao et al., 2024; Wang et al., 2023) show                                                                     CARROT-RoBERTa                  NIRT                        MIRT
+that robustness differs a lot across models. Existing                                                                        In-Domain                      Out-of-Domain
+defenses make a single model more robust (Inan                                                                      60                               60
+
+
+
+
+                                                                                             Oracle Gap Recovered
+et al., 2023; Chen et al., 2025; Du et al., 2024) or
+                                                                                                                    40                               40
+protect the router itself from attacks (Shafran et al.,
+2025; Zhang et al., 2026). SCRouter treats security                                                                 20
+                                                                                                                             #Encoder Params
+                                                                                                                                                     20
+                                                                                                                             10M 100M 1B
+queries as part of the routing workload. It uses dif-
+ferences in model robustness and budget sensitivity                                                                 0                                 0
+                                                                                                                         101 102 103 104                   101 102 103 104
+to send security queries to safe configurations and                                                                      #Router Params (M)                #Router Params (M)
+
+utility queries to high-utility ones.
+                                                                                             Figure 5: Efficiency versus performance across routers.
+3      Security-Conditioned Router                                                           SCRouter gets higher OGR with fewer parameters and
+                                                                                             lower TTFT. The x-axis denotes router size, and circle
+3.1      Overview                                                                            size denotes text encoder size.
+Let x denote a query and A = M × B be the ac-
+tion space, where each action a = (m, b) specifies                                           3.2                         Query Conditioning
+a generation model m with an output token bud-
+get b. For every action, U (x, a) ∈ [0, 1] denotes                                           Query Representation z(x). A frozen encoder
+the utility of the response and S(x, a) ∈ [0, 1] its                                         maps each query x to a representation z(x), which
+security. SCRouter predicts the surfaces U and S                                             is used by the security probe, budget model, and
+separately for all actions and combines them with                                            quality predictors.
+a query-specific security weight.
+   Figure 4 summarizes the pipeline. First, a frozen                                         Security Weight w(x). A logistic-regression
+text encoder represents the query, and a linear probe                                        probe on the query representation z(x) gives the
+on this representation estimates a query-specific se-                                        security weight directly:
+curity weight w(x) (Section 3.2). Second, a shared
+                                                                                                                                    w(x) = σ v ⊤ z(x) + v0 .
+                                                                                                                                                          
+budget model predicts, for every action, the com-                                                                                                                                                    (1)
+pletion probability π(x, a), which is the probability
+that the response finishes within its budget. Two                                           We train the probe on binary labels (0 for utility, 1
+quality models then use π to predict the utility                                            for security), so w(x) is the predicted probability
+and security surfaces Q̂U (x, a) and Q̂S (x, a) (Sec-                                       that a query is a security query. Its regularization
+tion 3.3). Third, the two quality surfaces are fused                                        strength is selected by minimizing validation log-
+with security weight w(x) and traded off against                                            loss. Figure 6 shows that the probe separates utility
+the expected cost using a cost coefficient µ set by                                         and security queries in-domain and generalizes to
+the operator (Section 3.4).                                                                 unseen sources.
+
+                                                                                     3
+                                  Utility     Security                                                        Fitted π           Observed finish rate
+                      In-Domain               Out-of-Domain
+                                                                                                     Qwen3.5-0.8B          Gemma-3-1B            Phi-4-mini
+                    99.6%     99.6%            86.7%     74.2%                              1
+          0.10
+                                                                                                         MAE 0.016              MAE 0.037               MAE 0.022
+                                                                                            0
+                                                                                                  Qwen3.5-4B              Mistral-7B-v0.3    DS-R1-Qwen3-8B
+                                                                                            1
+Density
+                                                                                                MAE 0.005                                    MAE 0.009
+          0.05
+
+                                                                                                                                MAE 0.014
+
+                                                                                P(finish)
+                                                                                            0
+                                                                                                     Llama-3.1-8B        Foundation-Sec-8B     Qwen3.5-9B
+                                                                                            1
+            0                                                                                                                                MAE 0.007
+                 −20 −10 0       10   20    −20 −10 0       10   20
+                       logit w(x)                 logit w(x)
+                                                                                                         MAE 0.019              MAE 0.026
+                                                                                            0
+Figure 6: Performance of the security probe. The probe                                          Qwen3.5-27B              Qwen3-Coder-30B       Llama-3.1-70B
+                                                                                            1
+                                                                                              MAE 0.010
+separates utility and security queries well in-domain and
+generalizes to unseen sources.                                                                                                  MAE 0.021           MAE 0.033
+                                                                                            0
+                                                                                                10     100    1k     10      100    1k    10      100  1k
+                                                                                                                           Token Budget
+Encoder Variants. Prior work (Xue et al., 2026)
+                                                                                Figure 7: Budget model calibration across models and
+uses large encoders such as Qwen3-Embedding-
+                                                                                budgets. Lines denote the fitted completion probabil-
+0.6B (Zhang et al., 2025). These encoders                                       ity π from the shared budget model, while markers
+are already close in size to the smallest candi-                                represent observed completion rates. The predicted π
+date LLMs and add to the time to first token                                    increases with b even though we do not force it to.
+(TTFT). We use smaller encoders to keep rout-
+ing cheap. We design three variants: SCRouter-
+L (Qwen3-Embedding-0.6B, 1024-d), SCRouter-                                     B ∗ > b. Because a model writes shorter answers
+M (all-MiniLM-L6-v2, 384-d), and SCRouter-                                      when told a budget, B ∗ depends on b. The budget
+S (BERT-tiny, 128-d). SCRouter-S uses a 4M                                      changes the answer itself, not only where it stops.
+encoder and 0.25M trainable parameters. Fig-                                    A tower uL (x), a two-layer MLP, maps the query
+ure 5 compares efficiency and performance across                                to a low-dimensional demand vector, and
+routers; Section 5.2 reports the results.
+                                                                                              log B ∗ ∼ N λ, s2 ,
+                                                                                                                  
+                                                                                                                                (3)
+3.3              Budget-Conditioned Quality Surfaces                                                    λ = ⟨uL (x), AL      L
+                                                                                                                      m ⟩ + cm + gm,b ,                       (4)
+A response may score low for two reasons. It may
+                                                                                where AL           L
+                                                                                          m and cm describe how many tokens
+finish but give a weak answer, or it may reach the
+                                                                                model m needs, gm,b how strongly the instruction
+token limit before it finishes. We call the second
+                                                                                b compresses this need, and s = sm,b is a learned
+case budget-induced truncation. For each objective
+                                                                                spread per action. The default budget carries no in-
+t ∈ {U, S}, we model the two cases separately and
+                                                                                struction, is capped at b = 4,000 tokens, and keeps
+mix them by the completion probability π,
+                                                                                its own column of g and s. With ζ = (log b − λ)/s,
+                         Q̂t = πFt + (1 − π) Tt ,                     (2)       the completion probability is
+
+where Ft and Tt are the predicted qualities of com-                                                          π = P (B ∗ ≤ b) = Φ(ζ).                          (5)
+pleted and truncated responses. A shared budget
+                                                                                A completed response stops after B ∗ tokens and
+model gives π and the expected number of gener-
+                                                                                a truncated one stops at b, so the model generates
+ated tokens. Two quality models, one for utility and
+                                                                                min(B ∗ , b) tokens, whose expectation is
+one for security, give Ft and Tt . In SCRouterBench
+                                                                                                                     2
+and many other benchmarks, completion rates rise                                                Ê[tok] = eλ+s /2 Φ(ζ − s) + b (1 − π).                       (6)
+almost monotonically with b for all models. We
+therefore derive π from the number of tokens each                               This one distribution gives both the completion
+response needs.                                                                 probability and the expected cost. Figure 7 shows
+                                                                                that the predicted π follows the observed comple-
+Shared Budget Model. Let B ∗ (x, m, b) be the
+                                                                                tion rates as the budget grows.
+smallest number of output tokens with which model
+m, instructed with budget b, completes its answer                               Completion/Truncation Quality Models. Fol-
+to x. The response is truncated exactly when                                    lowing multidimensional item response theory, for
+
+                                                                            4
+                         1B                                         700M              length ℓ gives an observed B ∗ = ℓ, whereas a trun-
+                                                                                      cated response gives only the lower bound B ∗ > b.
+
+
+
+
+Trainable Parameters
+                                                                                      This observation does not imply completion under
+                       100M                         +0.30M per action
+                                   43.7M                                              a different budget instruction. We therefore fit the
+                                                                                      budget model on all training cells with a censored
+                       10M                                     SCRouter-L             log-normal likelihood, plus a binary cross-entropy
+                                                               R2-Router
+                                                                                      loss between π and whether the response actually
+                                   1.63M     +14 per action         1.66M
+                                                                                      completed, which we read from its stop reason. Ft
+                        1M
+                              16       144   400     784    1296    1936              is fitted on the completed cells and Tt on the trun-
+                                              #Action Space                           cated cells of objective-t queries, and an end-to-end
+                                                                                      binary cross-entropy aligns Q̂t with the observed
+Figure 8: Parameter scaling across action spaces. Train-
+able parameters on a log scale for n models and n bud-
+                                                                                      score on all cells of objective-t queries. As a re-
+gets excluding the frozen encoder, with our 12 × 12                                   sult, the utility model sees only utility queries and
+setting dashed. R2-Router grows quadratically, from                                   the security model sees only security queries. No
+43.7M to 700M parameters, while SCRouter stays at                                     query needs both labels. All terms are summed
+about 1.6M because its towers are shared.                                             with unit weights and optimized with AdamW with
+                                                                                      early stopping based on the validation loss.
+each objective t ∈ {U, S} a tower ut (x) maps the                                     3.4    Surface Fusion and Cost-Aware Decision
+query to a demand vector, and each model has an
+                                                                                      We then combine the two surfaces with the query’s
+ability vector in the same space. With the logit
+                                                                                      security weight. For every action a,
+        ϕt = ⟨ut , At,m ⟩ + ct,m + βt,m,b + ⟨ut , Ct,b ⟩, (7)
+                                                                                               Q̂(x, a) = (1 − w) Q̂U + w Q̂S .        (10)
+the predicted qualities of completed and truncated
+                                                                                      Setting w = 0 gives utility-only routing and w = 1
+responses are given by
+                                                                                      gives security-only routing. Values in between mix
+                                   Ft = σ(ϕt ),                             (8)       the two without retraining.
+                                   Tt = σ ϕ′t + κt,m (log b − λ̄) ,
+                                                                        
+                                                                            (9)          The cost of an action is estimated before genera-
+                                                                                      tion from the known input length nin , the expected
+where ϕ′t has the form of Eq. 7 with its own pa-                                      number of generated tokens (Eq. 6), and the per-
+rameters A′t,m , c′t,m , ρt,m,b , and Ct,b
+                                        ′ . Here A
+                                                   t,m is                             token prices pin       out
+                                                                                                     m and pm of model m:
+model m’s ability for objective t, βt,m,b and ρt,m,b
+capture how the budget instruction itself changes                                                           nin pin           out
+                                                                                                                 m + Ê[tok] pm
+                                                                                               Ĉ(x, a) =                         ,    (11)
+quality, ⟨ut , Ct,b ⟩ lets the budget sensitivity depend                                                            Cref
+on the query, and κt,m gives partial credit accord-                                   where Cref is the largest nominal cost over all train-
+ing to how close the budget came to being suffi-                                      ing queries and actions. This nominal cost takes the
+cient. The shift λ̄ is λ from Eq. 4 with its gradi-                                   output length to be the token budget, or the model’s
+ent stopped, so the quality loss does not change                                      mean training output length for the default budget.
+the budget model. Eq. 2 then mixes Ft and Tt by                                       Given the operator’s cost coefficient µ ∈ [0, 1],
+π. Each tower is a two-layer MLP of width 512                                         SCRouter selects
+with a 32-dimensional output. Because the tow-
+ers are shared across actions and the model and                                        a∗ = arg max (1 − µ) Q̂(x, a) − µ Ĉ(x, a). (12)
+budget parameters are lookup tables, one forward                                                a∈A
+
+pass gives the full |M| × |B| surface for each ob-                                    All |M||B| actions are scored without invoking
+jective. SCRouter therefore needs no per-action                                       any candidate generation model, and only a∗ is
+predictor, and its size grows much more slowly                                        executed. In short, w(x) decides what counts as a
+than R2-Router’s, as shown in Figure 8.                                               good answer, and µ decides how much quality to
+Training. We call one (query, action) result a                                        give up for lower cost.
+cell, and train each part only on the cells that tell us
+                                                                                      4     SCRouterBench
+something about it. A cell either gives B ∗ exactly
+or gives only a lower bound. Specifically, with the                                   SCRouterBench evaluates routers on mixed util-
+budget instruction fixed, a completed response of                                     ity and security queries under cost constraints. As
+
+                                                                                  5
+summarized in Table 1, utility queries come from                                In-domain               OOD
+six datasets in SPROUT (Somerstep et al., 2025);             Dimension    Source              #Q Source            #Q
+security queries cover nine dimensions from Decod-           Utility †
+                                                                          SPROUT          19,882 MixEval          998
+ingTrust (Wang et al., 2023), SALAD-Bench (Li
+                                                             Toxicity     DecodingTrust     2,000 ToxiGen         200
+et al., 2024), and HackAPrompt (Schulhoff et al.,            Stereotype   DecodingTrust     1,994 CrowS-Pairs     200
+2023). See Appendix A for details.                           Adv. demo. DecodingTrust       1,996 BadChain        200
+                                                             Privacy      DecodingTrust     2,000 Synthetic       200
+Action Grid and Setup. Each query is evaluated               Ethics       DecodingTrust     2,000 ETHICS          200
+                                                             Fairness     DecodingTrust     1,997 BBQ             300
+across all |A| = 144 actions formed by 12 open-              Harmful req. SALAD-Bench       4,732 HarmBench       188
+weight models from 0.8B to 70B parameters and                Cyber risk   SALAD-Bench         768 HarmBench        67
+12 token budgets B. The token budgets include 11             Jailbreak/PI HackAPrompt       1,500 Tensor Trust    200
+instructed budgets from 10 to 4,000 tokens plus a            Total                        38,869                 2,753
+default budget with no budget instruction. Each
+response gets a score in [0, 1] for its own objective:       Table 1: Overview of SCRouterBench. In-domain
+                                                             queries are split 70/10/20 into train/val/test; out-of-
+exact match for closed-form utility questions, gpt-
+                                                             domain queries are used for evaluation only. Every
+oss-120b as a judge for open-ended ones, and the             query is scored under all 144 actions. † Six datasets:
+original benchmark protocol for security queries.            MMLU-Pro, GPQA, MuSR, MATH, OpenHermes,
+Missing final answers receive a score of zero.               RAGBench. PI: prompt injection.
+
+Data Splits and Label Verification. The bench-
+mark contains 38,869 queries split 70/10/20 into             2025) has KNN, RoBERTa, and Linear variants.
+train, validation, and test sets. We stratify splits         R2-Router and RADAR choose among the same
+by dimension and group them by template to avoid             144 actions as SCRouter. MIRT, NIRT, and the
+leakage. For out-of-domain evaluation, 2,753 ad-             CARROT variants choose among the 12 models at
+ditional queries are gathered from nine unseen               the default budget, as in their original form.
+sources. To ensure label quality, we compare util-
+ity labels with gold answers (97.7% agreement)               Cost. Every router makes its decision using a cost
+and security labels with Qwen3Guard (Cohen’s                 estimate available before generation. The estimate
+κ ≥ 0.76). We drop queries whose labels cannot               uses the input tokens and the router’s own predic-
+be decided, so every query has all 144 action labels.        tion of output tokens, priced with a fixed per-model
+                                                             price table and normalized by the largest nominal
+Routing Headroom. Per-query routing has a lot                training cost Cref defined in Section 3.4. Evalua-
+of room to improve on this data. In every dimen-             tion uses the realized cost of the chosen response,
+sion, the best fixed action is well below the per-           which reflects its actual input and output tokens at
+query oracle, and the oracle’s model choices are             the same per-model prices.
+spread out, with an entropy of 2.5-3.4 bits. This
+equals spreading the choices evenly over 6 to 11 of          Metric. Sweeping the cost coefficient µ traces
+the 12 models. No single model is best for most              the router’s performance-cost frontier R(c). We
+queries, so the router must choose per query.                summarize it with Oracle Gap Recovery (OGR):
+                                                             the area between the router and a random baseline,
+5     Experiments                                            divided by the area between the oracle and the
+                                                             random baseline, over log cost:
+5.1    Experimental Setup
+                                                                           R              
+Router Baselines. We compare with seven base-                                R(c) − Rnd(c) d log c
+                                                               OGR = 100 · R                      , (13)
+lines, each re-run with its original encoder, ar-                            O(c) − Rnd(c) d log c
+chitecture, training objective, and decision rule.
+R2-Router (Xue et al., 2026) trains one MLP                  where O(c) is the oracle frontier and Rnd(c) is
+per model-budget action on Qwen3-Embedding-                  a label-free baseline that uniformly samples from
+0.6B. RADAR (Fernandez et al., 2026) fits a two-             fixed actions with mean cost at most c. The integral
+parameter IRT model over all actions on Qwen3-               runs from the cost of the cheapest fixed action to
+Embedding-8B, and we report both its Chebyshev               that of the highest-scoring one. If a router cannot
+rule and a linear rule. MIRT and NIRT (Song et al.,          reach a cost c, we set R(c) = Rnd(c). By defini-
+2025) use BERT-base. CARROT (Somerstep et al.,               tion, OGR is 0 for random selection and 100 for
+
+                                                         6
+                        SCRouter-L                  SCRouter-M               SCRouter-S             R2-Router      RADAR             CARROT-KNN
+                        CARROT-RoBERTa              CARROT-Linear            NIRT                   MIRT
+                                      Overall                                       Utility                            Security
+                       100                                     100                                        100
+
+
+
+
+Oracle Gap Recovered
+                        75                                      75                                         75
+
+
+                        50                                      50                                         50
+
+
+                        25                                      25                                         25
+
+
+                         0                                       0                                          0
+                                     10−5               10−4                10−5             10−4                                  10−5
+                                 Cost per Query (USD)                      Cost per Query (USD)                   Cost per Query (USD)
+
+
+Figure 9: Performance-cost trade-offs on in-domain evaluation. Each curve shows performance against log cost as
+µ varies. Random selection and the oracle are the lower and upper bounds. SCRouter is on top at most costs, with
+the largest gap on security and at low cost, where model-only baselines have no available action.
+
+
+                                                In-Domain      Out-of-Domain              SCRouter scores higher than R2-Router at most
+    Router                                   All Util. Sec.    All Util.     Sec.         costs, especially low ones. Model-only baselines
+    SCRouter-L                              60.9 52.9 72.0 48.1 49.6 47.3                 such as MIRT, NIRT, and CARROT cannot go be-
+    SCRouter-M                              60.5 52.9 70.9 50.2 50.7 49.8                 low the cost of the cheapest model at its default
+    SCRouter-S                              59.9 53.9 66.6 46.9 48.4 46.1                 budget. RADAR uses a single ability scale, which
+    R2-Router         48.0                        49.4 39.1 15.6     32.5   0.3           ranks actions well for utility but poorly for secu-
+    RADAR (linear)    39.2                        44.9 27.4 27.7     38.3 19.9
+    RADAR (Chebyshev) 36.7                        41.3 30.0 27.4     37.0 15.8
+                                                                                          rity, where its OGR drops to 27.4. On utility, all
+    CARROT-KNN        42.1                        39.0 38.8 23.7     34.1   1.2           curves meet at high cost, where a strong model
+    CARROT-RoBERTa 35.9                           33.2 32.1 14.7     31.8 -5.8            with a large budget answers most queries well. The
+    CARROT-Linear     37.7                        34.8 30.4 14.8     27.1 -9.1
+    NIRT              32.6                        32.8 17.1 9.6      26.9 -14.3
+                                                                                          routers differ mainly when the cost is tight. On
+    MIRT              32.0                        32.4 17.6 7.3      25.8 -15.4           security, SCRouter leads even at the lowest costs.
+                                                                                          A safe answer to a harmful request is often a short
+Table 2: OGR on SCRouterBench, in-domain and out-                                         refusal, and Figure 3 shows that security peaks
+of-domain, for all queries (All) and for the utility (Util.)                              at only 120 tokens. Model-only baselines cannot
+and security (Sec.) subsets. SCRouter variants beat all
+                                                                                          lower the budget to use this.
+baselines in both settings.
+                                                                                          Utility versus Security. Every baseline in Ta-
+                                                                                          ble 2 scores lower on security than on utility in-
+the oracle. We report OGR on all queries and on                                           domain. RADAR (linear) loses 17.5 points, and
+the two subsets, averaged over three seeds.                                               NIRT and MIRT lose about 15. SCRouter shows
+                                                                                          the opposite pattern, with all three variants higher
+5.2                          Main Results
+                                                                                          on security. Compared with R2-Router, SCRouter
+Table 2 reports OGR in-domain and out-of-domain,                                          gains at most 4.5 points on utility but 27.5 to
+and Figure 9 shows the performance-cost curves.                                           32.9 points on security. Most of its overall gain
+                                                                                          thus comes from security queries. A larger action
+In-Domain. SCRouter-L has the highest over-
+                                                                                          space alone does not explain this. CARROT-KNN
+all OGR, 12.9 points above the best baseline, R2-
+                                                                                          chooses among only 12 models but reaches 38.8
+Router, with the same encoder and action space.
+                                                                                          on security, close to the 39.1 of R2-Router with all
+It is better on both objectives, with gains of 32.9
+                                                                                          144 actions. SCRouter uses the same 144 actions
+points on security and 3.5 points on utility. As
+                                                                                          as R2-Router and reaches 72.0, so the gain comes
+shown in Figure 5, the gains hold with smaller en-
+                                                                                          from its quality metric.
+coders. SCRouter-M, with a 23M MiniLM encoder,
+is still 12.5 points ahead. SCRouter-S, with a 4M                                         Out-of-Domain. All routers do worse on the nine
+encoder, is 11.9 points ahead and has the best utility                                    unseen sources, most of all on security. On security,
+OGR of 53.9. It is behind the two larger variants                                         R2-Router drops to a near-random 0.3, CARROT-
+only on the security subset.                                                              KNN gets 1.2, and the other CARROT and IRT
+   Figure 9 shows where the gains come from.                                              routers fall below random. RADAR is the strongest
+
+                                                                                      7
+                                                                                          SCRouter-L         SCRouter-M   SCRouter-S
+Component                       In-Domain Out-of-Domain
+                                                                                          R2-Router          RADAR        CARROT-KNN
+SCRouter-L (full)                  60.9           48.1                                    CARROT-RoBERTa     NIRT         MIRT
+  w/o Query-specific w(x)       54.0 (-6.9)    40.7 (-7.4)
+                                                                                         60           54.9
+  w/o Budget terms              58.3 (-2.6)    43.0 (-5.1)
+
+
+
+
+                                                                  Oracle Gap Recovered
+  w/o Success/failure split     55.0 (-5.9)    42.4 (-5.7)
+  w/o Separate quality models   49.9 (-11.0)   37.3 (-10.8)                              45
+
+
+                                                                                         30
+Table 3: Ablation results. We report the overall OGR
+after removing each component from the full model.
+                                                                                         15
+
+
+                                                                                         0
+baseline under domain shift, reaching an overall
+score of 27.7. Its two-parameter IRT model is sim-                Figure 10: Leave-one-source-out evaluation across 15
+ple and likely has less room to overfit the train-                training sources. We report the average held-out OGR
+ing sources. RADAR (linear) loses 11.5 points                     for each method. All SCRouter variants beat the base-
+                                                                  lines on held-out sources.
+overall from in-domain to out-of-domain, while
+R2-Router, which trains one MLP per action, loses
+32.4. All SCRouter variants still beat it on every                Success/Failure Split. Predicting quality sepa-
+metric. SCRouter-M has the best overall OGR of                    rately for successful and failed responses helps in
+50.2. It is 22.5 points above RADAR overall, 12.4                 both settings. Omitting this split reduces OGR by
+points on utility, and 29.9 points on security.                   5.9 points in-domain and 5.7 points out-of-domain.
+   SCRouter still does worse out-of-domain than                   Failed utility responses are rarely useful, but failed
+in-domain. SCRouter-L drops from 60.9 to 48.1                     security responses are often still safe, so the two
+overall, mainly because its security OGR falls from               cases need separate predictions.
+72.0 to 47.3. Figure 6 explains much of this drop.
+The probe classifies 99.6% of security queries cor-               Separate Quality Models. Using separate utility
+rectly in-domain but only 74.2% on unseen sources,                and security models matters most. Merging them
+compared with 86.7% for utility queries. About a                  into one model gives the largest drops, with OGR
+quarter of unseen security queries thus get a low                 falling by 11.0 points to 49.9 in-domain and by
+w(x) and are routed like utility queries. The probe               10.8 points to 37.3 out-of-domain. A single model
+still separates most queries, which helps SCRouter                tends to fit the more common utility labels and does
+keep a large lead over the baselines.                             worse on security.
+
+                                                                  5.4                         Robustness under Domain Shift
+5.3   Ablation Study
+                                                                  To test robustness to domain shift, we hold out
+To measure what each part adds, we remove one                     each of the 15 training sources in turn and report
+part at a time from SCRouter-L and test in-domain                 the results in Figure 10. SCRouter variants attain
+and out-of-domain. Table 3 shows the results.                     50.5-54.9 average held-out OGR, whereas base-
+                                                                  lines RADAR, R2-Router, and CARROT-KNN
+Query-Specific Weight. Replacing w(x) with
+                                                                  reach only 34.7, 22.0, and 9.5 respectively. This
+a fixed weight lowers OGR by 6.9 points in-
+                                                                  16–20 point gain over the best baseline matches our
+domain and 7.4 points out-of-domain, so a per-
+                                                                  out-of-domain results in Table 2. Smaller encoders
+query weight matters. A fixed weight applies the
+                                                                  transfer better. SCRouter-S has the best held-out
+same trade-off to every query. It either undervalues
+                                                                  OGR of 54.9, and SCRouter-M has the best out-of-
+security on harmful requests or undervalues utility
+                                                                  domain OGR in Table 2. SCRouter-L is best only
+on ordinary ones.
+                                                                  in-domain. A larger encoder may fit the training
+                                                                  sources too closely. A small encoder is thus a good
+Budget Modeling. Removing budget terms,
+                                                                  default when the test workload is unknown.
+such as the per-model compression table, query-
+dependent budget sensitivity, partial credit for                  6                       Conclusion
+failed responses, and auxiliary losses, reduces OGR
+by 2.6 points in-domain and 5.1 points out-of-                    We present SCRouter, a router that picks both the
+domain. Modeling the budget helps in both settings,               model and token budget. It predicts utility and se-
+especially out-of-domain.                                         curity separately, weights them per query with a se-
+
+                                                              8
+curity probe, and uses a shared budget model to es-           and Eric Wong. 2024. JailbreakBench: An open ro-
+timate success probability and cost. On SCRouter-             bustness benchmark for jailbreaking large language
+                                                              models. In Advances in Neural Information Process-
+Bench, SCRouter recovers 60.9% of the oracle gap
+                                                              ing Systems.
+in-domain and beats all baselines out-of-domain.
+These results demonstrate that routing mixed work-          Patrick Chao, Alexander Robey, Edgar Dobriban,
+loads requires a per-query quality metric, not just a         Hamed Hassani, George J. Pappas, and Eric Wong.
+                                                              2025. Jailbreaking black box large language mod-
+larger action space.                                          els in twenty queries. In 2025 IEEE Conference on
+                                                              Secure and Trustworthy Machine Learning (SaTML).
+Limitations
+                                                            Lingjiao Chen, Matei Zaharia, and James Zou. 2024a.
+Following prior routing benchmarks (Hu et al.,                FrugalGPT: How to use large language models while
+2024; Somerstep et al., 2025), our evaluation fo-             reducing cost and improving performance. Transac-
+                                                              tions on Machine Learning Research.
+cuses on single-turn text queries and a pool of 12
+open-weight models. Multi-turn and multimodal               Shuhao Chen, Weisen Jiang, Baijiong Lin, James Kwok,
+workloads are left for future evaluation. Cost com-           and Yu Zhang. 2024b. RouterDC: Query-based
+                                                              router by dual contrastive learning for assembling
+parisons use actual token consumption and a fixed
+                                                              large language models. In Advances in Neural Infor-
+per-model price table shared by all routers. This             mation Processing Systems.
+provides a consistent comparison, but does not ac-
+count for time-varying prices or load-dependent             Sizhe Chen, Julien Piet, Chawin Sitawarin, and David
+                                                              Wagner. 2025. StruQ: Defending against prompt
+serving costs.                                                 injection with structured queries. In 34th USENIX
+                                                              Security Symposium.
+Ethical Considerations
+                                                            Dujian Ding, Ankur Mallick, Chi Wang, Robert Sim,
+SCRouterBench is built entirely from publicly                 Subhabrata Mukherjee, Victor Rühle, Laks V. S. Lak-
+available benchmarks, used under their original               shmanan, and Ahmed Hassan Awadallah. 2024. Hy-
+                                                              brid LLM: Cost-efficient and quality-aware query
+licenses, and no new human data was collected. Its
+                                                              routing. In The Twelfth International Conference on
+security queries and the corresponding model re-              Learning Representations.
+sponses contain toxic, biased, and harmful content,
+                                                            Yanrui Du, Sendong Zhao, Danyang Zhao, Ming Ma,
+including jailbreak and prompt-injection attacks,
+                                                              Yuhan Chen, Liangyu Huo, Qing Yang, Dongliang
+which we use solely to evaluate routing and release           Xu, and Bing Qin. 2024. MoGU: A framework for
+only for research purposes. The per-model security            enhancing safety of LLMs while preserving their
+results could also reveal which configurations are            usability. In Advances in Neural Information Pro-
+easiest to attack. We think the benefit of security-          cessing Systems.
+aware routing outweighs this risk. SCRouter is a            Tao Feng, Yanzhen Shen, and Jiaxuan You. 2025.
+cost-aware routing layer, not a safety guarantee.             GraphRouter: A graph-based router for LLM selec-
+We used AI assistants to check grammar.                       tions. In The Thirteenth International Conference on
+                                                              Learning Representations.
+                                                            Nigel Fernandez, Branislav Kveton, Ryan A. Rossi,
+References                                                    Andrew S. Lan, and Zichao Wang. 2026. RADAR:
+                                                              Reasoning-ability and difficulty-aware routing for
+Abdelrahman Abouelenin, Atabak Ashfaq, Adam Atkin-            reasoning LLMs. In The Fourteenth International
+  son, Hany Awadalla, Nguyen Bach, et al. 2025.               Conference on Learning Representations.
+  Phi-4-Mini technical report: Compact yet powerful
+  multimodal language models via mixture-of-LoRAs.          Gemma Team, Aishwarya Kamath, Johan Ferret, Shreya
+  arXiv preprint arXiv:2503.01743.                            Pathak, Nino Vieillard, et al. 2025. Gemma 3 techni-
+                                                              cal report. arXiv preprint arXiv:2503.19786.
+Pranjal Aggarwal, Aman Madaan, Ankit Anand, Sriv-
+  idya Pranavi Potharaju, Swaroop Mishra, Pei Zhou,         Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri,
+  Aditya Gupta, Dheeraj Rajagopal, Karthik Kappa-             Abhinav Pandey, Abhishek Kadian, et al. 2024.
+  ganthu, Yiming Yang, Shyam Upadhyay, Manaal                 The Llama 3 herd of models. arXiv preprint
+  Faruqui, and Mausam. 2024. AutoMix: Automati-               arXiv:2407.21783.
+  cally mixing language models. In Advances in Neu-
+  ral Information Processing Systems.                       Kai Greshake, Sahar Abdelnabi, Shailesh Mishra,
+                                                              Christoph Endres, Thorsten Holz, and Mario Fritz.
+Patrick Chao, Edoardo Debenedetti, Alexander Robey,           2023. Not what you’ve signed up for: Compromising
+  Maksym Andriushchenko, Francesco Croce, Vikash              real-world LLM-integrated applications with indirect
+  Sehwag, Edgar Dobriban, Nicolas Flammarion,                 prompt injection. In Proceedings of the 16th ACM
+  George J. Pappas, Florian Tramèr, Hamed Hassani,            Workshop on Artificial Intelligence and Security.
+
+
+                                                        9
+Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song,               Alicia Parrish, Angelica Chen, Nikita Nangia,
+  Peiyi Wang, et al. 2025. DeepSeek-R1 incentivizes                Vishakh Padmakumar, Jason Phang, Jana Thompson,
+  reasoning in LLMs through reinforcement learning.                Phu Mon Htut, and Samuel R. Bowman. 2022. BBQ:
+  Nature.                                                          A hand-built bias benchmark for question answering.
+                                                                   In Findings of the Association for Computational
+Dan Hendrycks, Collin Burns, Steven Basart, Andrew                 Linguistics: ACL 2022.
+  Critch, Jerry Li, Dawn Song, and Jacob Steinhardt.
+  2021. Aligning AI with shared human values. In In-             Fábio Perez and Ian Ribeiro. 2022. Ignore previous
+  ternational Conference on Learning Representations.              prompt: Attack techniques for language models. In
+                                                                   NeurIPS ML Safety Workshop.
+Qitian Jason Hu, Jacob Bieker, Xiuyu Li, Nan Jiang,
+  Benjamin Keigwin, Gaurav Ranganath, Kurt Keutzer,              Sander Schulhoff, Jeremy Pinto, Anaum Khan, Louis-
+  and Shriyash Kaustubh Upadhyay. 2024. Router-                    François Bouchard, Chenglei Si, Svetlina Anati,
+  bench: A benchmark for multi-LLM routing system.                 Valen Tagliabue, Anson Kost, Christopher Carnahan,
+  In Agentic Markets Workshop at ICML 2024.                        and Jordan Boyd-Graber. 2023. Ignore this title and
+Hakan Inan, Kartikeya Upasani, Jianfeng Chi, Rashi                 HackAPrompt: Exposing systemic vulnerabilities of
+  Rungta, Krithika Iyer, Yuning Mao, Michael                       LLMs through a global prompt hacking competition.
+  Tontchev, Qing Hu, Brian Fuller, Davide Testuggine,              In Proceedings of the 2023 Conference on Empirical
+  and Madian Khabsa. 2023. Llama guard: LLM-                       Methods in Natural Language Processing.
+  based input-output safeguard for human-AI conver-
+  sations. arXiv preprint arXiv:2312.06674.                      Avital Shafran, Roei Schuster, Tom Ristenpart, and Vi-
+                                                                   taly Shmatikov. 2025. Rerouting LLM routers. In
+Wittawat Jitkrittum,      Harikrishna Narasimhan,                  Second Conference on Language Modeling.
+ Ankit Singh Rawat, Jeevesh Juneja, Congchao
+ Wang, Zifeng Wang, Alec Go, Chen-Yu Lee,                        Seamus Somerstep, Felipe Maia Polo, Allysson
+  Pradeep Shenoy, Rina Panigrahy, Aditya Krishna                   Flavio Melo de Oliveira, Prattyush Mangal, Mírian
+  Menon, and Sanjiv Kumar. 2026.          Universal                Silva, Onkar Bhardwaj, Mikhail Yurochkin, and
+  model routing for efficient LLM inference. In The                Subha Maity. 2025. CARROT: A cost aware rate
+ Fourteenth International Conference on Learning                   optimal router. In ICLR 2025 Workshop on Founda-
+ Representations.                                                  tion Models in the Wild.
+
+Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying                     Wei Song, Zhenya Huang, Cheng Cheng, Weibo Gao,
+ Sheng, Lianmin Zheng, Cody Hao Yu, Joseph Gon-                   Bihan Xu, GuanHao Zhao, Fei Wang, and Runze
+ zalez, Hao Zhang, and Ion Stoica. 2023. Efficient                Wu. 2025. IRT-router: Effective and interpretable
+ memory management for large language model serv-                 multi-LLM routing via item response theory. In Pro-
+ ing with PagedAttention. In Proceedings of the 29th              ceedings of the 63rd Annual Meeting of the Associa-
+ Symposium on Operating Systems Principles.                       tion for Computational Linguistics (Volume 1: Long
+                                                                  Papers).
+Lijun Li, Bowen Dong, Ruohui Wang, Xuhao Hu, Wang-
+   meng Zuo, Dahua Lin, Yu Qiao, and Jing Shao. 2024.            Sam Toyer, Olivia Watkins, Ethan Adrian Mendes,
+   SALAD-bench: A hierarchical and comprehensive                   Justin Svegliato, Luke Bailey, Tiffany Wang, Isaac
+   safety benchmark for large language models. In Find-            Ong, Karim Elmaaroufi, Pieter Abbeel, Trevor Dar-
+   ings of the Association for Computational Linguistics:          rell, Alan Ritter, and Stuart Russell. 2024. Tensor
+   ACL 2024.                                                       trust: Interpretable prompt injection attacks from an
+Yifan Lu, Rixin Liu, Jiayi Yuan, Xingqi Cui, Shenrun               online game. In The Twelfth International Confer-
+  Zhang, Hongyi Liu, and Jiarong Xing. 2026. Router-               ence on Learning Representations.
+  arena: An open platform for comprehensive compari-
+  son of LLM routers. In The Fourteenth International            Boxin Wang, Weixin Chen, Hengzhi Pei, Chulin Xie,
+  Conference on Learning Representations.                          Mintong Kang, Chenhui Zhang, Chejian Xu, Zidi
+                                                                   Xiong, Ritik Dutta, Rylan Schaeffer, Sang Truong,
+Mantas Mazeika, Long Phan, Xuwang Yin, Andy Zou,                   Simran Arora, Mantas Mazeika, Dan Hendrycks, Zi-
+ Zifan Wang, Norman Mu, Elham Sakhaee, Nathaniel                   nan Lin, Yu Cheng, Sanmi Koyejo, Dawn Song, and
+ Li, Steven Basart, Bo Li, David Forsyth, and Dan                  Bo Li. 2023. DecodingTrust: A comprehensive as-
+ Hendrycks. 2024. Harmbench: A standardized eval-                  sessment of trustworthiness in GPT models. In Ad-
+ uation framework for automated red teaming and ro-                vances in Neural Information Processing Systems.
+ bust refusal. In Forty-first International Conference
+ on Machine Learning.                                            Sajana Weerawardhena, Paul Kassianik, Blaine Nel-
+                                                                   son, Baturay Saglam, Anu Vellore, Aman Priyan-
+Isaac Ong, Amjad Almahairi, Vincent Wu, Wei-Lin Chi-               shu, Supriti Vijay, Massimo Aufiero, Arthur Gold-
+   ang, Tianhao Wu, Joseph E. Gonzalez, M Waleed                   blatt, Fraser Burch, Ed Li, Jianliang He, Dhruv Ke-
+   Kadous, and Ion Stoica. 2025. RouteLLM: Learning                dia, Kojin Oshiba, Zhouran Yang, Yaron Singer,
+   to route LLMs from preference data. In The Thir-                and Amin Karbasi. 2025. Llama-3.1-FoundationAI-
+   teenth International Conference on Learning Repre-              SecurityLLM-8B-Instruct technical report. arXiv
+   sentations.                                                     preprint arXiv:2508.01059.
+
+
+                                                            10
+Alexander Wei, Nika Haghtalab, and Jacob Steinhardt.
+  2023. Jailbroken: How does LLM safety training
+  fail? In Advances in Neural Information Processing
+  Systems.
+Jiaqi Xue, Qian Lou, Jiarong Xing, and Heng Huang.
+   2026. R2-router: A new paradigm for LLM routing
+   with reasoning. In Forty-third International Confer-
+   ence on Machine Learning.
+An Yang, Anfeng Li, Baosong Yang, Beichen Zhang,
+  Binyuan Hui, et al. 2025. Qwen3 technical report.
+  arXiv preprint arXiv:2505.09388.
+Gyeong-In Yu, Joo Seong Jeong, Geon-Woo Kim, Soo-
+  jeong Kim, and Byung-Gon Chun. 2022. Orca: A
+  distributed serving system for Transformer-Based
+  generative models. In 16th USENIX Symposium
+  on Operating Systems Design and Implementation
+  (OSDI 22).
+Wenhui Zhang, Huiyu Xu, Zhibo Wang, Zhichao
+ Li, Zeqing He, Xuelin Wei, and Kui Ren. 2026.
+ Rerouteguard: Understanding and mitigating ad-
+ versarial risks for llm routing. arXiv preprint
+ arXiv:2601.21380.
+Yanzhao Zhang, Mingxin Li, Dingkun Long, Xin Zhang,
+  Huan Lin, Baosong Yang, Pengjun Xie, An Yang,
+  Dayiheng Liu, Junyang Lin, Fei Huang, and Jingren
+  Zhou. 2025. Qwen3 embedding: Advancing text
+  embedding and reranking through foundation models.
+  arXiv preprint arXiv:2506.05176.
+Andy Zou, Zifan Wang, Nicholas Carlini, Milad Nasr,
+  J. Zico Kolter, and Matt Fredrikson. 2023. Univer-
+  sal and transferable adversarial attacks on aligned
+  language models. arXiv preprint arXiv:2307.15043.
+
+A    SCRouterBench Details
+Table 5 lists the sources, dimensions, scoring cri-
+teria, and split sizes of SCRouterBench, including
+the out-of-domain evaluation set. Table 4 lists the
+12 models in the action space.
+
+
+
+
+                                                          11
+    Tier          Model                                                            Developer            Params    Focus
+                  Qwen3.5-0.8B                                                     Qwen                   0.8B    General
+                  Gemma-3-1B-it (Gemma Team et al., 2025)                          Google                   1B    General
+    Small
+                  Phi-4-mini-instruct (Abouelenin et al., 2025)                    Microsoft              3.8B    General
+                  Qwen3.5-4B                                                       Qwen                     4B    General
+                  Mistral-7B-Instruct-v0.3                                         Mistral AI               7B    General
+                  DeepSeek-R1-0528-Qwen3-8B (Guo et al., 2025)                     DeepSeek                 8B    Reasoning
+    Medium        Llama-3.1-8B-Instruct (Grattafiori et al., 2024)                 Meta                     8B    General
+                  Foundation-Sec-8B-Instruct (Weerawardhena et al., 2025)          Cisco                    8B    Security
+                  Qwen3.5-9B                                                       Qwen                     9B    General
+                  Qwen3.5-27B                                                      Qwen                   27B     General
+    Large         Qwen3-Coder-30B-A3B-Instruct (Yang et al., 2025)                 Qwen         30B (3B active)   Coding
+                  Llama-3.1-70B-Instruct (Grattafiori et al., 2024)                Meta                   70B     General
+
+Table 4: Model pool of SCRouterBench: 12 open-weight LLMs from 0.8B to 70B parameters, covering general-
+purpose instruction following, reasoning, coding, and security specialization. Each model is paired with 12 token
+budgets, giving |A| = 144 actions.
+
+
+
+   Source             Dimension                      Outcome (score 1 if . . . )                         Train    Val       Test
+   Utility (SPROUT)
+   MMLU-Pro        Knowledge                         extracted final answer matches the reference        3,734    534 1,067
+   GPQA            Expert QA                         extracted final answer matches the reference          168     24    48
+   MuSR            Multi-step reasoning              extracted final answer matches the reference          234     34    67
+   MATH            Mathematics                       extracted final answer matches the reference        3,069    439   877
+   OpenHermes      Instruction following             independent judge (gpt-oss-120b) score              6,139    876 1,753
+   RAGBench        Retrieval-grounded QA             independent judge (gpt-oss-120b) score                572     83   164
+   Security
+   DecodingTrust      Toxicity                       1− max Detoxify toxicity over the full response     1,400    200       400
+   DecodingTrust      Stereotype bias                does not agree with the stereotype                  1,395    200       399
+   DecodingTrust      Adv. demonstration             does not output the attacker’s target label         1,397    200       399
+   DecodingTrust      Privacy                        does not leak the target personal information       1,400    200       400
+   DecodingTrust      Machine ethics                 correct wrong / not-wrong judgment                  1,400    200       400
+   DecodingTrust      Fairness                       correct income prediction (Adult)                   1,397    200       400
+   SALAD-Bench        Harmful requests               MD-Judge rates the response safe                    3,311    474       947
+   SALAD-Bench        Cyber risk                     MD-Judge rates the response safe                      537     77       154
+   HackAPrompt        Jailbreak / prompt injection   does not output the attacker’s target string        1,050    150       300
+   Total (38,869 queries)                                                                               27,203 3,891 7,775
+   Out-of-domain                                                                                                          OOD
+   MixEval            Utility                      exact answer match (640 multiple-choice) or in-                        998
+                                                   dependent judge (358 open)
+   ToxiGen            Toxicity                     1− max Detoxify toxicity over the full response                        200
+   CrowS-Pairs        Stereotype bias              chooses the less stereotypical option                                  200
+   BadChain           Adv. demonstration           answer matches the StrategyQA reference de-                            200
+                                                   spite backdoored demonstrations
+   Synthetic          Privacy                      does not leak the planted secret                                       200
+   ETHICS             Machine ethics               correct commonsense-morality label                                     200
+   BBQ                Fairness                     answers “unknown” in an ambiguous context                              300
+   HarmBench          Harmful requests             HarmBench classifier: attack unsuccessful                              188
+   HarmBench          Cyber risk                   HarmBench classifier: attack unsuccessful                               67
+   Tensor Trust       Jailbreak / prompt injection no hijacking or access-code extraction (official                       200
+                                                   rules)
+   Total                                                                                                                2,753
+
+Table 5: Composition of SCRouterBench. Every query is answered under 12 models × 12 budgets and scored in
+[0, 1] for its own objective only (higher is better; for security, safer); a response without a visible final answer scores
+0. Counts are queries with all 144 outcomes. Splits are grouped by prompt template and near-duplicate text and
+stratified by dimension. The out-of-domain sources, including ETHICS (Hendrycks et al., 2021), BBQ (Parrish
+et al., 2022), HarmBench (Mazeika et al., 2024), and Tensor Trust (Toyer et al., 2024), share no data with the
+training sources and are scored with their released criteria.
+
+
+
+                                                                  12
+

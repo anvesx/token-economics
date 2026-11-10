@@ -1,0 +1,2868 @@
+TITLE: Menu Pricing of Large Language Models
+URL: https://arxiv.org/abs/2502.07736
+ORG: arXiv  TYPE: paper  DATE: 2025-02
+
+Menu Pricing of Large Language Models∗
+Dirk Bergemann
+
+Alessandro Bonatti
+
+Alex Smolin
+
+arXiv:2502.07736v2 [econ.TH] 9 Mar 2026
+
+March 10, 2026
+
+Abstract
+We develop a framework for the optimal pricing and product design of LLMs in
+which a provider sells menus of token budgets to users who differ in their valuations
+across a continuum of tasks. Under a homogeneous production technology, we show
+that users’ high-dimensional type profiles are summarized by a scalar index, reducing
+the seller’s problem to one-dimensional screening. The optimal mechanism takes the
+form of committed-spend contracts: buyers pay for a budget that they allocate across
+token classes priced at marginal cost. We extend the analysis to environments with
+multiple differentiated models and to competition between a proprietary leader and an
+open-source fringe, showing that competitive pressure reshapes both the intensive and
+extensive margins of compute provision. Each element of our theory (token-budget
+menus, maximum- and minimum-spend plans, multi-model versioning, and linear API
+pricing) has a direct counterpart in the observed pricing practices of providers such as
+Anthropic, OpenAI, and GitHub.
+Keywords: Large Language Models, Optimal Pricing, Menu Pricing, Fine-Tuning.
+JEL Codes: D47, D82, D83.
+∗
+
+Bergemann: Department of Economics, Yale University, dirk.bergemann@yale.edu. Bonatti: MIT Sloan,
+bonatti@mit.edu. Smolin: Toulouse School of Economics, alexey.v.smolin@gmail.com. We thank Mark Armstrong, Mert Demirer, Scott Kominers, Antonio Russo, Ron Siegel, and Frank Yang for valuable comments
+and discussions, as well as audiences at the Triangle Conference, USC, Caltech, Virginia, the Chicago workshop, the Sciences Po workshop, the NBER Market Design workshop, VSET, Brown, LSE, the TSE Digital
+Economics Conference, the IESE Economics of AI Conference, and Cambridge. An extended abstract of
+an earlier version of this paper appeared as “The Economics of Large Language Models: Token Allocation,
+Fine-Tuning, and Optimal Pricing” in the proceedings of EC’25. Dirk Bergemann gratefully acknowledges
+financial support from NSF SES 2049754 and ONR MURI. Alessandro Bonatti gratefully acknowledges financial support from NSF SES 2519401. Alex Smolin gratefully acknowledges funding from the French National
+Research Agency (ANR) under the Investments for the Future program (grant ANR-17-EURE-0010) and
+through the AI Interdisciplinary Institute ANITI (grant ANR-23-IACL-0002).
+
+1
+
+Introduction
+
+Access to large language models is fast becoming a major input to economic activity. Businesses use LLMs for coding, customer support, legal research, and content generation; individual users rely on them for writing, analysis, and decision-making. The leading providers,
+Anthropic, OpenAI, and Google, collectively serve hundreds of millions of users and generate
+billions of dollars in annualized revenue. Yet the pricing of these services remains strikingly ad
+hoc: subscription tiers, token-based metering, credit systems, and volume commitments coexist with no clear theoretical foundation. Understanding how a profit-maximizing provider
+should price LLM access, and quantifying the distortions that arise when it does, is the goal
+of this paper.1
+Pricing access to LLMs is fundamentally a multidimensional screening problem. An
+LLM user faces a continuum of tasks, each with a different value. The provider offers token
+budgets—bundles of input, output, and fine-tuning tokens—that the user allocates across
+tasks at her discretion. The provider can meter total token usage but cannot observe or
+contract on the user’s task-by-task allocation, creating a combined adverse-selection and
+moral-hazard problem. User types are infinite-dimensional (a function from tasks to values),
+the allocation space is high-dimensional (tokens of multiple classes across many tasks), and
+the user’s hidden action (token allocation across tasks) further compounds the difficulty. A
+priori, this problem seems intractable.
+Our central result is that it is not. Under a homogeneous production technology—
+meaning that the gain function is homogeneous, so the optimal composition of inference
+tokens is scale-invariant—each user’s entire type profile collapses to a scalar index, the aggregate type. Users with the same aggregate type make the same total token demands,
+receive the same total surplus, and choose the same menu item, regardless of the fine structure of their task valuations. This aggregation property reduces the provider’s problem to
+one-dimensional screening à la Mussa and Rosen (1978), despite the underlying complexity
+of the environment. Building on this reduction, we develop the analysis in four steps.
+First, we characterize the efficient allocation (Section 3). Efficiency requires that all
+tasks employ inference token classes in common proportions; only the scale of token usage
+varies with a task’s marginal value. When the provider faces capacity constraints in each
+token class, the efficient allocation can be implemented through linear prices equal to inflated shadow costs (Corollary 1), a result that rationalizes the linear, pay-per-token pricing
+universally observed in developer-facing API markets.
+1
+
+For the practical challenges associated with LLM pricing, see https://www.wsj.com/articles/no-oneknows-how-to-price-ai-tools-f346ea8a.
+
+1
+
+Second, we characterize the optimal mechanism for a single-model monopolist (Section 4).
+By the aggregation result, the buyer’s indirect utility from a token-budget bundle takes a
+multiplicative form: aggregate type times aggregate quality. The optimal menu therefore
+excludes low types and distorts quality downward for (almost) all others, exactly as in the
+standard one-dimensional framework. Crucially, the optimal mechanism admits intuitive
+indirect implementations (Proposition 4): it can be realized as a maximum-spend mechanism
+(a budget of credits allocated across tokens priced at marginal cost), as a minimum-spend
+mechanism (volume commitments that unlock lower per-token prices), or as a menu of twopart tariffs. These implementations are not merely theoretical curiosities; they correspond
+precisely to the pricing structures observed at leading platforms.
+Third, we extend the framework to multiple differentiated models (Section 5). When
+models share a common returns-to-scale parameter in inference but differ in returns to finetuning, the buyer’s payoff has a constant elasticity of substitution over model qualities. Cost
+minimization implies that each type uses a single model for all tasks (Proposition 6). This
+generates a natural versioning structure: higher-tier plans grant access to more capable
+models, not merely larger usage allocations. Anthropic’s pricing illustrates the single-model
+benchmark of Section 4: all paid tiers access the same models, with differentiation occurring
+through compute budgets. OpenAI, by contrast, screens jointly on usage and model access,
+reserving its most compute-intensive reasoning model for the highest tier, consistent with
+the multi-model menu of Section 5.
+Fourth, we study competition between a proprietary leader and an open-source fringe
+that sells tokens at marginal cost (Section 5). The leader designs an optimal menu subject
+to the buyer’s ability to supplement usage from the fringe. Three regions emerge: low types
+purchase exclusively from the fringe; intermediate types buy from the leader at quantities
+that exactly deter fringe top-up; and high types are served as under pure monopoly, with
+standard downward distortions (Proposition 7). Competition thus reshapes both the intensive margin (how much compute is sold to each buyer) and the extensive margin (which
+buyers adopt the proprietary model at all).
+We conclude by connecting each theoretical construct to observed pricing (Section 6).
+Consumer subscriptions at Anthropic and OpenAI implement the nonlinear menus of Sections 4 and 5. Model aggregators (e.g., Quora’s Poe and GitHub Copilot) implement the
+committed-spend mechanisms of Section 4.2, differing in whether they enforce a hard budget
+cap (maximum spend) or allow overages at linear prices (minimum spend). API pricing is
+linear in tokens with no volume discounts, consistent with providers prioritizing adoption
+over rent extraction. Thus, pricing practices observed in the industry suggest that these
+mechanisms capture fundamental economic forces rather than incidental design choices.
+2
+
+Related Literature Our paper contributes to the rapidly growing literature on the economics of AI. Existing work has examined the impact of LLMs on price competition (Fish,
+Gonczarowski, and Shorrer, 2024), token auctions (Duetting, Mirrokni, Paes Leme, Xu, and
+Zuo, 2024), and sponsored search (Bergemann, Bojko, Dütting, Paes Leme, Xu, and Zuo,
+2024), and Demirer, Fradkin, Tadelis, and Peng (2025) document pricing and market-share
+patterns. By contrast, our focus is on the provider’s own design problem, how to price and
+version LLM access, which has received surprisingly little theoretical attention. For example,
+Mahmood (2024) studies competition among producers of generative AI who can specialize in
+different tasks, but restricts attention to linear token pricing. We go further and characterize
+the fully optimal nonlinear mechanism, leveraging the sufficient-statistic reduction generated
+by the homogeneity of the gain function, which renders the joint screening-and-moral-hazard
+problem solvable and yields sharp, implementable predictions.
+At their core, LLMs are an information technology, connecting our work to the literature
+on selling information (Babaioff, Kleinberg, and Paes Leme, 2012; Bergemann, Bonatti, and
+Smolin, 2018; Yang, 2022). However, LLMs possess distinctive features: they are generalpurpose technologies deployed across many tasks, usage is metered in tokens, and precision
+is improved by combining inference and fine-tuning, which give rise to a structurally different
+design problem.
+Methodologically, our aggregation result relates to the literature on “1.5-dimensional”
+mechanism design (Fiat, Goldner, Karlin, and Koutsoupias, 2016; Devanur, Goldner, Saxena, Schvartzman, and Weinberg, 2020). Unlike most of that literature, however, we must
+address potential incentive clashes across the continuum of subproblems that arise from the
+buyer’s hidden allocation of tokens, requiring an additional argument based on the production technology. Even in simpler settings, such as one-dimensional screening with moral hazard (Castro-Pires, Chade, and Swinkels, 2024) or multidimensional screening and bundling
+without moral hazard (Armstrong, 1996; Rochet and Stole, 2003; Daskalakis, Deckelbaum,
+and Tzamos, 2017), tractability issues arise. Our environment combines both, and our solution exhibits a constrained efficiency property as in Laffont and Tirole (1990) and Doligalski,
+Dworczak, Krysta, and Tokarski (2025).
+
+2
+
+Model
+
+2.1
+
+Task Environment
+
+A buyer of LLM services faces a unit measure of tasks indexed by i ∈ [0, 1]. In our baseline
+setting, an LLM provider offers one type of model only. The buyer can decide on (i) how
+
+3
+
+many inference tokens to use for each task i, xi ∈ RJ+ and (ii) how many fine-tuning tokens
+to use to improve the model’s performance (e.g., precision) on all tasks, z ∈ RK
++ . In language
+models, a token is a unit of text, typically a word.
+The model’s performance on task i is given by the gain function g(xi , z). The function g
+is common across tasks and takes the following form:
+g(xi , z) = Ψ(xi ) Φ(z).
+
+(1)
+
+Thus, the gain function is multiplicatively separable in inference and fine-tuning tokens.
+Diminishing returns to inference tokens on a single task are a fundamental feature of
+LLM performance, consistent with empirically observed scaling laws. Thus the function Ψ is
+positive, increasing, strictly concave, differentiable, Inada at 0,2 and homogeneous of degree
+σ ∈ (0, 1), i.e., Ψ(rxi ) = rσ Ψ(xi ) for all r > 0. This function captures the returns to inference
+
+PJ
+ρ σ/ρ
+,
+tokens. A canonical example of such a function is a CES function, Ψ(xi ) =
+j=1 αj xij
+P
+where αj > 0, j αj = 1, ρ < 1. The function Φ(z) is positive, increasing, such that g is
+strictly concave (e.g., Φ(z)1/(1−σ) is strictly concave) and (1 − σ)-Inada at 0.3 This function
+captures the returns to fine-tuning.
+These properties are similar in shape to the scaling laws for training LLMs. Concavity
+captures the fundamental assumption that time and computing resources spent on a single
+task exhibit diminishing marginal returns. Homogeneity is the key tractability assumption.
+It ensures that the optimal mix of token classes is the same for every task; only the scale of
+token usage varies. This property drives the aggregation result in Section 3, which reduces the
+seller’s infinite-dimensional screening problem to a one-dimensional problem. The parameter
+σ captures the returns to scale.
+The buyer’s marginal value of performance on each task is captured by w = (wi )i∈[0,1] ,
+w : [0, 1] → [0, 1],
+
+(2)
+
+which we refer to as the buyer’s type. Using a z-fine-tuned model with a profile of (xi )i∈[0,1]
+inference tokens delivers the following total payoff for buyer type w:
+Z 1
+wi g(xi , z)di.
+
+(3)
+
+0
+
+The buyer’s type is distributed according to a commonly known distribution Fw . The buyer
+That is, for all j and xi,−j ∈ RJ−1
+such that Ψ(0, xi,−j ) > 0, limxij ↓0 Ψj (xij , xi,−j ) = +∞.
++
+That is, there exists z0 ≥ 0, z0 ̸= 0, such that limr↓0 Φ(rz0 )/r1−σ = +∞. Sufficient conditions for this
+property are (i) Φ(0) > 0 or (ii) Φ is homogeneous of degree σ̂ ∈ (0, 1) with σ + σ̂ < 1.
+2
+
+3
+
+4
+
+knows his type, while the provider does not.
+The provider bears the cost of processing tokens. We assume that the marginal processing
+costs are constant but can vary across different token classes. The cost of inference tokens
+is cj > 0, j ∈ [J], and the cost of fine-tuning tokens is ĉk > 0, k ∈ [K]. We let c ∈ RJ++ and
+ĉ ∈ RK
+++ denote the corresponding cost profiles.
+Notation Throughout the text, we use the following notation. “≜” indicates a definition.
+K
+K
+[K] ≜ {1, . . . , K}. RK
+: xk ≥ 0, k ∈ [K]} and RK
+: xk >
++ ≜ {x ∈ R
+++ ≜ {x ∈ R
+0, k ∈ [K]}. All stand-alone qualifiers such as “positive,” “increasing,” and “concave” are
+understood in the weak sense, that is, as “non-negative,” “non-decreasing,” and “weakly
+concave,” respectively. For constants, subscripts refer to variables or tasks; for functions,
+they indicate partial derivatives. All proofs are in Appendix A.
+
+2.2
+
+Mechanism Design
+
+The provider contracts on the total number of tokens of each class used by the buyer. In
+other words, the provider sells budgets of various kinds of tokens. A mechanism consists of
+an arbitrary menu of the form
+{(X1 (w), . . . , XJ (w), Z1 (w), . . . , ZK (w), t(w))}w ,
+
+(4)
+
+where Xj is the total number of inference tokens of class j. Upon purchase, the buyer can
+freely distribute those tokens across tasks. (We relax this restriction in Appendix B, where
+we allow the provider to contract on the usage of all tokens by the buyer.) Zk is the number
+of fine-tuning tokens of class k, which is used for fine-tuning and cannot be distributed.
+The seller’s problem is an optimal mechanism design problem with infinite-dimensional
+private information and moral hazard. However, we show that the homogeneity of the gain
+function renders the problem tractable.
+
+2.3
+
+Mapping the Setting to Practice
+
+Before turning to the analysis, we describe how the primitives of our setting relate to the
+design and operation of contemporary large language models (LLMs).
+Fine-tuning tokens, z ∈ RK
+The case z = 0 corresponds to a baseline model that has
++
+4
+not been fine-tuned. In this case, the model can be interpreted as a foundation model. Its
+4
+
+For tractability, we will often study the case g(x, 0) = 0. This can be viewed as a normalization that
+doesn’t affect the economics of the problem.
+
+5
+
+quality depends on its size (i.e., the number of parameters)5 , its architecture, the quantity
+and quality of training data, and the details of the training procedure. Scaling up model
+size typically improves capability and accuracy, but state-of-the-art performance generally
+requires commensurate scaling of training data as well (Kaplan et al., 2020). In our setting,
+we take pretraining as given. Accordingly, we focus on inference-time compute rather than
+training-time compute.
+When z > 0, this variable captures the number of tokens used to fine-tune the foundation
+model. Fine-tuning resembles pretraining in that it updates the model’s parameters, without
+changing its size or architecture, but it is much smaller in scale. It is performed on a dataset
+directly relevant to a class of tasks (e.g., labeled X-ray scans, code examples, or conversational
+transcripts) and can be interpreted as injecting task-specific knowledge and behavior into
+the model.
+Inference tokens, xi ∈ RJ+ These are the tokens used directly to process a given task.
+The two standard classes of inference tokens are input and output tokens. Input tokens are
+those provided by the user. Increasing the number of input tokens can improve predictive
+quality for two reasons. First, richer prompts provide more context, enabling more tailored
+and appropriate responses. Second, additional input may supply the data on which the model
+is meant to operate. For example, retrieval-augmented generation (RAG) uses the prompt
+to retrieve relevant passages from an external corpus and appends them to the prompt.
+Output tokens are those generated by the model. A larger number of output tokens
+can also improve quality. First, it allows the model to provide more detailed and nuanced
+answers. Second, it provides opportunities for multi-step reasoning, often described as chainof-thought (CoT) computation. This additional reasoning channel can enable the model
+to solve more complex tasks, at the cost of generating many intermediate tokens, often
+hidden from the user. This inference-time reasoning is qualitatively distinct from pretraining,
+remains only partially understood, and is an active frontier for improving LLM performance.6
+Gain function, g Tokens of different classes enter the large language model as distinct inputs. They are neither perfect substitutes nor perfect complements, but each can contribute
+to higher predictive quality. This motivates our gain-function formulation in (1), which is
+also in line with the empirically observed scaling laws for inference-time computation (e.g.,
+Wu, Sun, Li, Welleck, and Yang, 2025).
+5
+
+The parameter counts of leading models are estimated to be in the several-billion range; see https:
+//codingscape.com/blog/most-powerful-llms-large-language-models.
+6
+Recent progress has leveraged this channel; see, for instance, https://arcprize.org/blog/oai-o3pub-breakthrough.
+
+6
+
+Furthermore, one can envision other contractible token categories, either by refining the
+distinctions above (e.g., separating reasoning tokens from response tokens) or by introducing
+new modalities and resources (e.g., media files, external databases, etc.). Accordingly, our
+model accommodates an arbitrary number of inference and fine-tuning token classes.
+Costs, cj , ĉk Processing tokens is costly because it requires executing the neural network
+and, for fine-tuning, computing parameter updates, which in turn requires energy and specialized hardware. Because tokens within a given class are processed symmetrically from
+a computational perspective, we assume that the marginal cost per token within a class
+is constant across tasks.7 However, because different token classes correspond to different
+computational routines, we allow marginal costs to differ across classes.
+
+3
+
+Efficient Solution
+
+In this section, we begin by analyzing the socially efficient allocation of tokens to buyers
+and tasks. This solution provides a useful benchmark and also coincides with the optimal
+monopoly solution when the buyer’s type is known. We then turn to the problem of a social
+planner who faces capacity constraints for each token class, and we use the constrainedefficient solution to characterize the buyer’s utility from purchasing a fixed token budget.
+Unconstrained problem Given a type w = (wi )i∈[0,1] , the efficient allocation solves the
+following problem:
+Z 1
+wi Ψ(xi )Φ(z)di −
+
+max
+(xi )i∈[0,1] ,z≥0
+
+0
+
+J
+X
+j=1
+
+Z 1
+xij di −
+
+cj
+0
+
+K
+X
+
+ĉk zk .
+
+(5)
+
+k=1
+
+Consider the allocation of inference tokens first. A key implication of the homogeneity
+of the production function Ψ is that inference tokens are optimally employed in the same
+proportions: the efficient allocation of tokens across tasks differs solely by the scale at which
+these inputs are employed. To see this, consider the system of J first-order conditions for
+each xi = (xi1 , ..., xiJ ):
+wi ∇Ψ(xi )Φ(z) = c.
+(6)
+By equation (6), for all i, ∇Ψ(xi ) belongs to a ray with a direction c. Because Ψ is homogeneous and strictly concave, the ray in the space of gradients corresponds to a ray in the
+7
+
+Note that fine-tuning typically does not change the model’s architecture or size and therefore should not
+directly affect marginal inference costs.
+
+7
+
+space of tokens. Thus, for each i, any optimal xi can be written as:
+xi = ri d,
+where d ∈ RJ+ is the unique vector that solves ∇Ψ(d) = c, i.e., the cost-minimizing input
+shares. Furthermore, because Ψ is homogeneous of degree σ, Ψj is homogeneous of degree
+σ − 1, so that the optimal scale is given by
+1
+
+1
+
+ri = wi1−σ Φ(z) 1−σ .
+Substituting back in the objective function, both the total surplus and the total consumption
+R 1 1/(1−σ)
+of each token class depend on the buyer’s type w only through 0 wi
+di. It is then
+convenient to define the aggregate type θ(w) as
+Z 1
+
+1
+1−σ
+
+wi
+
+θ(w) ≜
+
+1−σ
+di
+
+.
+
+(7)
+
+0
+
+Our first result establishes that the total surplus and the total amount of inference tokens
+depend only on the aggregate type and not on the finer details of the type profile w.
+Proposition 1 (Efficient Allocation). Under the efficient allocation, all buyer types w
+with the same aggregate type θ(w) consume the same number of fine-tuning tokens, consume
+the same total number of inference tokens in each class, and obtain the same total payoff.
+1
+The number of inference tokens allocated to task i is proportional to wi1−σ .
+Proposition 1 has a key implication: two buyers with very different task profiles—one
+who values a few tasks intensely and many tasks little, and another who values all tasks
+moderately—consume the same total resources and obtain the same total surplus, provided
+they share the same aggregate type. The seller therefore cannot distinguish between them
+on the basis of total token consumption, nor would it want to. This indistinguishability is
+not an assumption but a consequence of the technology: homogeneity of Ψ ensures that the
+efficient mix of token classes is task-independent, so only the scale of usage varies, and the
+aggregator (7) is the natural summary of how much total scale a buyer demands.
+We now show that a similar logic can be used to characterize the socially efficient solution
+under capacity constraints in each class of tokens (training, computation, input, output).
+Constrained problem We now introduce capacity constraints on each token class. This
+detour is not merely a generalization: the special case in which all constraints bind is precisely
+the problem faced by a buyer who has purchased a fixed bundle of token budgets. Thus,
+8
+
+the constrained-efficient allocation provides the foundation for the seller’s mechanism design
+problem in Section 4.
+Fix a type w and capacity constraints Xj > 0, Zk > 0 for all j, k. The capacityconstrained planner’s problem is
+Z 1
+wi Ψ(xi )Φ(z) di −
+
+max
+(xi )i∈[0,1] ,z≥0
+
+0
+
+J
+X
+
+Z 1
+xij di −
+
+cj
+
+j=1
+
+0
+
+K
+X
+
+ĉk zk ,
+
+k=1
+
+Z 1
+xij di ≤ Xj , zk ≤ Zk for j ∈ [J], k ∈ [K].
+
+s.t.
+0
+
+Our next result establishes that the capacity-constrained efficient allocation coincides
+with the (unconstrained) efficient allocation for marginal costs inflated by the shadow costs
+of the capacity constraints, (c′ , ĉ′ ) ≥ (c, ĉ). This observation yields an immediate implementation of the efficient solution.
+Corollary 1 (Constrained Efficient Allocation).
+1. In the capacity-constrained efficient allocation, all buyer types w with the same aggregate type θ(w) consume the same total number of fine-tuning tokens and inference
+tokens in each class, and they obtain the same total payoff.
+2. The capacity-constrained efficient allocation can be implemented via linear prices equal
+to inflated marginal costs.
+Thus, capacity constraints do not change the qualitative properties of the solution, but
+lead to an inefficiency in the relative allocation of token types, and in the split between those
+buyer types who choose to fine-tune (z > 0) and those who do not (z = 0).
+The special case where all capacity constraints bind is of particular interest, because it is
+instrumental in the characterization of the buyer’s demand for token budgets in Section 4.
+When all constraints bind, the total production cost is pinned down. The planner’s and the
+buyer’s solutions then coincide, i.e., the constrained efficient allocation solves the problem
+of a buyer who has access to inference and fine-tuning token budgets (X, Z).
+The optimal allocation of a fixed budget (X, Z) solves the following problem:
+Z 1
+max
+
+xij ≥0
+
+Z 1
+wi Ψ(xi )Φ(Z) di,
+
+xij di = Xj for j ∈ [J].
+
+s.t.
+
+0
+
+(8)
+
+0
+
+Applying the homogeneity argument again, Φ(Z) factors out, and the buyer optimally sets
+1/(1−σ)
+xi = ri d with ri ∝ wi
+. Since the budget constraint for each token class j requires
+R1
+R1
+dj 0 ri di = Xj , the common direction is d = X/ 0 ri di, which yields a simple expression
+for the buyer’s optimal payoff.
+9
+
+The following result is the key step in our analysis. It shows that the buyer’s indirect
+utility from any token bundle is multiplicatively separable in the aggregate type and an
+aggregate quality index, placing the seller’s problem squarely in the Mussa-Rosen framework.
+Proposition 2 (Buyer Indirect Utility). For any inference and fine-tuning token budgets
+X = (X1 , . . . , XJ ) ≥ 0 and Z = (Z1 , . . . , ZK ) ≥ 0, the indirect utility of buyer type w is
+U (w, X, Z) = θ(w) Ψ(X)Φ(Z),
+where θ(w) is the aggregate type defined in (7).
+We therefore obtain a tractable expression for the buyer’s payoff by means of a representative task, whose value is given by the aggregate type θ, to which the buyer assigns the
+entire token budget. Heterogeneity across tasks washes out, and only the aggregate matters.
+A notable implication is that the buyer’s unobserved allocation of tokens across tasks generates no additional incentive constraints beyond those of the standard screening problem.
+Under homogeneity, the cost-minimizing input mix is independent of scale, so the buyer’s
+within-bundle allocation is pinned down regardless of type. This product form is the key
+input to the seller’s problem, which we turn to next.
+
+4
+
+Menus of Token Budgets
+
+The main result of this section is that the seller’s optimal mechanism takes the form of a
+menu of committed-spend contracts: each buyer pays an upfront fee for a spending budget
+that she allocates freely across token classes priced at the provider’s marginal cost. Higher
+types purchase larger budgets at higher fees, with quantity discounts that are consistent with
+observed industry pricing. The formal analysis proceeds in two steps: we first characterize
+the optimal direct mechanism (Section 4.1) and then show that it admits intuitive indirect
+implementations (Section 4.2).
+We now characterize the provider’s profit-maximizing menu of token budgets. By Proposition 2, the buyer’s indirect utility from a bundle (X, Z) is θ(w) Ψ(X)Φ(Z). Two features
+of this expression are worth emphasizing. First, private information enters only through
+the scalar θ: the seller’s multidimensional screening problem reduces to a one-dimensional
+problem. Second, the payoff is multiplicatively separable in type and allocation, placing us
+in the framework of Mussa and Rosen (1978).
+
+10
+
+4.1
+
+Optimal Budget Mechanism
+
+Define the effective type as θ and the effective allocation as the aggregate quality given by
+Q(X, Z) ≜ Ψ(X)Φ(Z).
+
+(9)
+
+The effective production costs of producing the aggregate quality Q can be found via a
+cost-minimization problem:
+C(Q) ≜ min
+
+X,Z≥0
+
+J
+X
+
+cj X j +
+
+j=1
+
+K
+X
+
+ĉk Zk ,
+
+s.t. Ψ(X)Φ(Z) = Q.
+
+(10)
+
+k=1
+
+The solution to the cost-minimization problem has the following properties.
+Lemma 1 (Cost Function). The cost function C(Q) is strictly increasing and strictly
+convex and satisfies C+′ (0) = 0.8
+Convexity follows from the strict concavity of the gain function g: producing higher
+aggregate quality requires disproportionately more tokens. The property C+′ (0) = 0 follows
+from the Inada conditions. Economically, C+′ (0) = 0 means that the first unit of aggregate
+quality is arbitrarily cheap to produce. Combined with convexity, this implies that it is never
+efficient to exclude any buyer type entirely. Thus, in the monopoly problem, exclusion is
+driven by information rents rather than production costs.
+By Lemma 1, the analysis of Mussa and Rosen (1978) applies. Denote the prior distribution of θ by F , which is derived from Fw . The seller chooses an aggregate quality schedule
+Q(θ) and a transfer schedule t(θ) to solve
+
+
+max EF t(θ) − C(Q(θ)) ,
+
+Q(·), t(·)
+
+subject to incentive compatibility and individual rationality.
+As usual, let
+1 − F (θ)
+,
+φ(θ) ≜ θ −
+f (θ)
+
+(11)
+
+denote the virtual (aggregate) type. If the virtual value φ is not increasing, let φ̄ denote its
+Myerson-ironed version. Then, all θ with φ̄(θ) ≤ 0 are excluded. For all other θ, the optimal
+allocation is uniquely pinned down by:
+φ̄(θ) = C ′ (Q(θ)).
+8
+
+(12)
+
+In Section 5, we show that if Φ(Z) is also a homogeneous function, then C(Q) is simply a power function.
+
+11
+
+Denoting the corresponding optimal transfers by
+Z θ
+t(θ) = θ Q(θ) −
+
+Q(r)dr,
+
+(13)
+
+0
+
+we can then fully characterize the optimal mechanism.
+Proposition 3 (Optimal Menu). The optimal menu of token budgets is {(X(θ), Z(θ), t(θ))}θ ,
+where (X(θ), Z(θ)) are the cost-minimizing token budgets that deliver quality Q = Q(θ) at
+prices t(θ) as defined in (10)-(13).
+The optimal menu offers a continuum of plans. All types w with the same aggregate
+type θ(w) choose the same item. Low-type buyers are excluded. All served buyers receive
+distorted-downward quality (fewer tokens than the efficient allocation would prescribe) except at the very top. Buyers with higher aggregate types purchase strictly larger token
+budgets and pay strictly higher transfers, but enjoy quantity discounts: the average price
+per unit of quality falls with θ.
+
+4.2
+
+Indirect Mechanisms
+
+The optimal direct mechanism specifies token quantities for each type. In practice, providers
+do not announce menus of token quantities; they post prices and spending limits. We now
+show that three natural pricing formats implement the optimum.
+We first consider committed-spend mechanisms, where the terms of the contract with a
+buyer are related to a maximum or minimum total expenditure.
+Definition 1 (Maximum-Spend Mechanism). A maximum-spend mechanism is a collection of token prices p and a menu of monetary budgets and transfers {(Bn , Tn )}n such
+that, upon selecting item n, the buyer pays Tn for access to budget Bn , which he can freely
+spend on tokens priced at p.
+While the optimal budget (direct) mechanism is a cap on quantities, the maximumspend mechanism limits quality by capping expenditures at fixed prices. Those expenditures
+are virtual in that they do not contribute to payment beyond Tn , but they govern token
+allocation. As we will see in Section 6, the maximum-spend mechanism is used in practice,
+for example, by Quora’s Poe (see Section 6), and it is closely related to the Cost-Based
+tariffs (where p = c) introduced in Armstrong (1996). Indeed, Proposition 8 in Appendix B
+derives analogous conditions to those in Armstrong (1996) under which a maximum-spend
+mechanism is optimal across all mechanisms, including those that specify a task-by-task
+token allocation.
+12
+
+An alternative implementation does not impose a cap on spending, but exposes the buyer
+to variable marginal prices, much like committed-spend mechanisms in cloud computing.
+Definition 2 (Minimum-Spend Mechanism). A minimum-spend mechanism is a menu
+of monetary budgets and transfers {(pn , Tn )}n such that, upon selecting item n, the buyer
+commits to spending at least Tn on tokens priced at pn .
+A minimum-spend mechanism allows buyers to commit to larger budgets (i.e., total expenditures) to unlock variable-price discounts. In contrast to a maximum-spend mechanism,
+payment comes from actual token consumption rather than from an upfront payment.
+Definition 3 (Two-Part-Tariff Mechanism). A two-part-tariff mechanism is a menu of
+prices and transfers {(pn , Tn )}n such that, upon selecting item n, the buyer pays Tn and can
+buy any number of tokens priced at pn .
+A two-part tariff is a classical mechanism that combines upfront and consumption payments but does not impose any token consumption limits.
+Define a type-dependent markup m(θ) as:
+m(θ) ≜
+
+θ
+.
+φ̄(θ)
+
+(14)
+
+The markup m(θ) is the ratio of the true type to the virtual type; it captures the informationrent wedge that the seller imposes. Higher markups on lower types reflect greater information
+rents extracted from higher types in the menu.
+Proposition 4 (Indirect Implementation). An optimal menu of token budgets can be
+implemented via a maximum-spend mechanism. If m(θ) is decreasing (e.g., if F has an
+increasing hazard rate), then an optimal menu of token budgets can be implemented via a
+minimum-spend mechanism and a two-part tariff mechanism.
+Implementability by a maximum-spend mechanism is straightforward and relies on the
+fact that the optimal token allocation is constrained-efficient, as in Doligalski et al. (2025): it
+suffices to set prices equal to marginal costs and to choose token expenditures and transfers
+so as to mimic those under the direct mechanism.
+Implementability by minimum-spend and two-part tariff mechanisms requires more care.
+Because Ψ is homogeneous, the cost-minimizing input mix is the same for every quality level
+Q; only the scale changes. A two-part tariff that preserves this input mix must therefore set
+token prices proportional to marginal costs; any other price vector would distort the buyer’s
+allocation away from cost minimization. The proportionality factor is the markup m(θ) =
+13
+
+θ/φ̄(θ), which inflates all marginal costs equally. The condition that m(θ) is decreasing
+ensures that higher types, who select larger budgets, face lower per-token prices, so the
+menu is incentive-compatible. In the minimum-spend implementation, the markup equals
+the ratio between total revenue and total cost for type θ. Section 6 shows that each of these
+three implementations corresponds to an observed pricing format at leading platforms.
+
+5
+
+Multiple Models and Competition
+
+In practice, every major LLM provider offers multiple models that differ in capability and cost
+(e.g., Anthropic’s Haiku, Sonnet, and Opus, or OpenAI’s GPT-4o-mini and o1). A buyer
+can assign different tasks to different models, and the provider can screen on both usage
+quantity and model access. This section extends our framework to this richer environment.
+Two new questions arise: How does a buyer optimally allocate tasks across models? And
+how does a profit-maximizing provider design menus that screen on both dimensions?
+Specifically, we extend our setting and allow there to be L models, each with a modelspecific gain function:
+gl (xi , z) = Ψl (xi )Φl (z),
+(15)
+where Ψl and Φl are assumed to have the same properties as in the baseline model, with Ψl
+being homogeneous of degree σl . We order the models so that σ1 ≤ σ2 ≤ · · · ≤ σL . The
+token costs are model-specific (cl , ĉl ).
+The buyer can process different tasks with different models; however, he cannot use two
+models for the same task.9 If the buyer of type w processes tasks i ∈ Il with model l, his
+total payoff ignoring the payment is:
+L Z
+X
+l=1
+
+wi gl (xli , zl )di.
+
+(16)
+
+Il
+
+In this setting, a bundle specifies token budgets for all available models (Xl , Zl )Ll=1 =
+(Xl1 , . . . , XlJ , Zl1 , . . . , ZlK )Ll=1 .
+As a preliminary step for the subsequent analysis, we show that the buyer’s value for a
+bundle (Xl , Zl )Ll=1 depends only on the aggregate quality of each model,
+Ql ≜ gl (Xl , Zl ),
+9
+
+(17)
+
+Equivalently, we could assume that the buyer can combine tokens from two models on any task, with a
+performance given by the sum of individual gain functions.
+
+14
+
+and admits a tractable closed-form expression. To this end, we fix w and order the tasks so
+that wi is increasing. We assume that Ql > 0 for all l (if Ql = 0 then the l-th model can be
+ignored). If the buyer allocates tasks in the set Il to model l, then his payoff from model l
+is, by the arguments of Proposition 2,
+Ul (Il , Ql ) = θl (Il )Ql ,
+
+(18)
+
+R 1/(1−σl ) 1−σ
+where θl (Il ) ≜ ( Il wi
+di) l . The total payoff from the task-model allocation (Il )Ll=1 is
+L
+X
+
+Ul (Il , Ql ) =
+
+l=1
+
+The optimal payoff U ∗ (Q1 , . . . , QL ) =
+allocation (Il∗ )Ll=1 .
+
+L
+X
+
+θl (Il )Ql .
+
+(19)
+
+l=1
+
+PL
+
+∗
+l=1 Ul (Il , Ql ) is evaluated at the optimal task-model
+
+Lemma 2 (Buyer-Optimal Payoff ). If σl = σ for all l ∈ [L], then
+U ∗ (Q1 , . . . , QL ) = θ
+
+L
+X
+
+!σ
+1/σ
+
+Ql
+
+.
+
+(20)
+
+l=1
+
+By Lemma 2, despite the combinatorial complexity of assigning a continuum of tasks to
+multiple models, the buyer’s payoff from a bundle of tokens across different models admits
+a simple product decomposition into an aggregate type and a CES-style aggregate quality
+over models. The elasticity of substitution across models is pinned down by the common
+returns-to-scale parameter σ, and the single-model tractability of Sections 3–4 extends to
+the multi-model environment.
+
+5.1
+
+Efficient Solution
+
+We first compute the efficient allocation in this setting. Since the buyer’s value takes a
+simple form (20) as a function of aggregate qualities of each model, the efficient allocation
+delivers the efficient amount of these qualities in a cost-efficient way.
+Assumption 1 (Homogeneous Fine-Tuning). For each l = 1, ..., L:
+1. Ψl is homogeneous of degree σ ∈ (0, 1).
+2. Φl is homogeneous of degree σ̂l < 1 − σ.
+All subsequent analysis holds under Assumption 1, so we omit it from the statements.
+Assumption 1 allows us to obtain closed-form expressions because of the following result:
+15
+
+Lemma 3 (Model-Specific Cost Function). The cost function of delivering aggregate
+1/(σ+σ̂l )
+quality Ql through model l is Cl (Ql ) = κl Ql
+for some constant κl > 0.
+By Lemma 3, the minimal cost of obtaining quality Q from L models is
+C(Q) =
+
+L
+X
+
+min
+
+Q1 ,...,QL ≥0
+
+1/(σ+σ̂l )
+κl Ql
+,
+
+s.t.
+
+l=1
+
+L
+X
+
+1/σ
+
+Ql
+
+= Q1/σ .
+
+l=1
+
+The optimal solution utilizes a single model, resulting in
+C(Q) = min κl Q1/(σ+σ̂l ) .
+
+(21)
+
+l∈[L]
+
+Thus, the rich functional model heterogeneity (15) reduces to heterogeneity in two parameters (κl , σ̂l ) that roughly correspond to “cost-effectiveness” and “propensity to fine-tune.”
+Heterogeneity in κl is vertical: higher κl correspond to overall costlier models. Heterogeneity
+in σ̂l is horizontal: models with high σ̂l are better at generating high Q whereas models with
+low σ̂l are better at generating low Q. As a result, higher values of Q are optimally produced
+by models with higher σ̂l . In other words, models with higher returns to fine-tuning have
+flatter cost curves and are cheaper for producing high qualities, introducing a natural form
+of horizontal differentiation among models.
+Notably, the cost function C(Q) is not convex but piecewise convex, with kinks at
+the model switches, which translates into unusual properties of the efficient and profitmaximizing allocations. Specifically, the efficient quality allocation for type θ when using
+model l solves:
+max θQ − κl Q1/(σ+σ̂l ) ,
+Q≥0
+
+leading to the following characterization:
+Proposition 5 (Efficient Allocation). In the efficient allocation, each type θ processes
+all tasks with a single model:
+
+
+∗
+
+l ∈ arg max (1 − σ − σ̂l )
+l
+
+(σ + σ̂l )
+κl
+
+(σ+σ̂l )/(1−σ−σ̂l )
+
+θ1/(1−σ−σ̂l ) ,
+
+(22)
+
+with the aggregate quality:
+∗
+
+Q (θ) =
+
+
+
+θ(σ + σ̂l∗ )
+κl∗
+
+(σ+σ̂l∗ )/(1−σ−σ̂l∗ )
+.
+
+The efficient token allocation is given by Lemma 3 evaluated at Q∗ from (23).
+16
+
+(23)
+
+Every type uses a single model. Higher aggregate types θ consume higher aggregate
+qualities by using models with higher fine-tuning capabilities σ̂l , i.e., Q∗ (θ) is increasing.
+Because C(Q) is not continuously differentiable, the allocation is discontinuous at the
+model switch. Indeed, it follows from (23) and (22) that if the efficient allocation at type θ
+is indifferent between Ql of model l and Ql′ of model l′ such that σ̂l′ > σ̂l , then
+1 − σ − σ̂l
+Ql ′
+=
+> 1.
+Ql
+1 − σ − σ̂l′
+
+5.2
+
+Multi-Model Monopolist
+
+We now assume that all L models are sold by a monopolist who offers a menu. Each item
+specifies a transfer and a collection of token budgets for different models (Xl , Zl )Ll=1 .
+By Lemma 2, the seller’s problem is equivalent to the optimal screening problem in Mussa
+and Rosen (1978), in which the buyer’s type is θ ∈ R, the seller chooses a menu of (Q, t),
+the buyer’s payoff is U (θ, Q) = θQ, and the cost of obtaining a quality Q is equal to C(Q)
+as in (21). Although C(Q) is not convex, the Envelope theorem applies and this problem is
+equivalent to a maximization of virtual surplus:
+max
+Q(·): increasing
+
+Z 1
+
+
+φ(θ)Q(θ) − C(Q(θ)) dF (θ),
+
+(24)
+
+0
+
+where φ(θ) = θ − (1 − F (θ))/f (θ).
+Assuming φ(θ) is increasing, the solution can be obtained pointwise to equal an efficient
+allocation with respect to the virtual type: Qm (θ) = Q∗ (φ(θ)). By Proposition 5, if φ(θ) < 0,
+then the buyer is excluded, Qm = 0; if φ(θ) ≥ 0,
+
+
+m
+
+l (θ) ∈ arg max (1 − σ − σ̂l )
+l
+
+m
+
+Q (θ) =
+
+
+
+φ(θ)(σ + σ̂lm )
+κlm
+
+(σ + σ̂l )
+κl
+
+(σ+σ̂l )/(1−σ−σ̂l )
+
+φ(θ)1/(1−σ−σ̂l ) ,
+
+(25)
+
+(σ+σ̂lm )/(1−σ−σ̂lm )
+.
+
+(26)
+
+Since Q∗ is increasing, the pointwise solution solves the problem. Optimal transfers are
+m
+
+Z θ
+
+m
+
+t (θ) = θQ (θ) −
+
+Qm (r)dr.
+
+(27)
+
+0
+
+As under the efficient allocation, because C(Q) is not continuously differentiable, the quality
+and transfer schedules are discontinuous.
+Proposition 6 (Multi-Model Monopoly). If φ(θ) is increasing, then the optimal token17
+
+budget menu is given by {((Xl (θ), Zl (θ))Ll=1 , t(θ))}θ , where (Xl (θ), Zl (θ))Ll=1 are efficient token
+budgets that deliver quality Qm (θ) at prices t(θ) as defined in (26) and (27).
+The monopolist assigns each buyer type to a single model, with higher types using more
+capable models. All types w with the same aggregate type θ(w) choose the same item
+and use one model, lm (θ) as defined in (25), for all tasks. The quality schedule exhibits
+discrete jumps at model-switching thresholds: a buyer at the margin between two models
+jumps to a strictly higher quality when upgrading. OpenAI’s tier structure, which reserves
+its most compute-intensive reasoning model for the highest-paying subscribers, provides a
+direct empirical counterpart; see the discussion in Section 6.
+
+5.3
+
+Leader-Fringe Competition
+
+We now study competition between a proprietary leader and an open-source competitive
+fringe. The key economic forces are: (i) the fringe provides an outside option whose value
+depends on the buyer’s type; (ii) for intermediate types, the leader must provide enough
+tokens to deter fringe top-up; (iii) for high types, the leader acts as an unconstrained monopolist. The resulting allocation has three distinct regions, generating a richer pattern of
+distortions than either the single-model monopoly or the multi-model monopoly.
+Specifically, we assume that there is a single leader, corresponding to the highest-capability
+model (l = L) in the previous section, and a continuum of firms in a competitive fringe that
+sell their tokens at fixed per-token prices equal to marginal costs. We assume that the leader
+possesses a proprietary model characterized by the aggregate cost parameter cL > 0, returns
+to intensity σL = σ > 0, and returns to fine-tuning σ̂L > 0, such that σ + σ̂L < 1. The
+fringe possesses an open-source model characterized by the lower aggregate cost parameter cF ∈ [0, cL ), the same returns to intensity σF = σ, and lower returns to fine-tuning
+σ̂F ∈ [0, σ̂L ).
+The buyer has a private type w. By Lemma 2, only the aggregate type θ(w) matters,
+so we take θ as a primitive and assume that θ is distributed according to F with strictly
+positive density f everywhere on [0, 1]. The buyer can multi-home and can buy at most one
+item from the leader.
+We want to solve the leader’s problem, which can be viewed as a monopolistic design of
+an optimal menu (q, t) subject to the competitive pressure from the fringe. For notational
+simplicity, define the quantities:
+1/(σ+σ̂L )
+
+= gL (XL1 , . . . , XLJ , ZL1 , . . . , ZLK )1/(σ+σ̂L ) ,
+
+1/(σ+σ̂F )
+
+= gF (XF 1 , . . . , XF J , ZF 1 , . . . , ZF K )1/(σ+σ̂F ) .
+
+qL ≜ QL
+
+qF ≜ QF
+
+18
+
+The payoff of type θ from having purchased quantity qL from the leader is
+(σ+σ̂L )/σ
+
+max θ(qL
+qF ≥0
+
+(σ+σ̂F )/σ σ
+
++ qF
+
+) − c F qF ,
+
+(28)
+
+with a (type-dependent) outside option corresponding to qL = 0. The first-order condition
+for the buyer’s problem of purchasing fringe quantity is
+(σ+σ̂L )/σ
+
+θ(σ + σ̂F )(qL
+
+(σ+σ̂F )/σ σ−1 σ̂F /σ
+) qF
+= cF .
+
++ qF
+
+(29)
+
+In general, (29) does not admit a closed-form solution. It does so in the case of σ̂F = 0.
+Specifically, define
+
+q̂(θ) ≜
+
+θσ
+cF
+
+σ/((1−σ)(σ+σ̂L ))
+,
+
+ψ(θ) ≜ θ
+
+1
+1−σ
+
+
+(1 − σ)
+
+σ
+cF
+
+σ/(1−σ)
+.
+
+(30)
+
+If the quantity purchased from the leader is qL < q̂(θ), the buyer will purchase fringe tokens
+to achieve the optimal total quantity q̂(θ); if qL > q̂(θ), the buyer will single-home with the
+leader. The buyer’s outside option utility corresponding to q = 0 is ψ(θ). We then obtain
+the following characterization of the buyer’s demand for the leader’s quantity.
+Lemma 4 (Buyer’s Payoff ). The leader’s problem is equivalent to one in which the buyer
+has a zero outside option and the following payoff:
+
+u(θ, q) =
+
+
+c q (σ+σ̂L )/σ ,
+
+if q < q̂(θ),
+
+θq σ+σ̂L − ψ(θ),
+
+if q ≥ q̂(θ).
+
+F
+
+(31)
+
+The payoff u(θ, q) in Lemma 4 is continuous, differentiable, and increasing in both parameters. In the region q < q̂(θ), it is convex in q and independent of θ. In the region
+q > q̂(θ), it is concave in q and supermodular in q and θ.
+The two-regime structure has a clear economic interpretation. In the first regime (q <
+q̂(θ)), the buyer supplements leader tokens with fringe tokens to achieve the optimal total
+quantity, so her marginal value of additional leader tokens is pinned down by the fringe price
+cF ; the leader faces a perfectly elastic residual demand. In the second regime (q ≥ q̂(θ)), the
+buyer single-homes with the leader, and her value is the standard concave payoff minus the
+outside option ψ(θ) she forgoes by not using the fringe. The transition between regimes is
+where the leader’s competitive constraint binds.
+The leader’s problem is an instance of screening with a type-dependent outside option
+(Jullien, 2000); the reformulation (31) absorbs this outside option into the buyer’s payoff.
+19
+
+An optimal menu can then be characterized by standard methods.10 Indeed, u(θ, q) satisfies
+the (weak) single-crossing constraints: uθq (θ, q) = 0 if q < q̂(θ) and uθq (θ, q) > 0 if q ≥ q̂(θ).
+Allocation q(θ) is implementable only if it is increasing whenever q ≥ q̂(θ), and the profit
+associated with allocation q is:
+
+Z 1
+1 − F (θ)
+Π(q) =
+u(θ, q(θ)) − cL q(θ) −
+uθ (θ, q(θ)) f (θ)dθ.
+f (θ)
+0
+
+(32)
+
+In regular environments, this profit can be maximized pointwise. To this end, denote by
+q (θ) the optimal monopoly quantity in the absence of the competitive fringe
+m
+
+m
+
+q (θ) =
+
+
+
+(σ + σ̂L )φ(θ)
+cL
+
+1/(1−σ−σ̂L )
+.
+
+(33)
+
+Proposition 7 (Leader-Fringe Competition). Let F satisfy a monotone hazard rate and
+σ̂F = 0. Then, there exist θ and θ, θ ≤ θ, such that (i) for θ ≤ θ, q(θ) = 0, (ii) for θ ∈ (θ, θ),
+q(θ) = q̂(θ) given by (30), and (iii) for θ ≥ θ, q(θ) = q m (θ) given by (33).
+Under the optimal mechanism, low types purchase exclusively from the fringe. All higher
+types purchase exclusively from the leader. Out of those, the midline types are on the margin
+of whether to buy from the fringe, whereas the highline types strictly prefer to purchase from
+the leader. Depending on parameters, the midline region may not exist, θ = θ, or the highline
+region may not exist, θ > 1.
+The three-region structure reflects three distinct economic regimes. In the fringe-only
+region (θ ≤ θ), the buyer’s willingness to pay for the leader’s superior fine-tuning capability
+is too low to justify adoption. In the deterrence region (θ < θ < θ), the leader offers exactly
+enough tokens to make the buyer indifferent between single-homing with the leader and
+supplementing with the fringe; this pins the leader’s quantity to q̂(θ), which rises with type.
+In the monopoly region (θ ≥ θ), the buyer’s value is high enough that fringe competition
+no longer constrains the leader, who reverts to the standard downward-distorted monopoly
+quantity q m (θ). The novel region is the deterrence region, which has no analog in either the
+single-model monopoly or the multi-model monopoly.
+10
+
+See Calzolari and Denicolò (2013) for a related analysis of nonlinear competition between a dominant
+firm and a competitive fringe under private information about demand.
+
+20
+
+Comparison with Efficient Allocation It is instructive to compare the allocation under
+leader-fringe competition with the efficient benchmark. By Proposition 5, defining
+u∗l (θ) = (1 − σl − σ̂l )θ1/(1−σl −σ̂l )
+
+
+
+σl + σ̂l
+cl
+
+(σl +σ̂l )/(1−σl −σ̂l )
+,
+
+type θ uses the fringe model if and only if u∗F (θ) > u∗L (θ). The indifference type at which
+u∗F (θ) = u∗L (θ) is (recall that σL = σF = σ and σ̂F = 0)
+
+θ̂ =
+
+1−σ
+1 − σ − σ̂L
+
+(1−σ−σ̂L )(1−σ)/σ̂L 
+
+σ
+cF
+
+σ(1−σ−σ̂L )/σ̂L 
+
+cL
+σ + σ̂L
+
+(σ+σ̂L )(1−σ)/σ̂L
+.
+
+(34)
+
+If θ < θ̂, then the type uses the fringe model: qF (θ) = (θσ/cF )1/(1−σ) and qL (θ) = 0. If
+θ ≥ θ̂, then the type uses the leader model: qF (θ) = 0 and qL (θ) = (θ(σ + σ̂L )/cL )1/(1−σ−σ̂L ) .
+Comparing this with the fringe-competition allocation characterized in Proposition 7, we
+see two main differences: First, we see that the “highline” leader quantity q m (θ) is distorted
+downward from efficiency because φ(θ) is smaller than θ. This is natural, since in that range
+the leader is unconstrained by the fringe and acts as a monopolist. Second, there is an
+additional extensive margin distortion, because θ̂ < θ.11
+Comparison with Multi-Model Monopoly Another natural benchmark is the case of
+a monopolist possessing the leader and fringe models. By Proposition 6, the monopolist
+effectively faces a Mussa-Rosen problem with the buyer’s payoff:
+(σ+σ̂L )/σ σ
+
+u(θ, qL , qF ) = θ(qF + qL
+
+) .
+
+and will be supplying an efficient allocation with respect to the virtual type. If θ < θm ,
+where φ(θm ) ≜ θ̂ and θ̂ is defined at (34), then the type uses the fringe model and qF (θ) =
+(φ(θ)σ/cF )1/(1−σ) and qL (θ) = 0. If θ ≥ θm , then the type uses the leader model with
+qF (θ) = 0 and qL (θ) = (φ(θ)(σ + σ̂L )/cL )1/(1−σ−σ̂L ) .
+Relative to the efficiency benchmark, the allocation is distorted downward within each
+model, except at the very top. In addition, fewer types consume the leader model.
+Relative to the leader-fringe environment of Proposition 7, the integrated multi-model
+monopolist internalizes the fringe technology and therefore does not face a competitive outside option. This has two implications. First, the fringe allocation is no longer pinned down
+by marginal-cost pricing: types that use the fringe model receive qF (θ) = (φ(θ)σ/cF )1/(1−σ)
+1−σ−σ̂L σ σ+σ̂L (1−σ)/σ̂L
+1−σ
+, and thus, by the strict concavity of the logarithm
+1−σ−σ̂L  
+σ+σ̂L
+
+
+
+θ̂
+1−σ
+1−σ
+σ
+and Jensen’s inequality, ln θ = σ̂L (1 − σ − σ̂L ) ln 1−σ−σ̂
++ (σ + σ̂L ) ln σ+σ̂
+< 0.
+L
+L
+11
+
+Indeed, θθ̂ =
+
+
+
+21
+
+(and are excluded whenever φ(θ) < 0), whereas under leader-fringe competition the corresponding types purchase the efficient quantity (θσ/cF )1/(1−σ) from the fringe. Second, the
+“midline” region θ ∈ (θ, θ) in which the leader supplies q = q̂(θ) to deter top-up purchases
+from the fringe disappears. Because the monopolist controls both models, she uses the fringe
+model directly as the low-quality product in the Mussa-Rosen menu and assigns each type
+to a single model with a single cutoff θm . Finally, once the fringe constraint is slack, the
+intensive-margin provision coincides and equals the monopoly quantity q m (θ); differences between the two environments are therefore concentrated among low and intermediate types.12
+Figure 1 illustrates the optimal allocation and distortions in a uniform example. All
+calculations for this example are in Appendix A.
+The top panel plots the leader quantity q(θ), and the bottom panel plots the fringe
+quantity qF (θ). Four cutoffs, ordered θ̂ < θ < θm < θ, partition the type space. The efficient
+allocation (solid) features a single switch at θ̂: types below θ̂ use only the fringe, types
+above use only the leader. The leader–fringe allocation (dotted) shifts this switch rightward
+to θ, reflecting the extensive-margin distortion. Between θ and θ, the leader supplies the
+deterrence quantity q̂(θ), which lies strictly below the efficient leader quantity. Above θ,
+the fringe constraint is slack and the leader reverts to the monopoly quantity q m (θ), which
+coincides with the integrated monopolist’s allocation (dashed). In the bottom panel, the
+efficient and leader–fringe curves for qF coincide over their respective ranges, since the fringe
+prices at marginal cost in both cases; the difference is that fringe usage persists up to θ
+rather than θ̂. The integrated monopoly distorts fringe provision downward and switches to
+the leader at the later cutoff θm .
+
+6
+
+LLM Pricing in Practice
+
+A striking feature of current LLM pricing is that different market segments implement each
+of the optimal mechanisms in our theoretical framework: consumer subscriptions implement
+the nonlinear menus of Sections 4 and 5; model aggregators implement the committed-spend
+mechanisms of Section 4.2; and developer APIs implement the constrained-efficient linear
+pricing of Corollary 1.
+Our main findings are as follows. The two largest proprietary providers, Anthropic and
+OpenAI, offer remarkably similar price points ($20 and $200) but implement fundamentally
+different screening mechanisms. Anthropic screens through quantity alone, holding model ac12
+
+Calzolari and Denicolò (2015) show that a dominant firm with a competitive advantage can profitably
+impose exclusive dealing on privately informed buyers; the mechanism here is analogous, though exclusivity
+arises from the optimal nonlinear tariff rather than from contractual restrictions.
+
+22
+
+q(θ)
+103
+
+θ̂
+
+θ
+
+θm θ
+
+102
+
+101
+
+Efficient
+Monopoly
+Leader–fringe
+
+100
+
+θ
+
+qF (θ)
+
+θ̂
+
+θ
+
+0.2
+
+0.3
+
+θm
+
+Efficient
+Monopoly
+Leader–fringe
+
+100
+
+10−1
+
+10−2
+
+0
+
+0.1
+
+0.4
+
+0.5
+
+0.6
+
+0.7
+
+0.8
+
+0.9
+
+1θ
+
+Figure 1: Leader-Fringe allocations across different regimes. Example with θ ∼ U [0, 1],
+σ = 1/2, σ̂L = 1/4, cF = 1/10, cL = 1/8.
+cess constant across paid tiers, matching the token-budget mechanism of Proposition 3. OpenAI screens through both quantity and model access, reserving its most compute-intensive
+reasoning model for the highest tier, matching the multi-model menu of Proposition 6. This
+contrast illustrates the distinction between the single-model screening of Section 4 and the
+multi-model versioning of Section 5. Model aggregators, which resell access to upstream
+providers through a single interface, implement the committed-spend mechanisms of Section 4.2: Quora’s Poe enforces a hard budget cap (maximum spend), while GitHub Copilot
+allows overage purchasing at linear prices (minimum spend). Finally, API pricing across all
+major providers is linear in tokens with no volume discounts, resembling the constrainedefficient benchmark of Corollary 1 rather than any profit-maximizing mechanism, consistent
+with providers prioritizing market share over rent extraction in the developer segment.
+
+23
+
+6.1
+
+Anthropic
+
+Anthropic’s consumer pricing for Claude best illustrates the token-budget mechanism of
+Section 4. Anthropic offers the same model family across all paid tiers, with differentiation
+occurring through usage allocations. As in the optimal menu characterized in Proposition 3,
+users with higher aggregate types θ select items with larger token budgets while consuming
+the same underlying technology.
+Figure 2 summarizes the structure of paid tiers as of January 2026. All paid tiers,
+namely Pro ($20/month), Max 5x ($100/month), and Max 20x ($200/month), grant access
+to Haiku 4.5, Sonnet 4.5, and Opus 4.5. The key distinction is the quantity of compute:
+Anthropic measures usage limits in computational intensity. For example, Opus queries
+consume resources approximately 5× faster than Sonnet. This aligns with Proposition 3,
+where the optimal mechanism defines users’ budgets in total tokens consumed across classes.
+Although Anthropic offers multiple models, all paid tiers grant access to the same set, so the
+relevant screening dimension is quantity rather than model access. The different depletion
+rates across models (e.g., Opus consuming resources 5× faster than Sonnet) function as
+heterogeneous per-unit costs within a single compute-budget mechanism, analogous to the
+token-class costs cj in Proposition 3.
+Pro
+$20/mo
+
+• All models
+• ∼45 msgs/5hrs
+• 5× free tier
+• Projects, tools
+
+Max 5x
+$100/mo
+
+• All models
+• ∼225 msgs/5hrs
+• 15–35 hrs
+Opus/wk
+• Priority access
+
+Max 20x
+$200/mo
+
+• All models
+• ∼900 msgs/5hrs
+• 24–40 hrs
+Opus/wk
+• Full Opus access
+
+Increasing token budget X(θ)
+
+Figure 2: Anthropic subscription tiers (January 2026). Model access is constant across paid
+tiers; differentiation occurs through usage allocations.
+
+24
+
+6.2
+
+OpenAI
+
+Unlike Anthropic’s tier structure, which differentiates mostly through constraints on usage,
+OpenAI’s ChatGPT pricing differentiates through both quantity and exclusive model access:
+higher tiers grant access to more capable models and relax usage constraints. This joint
+screening aligns with the multi-model monopolist of Section 5.2.
+Figure 3 summarizes OpenAI’s tier structure as of January 2026. The Free tier provides limited GPT-4o access with automatic downgrade to GPT-4o-mini when capacity is
+constrained. Plus ($20/month) expands to approximately 80 GPT-4o messages per 3-hour
+window and adds reasoning models (o3, o4-mini) with a separate weekly limit of roughly 100
+queries. Pro ($200/month) removes most constraints and provides exclusive access to o1pro, OpenAI’s most compute-intensive reasoning model. Thus, both Anthropic and OpenAI
+converge on similar price points ($20 standard, $200 premium), but implement very different
+screening strategies.
+Free
+
+Plus
+
+Pro
+
+$0/mo
+
+$20/mo
+
+$200/mo
+
+• GPT-4o (limited)
+• Downgrades to mini
+• No reasoning models
+• Basic features
+
+• 80 GPT-4o msgs/3hrs
+• Access to o3, o4-mini
+• 100 reasoning msgs/wk
+• Custom GPTs
+
+• Unlimited GPT-4o, o3
+• Exclusive o1-pro access
+• Highest compute
+• Priority capacity
+
+Increasing model capability and token budget
+
+Figure 3: OpenAI ChatGPT subscription tiers (January 2026). Higher tiers grant access to
+more capable models and larger usage allocations.
+In Proposition 6, we showed that when models differ in cost curvature, the optimal mechanism assigns higher-capability models to higher buyer types. OpenAI’s decision to reserve
+its o1-pro model for the highest tier is consistent with this prediction. In consumer subscriptions, the relevant cost differences across models may reflect inference-time compute intensity
+rather than user fine-tuning, but the qualitative implication of a monotone assignment with
+discrete jumps at upgrade thresholds is the same.
+
+25
+
+6.3
+
+Model Aggregators: GitHub and Quora
+
+A number of AI platforms, including GitHub Copilot and Quora’s Poe, do not develop
+their own models. Instead, they aggregate models produced by others (OpenAI, Anthropic,
+Google, Mistral, and others) and sell access to users through a single interface. A common
+contractual arrangement is one whereby subscribers pay a monthly fee, receive a budget
+of platform-specific credits, and allocate those credits across the available models. Selecting a more capable model typically depletes the budget faster. We now describe Quora’s
+and GitHub’s platforms in detail and then relate their pricing structures to the indirect
+implementation of the optimal mechanism discussed in Section 4.2.
+Quora-Poe Poe offers subscribers access to over 100 AI models through a unified chat
+interface. A subscriber pays a fixed monthly fee and receives an allocation of “compute
+points,” which serve as the platform’s internal currency. Each model is priced in points per
+message at a rate that reflects its inference cost.13
+Table 1 summarizes Poe’s tier structure. The entry-level Basic plan provides 300,000
+points per month for $5; the top-tier Premium plan provides 12,500,000 points for $250.
+Above the Basic tier, the effective price per million points is constant at $20, so that higher
+tiers simply offer a proportionally larger budget at a fixed unit rate. Table 2 reports point
+costs for selected models, illustrating the wide dispersion across model classes.
+Tier
+Basic
+Standard
+Pro
+Advanced
+Premium
+
+Monthly Price
+
+Points/Month
+
+Eff. $/M Points
+
+$5
+$20
+$50
+$100
+$250
+
+300,000
+1,000,000
+2,500,000
+5,000,000
+12,500,000
+
+$16.67
+$20.00
+$20.00
+$20.00
+$20.00
+
+Table 1: Poe subscription tiers (2025).
+The connection to the maximum-spend framework of Section 4.2 is immediate. The
+monthly subscription fee corresponds to the transfer Tn ; the point allocation corresponds to
+the budget Bn ; and the per-model point costs correspond to marginal-cost pricing of different
+token classes. The subscriber chooses how to allocate the budget taking the marginal prices
+into account. Finally, once the budget is exhausted, access to all models is suspended until
+the next billing cycle, and points do not roll over. Thus, Poe’s menu is best captured by a
+maximum-spend mechanism.
+13
+
+For instance, a message to GPT-4o-mini costs 9 points, while a message to Claude Opus 4 costs 4,105
+points, a ratio of roughly 450×.
+
+26
+
+Class
+
+Model
+
+Points/Message
+
+Budget
+
+GPT-4o-mini
+Gemini-2.0-Flash
+
+9
+9
+
+Mid-tier
+
+GPT-4o
+Claude-3.5-Sonnet
+
+224
+276
+
+Frontier
+
+Claude-3-Opus
+Claude-Opus-4
+
+1,697
+4,105
+
+Table 2: Poe per-model point costs (2025).
+GitHub Copilot GitHub Copilot provides AI-assisted coding within a developer’s integrated environment. Like Poe, Copilot offers multiple pricing tiers, each bundling a monthly
+fee with a budget of “premium requests” that the developer allocates across model calls.
+Table 3 summarizes the plan structure.
+Plan
+Free
+Pro
+Pro+
+Business
+Enterprise
+
+Monthly Fee
+
+Premium Requests
+
+$0
+$10
+$39
+$19/user
+$39/user
+
+50
+300
+1,500
+300/user
+1,000/user
+
+Notes
+Limited quota, basic completions
+Unlimited completions, chat, IDE support
+Larger quota, advanced models
+Org controls, policy management
+Enterprise features
+
+Table 3: GitHub Copilot pricing tiers and premium request budgets (2026).
+The mechanism by which Copilot meters usage differs slightly from Poe’s point system
+but serves the same function. Rather than assigning each model a point cost per message,
+Copilot assigns each model a multiplier that determines how many premium requests a single
+interaction consumes. A set of baseline models, including GPT-5 mini, GPT-4.1, and GPT4o, carry a multiplier of 0 on paid plans: interactions with these models are included at no
+additional budget cost. Efficient reasoning models such as Claude Haiku 4.5 and o4-mini
+carry multipliers of 0.25–0.33. Standard models such as Claude Sonnet 4.x and GPT-5.x
+carry a multiplier of 1. At the frontier, Claude Opus 4.5 carries a multiplier of 3, and
+GPT-4.5 carries a multiplier of 50.
+This mechanism matches the framework of Section 4.2 quite closely. The plan fee corresponds to Tn ; the monthly premium-request allocation corresponds to Bn ; and the model
+multipliers play the role of heterogeneous marginal costs. A distinctive feature of Copilot
+is that it extends this budget mechanism with an overage option. When a developer (i.e.,
+a buyer) exhausts her monthly allocation, Copilot allows continued use at a fixed charge
+27
+
+of $0.04 per premium request. The minimum-spend framework of Section 4.2 matches this
+feature rather well: each user commits to a certain amount of monthly spending, there are
+no refunds, but the developer can increase her consumption ex post at linear prices.14
+Thus, both Poe and Copilot implement the core logic of the committed-spend mechanisms: a non-bankable budget, priced up front via a subscription fee, that the user freely
+allocates across inputs with heterogeneous per-unit costs. The key distinction lies in how
+each platform handles the overages. Poe enforces a hard cap: once points are exhausted,
+access is suspended until the next billing cycle. This corresponds exactly to the maximumspend mechanism. Copilot, by contrast, allows the cap to be relaxed at a known marginal
+price (which varies across models through the multiplier system), effectively implementing a
+minimum-spend mechanism.
+
+6.4
+
+API Pricing
+
+Alongside consumer subscriptions, every major LLM provider operates a developer-facing
+API through which applications can programmatically submit prompts and receive completions. A developer who calls the API pays per token, with separate rates for input tokens
+(the prompt) and output tokens (the model’s response). There is no subscription fee, no
+bundled allocation, and no minimum commitment: the developer pays only for what she
+uses. Table 4 reports prices for selected models across three providers as of January 2025.
+Provider
+
+Model
+
+Input ($/M)
+
+Output ($/M)
+
+OpenAI
+OpenAI
+OpenAI
+
+GPT-4o-mini
+GPT-4o
+o1 (reasoning)
+
+0.15
+2.50
+15.00
+
+0.60
+10.00
+60.00
+
+Anthropic
+Anthropic
+Anthropic
+
+Claude 3.5 Haiku
+Claude 3.5 Sonnet
+Claude 3 Opus
+
+0.80
+3.00
+15.00
+
+4.00
+15.00
+75.00
+
+Google
+Google
+
+Gemini 1.5 Flash
+Gemini 1.5 Pro
+
+0.075
+1.25
+
+0.30
+5.00
+
+Table 4: API pricing across major providers (January 2025). Prices per million tokens.
+The pricing structure is notably uniform. Output tokens are priced at 3–5× input tokens
+across all providers, reflecting that output generation is sequential and autoregressive (each
+token requires a forward pass conditioned on all preceding tokens), whereas input encod14
+
+As in the theory, the overage charge interacts with the multiplier system: a query to a 1× model costs
+$0.04 in the overage region, while a query to a 3× model (Claude Opus 4.5) costs $0.12.
+
+28
+
+ing is parallelizable and therefore substantially cheaper per token. Pricing is strictly linear:
+there are no quantity discounts, volume commitments, or tiered rates in standard API access. Although outside our model, all providers offer batch discounts (typically 50%) for
+asynchronous processing and prompt-caching discounts (up to 90%) for repeated inputs.
+This linear, pay-per-token structure stands in sharp contrast to the nonlinear menus
+that characterize consumer subscriptions. It corresponds instead to the constrained-efficient
+allocation of Corollary 1: when a provider faces capacity constraints but wishes to maximize
+total surplus rather than profit (for instance, to lock in consumers in anticipation of future
+monetization), the constrained-efficient allocation can be implemented via linear prices equal
+to marginal costs inflated by shadow costs. The absence of nonlinear screening in API pricing
+is consistent with providers currently prioritizing adoption over rent extraction.
+The uniformity of the pricing format across providers is itself evidence of competitive
+pressure: if any single provider were to introduce nonlinear screening in the API segment, it
+would risk losing developers to competitors who maintain simpler, linear pricing.
+Evidence from pricing dynamics is consistent with this interpretation. First, API prices
+have declined rapidly: GPT-4-class capability fell from $30/$60 per million tokens at launch
+(March 2023) to $2.50/$10 by August 2024, a 90% reduction in 16 months. Second, providers
+appear to cut prices in response to competitive launches rather than cost improvements; OpenAI’s August 2024 reductions followed Claude 3.5 Sonnet and Llama 3.1 releases. Third,
+gross margins of 50–75% imply prices remain above marginal cost but are being compressed
+by competition. The entry of DeepSeek in January 2025 with reasoning-model pricing at
+$0.55/$2.19, versus OpenAI’s $15/$60 for comparable capability, suggested that further compression is viable. See Demirer et al. (2025) for a comprehensive treatment of market share
+dynamics in the API segment.
+
+7
+
+Conclusion
+
+A priori, the problem of pricing LLM access appears intractable: users have high-dimensional
+private information, the allocation space is also high-dimensional, and the user’s hidden
+allocation of tokens across tasks introduces moral hazard. In this paper, we have shown that
+homogeneity of the gain function generates a sufficient-statistic reduction that makes the
+problem solvable. Users’ high-dimensional type profiles collapse to a scalar aggregate type;
+the seller’s problem reduces to one-dimensional screening; and the optimal mechanism admits
+simple implementations (committed-spend contracts and two-part tariffs) that correspond
+precisely to the pricing structures observed at leading providers.
+
+29
+
+While we have phrased the analysis in terms of large language models, the framework
+applies more broadly to any setting in which a provider sells access to a general-purpose
+technology with multiple input classes and heterogeneous users. Cloud computing, where
+providers offer a multiplicity of services with both horizontal and vertical differentiation, is a
+natural example. In both settings, the core pricing problem is how to allocate and monetize
+costly computing resources, particularly when operating under capacity constraints.
+Several extensions would enrich the analysis. First, we assumed that all tasks are homogeneous in their use of input, output, and fine-tuning tokens, and differ only vertically in
+how valuable a given task is to the buyer. Allowing the gain function parameters to vary
+across tasks would break the aggregation result. Understanding how the optimal mechanism
+changes when the scalar sufficient statistic no longer exists is a challenging but important
+open question, especially in the context of competing specialized models.
+Second, we assumed that all buyer types have fine-tuning data readily available. In practice, buyers face constraints on data availability or may be unwilling to share data with the
+provider because of privacy, compliance, or intellectual-property concerns. A data-poor buyer
+may then substitute toward inference-time tokens, while a data-rich buyer substitutes toward
+fine-tuning tokens. When data availability is the user’s private information, the provider’s
+problem involves screening on two dimensions (aggregate type and data availability), which
+may require new techniques.
+Third, LLM platforms exhibit network effects and data externalities that our static framework abstracts from. A provider that attracts more users may improve its model through
+fine-tuning, reinforcement learning from human feedback, or simply from the revenue that
+funds further training. These dynamic complementarities between adoption and model quality could substantially reshape optimal pricing, potentially justifying the aggressive belowaverage-cost pricing observed in the API segment not just as a means to capture market
+share but as investment in model improvement.
+Fourth, our analysis treats each provider as either a monopolist or a leader facing a
+competitive fringe. A full oligopoly analysis with multiple differentiated proprietary models
+would capture the strategic interactions among Anthropic, OpenAI, Google, and others that
+increasingly shape the market. The tractability of our framework through the reduction
+to one-dimensional types suggests that such an extension may be feasible and would yield
+further predictions about equilibrium pricing and product differentiation.
+The LLM industry is at an inflection point between growth-oriented pricing and profitmaximizing pricing. Our framework provides a theoretical foundation for understanding
+the mechanisms through which this transition will unfold, and for evaluating whether the
+resulting market structure efficiently allocates this critical economic input.
+30
+
+A
+
+Proofs and Derivations
+
+Proof of Proposition 1 For any z and i, the optimal allocation of inference tokens on
+task i solves
+J
+X
+max wi Ψ(xi )Φ(z) −
+cj xij .
+xij ≥0
+
+j=1
+
+If wi = 0 or Φ(z) = 0, then xi = 0. Otherwise, by the Inada assumption, the problem admits
+an interior solution, which satisfies the system of J first-order conditions:
+wi ∇Ψ(xi )Φ(z) = c.
+
+(35)
+
+By (35), for all i, ∇Ψ(xi ) belongs to a ray with a direction c. Because Ψ is homogeneous
+and strictly concave, the ray in the space of gradients corresponds to a ray in the space of
+tokens.15 Thus, for each i, any optimal xi can be written as:
+xi = dyi ,
+where d ∈ RJ+ is the unique vector that solves ∇Ψ(d) = c.
+Therefore, by the homogeneity of Ψ, we have ∇Ψ(xi ) = yiσ−1 ∇Ψ(d), and (35) can be
+rewritten as:
+wi yiσ−1 ∇Ψ(d)Φ(z) = ∇Ψ(d),
+which pins down the optimal scale as:
+1
+
+1
+
+yi = wi1−σ Φ(z) 1−σ .
+The resulting total surplus ignoring fine-tuning costs is:
+Z 1
+wi Ψ(xi )Φ(z)di −
+0
+
+J
+X
+j=1
+
+Z 1
+
+1
+
+Z 1
+cj
+
+Z 1
+xij di =
+
+0
+
+wi yiσ Ψ(d)Φ(z) − yi (d · c) di
+
+0
+
+1
+
+1
+
+1
+
+wi1−σ Φ(z) 1−σ (Ψ(d) − d · c) di = θ(w) 1−σ Φ(z) 1−σ (1 − σ)Ψ(d),
+
+=
+
+(36)
+
+0
+15
+
+By homogeneity, for all x ∈ RJ+ and r > 0, ∇Ψ(rx) = rσ−1 ∇Ψ(x), so any token ray corresponds to a
+gradient ray. By strict concavity, if x1 ̸= x2 , then ∇Ψ(x1 ) ̸= ∇Ψ(x2 ), so distinct token rays map to distinct
+gradient rays.
+
+31
+
+where θ(w) is the aggregate type defined as
+Z 1
+θ(w) ≜
+
+1
+1−σ
+
+wi
+
+1−σ
+di
+
+,
+
+(37)
+
+0
+
+and the last equality in (36) follows from the definition of d and Euler’s theorem for homogeneous functions: d · ∇Ψ(d) = σΨ(d).
+Similarly, the total amount of inference tokens of class j is:
+Z 1
+
+Z 1
+xij di =
+
+Z 1
+
+0
+
+0
+
+1
+
+1
+
+1
+
+1
+
+dj wi1−σ Φ(z) 1−σ di = θ(w) 1−σ dj Φ(z) 1−σ .
+
+dj yi di =
+0
+
+This completes the proof.
+
+□
+
+Proof of Corollary 1 The Lagrangian approach applies. Thus, associating Lagrange
+multipliers λj ≥ 0 and λ̂k ≥ 0 with the capacity constraints for the different token classes,
+the optimal solution solves
+Z 1
+wi g(xi , z)di −
+
+max
+(xi )i∈[0,1] ,z≥0
+
+0
+
+J
+X
+
+Z 1
+xij di −
+
+(cj + λj )
+0
+
+j=1
+
+K
+X
+
+(ĉk + λ̂k )zk .
+
+k=1
+
+As such, the solution is an efficient allocation given the adjusted costs c′j ≜ cj + λj and
+ĉ′k ≜ ĉk + λ̂k . The result follows.
+□
+Proof of Proposition 2 Consider the buyer-optimal inference token allocation across
+tasks for any given token budgets (X, Z) such that Φ(Z) > 0:
+Z 1
+
+Z 1
+max
+
+xij ≥0
+
+wi Ψ(xi )Φ(Z)di,
+
+xij di = Xj for j ∈ [J].
+
+s.t.
+
+0
+
+(38)
+
+0
+
+Because Φ(Z) is a strictly positive constant, it can be ignored. Assume that for each j,
+Xj > 0; otherwise, xij = 0 for all i. Lagrangian approach applies. We associate Lagrange
+multipliers λ = (λ1 , . . . , λJ ) with the budget constraints of (38); the resulting first-order
+conditions are:
+wi ∇Ψ(xi ) = λ.
+By the same logic as in the efficiency analysis, these conditions imply that the relative ratios
+of input tokens are the same across all tasks:
+xi = yi d,
+32
+
+R1
+for some d ∈ RJ+ . The budget constraints imply that ( 0 yi di)d = X and hence d is proporP
+tional to X and can be normalized to satisfy Jj=1 dj = 1, leading to
+d = PJ
+
+1
+
+j=1 Xj
+
+X.
+
+(39)
+
+The optimal scales yi solve:
+Z 1
+max
+yi ≥0
+
+Z 1
+
+wi yiσ Ψ(d)di,
+
+yi di =
+
+s.t.
+0
+
+0
+
+J
+X
+
+Xj .
+
+j=1
+
+At the optimum, the marginal gains wi σyiσ−1 are equalized across tasks, so:
+PJ
+
+j=1 Xj
+
+1
+1−σ
+
+yi = wi
+
+R1
+0
+
+1
+1−σ
+
+wr
+
+.
+
+dr
+
+The optimal buyer’s payoff is:
+
+
+Z 1
+U=
+
+1
+1−σ
+
+wi wi
+0
+
+Z 1
+
+1
+1−σ
+
+wi
+
+=
+0
+
+di
+
+σ
+
+PJ
+
+j=1 Xj
+
+R1
+
+w
+
+1
+1−σ
+
+ Ψ(d)Φ(Z)di
+
+dr
+
+r
+0
+1−σ X
+J
+
+!σ
+Xj
+
+Ψ(d)Φ(Z) = θ(w)Ψ(X)Φ(Z),
+
+j=1
+
+where in the last equality we used the homogeneity of Ψ and (39).
+Proof of Lemma 1 The fact that C(Q) is strictly increasing and strictly convex is immediate because g(X, Z) = Ψ(X)Φ(Z) is strictly increasing and strictly concave in its arguments
+whenever g(X, Z) > 0.
+To show C+′ (0) = 0, observe that since C(Q) is convex, C+′ (0) = inf Q>0 C(Q)/Q. Pick any
+X0 such that Ψ(X0 ) > 0 and Z0 as in Footnote 3. For r > 0, consider (Xr , Zr ) = r(X0 , Z0 )
+and set Qr = g(Xr , Zr ). We have,
+C(Qr )
+c · Xr + ĉ · Zr
+r(c · X0 + ĉ · Z0 )
+c · X0 + ĉ · Z0
+1
+≤
+= σ
+=
+.
+Qr
+Qr
+r Ψ(X0 )Φ(rZ0 )
+Ψ(X0 )
+Φ(rZ0 )/r1−σ
+By the choice of Z0 , Φ(rZ0 )/r1−σ → +∞ as r ↓ 0, hence the right-hand side goes to 0. Since
+Qr ↓ 0, it follows that inf Q>0 C(Q)/Q = 0.
+□
+
+33
+
+Proof of Proposition 3 The result is an application of Mussa and Rosen (1978) to the
+buyer’s payoff θQ from Proposition 2 and the cost function C(Q) from Lemma 1. The
+optimal quality schedule (12) and transfers (13) follow from standard arguments.
+□
+Proof of Proposition 4 Fix an optimal direct mechanism (X ∗ (θ), Z ∗ (θ), T ∗ (θ)) with the
+associated aggregate quality Q∗ (θ) = Ψ(X ∗ (θ))Φ(Z ∗ (θ)).
+Maximum-spend mechanism. Consider a maximum-spend mechanism with p =
+(c, ĉ), T (θ) = T ∗ (θ), and B(θ) = C(Q∗ (θ)). Under this mechanism, since tokens are priced
+at marginal cost, each type w purchasing budget B(θ′ ) would optimally allocate tokens in a
+constrained-efficient way, thus deriving payoff θ(w)Q where C(Q) = B(θ′ ), i.e., Q = Q∗ (θ′ ).
+Hence, the choice across items in this mechanism is equivalent to the choice in the direct
+mechanism, and this mechanism implements the allocation of the direct mechanism.
+Two-part-tariff mechanism. When type w faces any two-part tariff, his optimal token
+allocation problem is equivalent to the efficient allocation problem (5) with prices taking the
+roles of costs. Therefore, all types w with the same θ(w) have the same payoff from any
+possible two-part tariff and can be treated as a single type.
+Faced with a given item, the problem of type θ can be written as value-maximizationpayment-minimization:
+max θQ − P (Q),
+Q≥0
+
+where
+P (Q) ≜
+
+min
+
+J
+X
+
+X1 ,...,XJ ,Z1 ,...,ZK ≥0
+
+p j Xj +
+
+j=1
+
+K
+X
+
+p̂k Zk ,
+
+s.t. Ψ(X)Φ(Z) = Q.
+
+k=1
+
+Consider the following two-part-tariff mechanism:
+pj (θ) = m(θ)cj , p̂k (θ) = m(θ)ĉk , j ∈ [J], k ∈ [K],
+p0 (θ) = t(θ) − m(θ)C(Q(θ)),
+where C(Q) is as defined in (10), Q(θ) is as defined in (12), and t(θ) is as defined in (13).
+P
+P
+PJ
+PK
+Under this mechanism, Jj=1 pj Xj + K
+k=1 p̂k Zk = m(θ)(
+j=1 cj Xj +
+k=1 ĉk Zk ). Thus, the
+buyer-optimal allocation is efficient, and P (Q) = m(θ)C(Q).
+The rest of the argument is standard (e.g., Tirole (1988, pp. 154-157)). A buyer-optimal
+Q(θ) is determined by the first-order condition:
+θ = P ′ (Q(θ)) = m(θ)C ′ (Q(θ)),
+
+34
+
+and thus the buyer-optimal level of quality satisfies the optimality condition:
+φ̄(θ) = C ′ (Q(θ)).
+If m(θ) is decreasing, then the implied payment schedule in units of C(Q) is concave. Thus, a
+menu of two-part tariffs with markups m(θ), constant across inputs, implements the desired
+quality schedule Q(θ), with each type θ consuming the optimal amount of tokens and paying
+the optimal total transfer.
+Minimum-spend mechanism. Consider a minimum-spend mechanism that consists
+of p(θ) = r(θ)(c, ĉ) and B(θ) = T ∗ (θ) for all types such that Q∗ (θ) > 0, where r(θ) =
+T ∗ (θ)
+. By construction, since prices are proportional to costs, type w, when consuming
+C(Q∗ (θ))
+aggregate quality Q, would optimally derive value θ(w)Q. Thus, the buyer’s problem of
+optimal spending can be formulated in terms of Q. The restriction of minimum spend when
+reporting θ′ can be written as r(θ′ )C(Q) ≥ T ∗ (θ′ ), which simplifies to Q ≥ Q∗ (θ′ ). Thus,
+the optimal payoff of type θ when reporting type θ′ is
+U (θ, θ′ ) = max
+θQ − r(θ′ )C(Q).
+∗ ′
+Q≥Q (θ )
+
+This mechanism implements the allocation of the direct mechanism if each type prefers
+to report truthfully and choose Q = Q∗ (θ). Since B(θ) is increasing, for this to happen, r(θ)
+must be decreasing.
+In fact, r(θ) being decreasing is not only necessary but also sufficient for implementability.
+To see this, note that Q∗ (θ) is continuously increasing and r(θ) ≥ 1. Thus, the optimal
+deviation is always weakly below the maximum quality offered in the direct menu:
+θQ − C(Q) = Q∗ (θ),
+arg max
+θQ − r(θ′ )C(Q) ≤ arg max
+∗ ′
+∗ ′
+Q≥Q (θ )
+
+Q≥Q (θ )
+
+where θ is the maximum point in supp F . Moreover, if type θ deviates to type θ′ and
+consumes quality Q ≤ Q∗ (θ), then there exists a type θ′′ ≥ θ′ such that Q = Q∗ (θ′′ ). Since
+r is decreasing, it is more profitable for type θ to deviate to type θ′′ and consume Q∗ (θ′′ ).
+But such a deviation is equivalent to the deviation to θ′′ in the direct menu and is therefore
+not profitable.
+It remains to show that decreasing m implies decreasing r. Assume that m is decreasing.
+Since m and r are continuous, it suffices to show that their derivatives are negative at all
+
+35
+
+differentiable points. At those points, m′ (θ) ≤ 0, which implies φ̄(θ) − φ̄′ (θ)θ ≤ 0, and
+r′ (θ) =
+
+T ∗′ (θ)C(Q∗ (θ)) − T ∗ (θ)C ′ (Q∗ (θ))Q∗′ (θ)
+Q′ (θ)
+=
+(θC(Q∗ (θ)) − T ∗ (θ)φ̄(θ)),
+∗
+2
+∗
+2
+C(Q (θ))
+C(Q (θ))
+
+where we used the fact that T ∗′ (θ) = θQ∗′ (θ) and C ′ (Q∗ (θ)) = φ̄(θ). Since Q is increasing, it
+T ∗ (θ)
+θ
+≤ C(Q
+suffices to show that φ̄(θ)
+∗ (θ)) , i.e., the markup in the two-part tariff implementation is
+lower than the markup in the minimum-spend implementation. To show this, observe that
+at the maximal excluded type θ0 , θC(Q∗ (θ)) − T ∗ (θ)φ̄(θ) = 0, and for all types θ > θ0 ,
+
+
+θC(Q∗ (θ)) − T ∗ (θ)φ̄(θ)
+θ
+
+′
+=
+
+T (θ)
+(φ̄(θ) − φ̄′ (θ)θ) ≤ 0.
+θ2
+
+(40)
+
+Therefore, θC(Q∗ (θ)) − T ∗ (θ)φ̄(θ) ≤ 0, and r is decreasing.
+Proof of Lemma 2 For general, not necessarily identical, σl , the marginal gain from
+assigning an infinitesimal task with value wi to model l is, by (18):
+1 − σl
+1/(1−σl )
+δl (wi ) = R 1/(1−σ )
+Ql wi
+.
+l
+σ
+l
+( Il w r
+dr)
+
+(41)
+
+Under an optimal task split, if a task with value wi is assigned to a model l, then it must be
+that for all m, δl (wi ) ≥ δm (wi ). Because δm (wi )/δl (wi ) is increasing in wi for all m > l, it
+follows that an optimal task-model allocation exists that forms a monotone partition, with
+models of higher l (and thus higher σl ) being allocated the more valuable tasks.
+Denoting by il the delimiting points, with i0 = 0 and iL = 1, the optimal partition is
+determined by equalizing the marginal gains, δl (wil ) = δl+1 (wil ) for l ∈ [L − 1]:
+R 1/(1−σl ) σ
+( Il w i
+di) l
+
+1/(1−σl )
+
+(1 − σl )Ql wil
+
+1/(1−σl+1 )
+
+(1 − σl+1 )Ql+1 wil
+
+= R
+.
+1/(1−σl+1 )
+( Il+1 wi
+di)σl+1
+
+(42)
+
+When σl ≡ σ, the optimality condition (42) simplifies to the following expression:16
+R
+1/(1−σ)
+( I ∗ wi
+di)σ
+Ql
+l
+= R
+.
+1/(1−σ)
+Ql+1
+( ∗ wi
+di)σ
+Il+1
+
+16
+
+In the general case of heterogeneous σl , the optimal task split and the resulting buyer’s payoff do not
+admit tractable closed-form solutions. In particular, the fine details of the profile w could matter.
+
+36
+
+Thus,
+Z 1
+1/σ
+Ql
+1/(1−σ)
+1/(1−σ)
+wi
+di,
+wi
+di = P
+1/σ
+∗
+Q
+0
+Il
+m
+m
+
+Z
+
+or, equivalently,
+1/σ
+
+Ql
+P
+1/σ
+m Qm
+
+θl (Il∗ ) =
+
+!1−σ
+θ.
+
+The collection (θl (Il∗ ))Ll=1 determines an optimal (monotone) partition (Il∗ )Ll=1 .17 All models
+with Ql > 0 are employed at some tasks. The resulting optimal payoff is then (20).
+□
+Proof of Lemma 3 Drop the l index. First, consider the case σ̂ > 0. Define the unit-cost
+indices
+e ≜ min{c · x : Ψ(x) ≥ 1}, ê ≜ min{ĉ · z : Φ(z) ≥ 1}.
+x≥0
+
+z≥0
+
+For strictly concave, increasing, homogeneous Ψ, Φ these are finite and attained, and the
+respective minimizers d, dˆ are unique.
+By homogeneity and the definition of e, the minimal cost to reach Ψ(x) = Ψ0 is
+1/σ
+
+min{c · x : Ψ(x) ≥ Ψ0 } = Ψ0 e,
+x≥0
+
+1/σ
+1/σ̂
+1/σ̂ ˆ
+attained at x = Ψ0 d. Similarly, minz≥0 {ĉ · z : Φ(z) ≥ Φ0 } = Φ0 ê, attained at z = Φ0 d.
+The cost minimization reduces to
+1/σ
+
+1/σ̂
+
+min Ψ0 e + Φ0 ê s.t. Ψ0 Φ0 = Q.
+
+Ψ0 ,Φ0 ≥0
+
+Straightforward calculation gives:
+Ψ0 = Q
+
+σ
+σ+σ̂
+
+
+
+ê σ
+e σ̂
+
+σ σ̂
+ σ+σ̂
+
+,
+
+Φ0 = Q
+
+σ̂
+σ+σ̂
+
+
+
+ê σ
+e σ̂
+
+σ σ̂
+− σ+σ̂
+
+,
+
+which corresponds to the optimal token allocation:
+∗
+
+x (Q) = Q
+
+1
+σ+σ̂
+
+σ̂
+ ê σ  σ+σ̂
+
+e σ̂
+
+d,
+
+∗
+
+z (Q) = Q
+
+1
+σ+σ̂
+
+σ
+ ê σ − σ+σ̂
+
+e σ̂
+
+ˆ
+d.
+
+The resulting cost function is:
+1/σ
+
+C(Q) = eΨ0
+17
+
+1/σ̂
+
++ êΦ0
+
+σ
+
+σ̂
+
+= e σ+σ̂ ê σ+σ̂
+
+σ̂
+h σ  σ+σ̂
+
+σ̂
+
++
+
+σ i
+ σ̂  σ+σ̂
+
+σ
+
+1
+
+Non-monotone partitions may also be optimal, but θl (Il∗ ) are uniquely determined.
+
+37
+
+1
+
+Q σ+σ̂ = C0 Q σ+σ̂ .
+
+The case σ̂ = 0 is analogous and simpler because in that case Φ(z) ≡ Φ0 > 0 and
+fine-tuning can be ignored. The resulting cost function is
+
+C(Q) = e
+
+Q
+Φ0
+
+ σ1
+
+1
+
+= C0 Q σ .
+
+This completes the proof.
+
+□
+
+Proof of Proposition 5 By Lemma 3, each model’s surplus θQ − κl Q1/(σ+σ̂l ) is concave
+in Q and can be maximized in closed form. The efficient allocation selects the model that
+yields the highest surplus, yielding (22)–(23). Single-model usage follows because the cost
+function (21) is concave in Q1/σ .
+□
+Proof of Proposition 6 The result follows by pointwise maximization of virtual surplus
+with φ(θ) in place of θ in Proposition 5. Monotonicity of φ ensures that the pointwise
+solution Qm (θ) = Q∗ (φ(θ)) is increasing and therefore implementable.
+□
+Proof of Lemma 4 When σ̂F = 0, (29) simplifies into:
+(σ+σ̂ )/σ
+qL L + q F =
+
+θσ
+cF
+
+1/(1−σ)
+
+
+
+σ/(1−σ)
+
+
+
+.
+
+(43)
+
+The outside option corresponding to qL = 0 is
+ψ(θ) = θ
+
+1
+1−σ
+
+(1 − σ)
+
+σ
+cF
+
+.
+
+(44)
+
+The formulation (31) follows.
+Proof of Proposition 7 Denote the expression in the brackets of (32) by Π(θ, q) and
+observe that
+
+c q(θ)(σ+σ̂L )/σ − c q(θ),
+if q(θ) < q̂(θ),
+F
+L
+Π(θ, q(θ)) =
+(45)
+φ(θ)q(θ)σ+σ̂L − c q(θ) − ψ(θ) + 1−F (θ) ψ ′ (θ), if q(θ) > q̂(θ).
+L
+
+f (θ)
+
+Consider the pointwise maximization of Π(θ, q(θ)). In the region q(θ) ∈ [0, q̂(θ)], Π(θ, q(θ))
+is convex in q(θ) and therefore attains its maximum at a corner, q(θ) = 0 or q(θ) = q̂(θ).
+
+38
+
+Direct calculation shows that Π(θ, 0) > Π(θ, q̂(θ)) if and only if θ < θ1 , where
+cF
+θ1 ≜
+σ
+
+
+
+cL
+cF
+
+(1−σ)(σ+σ̂L )/σ̂L
+.
+
+(46)
+
+In the region q(θ) ≥ q̂(θ), if φ(θ) ≤ 0, then optimally q(θ) = q̂(θ). If φ(θ) > 0, then
+Π(θ, q(θ)) is concave in q(θ) and therefore the maximum is either at the corner, q(θ) = q̂(θ),
+or in the interior, in which case it equals the optimal monopoly quantity
+
+
+m
+
+q (θ) =
+
+(σ + σ̂L )φ(θ)
+cL
+
+1/(1−σ−σ̂L )
+.
+
+(47)
+
+Thus, the solution over the region q(θ) ≥ q̂(θ) is interior if and only if Πq (θ, q̂(θ)) > 0, or
+cL
+φ(θ) >
+σ + σ̂L
+
+
+
+θσ
+cF
+
+σ(1−σ−σ̂L )
+ (1−σ)(σ+σ̂
+)
+L
+
+.
+
+(48)
+
+Condition (48) can hold on disjoint intervals of θ even if φ(θ) is increasing, because the
+right-hand side is increasing in θ. However, the power of θ on the right-hand side is strictly
+less than 1. Thus, if F satisfies monotone hazard rate, then φ′ (θ) ≥ 1, and condition (48)
+holds, if at all, for all θ > θ2 where θ2 solves:
+cL
+φ(θ2 ) =
+σ + σ̂L
+
+
+
+θ2 σ
+cF
+
+σ(1−σ−σ̂L )
+ (1−σ)(σ+σ̂
+)
+L
+
+.
+
+(49)
+
+If (49) doesn’t admit a solution, then the solution is never interior and thus for all θ < θ1 ,
+q(θ) = 0 and for all θ > θ1 , q(θ) = q̂(θ). If (49) admits a solution at θ2 > θ1 , then: for all
+θ < θ1 , q(θ) = 0; for all θ ∈ (θ1 , θ2 ), q(θ) = q̂(θ); for all θ ≥ θ2 , q(θ) = q m (θ). Finally, if
+(49) admits a solution at θ2 < θ1 , then θ3 ∈ [θ2 , θ1 ] exists such that for all θ < θ3 , q(θ) = 0
+and for all θ ≥ θ3 , q(θ) = q m (θ). (The threshold θ3 > θ2 is determined by the condition
+Π(θ3 , q m (θ3 )) = 0.)
+Since all these (relaxed) solutions are implementable, the result follows.
+□
+Leader-Fringe Competition with Uniform Types
+Competitive Mechanism— With σ̂F = 0 the buyer’s first-order condition implies
+(σ+σ̂L )/σ
+
+qL
+
++ qF =
+
+39
+
+
+
+θσ
+cF
+
+1/(1−σ)
+
+.
+
+On the fringe-indifference boundary (qF = 0) the leader’s quantity solves
+q̂(θ) =
+
+
+
+θσ
+cF
+
+σ
+(1−σ)(σ+σ̂
+)
+L
+
+.
+
+When the buyer single-homes on the leader and the fringe constraint is slack,
+q m (θ) =
+
+
+
+(σ+σ̂L ) φ(θ)
+cL
+
+1
+1−σ−σ̂
+
+L
+
+=
+
+
+
+(σ+σ̂L ) (2θ−1)
+cL
+
+1
+1−σ−σ̂
+
+L
+
+.
+
+We want the optimal menu to be characterized by 0 < θ1 < θ2 < 1 such that
+
+
+
+0,
+θ ≤ θ1 ,
+
+
+q LF (θ) = q̂(θ),
+θ1 < θ < θ2 ,
+
+
+
+q m (θ), θ ≥ θ ,
+2
+
+  1
+
+ θ σ 1−σ , θ ≤ θ1 ,
+LF
+cF
+qF (θ) =
+
+0,
+θ > θ1 .
+
+The entry cutoff is
+cF  cL 
+θ1 =
+σ cF
+
+(1−σ)(σ+σ̂L )
+σ̂L
+
+.
+
+The boundary-interior switch θ2 is the unique solution to
+σ(1−σ−σ̂ )
+
+φ(θ) =
+
+cL  θ σ (1−σ)(σ+σ̂LL )
+,
+σ + σ̂L cF
+
+cL
+which exists in (1/2, 1) if and only if σ+σ̂
+L
+
+
+
+σ
+cF
+
+σ(1−σ−σ̂L )
+(1−σ)(σ+σ̂
+)
+L
+
+< 1. Furthermore, θ2 > θ1 if and
+only if θ1 < (σ + σ̂L )/(σ + 2σ̂L ). Therefore, for 0 < θ1 < θ2 < 1 to take place, the necessary
+and sufficient conditions are:
+σ(1−σ−σ̂ )
+
+cL  σ (1−σ)(σ+σ̂LL )
+< 1,
+σ + σ̂L cF
+
+cF  cL 
+σ cF
+
+(1−σ)(σ+σ̂L )
+σ̂L
+
+<
+
+σ + σ̂L
+.
+σ + 2σ̂L
+
+Efficient Allocation— Efficiency features single-homing with a model-switch cutoff θ̂:
+   1 
+θ σ 1−σ
+
+
+ 0,
+,
+θ < θ̂,
+(qL∗ (θ), qF∗ (θ)) =  cF
+1
+
+θ(σ + σ̂L ) 1−σ−σ̂
+
+L
+
+, 0 , θ ≥ θ̂,
+
+cL
+with
+1−σ 
+θ̂ =
+1 − σ − σ̂L
+
+
+(1−σ−σ̂L )(1−σ)
+σ̂L
+
+ σ  σ(1−σ−σ̂
+L) 
+σ̂
+L
+
+cF
+
+cL 
+σ + σ̂L
+
+(σ+σ̂L )(1−σ)
+σ̂L
+
+.
+
+Multi-Model Monopoly— Virtual type is φ(θ) = 2θ − 1. Types θ < 1/2 are excluded. Among
+40
+
+served types the monopolist assigns a single model, switching at θm = (1 + θ̂)/2. Optimal
+quantities are
+
+
+
+(0, 0),
+θ < 12 ,
+
+
+
+1 
+  σ φ(θ) 1−σ
+1
+m
+m
+0,
+,
+≤ θ < θm ,
+(qL (θ), qF (θ)) =
+2
+c
+
+
+1
+ (σ + σ̂F ) φ(θ) 1−σ−σ̂
+
+
+
+L
+L
+
+,
+0
+, θ ≥ θm .
+
+cL
+
+41
+
+B
+
+Contractible Tasks
+
+Throughout the manuscript, we focus on the more realistic case in which the LLM provider
+cannot contract on the allocation of tokens across the buyer’s tasks. However, the fullcontracting setting provides a natural benchmark and we study it in this section. Thus, the
+seller designs a direct menu that specifies a token allocation across d

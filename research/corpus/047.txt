@@ -1,0 +1,2692 @@
+TITLE: Beyond Leaderboards: A Method for Application-Specific Capability Profiling of Large Language Models
+URL: https://arxiv.org/abs/2610.25659
+ORG: arXiv  TYPE: paper  DATE: 2026-10
+
+Beyond Leaderboards: A Method for
+Application-Specific Capability Profiling of Large
+Language Models
+Oleg Grynets​
+EPAM Systems​
+McLean, Virginia, USA​
+oleg_grynets@epam.com
+
+Vasyl Lyashkevych​
+EPAM Systems​
+Lviv, Ukraine​
+vasyl_lyashkevych@epam.com
+
+Andrii Salyk​
+EPAM Systems​
+Lviv, Ukraine​
+andrii_salyk@epam.com
+
+Dmytro Koziuberda​
+EPAM Systems​
+Kyiv, Ukraine​
+dmytro_koziuberda@epam.com
+
+Dmytro Kostetskyi​
+EPAM Systems​
+Lviv, Ukraine​
+dmytro_kostetskyi@epam.com
+
+Oleh Kaskun​
+EPAM Systems​
+Lviv, Ukraine​
+oleh_kaskun@epam.com
+
+Olena Pochernina​
+EPAM Systems​
+Lviv, Ukraine​
+olena_pochernina@epam.com
+
+Alona Seletska​
+EPAM Systems​
+Kyiv, Ukraine​
+alona_seletska@epam.com
+
+Oleksii Ilchuk​
+EPAM Systems​
+Lviv, Ukraine​
+oleksii_ilchuk@epam.com
+
+Viktoriia Tsymbal​
+EPAM Systems​
+Lviv, Ukraine​
+viktoriia_tsymbal@epam.com
+
+Daryna Tukalo​
+EPAM Systems​
+Kyiv, Ukraine​
+daryna_tukalo@epam.com
+
+Bohdan Saukh​
+EPAM Systems​
+Lviv, Ukraine​
+bohdan_saukh@epam.com
+
+Ivan Fedorchuk​
+EPAM Systems​
+Vinnytsia, Ukraine​
+ivan_fedorchuk@epam.com
+
+Hryhorii Petrenko​
+EPAM Systems​
+Kharkiv, Ukraine​
+hryhorii_petrenko@epam.com
+
+Abstract—Public leaderboards rank large language models
+(LLMs) in general, but an engineer has to choose a model for a
+specific application, architecture and cost. This paper presents
+a method for application-specific capability profiling of LLMs
+and its realization as a containerized testbed. The method
+treats each application as a unit of extension: an
+Oracle-to-PostgreSQL
+migration
+agent,
+a
+documentation-grounded chatbot or an enterprise-support
+automation agent runs in its own container behind a small
+contract, brings its own dataset, evaluator and owned
+attributes, and is onboarded together with its dashboards.
+Measurements accumulate in a versioned, sparse metamodel of
+every model. The method separates the model under test from
+judges and agents, freezes and hashes plans, refuses to compare
+values from different contexts, diagnoses the instrument before
+the system, and applies a null-agent check and a noise rule
+whose operating characteristics are quantified by simulation.
+In the evaluated automation conditions, model choices
+produced larger differences on selected observable outcomes
+than framework choices, although the experimental design
+does not establish a general causal ranking of these factors. The
+experiments also show that instruction tuning is
+deployment-specific and that system-reported success can
+exceed independently observed success: of 216 migration units
+checked against a real Oracle database, 108 were demonstrably
+correct. These measurements establish application-specific
+observations, not a universal model ranking.
+Keywords—large language models, capability profiling,
+model selection, metamodel, diagnostics, benchmarking, testbed,
+Grafana, LLM agents, database migration
+
+I.​
+
+INTRODUCTION
+
+Choosing a large language model (LLM) for an
+enterprise application is still, in most teams, an exercise in
+reading leaderboards and trusting vendor claims. Public
+benchmarks such as MMLU [1], BIG-bench [2], HELM [3]
+and Chatbot Arena [4] answer the question “how good is
+this model in general?”, but an engineer who has to migrate
+a legacy database, operate a documentation assistant or
+automate a support queue asks a different question: “how
+good is this model for this task, in this architecture, at this
+cost?” The two questions diverge more than is commonly
+assumed. In our own experiments a configuration change
+that improved intent classification by 4.6 percentage points
+on one deployment lowered it by 3.4 points on a second and
+had no effect on a third, so that a tuning result measured on
+a weak deployment described the deployment rather than the
+prompt. Similarly, in an automation agent that reasons over
+Jira, Confluence and Outlook events, the choice of the
+model changed the amount of work actually performed
+(mean state-changing effects per run) between 0.5 and 1.8,
+while the choice of the agent framework moved the same
+quantity only between 0.4 and 0.7.
+This paper presents a method for application-specific
+capability profiling of LLMs and the containerised testbed
+that realises it. The method is designed to make such
+differences visible, measurable and comparable. It profiles
+LLMs by running them through reference applications:
+small but complete prototypes of the application classes that
+matter to the authors’ organisation, namely an
+
+Oracle-to-PostgreSQL
+migration
+agent,
+a
+documentation-grounded chatbot and an enterprise-support
+automation agent. Every application is packaged as a
+separate container with an evaluation interface. The testbed
+executes models against datasets and application
+configurations, records versioned measurements, and
+exposes them through an analytical interface and through
+Grafana dashboards. The accumulated measurements form a
+sparse, versioned metamodel of each LLM: a profile of
+attributes, each measured in the same way for every model,
+which can be queried to decide which model should do
+which task at what cost.
+The method is organised in eight steps, from defining an
+application and onboarding it to deciding on a model and
+monitoring the profile (Section IV). Its central design
+decision is that an application is a unit of extension of the
+testbed, not just a workload. When a new application is
+added, it brings its own dataset, its own evaluator and its
+own attribute declarations, and onboarding registers the
+application in the probe registry, in the metric catalogue and
+in the dashboards. As a consequence the set of LLM features
+that the testbed can talk about grows with the set of
+applications it hosts: a chatbot adds retrieval and citation
+attributes, an automation agent adds tool-use and side-effect
+attributes, a migration agent adds behavioural-equivalence
+attributes. Section V describes the mechanism; Section VIII
+reports what the first three applications have revealed,
+together with a simulation of the decision rule and a
+statistical re-analysis of the reported counts.
+A.​ Problem Statement and Research Questions
+We study the following problem. Given a growing set of
+LLMs and a growing set of application classes, build an
+experimental infrastructure that (i) measures every model on
+every application under controlled and fully recorded
+conditions, (ii) keeps the measuring instrument separate
+from the object measured, (iii) refuses to report numbers that
+were produced under different conditions as if they were
+comparable, and (iv) makes the result usable for model
+selection. The work is organised around four research
+questions.
+●​ RQ1. What architecture allows heterogeneous
+reference applications to be added to an
+LLM-profiling testbed without modifying its core,
+while
+preserving
+reproducibility
+and cost
+transparency?
+●​ RQ2. Which measurement and diagnostic principles
+are necessary so that the numbers produced by such a
+testbed can be trusted, given that agents, judges and
+applications are themselves LLM-driven, and how
+should a failure be diagnosed: in the instrument first,
+or in the system?
+●​ RQ3. What do the first three reference applications
+reveal about the dependence of model behaviour on
+task, configuration and framework?
+●​ RQ4. How can the accumulated measurements be
+turned into a decision aid for model selection, and
+which claims must it refuse to make?
+B.​ Contributions
+The paper makes six contributions. First, it states a
+method for application-specific capability profiling in eight
+steps (Section IV).
+
+Second, it formalises an LLM metamodel as a sparse
+partial function from attributes to measurements with
+explicit context and plan identity, and defines the
+comparability relation, the evidence levels and a capability
+taxonomy used throughout (Section III).
+Third, it presents the architecture of the testbed with its
+application-container contract, onboarding algorithm,
+deterministic plan gate, three-way cost separation and
+dashboard registration, and it provides a reference
+implementation of the computational core (Section V).
+Fourth, it describes three reference applications and their
+evaluation stands in sufficient detail to be reproduced
+(Section VI).
+Fifth, it states the measurement and diagnostic principles
+distilled from defects that the authors found in their own
+stands, including the instrument-first diagnostic ladder, the
+degenerate-agent check and a three-state noise rule whose
+operating characteristics are quantified by Monte Carlo
+simulation (Section VII).
+Sixth, it presents the measured results, their statistical
+re-analysis, and the resulting evidence and capability maps
+(Sections VIII and IX).
+The methodological contribution is the operational
+coupling
+of
+context-aware
+measurement classes,
+evidence-constrained verdicts and instrument-first diagnosis
+with extensible application probes. The measured evidence
+is preliminary and does not establish a universal ranking of
+models or a causal ordering of model and framework effects.
+The paper distinguishes measurement validity,
+repeatability, and generalisability. Some comparisons
+involve small or single-run samples, and some outcome
+measures lack complete behavioural ground truth; these
+boundaries are identified in the experiments and Section
+IX-J. The study produces conditional capability profiles
+rather than a context-free ranking of evaluated models.
+The remainder of the paper is organised as follows.
+Section II reviews related work. Section III formalises the
+problem. Section IV states the method. Section V describes
+the testbed architecture. Section VI presents the reference
+applications. Section VII states the evaluation and diagnostic
+methodology. Section VIII reports experiments and Section
+IX discusses them. Section X concludes.
+II.​
+
+RELATED WORK
+
+We reviewed 88 scholarly sources, including
+peer-reviewed publications and preprints, and organised the
+literature into six areas: general-purpose benchmarking,
+application-level evaluation, LLM-as-a-judge, benchmark
+validity and statistical analysis, cost-aware model selection,
+and engineering practices for observable machine learning
+systems. Table I summarises how the testbed relates to each
+line.
+A.​ General-Purpose Benchmarks and Holistic Evaluation
+Large multi-task suites measure broad knowledge and
+reasoning. MMLU [1] and AGIEval [5] use
+examination-style questions, BIG-bench [2] collects
+hundreds of community-contributed tasks, and HELM [3]
+argues for holistic reporting over many scenarios and seven
+metric families, including calibration, robustness and
+efficiency, rather than accuracy alone. Human-preference
+platforms such as Chatbot Arena [4] and judge-based
+protocols such as MT-Bench [6] complement static suites
+with open-ended comparisons. Surveys [7] show that the
+
+2
+
+evaluation literature is dominated by such general-purpose
+protocols. Behavioural testing in the CheckList style [8] and
+dynamic benchmark construction [9] address the fragility of
+static test sets. These works define what to measure in
+general; the testbed adopts their emphasis on multiple
+metrics and on explicit scenarios, but replaces the “scenario”
+with a complete reference application so that the measured
+quantity is the behaviour of a model inside an architecture.
+Two lessons from this line of work shape the testbed
+more than any specific benchmark. The first is that a single
+aggregate score hides the structure of model behaviour:
+HELM reports accuracy next to calibration, robustness,
+fairness, bias, toxicity and efficiency for the same scenarios
+precisely so that trade-offs become visible [3], and
+BIG-bench documents tasks on which scale alone does not
+produce a smooth improvement [2]. The second is that
+preference-based and judge-based protocols inherit
+properties of their instruments. Pairwise voting at scale is
+informative about open-ended chat quality [4], yet it cannot
+say whether a model completes a database migration
+correctly, and a benchmark that ranks models on
+examination questions says little about their behaviour
+inside a retrieval pipeline. For these reasons the testbed does
+not attempt to compete with general leaderboards; it
+assumes that a team has already shortlisted models from
+them and asks what happens next.
+B.​ Application-Level Evaluation: Retrieval, Agents, Code,
+SQL
+Retrieval-augmented generation [10] is evaluated with
+component-level retrieval metrics on benchmarks such as
+BEIR [11] and with generation-level criteria such as
+faithfulness and answer relevance in automated frameworks
+[12], [13]. RGB [14] diagnoses noise robustness, negative
+rejection and information integration, and positional effects
+in long contexts are documented in [15]. Dense retrieval
+[16] and rank fusion [17] are the building blocks of the
+retrieval configurations that our chatbot stand compares.
+Agent evaluation has moved from single-turn function
+calling [18], [19] to interactive environments: AgentBench
+[20], WebArena [21], GAIA [22] and SWE-bench [23] score
+the end state or the task outcome in realistic environments,
+and surveys catalogue architectures and evaluation practices
+[24], [25]. Reasoning-and-acting loops [26], self-reflection
+[27] and experience-based learning [28] are the mechanisms
+around which many agents are built, while multi-agent
+frameworks [29], [30] supply orchestration patterns that we
+treat as an experimental variable. Our automation stand
+follows the end-state logic of these benchmarks but adds a
+distinction that they rarely make explicit: whether a claim of
+success in the final answer is backed by an observable
+effect.
+For code and data tasks, Spider [31] and BIRD [32]
+evaluate text-to-SQL by execution, TransCoder [33] and
+CodeTransOcean [34] address program translation, and
+EvalPlus [35] shows that weak test suites overstate
+functional correctness. A study of bugs introduced during
+LLM-based code translation [36] and two broad surveys of
+LLMs in software engineering [37], [38] frame the
+migration problem. Classical text-similarity metrics such as
+BLEU [39] and chrF [40] are still used as reference-based
+signals, but our migration results, like [35], indicate that a
+reference-based or acceptance-based verdict can overstate
+correctness; execution against the source system is the
+stronger instrument.
+
+What these application-level works share is that they
+evaluate a task in a fixed environment. For retrieval, the
+environment is the corpus and the index; for agents, a web
+or code environment; for SQL, a database. The
+application-level testbed generalises the idea in two
+directions. It treats the environment as one of the things that
+can be versioned and registered (the dataset version and the
+configuration are part of every measurement), and it makes
+the claim–effect distinction explicit: AgentBench and
+WebArena score the end state, but an agent that reports
+success without an observable effect is not separately
+counted in them, whereas in our automation stand the share
+of such runs is itself an attribute. The same reasoning
+applies to code translation: the studies of translation bugs
+[36] show that models introduce subtle semantic differences,
+and our finding that a clean install proves little is the
+database-specific form of the EvalPlus lesson that weak tests
+overstate correctness [35].
+C.​ LLM-as-a-Judge
+Judge models scale open-ended evaluation [6], [41],
+[42], yet they exhibit position and verbosity effects [43] and
+favour their own generations [44]. Our stands therefore use
+judges only for criteria that cannot be computed
+deterministically, keep them in a separate role from the
+model under test, and measure their instability directly: in
+the migration direction a semantic judge changed its verdict
+on 16.2% of repeated items at temperature 0.
+Leakage-resistant evaluation of judges on specifications [45]
+and execution-judged benchmarks [46] are earlier results
+from the same group that inform the design of the judge
+roles.
+Judge-based evaluation has a further cost dimension that
+is rarely reported: the judge’s own spend. In the P1 stand,
+1,802 combined judge calls cost more than twice as much as
+the conversion of the same files, which is why the testbed
+accounts for it separately. Learned judges such as
+Prometheus [42] and structured prompting such as G-Eval
+[41] improve agreement with human raters but do not
+remove the dependence on the instrument, and the evidence
+of self-preference [44] suggests that the judge should come
+from a different family than the model under test whenever
+the comparison is between vendors. In our chatbot stand
+both the judge and the controller currently use the same
+model family as one of the compared models, a limitation
+we record in Section IX-J.
+D.​ Benchmark Validity, Contamination and Statistics
+The testbed reduces contamination exposure through
+versioned, application-specific test data and isolation of
+expected outcomes. Synthetic or private datasets alone do
+not guarantee freedom from data contamination; that
+remains an evaluation-specific threat to validity.
+The statistical literature points in one direction: with few
+items and few repeats, effects smaller than the noise cannot
+be established. Dror et al. recommend matching the test to
+the data and reporting the variability of the evaluation itself
+[53], and Card et al. show that typical NLP comparisons
+have too little power to detect the differences they report
+[54]. Contamination studies add that the same model may
+have seen the test items, so that a high score can be memory
+rather than capability [49], [50]. The testbed responds in two
+ways. Versioned private and synthetic application datasets,
+together with the separation of ground-truth labels from
+model inputs, reduce contamination exposure. However,
+these safeguards do not establish that evaluation data are
+entirely absent from model training or development
+
+3
+
+histories. For the variability, it declines to publish model
+numbers until repeats have established the spread, and it
+applies the coarse noise-floor rule of Section VII-F where a
+formal test is not applicable.
+E.​ Model Selection, Routing and Multi-Objective Trade-offs
+Cost-aware use of LLMs has been studied as cascades
+[59] and as quality-aware routing between a cheaper and a
+stronger model [60]. Selecting among models with several
+conflicting objectives is a multi-objective problem whose
+standard solution concept is the Pareto set [61], [62]. The
+analytical interface of the testbed computes Pareto sets over
+measured attributes on the server and displays the evidence
+count behind each claim; our migration agent uses a
+deterministic complexity score for routing in the spirit of
+[60], and our token-optimisation study [63] shows that cost
+and quality must be evaluated jointly.
+F.​ Engineering Practice for Observable ML Systems
+Machine-learning systems accumulate hidden technical
+debt [64], and rubrics for production readiness explicitly
+include tests of data, model and infrastructure [65]. A case
+study of software engineering for ML at scale [66]
+documents the importance of data management and model
+evaluation tooling. Programmable guardrails [67] and
+prompt-programming frameworks [68] address safety and
+prompt optimisation, respectively. Dashboards for
+monitoring evolving information systems, including
+ontology-driven platforms with dashboard-centric analytics,
+have been investigated by co-author V. Lyashkevych
+[69]–[73]. The risk perspective on LLM-based development
+[74], the notion of a software functional state [75] and the
+orchestration of multi-agent systems with dynamic
+involvement of new agents [76] inform, respectively, the
+security attributes, the lifecycle view and the extensibility of
+the testbed. The metamodel idea itself builds on a unified
+architecture metamodel for information systems generated
+by AI [77]. Finally, a comparative analysis of frameworks
+for the same three application classes [78] was the starting
+point for the reference applications used here.
+G.​ Prompt Programming and Reasoning Strategies
+The behaviour of a model inside an application depends
+on how it is prompted. Few-shot prompting [79],
+chain-of-thought prompting [80] and interleaved reasoning
+and acting [26] changed what models can do without
+changing their weights, and declarative frameworks such as
+DSPy [68] compile pipelines of model calls and optimise
+their prompts against a metric. The testbed treats the prompt
+variant as a registered, hashed object, requires a baseline
+arm next to any compared variant and, in the programme
+scheme, optimises prompts per probe so that a model is
+measured under the prompt that suits it and the gain over the
+baseline prompt is itself recorded. Our measurement that a
+description rewrite had effects of opposite signs on three
+deployments is consistent with the prompt-sensitivity
+literature, and it adds a practical corollary: a prompt
+optimised against one deployment is a property of the pair,
+not of the prompt, so the optimisation target must be part of
+the identity that is stored with the result. DSPy-style
+optimisation against a metric also inherits the risk that the
+metric rewards the wrong behaviour; the null-agent check of
+Section VII-B is the guard that we apply before any loop is
+pointed at a number.
+
+H.​ Specification-Driven Development and Code
+Regeneration
+Specification-driven development treats a specification
+as the operational artefact consumed by LLM development
+agents. The authors’ earlier studies formalise a specification
+as a structure of semantic blocks with dependency relations,
+evaluate it with execution-judged benchmarks that keep the
+implementer panel fixed and include a no-specification
+control arm [46], evaluate the evaluators of specifications
+under sealed ground truth [45], and show on database
+migration that cost, validity and semantic preservation must
+be traded off [63]. The generation hook of the testbed reuses
+this machinery at a smaller scale: the application
+specification is the artefact from which an adapter is
+generated, and the smoke test and the control-arm discipline
+are the checks that the generated adapter must survive. The
+unified architecture metamodel [77] offers a representation
+(JSON, PlantUML and Mermaid views of architectural
+diagrams) that can serve as the structured context for such
+generation.
+I.​ Dashboards and Monitoring of Evolving Systems
+Operational dashboards for ML systems are often built
+last, as a view over logs. The earlier work of co-author V.
+Lyashkevych on intelligent monitoring of evolving
+information systems treats the dashboard as a first-class
+element of the architecture, with ontology-driven domain
+knowledge integrated into dashboard-centric analytics [69],
+context-aware selection of decision strategies [70],
+evolution-aware synthesis of monitoring systems by LLMs
+[71], genetic optimisation of monitoring models for
+LLM-modified systems [73] and multi-drift predictive
+monitoring [72]. We adopt this stance: the dashboards of the
+testbed are registered with the application at onboarding, not
+added afterwards. A natural next step, discussed in Section
+IX-D, is to monitor the metamodel itself for drift.
+TABLE I. ​POSITIONING OF THE TESTBED AGAINST RELATED LINES OF WORK
+Line of work
+
+Typical unit
+
+What the testbed adds
+complete application as
+General benchmarks
+task item
+scenario; per-application
+[1]–[3]
+attributes
+Preference platforms [4],
+execution-based and
+pairwise vote
+[6]
+deterministic metrics
+RAG evaluation
+answer /
+model as variable under fixed
+[12]–[14]
+retrieval
+retrieval; failure localisation
+Agent benchmarks [20],
+claims versus observed effects;
+task outcome
+[21], [23]
+framework as variable
+Code and SQL
+snippet /
+execution against source
+benchmarks [31], [32],
+query
+system; fix ledger
+[34]
+Validity and statistics
+enforced in code: comparability,
+guidelines
+[47], [53], [54]
+noise floor, fail-closed
+Routing and cascades
+measured profile of each model
+query
+[59], [60]
+as routing evidence
+Entries paraphrase the cited works; the right-hand column states the contribution of the
+present testbed.
+
+J.​ Intelligent Diagnostics, Knowledge Bases and Testing
+The diagnostic stance of this paper has an older root in
+the co-authors’ earlier research on intelligent diagnostics of
+computer facilities, which treated diagnosing as a
+knowledge-based task with its own infrastructure: an
+ontology of the diagnostic subject domain [81], a software
+tool for building the knowledge base of the diagnosing
+process [82], retrieval of diagnostic information from
+microprocessor devices [83], the search for features of
+diagnostic information and the development of a search
+
+4
+
+service for it [84], [85], criteria for setting correspondence
+between the terms of different knowledge bases [86], and
+logic-textual and neural approaches to information search
+[87]. Four ideas from this line carry over to the profiling of
+LLMs. First, diagnosis needs an explicit subject-domain
+vocabulary; in the testbed it is the attribute catalogue, in
+which every attribute has an owner, a unit and a direction.
+Second, diagnostic knowledge should be kept as a
+knowledge base separate from the diagnosed system; the fix
+ledger of the migration direction and the failure taxonomies
+of the other directions play this role (Section VII-K). Third,
+terms must be matched across knowledge bases with explicit
+criteria; the same quantity appears as recall at K in one
+probe and as a recall metric in another, and the catalogue
+must decide when two names denote one attribute. Fourth,
+retrieval of similar earlier failures is part of diagnosis, which
+is the practical reason for storing per-unit outcomes and not
+only aggregates.
+Testing under uncertainty has a second root in the
+quantitative treatment of software risks, where Monte Carlo
+simulation is used to evaluate the values of risk attributes
+TABLE II. ​
+Lesson
+report several metric families, not one score
+behavioural tests expose what accuracy hides
+execution is stronger evidence than text similarity
+retrieval and generation must be evaluated separately
+noise robustness and negative rejection matter
+agents are scored on end state, not on prose
+tool use is a distinct capability
+judges are biased and must be separated
+benchmarks can fail as instruments
+contamination inflates scores
+significance claims are fragile
+reproducibility needs identity
+document the context of every result
+cost and quality are traded off
+ML systems accumulate hidden debt
+agent frameworks supply orchestration patterns
+experience can improve agents, but must be validated
+guardrails are programmable but measurable
+
+Motivating works
+[2], [3], [7]
+[8], [9]
+[31], [32], [35], [36]
+[10]–[13]
+[14], [15]
+[20]–[23]
+[18], [19], [26]
+[6], [43], [44]
+[47], [48]
+[49]–[52]
+[53], [54]
+[55], [56]
+[57], [58]
+[59]–[62]
+[64]–[66]
+[24], [29], [30]
+[27], [28], [68]
+[67]
+
+PROBLEM FORMULATION AND REQUIREMENTS
+
+This section fixes the terminology and the formal objects
+used in the rest of the paper. The notation is summarised in
+Table III.
+A.​ Formal Model
+Let M be a set of models and A a set of reference
+applications. An application a ∈ A is a tuple
+​
+
+a = (Da, Ka, Ea, Σa),​
+
+Table II condenses the lessons drawn from the reviewed
+literature into design decisions. Each row names the
+decision, the works that motivate it and the mechanism in
+which it is realised, so that the paper’s architecture can be
+read as an application of the literature rather than a
+collection of ad hoc choices.
+
+DESIGN LESSONS DRAWN FROM THE REVIEWED LITERATURE
+
+In summary, existing work provides the measuring
+instruments and the warnings. What is missing, and what
+this paper offers, is an extensible infrastructure in which
+every application brings its own instruments, all
+measurements share one identity and comparability
+discipline, and the result is a profile of each model rather
+than a rank in a single list.
+III.​
+
+[88] and where the functional state of software through its
+life cycle has been formalised [75]. We use the same
+technique in Section VIII-I to study how often the decision
+rule of the testbed declares an effect when there is none and
+how large a real difference must be to be detected. A third
+relevant observation comes from literature on agent
+orchestration reviewed in the programme: a subtask graph
+fixed at design time can raise retry cost, because a failure
+upstream forces the re-execution of everything downstream,
+whereas executable control flow that isolates the failing
+subtask retries only that subtask. The group-level repair loop
+of the migration agent and the triage of the probe agent
+follow the same principle of isolating the failure before
+retrying.
+
+Realisation in the testbed
+per-application attribute sets; operational set common to all probes
+behavioural differential against real Oracle; scenario-based chatbot checks
+verification levels; demonstrably correct units; effects of tool calls
+retrieval-only runner; six metric groups; causal gating
+citation, refusal and empty-retrieval attributes
+frozen world state; expected tool sequences and final states
+tool selection, argument validity, hallucinated-call rate
+separate roles; judge spend counted apart; judge churn measured
+null-agent check; evidence levels; fix ledger
+private or synthetic datasets; sealed ground truth
+noise-floor rule; repeats before publication
+plan hash; prompt identity; frozen metric libraries
+dataset version, configuration, warnings stored with each run
+Pareto view with evidence counts; cost separation
+tests without network; pinned metric ruler; orphan recovery
+framework as experimental variable behind one contract
+self-learning as hypotheses; approval and immutable snapshots
+guardrail precision, recall and false-block rate measured offline
+
+that the application declares and owns. A probe pa exposes
+the application to the testbed: it names the modes in which
+the application can be run, the prompt slots that can be
+varied and the attributes it measures.
+A run fixes a model m, an application a, a dataset
+version d, a configuration κ ∈ Ka and a plan identity h, the
+hash of the frozen plan that produced the run. A
+measurement is the tuple
+For a declared comparison, partition the recorded
+configuration into the evaluated treatment (for example, the
+tested model or prompt variant) and an evaluation context
+κE containing the evaluator and metric-library versions,
+scoring protocol, fixed decoding and application settings,
+and any other factors required to be held constant. A plan
+hash h identifies the canonical execution plan; it does not
+itself establish equality of evaluation contexts.
+
+(1)
+
+where Da is a family of versioned datasets, Ka is a
+configuration space (retrieval settings, framework, prompt
+variant, model roles, evaluation method), Ea is the evaluator
+that produces measurements, and Σa is the set of attributes
+
+​
+
+μ = (m, σ, v, n, κ, d, h), σ ∈ Σa,​
+
+(2)
+
+with value v computed from n samples. The metamodel
+of model m is the partial function
+
+5
+
+Ψ(m): σ ↦ {(vi, ni, κi, di, hi)},
+
+v₁ ~ v₂ ⇔ σ₁ = σ₂ ∧ κE(κ₁) = κE(κ₂) ∧ d₁ = d₂. (4)
+
+computed over the list of runs after sorting by a total order
+on runs. Then two plans that contain the same runs in any
+order have the same hash, and a rerun that replays the stored
+plan has the hash of the original. Proof. Sorting maps every
+permutation of a multiset of runs to the same list, and a hash
+of the same list is the same value. Replay reads the stored
+row, which is the sorted list. Lemma 3 (non-emptiness). If
+the set M′ of eligible models is finite and non-empty, the
+Pareto set P(O) of Equation (5) is non-empty. Proof.
+Dominance is irreflexive and transitive, hence a strict partial
+order; a finite non-empty set has a maximal element under a
+strict partial order, and a maximal element is not dominated.
+
+The analytical interface applies (4) before it draws any
+comparison and displays a warning when a selection mixes
+contexts (Section V-H). Model selection is expressed over a
+set of objectives O = {(o1, δ1), …, (ok, δk)} with directions δ
+∈ {max, min}. Model m1 dominates m2 on O if it is at least
+as good on every objective and strictly better on one, and the
+recommended set is the non-dominated set:
+
+Lemma 1 applies within a declared comparison design
+whose treatment and evaluation-context coordinates have
+been registered in advance. Lemma 3 concerns exact Pareto
+dominance only. Uncertainty bands are reported as
+supplementary pairwise annotations and do not replace the
+transitive dominance relation used to construct P(O);
+approximate ties need not be transitive.
+
+The treatment dimension is declared in advance: models
+or prompt variants may differ between arms, but the
+evaluation context, dataset, scoring protocol and other fixed
+factors must match. Equality is tested on registered
+identifiers and evaluator versions; a changed metric library
+starts a new comparison class.
+
+C.​ Evidence Levels and Demonstrable Correctness
+The formal model above says what a measurement is; it
+does not say how much a measurement proves. Experience
+with the migration direction showed that the same word,
+“accepted”, can denote evidence of very different strength,
+so we attach an evidence level λ to every verdict. The levels
+are ordered by what the instrument could in principle detect
+(Table IV): a statement by the system itself, a static check of
+the output, installation or execution in a target environment,
+comparison with a human reference, and comparison with
+the behaviour of the real source system. A claim made at
+level λ is only as strong as the weakest level at which every
+unit that contributes to it was checked, and a report must
+state the denominator at each level.
+
+defined only on measured σ.​
+
+(3)
+
+Partiality is essential. An attribute that has not been
+measured is absent; it is never replaced by zero or by an
+average, and each view of the metamodel lists the attributes
+that are missing. Two values of the same attribute are
+comparable if they were produced in the same context:
+
+​
+
+P(O) = { m ∈ M′ : ¬∃ m′ ∈ M′, m′ ≻O m },​
+
+(5)
+
+where M′ is the set of models that satisfy the hard
+constraints of the task (for instance a minimum accuracy
+threshold) and for which every objective is measured in a
+comparable context.
+TABLE III. ​
+Symbol
+M, A
+a = (D, K, E, Σ)
+pa
+σ ∈ Σa
+κ
+h
+μ
+Ψ(m)
+~
+P(O)
+Ct, Cj, Cg
+
+NOTATION
+
+Meaning
+set of models, set of reference applications
+application: datasets, configurations, evaluator,
+owned attributes
+probe that exposes application a to the testbed
+attribute owned by application a
+run context: mode and configuration identifier
+hash of the frozen plan (identity of a
+measurement)
+measurement: model, attribute, value, sample
+count, context, dataset, plan
+metamodel of model m (partial function over
+attributes)
+comparability relation
+Pareto set for objectives O
+spend of tested model, judge and agent model
+
+B.​ Formal Properties
+Three simple properties follow from the definitions and
+justify the mechanisms of Section V. They are stated with
+short proofs because the mechanisms rely on them.
+Lemma 1 (comparability). On measurements of one
+attribute, the relation (4) is an equivalence relation.
+Proof. It is defined by equality of σ, the evaluation-context
+projection κE(κ), and d; equality is reflexive, symmetric and
+transitive, and a conjunction of equivalence relations is an
+equivalence relation. Consequently measurements fall into
+context classes, and any comparison, ranking or Pareto set is
+well defined within one class and meaningless across
+classes. Lemma 2 (plan identity). Let the plan hash be
+
+TABLE IV. ​
+Level
+L0
+L1
+L2
+L3
+L4
+
+Instrument
+system’s own report
+static check of the
+output
+install or execute in
+the target
+
+EVIDENCE LEVELS
+Detects
+nothing
+independent
+syntax, lint,
+structure
+load and runtime
+errors
+
+Misses
+everything
+
+unresolved references;
+semantics
+wrong but valid
+behaviour
+behaviour equal to a
+reference comparison divergence from a
+different valid
+(text, tree, judge)
+reference
+reference
+behaviour of the real behavioural
+inputs not exercised
+source system
+differences
+
+L0–L4 generalise the verification levels of the migration agent (CHECKED_STATIC,
+VERIFIED_INSTALL, VERIFIED_BEHAVIOR) to the other applications.
+
+Let UL4 ⊆ U contain only units for which the
+prescribed Oracle differential checks were actually
+executed. For u ∈ UL4, let acc(u) indicate the agent’s own
+acceptance verdict, con(u) a contradiction detected on the
+exercised L4 cases, and exp(u) a failure that reproduces the
+source-system error under the recorded test.
+Operational limitation: in the underlying migration
+stand, “demonstrably correct” denotes the following
+L4-screened operational count, not a proof of semantic
+equivalence over all possible inputs. A candidate can remain
+uncontradicted on the exercised Oracle tests while still
+diverging on untested cases. The count and the tested
+denominator must therefore accompany every claim.
+Ndc = |{u ∈ UL4 : [acc(u) ∧ ¬con(u)] ∨
+[¬acc(u) ∧ exp(u)]}|.​
+
+(6)
+
+6
+
+so that a unit counts both when it is accepted and not
+contradicted, and when it fails in exactly the way the source
+system fails. The definition applies only to UL4 and reports
+agreement on the executed checks, not exhaustive
+equivalence; for units that the stand cannot test the verdict is
+“not testable”, which is a separate category rather than a
+failure. The equation also shows why the agent’s own count
+of accepted units can rise while Ndc rises less: some
+accepted units are contradicted, and some failures are
+correct.
+D.​ A Capability Taxonomy for Mapping
+The word capability is used loosely in the LLM
+literature; for a testbed it must be operational. We define a
+capability as a named behaviour of a model that is
+
+observable in at least one reference application, is measured
+by at least one declared attribute at a stated evidence level,
+and can differ between models. The capability map of a
+model is then the set of its capabilities with the measured
+values and evidence levels, which is exactly the metamodel
+Ψ(m) read through the taxonomy. Table V lists the ten
+capabilities that the first three applications make
+measurable, with the attributes through which they are
+observed and the largest variation that the reports show. The
+taxonomy is not exhaustive and is not a claim about how
+model capabilities are organised internally; it is a
+bookkeeping device that lets us state which questions the
+testbed can currently answer.
+
+TABLE V. ​CAPABILITIES MADE MEASURABLE BY THE REFERENCE APPLICATIONS
+Capability
+C1 behavioural fidelity of
+translation
+C2 whole-file output
+completeness
+C3 grounded answering
+C4 retrieval use
+C5 tool routing
+C6 tool-argument validity
+C7 action honesty
+C8 instruction robustness
+C9 cost efficiency
+C10 run-to-run stability
+
+Observed through
+demonstrably correct units;
+defects; faithful raises
+refusals; file efficiency;
+abbreviation of large files
+faithfulness; citation validity and
+compliance
+recall, precision, MRR under
+fixed retrieval
+tool selection; forbidden calls;
+router model effect
+argument correctness;
+hallucinated tool calls
+unbacked success claims; effect
+rate
+
+Application
+
+Level
+
+Largest variation reported
+
+migration
+
+L4
+
+108 of 216 units; 25 of 114 accepted wrong or unverifiable
+
+P1
+
+L3
+
+about 69 large files abbreviated by one model; refusals
+8.32%
+
+chatbot
+
+L1–L3
+
+correctness 0.977–0.995 across finalists
+
+chatbot
+
+L1
+
+sparse recall 0.083 against 1.000 for dense (retrieval side)
+
+L1–L2
+
+4 routing failures of 10 scenarios; 2 fixed by a router change
+
+L1
+
+two scenarios still failing on arguments after routing fix
+
+L2
+
+0% to 55% of effect-free runs claim success
+
+L1
+
++4.6, −3.4, 0.0 pp on three deployments
+
+L1
+
+1,953 to 9,465 tokens per automation run
+
+L1
+
+SD 0.013 to 0.037; judge churn 16.2%
+
+chatbot,
+automation
+chatbot,
+automation
+automation
+
+intent
+classification
+tokens per run; cost per evidence all
+chatbot, P1,
+variance over repeats; judge churn
+judges
+effect of an instruction rewrite
+
+Evidence levels as in Table IV; values from the experiments of Section VIII. C4 is a property of the retrieval configuration and is listed because the model-side effect is held fixed in
+those experiments.
+
+Two points about the taxonomy matter for the rest of the
+paper. First, several capabilities are only visible in
+combination: a model’s grounded answering (C3) cannot be
+separated from the retrieval it is given (C4), which is why
+the chatbot stand uses a retrieval-only runner and holds the
+retrieval fixed when the model is varied. Second, the
+evidence level is part of the capability: C1 is measured at
+L4, but C3 is largely measured at L1 to L3 because no hard
+oracle exists for the quality of a free-text answer, in the
+sense of the generalisation caveat of the score-model
+decision record. Where a capability cannot be verified, we
+report it as such and do not substitute a judge and call it
+measured.
+E.​ Requirements
+Starting from the questions in Section I and from the
+defects described in Section VII, we derived ten
+requirements. Table VI lists them with the mechanism that
+satisfies each one and the section in which it is described.
+F.​ Scope and Assumptions
+The testbed measures models, not applications: the
+application is held fixed and the model is varied, or the
+application configuration is varied while the model is held
+fixed. The comparison of application architectures
+themselves is the subject of a separate study [78]. All model
+calls go through a single gateway, so that the models are
+reached in a uniform manner and cost can be attributed to
+the caller.
+
+The programme that this work belongs to plans two
+further stages, requirement analysis with specification
+generation tailored to a chosen model, and specification
+decomposition with decision making about which model
+handles which part. They depend on stable profiles and are
+outside the scope of this paper.
+TABLE VI. ​
+ID
+
+REQUIREMENTS AND THE MECHANISMS THAT SATISFY
+THEM
+
+Requirement
+Mechanism
+Add an application without probe contract; container
+R1
+changing the core
+adapter
+Every attribute has an
+metric catalogue owned by
+R2
+owner and a unit
+probes
+Reproduce a measurement frozen, hashed plans; prompt
+R3
+exactly
+identity
+Tested model, judge and
+R4
+three-way spend accounting
+agents costed apart
+No metric is produced by a
+R5
+agents propose, code computes
+model
+R6 Missing is not zero
+partial metamodel; missing list
+Never compare across
+R7
+comparability check in the UI
+contexts
+INCONCLUSIVE / absent
+R8 Outage is not a verdict
+verdict
+Aggregate must beat the
+R9
+null-agent check
+degenerate agent
+dashboards, registration at
+R10 Observable by non-authors
+onboarding
+
+Sec.
+IV
+IV
+IV
+IV
+IV, VI
+III
+IV
+VI
+VI
+IV
+
+7
+
+IV.​
+
+THE PROFILING METHOD
+
+The method answers a practical question: given a
+shortlist of LLMs, which of them is suited to a particular
+application, in a particular architecture, at what cost, and
+how sure can the team be of that answer? It does so by
+turning each application into an instrument and each model
+
+Fig. 1.​
+
+into a profile. The method has eight steps, M1 to M8 (Fig. 1,
+Table VII). The steps are ordered, but the method is
+iterative: a new application re-enters at M1, a new model at
+M3, and a diagnosis at M5 that blames the instrument sends
+the work back to M2 or M4.
+
+The eight steps of the profiling method. Solid arrows: the normal order; the dashed arrow: a new application or a new model re-enters the method.
+
+TABLE VII. ​
+
+STEPS OF THE METHOD, THEIR OUTPUTS AND THE GUARDS AGAINST KNOWN FAILURES
+
+Step
+
+Activity
+Output
+fix the dataset, the configuration space, the
+M1
+evaluator and the owned attributes with unit and application specification
+Define
+direction
+package as a container, expose the contract, pass
+M2 Add
+probe identifier;
+the smoke test, register probe, catalogue entries
+probe
+dashboards
+and dashboards
+agents propose runs; the gate validates,
+M3 Plan
+frozen plan with hash
+canonicalises, hashes and freezes the plan
+run under the caller’s key; code computes the
+M4
+measurements with
+metrics; tested model, judge and agents are costed
+Execute
+provenance
+apart
+M5
+test the instrument before the system, then locate diagnosis; verdict from a
+Inspect the first failing layer
+fixed taxonomy
+M6
+compare only values of one context class; apply effect, suggestive, or no
+Compar
+the noise rule and evidence levels
+result
+e
+M7
+apply hard constraints, then the Pareto set with
+recommendation with
+Decide ties and exclusions
+evidence counts
+M8
+show the profile on dashboards; monitor the
+views; alerts
+Publish profile for drift
+
+Guard
+
+Section
+
+every attribute has an owner, a unit and a
+direction
+
+VI
+
+a generated adapter must pass the smoke test
+
+V-E
+
+scope re-applied by code; baseline arm
+required
+
+V-D
+
+prompt identity; fail-closed reporting
+
+V-G
+
+an outage is not a verdict; the null agent must
+lose
+
+VII-J
+
+comparability; per-axis noise floor
+
+VII-F
+
+missing is not zero; context warning
+
+VIII-M
+
+dashboard variables fix the context class
+
+V-H
+
+Sections give the place where the mechanism behind each step is described.
+
+Three properties distinguish the method from a
+benchmark run. The unit of evaluation is the application, not
+the item. A leaderboard item is a question; a unit here is a
+complete behaviour in an architecture, such as the migration
+of a group of Oracle objects, a chatbot turn with its retrieval
+and tool calls, or the handling of an enterprise event. The
+artefact is a profile, not a rank. The result of the method is
+the metamodel of a model: its measured attributes with their
+contexts, and an explicit list of what was not measured. The
+guards are part of the method. Each step carries a guard that
+exists because a stand once misled its authors without it
+(Table VII), and a result produced without its guards is
+reported with a warning instead of a number. Table VIII
+contrasts the method with a leaderboard on the dimensions
+that matter to a team that has to choose.
+A.​ Re-Entry Rules
+What must be repeated when something changes is as
+important as what to do the first time (Table IX). The rules
+follow from the comparability relation: anything that
+changes a component of the context class opens a new class,
+and results from different classes are never merged.
+
+TABLE VIII. ​
+
+LEADERBOARD VERSUS APPLICATION-SPECIFIC PROFILING
+
+Dimension
+unit of evaluation
+
+Leaderboard
+item or task
+
+question answered
+
+how good is the
+model in general
+
+artefact
+
+rank or score
+
+comparability
+
+same benchmark
+version
+
+variables
+
+model
+
+failure handling
+
+item scored wrong
+
+uncertainty
+
+often single number
+
+cost
+
+rarely reported
+
+extension
+
+new benchmark
+
+Profiling method
+application in its architecture
+how good is the model for this
+application, configuration and
+cost
+sparse metamodel with
+contexts and missing list
+same attribute, context and
+dataset version, checked by
+code
+model, prompt variant,
+framework, retrieval,
+configuration
+failure diagnosed in instrument
+or system; outage not a verdict
+per-axis noise floor; evidence
+counts; ‘no result’ allowed
+three spends, reported
+separately
+new application brings new
+attributes and dashboards
+
+8
+
+TABLE IX. ​
+
+RE-ENTRY RULES OF THE METHOD
+
+Change
+
+Re-enter at Consequence for existing results
+existing results unchanged; new
+new model
+M3
+profile with absent attributes filled
+by runs
+new attributes in the catalogue;
+new application
+M1
+existing profiles list them as not
+measured
+new context class; no comparison
+new dataset version
+M3
+with older versions without
+bridging runs
+new configuration or
+new context class; baseline arm
+M3
+prompt variant
+required for a prompt comparison
+new ruler; old and new results not
+metric library upgrade M2
+comparable
+diagnosis blames the
+affected runs marked inconclusive;
+M2 or M4
+instrument
+fix and rerun
+drift of a hosted model
+re-run a frozen plan; compare as a
+M3
+detected
+new context class
+
+A new model is run on the existing applications and fills
+the absent attributes of its own profile. A new application
+adds attributes to the catalogue and, until models are run on
+it, every profile lists them as not measured. An upgrade of a
+metric library changes the ruler itself, so the testbed freezes
+the libraries to the versions that produced the results and
+treats an upgrade as the opening of a new context class.
+V.​
+
+TESTBED ARCHITECTURE
+
+This section answers RQ1. We first give the overview
+and the design principles, then describe the metamodel and
+the programme scheme from which the testbed originates,
+the planes of the core, the life cycle of a goal, the
+application-container contract with its onboarding
+procedure, the specification-driven generation hook, the
+accounting of cost and prompts, and finally the dashboards.
+The core, called MAS Core (metamodel extraction pipeline),
+was implemented by D. Koziuberda, with the shared
+agent-integration layer contributed by H. Petrenko; the
+analytical interface and the three reference applications were
+built by the programme teams, as indicated in Section VI.
+A.​ Overview and Design Principles
+Figure 2 shows the testbed. Reference applications live
+in their own containers on the left. MAS Core in the centre
+receives a goal (a statement of what to measure), plans runs
+
+Fig. 2.​
+
+with the help of agents, validates and freezes the plan with
+deterministic code, executes it through probes and writes
+measurements to a single store. Models under test, judges
+and the models that drive the agents are all reached through
+one LLM gateway, which keeps the cost of every role
+attributable. The store feeds the analytical interface, which is
+deterministic and contains no LLM in its analytics pages,
+and Grafana dashboards that are registered when an
+application is onboarded.
+Five principles, listed in Table X, run through the whole
+design. They were not postulated in advance; each was
+introduced after a defect in an earlier stand showed what
+happens without it (Section VII).
+TABLE X. ​
+Principle
+
+DESIGN PRINCIPLES OF THE TESTBED
+
+Why it matters
+judge or agent cost and
+The instrument is
+errors must not become
+not the subject
+the model’s
+Agents decide,
+code computes
+Reproducibility
+Missing is not
+zero
+An outage is not
+a verdict
+
+Where it is enforced
+three spends reported
+separately; distinct model
+roles
+aggregator schema has no
+a model must not write
+numeric field; metrics are
+its own score
+deterministic code
+plans frozen and hashed;
+numbers are comparable
+prompts identified by hash;
+only if produced alike
+one change per experiment
+partial metamodel; explicit
+averaged or zero-filled
+list of unmeasured
+values hide gaps
+attributes
+infrastructure failure
+INCONCLUSIVE status;
+says nothing about the
+absent verdict when an
+model
+agent is unreachable
+
+The five design principles in Table X capture the implementation safeguards
+introduced after faults in the evaluation infrastructure were identified experimentally.
+
+B.​ Programme Scheme and Metamodel
+The proposed framework supports a three-stage research
+programme (Figs. 3 and 4). The implementation and
+experiments in this paper concern Stage 1: constructing a
+capability metamodel from application-specific probes. The
+two subsequent stages—task-aware specification generation
+and model assignment to specification components—are
+proposed consumers of the profile, not evaluated functions
+of the present testbed. A task is represented as T = {agents,
+operations, environments, modules, context, …}, consistent
+with the architectural metamodel [77].
+
+Overview of the testbed: reference-application containers, MAS Core, measurement store, dashboards and the LLM gateway. Tested model, judge
+and agent model are separate roles.
+
+9
+
+Fig. 3.​
+
+Model families and their sparse capability profiles, linked to application-owned probe attributes and operational measurements; T denotes
+structured task context.
+
+Fig. 4.​
+
+Application probes and controlled prompt variants produce versioned capability measurements, which are aggregated into model profiles and
+exposed to analytical queries.
+
+A metamodel is a sparse record per model, grouped by
+model family, whose attributes are the quantities that probes
+measure. Table XI lists the attribute groups of the scheme
+and the probes that own them. The numbering follows the
+scheme (P1 conversion, P2 migration, P3 chatbot, P4
+automation); in the registry of the implementation the probes
+have identifiers such as p1_o2pg and p2_chatbot, which is a
+naming difference only. Attributes are owned by probes:
+conversion accuracy is an attribute of P1 and not a universal
+attribute of every model, and only a small operational set
+(tokens, cost, latency, completion) is collected identically for
+every probe. Figure 5 shows the resulting structure.
+
+TABLE XI. ​
+
+ATTRIBUTE GROUPS OF THE METAMODEL AND THEIR
+OWNERS
+
+Attribute group
+Conversion accuracy (Oracle,
+PostgreSQL)
+Migration accuracy (Oracle,
+PostgreSQL)
+Knowledge and retrieval, chatbot
+Knowledge and retrieval,
+automation
+Security treatment
+Token efficiency
+Index of required resources
+DevOps
+Volume, quantity of parameters
+Tokens, cost, latency, completion
+
+Probe
+P1
+P2
+P3
+P4
+P5
+P6
+P7
+P8
+—
+all
+
+State
+measures
+own stand; integration
+planned
+integrated (p2_chatbot)
+own stand; integration
+planned
+planned
+planned
+planned
+planned
+facts about the model
+operational set
+
+Probe integration status and attribute ownership evaluated in October 2026; P5–P8
+denote planned extensions.
+
+Fig. 5.​
+Structure of a model’s metamodel. Probe-owned attributes
+(P1–P4 implemented or integrated; P5–P8 planned) are measured in
+the same way for every model; the operational set is common.
+
+C.​ MAS Core: Planes and Components
+MAS Core is organised in four planes (Fig. 6). The
+control plane is a FastAPI service with endpoints for goals,
+models, probes, prompts, metamodels and cost; it hosts the
+registries (models and families, probes, attributes, datasets,
+techniques, prompt variants), the planner and understanding
+agents and the deterministic gate. The data plane is a
+PostgreSQL blackboard with registries, goals, frozen plans,
+runs, measurements, agent prompts and agent spend, plus a
+Redis broker with no persistence, no host port and a
+password. The execution plane consists of Celery workers
+with two queues, a probe agent that triages failures, a runner
+
+10
+
+that executes the probe and computes attributes
+deterministically, and an aggregator agent. The fourth plane
+is the measurement stand of the first probe, P1, which is a
+copy of the ConversionEvaluator adapted to the probe
+
+Fig. 6.​
+
+MAS Core architecture as implemented, redrawn from its documentation: control plane, execution plane, data stores and the P1 measurement
+stand. The agent model (the instrument) and the tested model with its judge (the object of measurement and its ruler) are separate roles.
+
+TABLE XII. ​
+Component
+
+COMPONENTS OF MAS CORE AND THEIR
+RESPONSIBILITIES
+Plane
+
+API surface
+
+control
+
+Registries
+
+control
+
+Planner agent
+
+control
+
+Understanding
+agent
+
+control
+
+Deterministic gate control
+Blackboard
+(PostgreSQL)
+
+data
+
+Broker (Redis)
+
+data
+
+Probe agent
+Runner and probe
+plug-ins
+Aggregator agent
+P1 stand (5
+services)
+
+contract; it has its own deployment and database. The
+responsibilities of each MAS Core component are
+distinguished in Table XII.
+
+Responsibility
+goals, models, probes, prompts,
+metamodel views, cost
+models, probes, attributes, datasets,
+prompt variants
+reads registries via read-only tools,
+proposes runs
+pins a prompt variant to every slot before
+freezing
+validates, canonicalises, hashes and
+freezes the plan
+single write path into measurements
+
+queues; task messages carry the caller’s
+key
+triage of a failed run: retry, resume or
+execution
+abort
+execute cases; compute attributes
+execution
+without an LLM
+judges whether a goal’s result is
+execution
+trustworthy; no numbers
+conversion, validation, evaluation,
+stand
+annotation, gateway
+
+D.​ Life Cycle of a Goal
+A request is a goal, for example “profile this model on
+Oracle-to-PostgreSQL conversion with the baseline
+prompt on a small subset”. Figure 7 and Algorithm 1
+show how it is processed.
+Algorithm 1. Goal planning, freezing and settlement.
+Input: goal G, caller key k, registries Reg
+Output: settled goal with measurements and assessment
+1 S ← ModelSession(k) // one client per unit of work
+2 draft ← Planner(G, read-only tools over Reg, S)
+3 draft ← Understanding(pin prompt variant per slot, S)
+4 if dry_run then return preview(draft) // nothing is stored
+5 plan ← Gate(draft) // reject on any violation:
+undeclared mode; variant of another probe; duplicate run;
+budget overrun; comparison without baseline arm
+6 re-apply goal scope and dataset version by code
+7 plan ← canonicalise(sort runs); h ← SHA-256(plan); freeze(plan, h)
+8 for each run in plan enqueue(run, k) // idempotent by run id
+9 on run end do request settlement // success and failure alike
+10 if infrastructure failure then status ← INCONCLUSIVE
+11 if no measurements then settle without a model call
+12 A ← Aggregator(results, S) // judgement; unreachable → absent
+13 store A beside the goal, never inside a measurement
+
+A new probe is a package with a manifest plus registry rows; the core is not edited.
+
+11
+
+TABLE XIV. ​
+
+CHECKS APPLIED BY THE DETERMINISTIC GATE
+
+Check
+Mode declared
+Variant ownership
+Uniqueness
+Budget
+
+Rejects
+a mode the probe does not declare
+a prompt variant belonging to another probe
+duplicated runs
+plans exceeding the stated budget
+a prompt comparison without the baseline on the
+same model
+dropped subset or changed dataset version
+(re-applied)
+
+Baseline arm
+Scope
+
+Fig. 7.​
+From a goal to a settled result: the agents propose,
+deterministic code disposes, and the plan is frozen and hashed
+before anything is spent.
+
+Four agents take part, declared in the same way: an
+AgentSpec names the agent, its system prompt and its
+response schema; a shared run_agent call performs the
+structured model call, converts any vendor failure into a
+single domain error and optionally records spend and the
+prompt hash; and a ModelSession holds the caller’s key
+and builds one model client per unit of work, so that the
+planner and the understanding agent of one goal share one
+client. Table XIII summarises the agents and what
+happens when one of them is unreachable.
+TABLE XIII. ​
+Agent
+
+AGENTS OF MAS CORE
+
+Response schema
+
+Planner
+
+PlanDraft
+
+Understanding
+
+VariantChoice
+
+Probe agent (triage) TriageDecision
+Aggregator
+
+E.​ Application Container Contract and Onboarding
+Reference applications are not linked into the core.
+Each one runs as a separate container and is reached over
+HTTP, so a new application can use its own language,
+dependencies and data. The chatbot application is the first
+to follow this pattern end to end: MAS Core reaches the
+Chatbot Evaluation API through a configured stand
+address and a shared container network, queries its
+datasets and configurations through a probe-options
+endpoint, submits an evaluation and persists the returned
+measurements. Table XV abstracts this into a contract.
+The application boundary and its onboarding data flow are
+illustrated in Fig. 8.
+
+GoalAssessment (4
+fields)
+
+If unreachable
+planning fails; no plan
+stored
+planning fails; single
+candidate needs no call
+decision is abort, never
+a guessed retry
+verdict absent, not
+“no”
+
+The aggregator schema has four fields (trustworthy, summary, anomalies, caveats);
+no field can hold a number.
+
+The gate deserves emphasis because it is where an
+LLM in the control flow is made safe. The planner is told
+to pass the goal’s subset through, but “the agent was told
+to” is not a control: in an early run a dropped subset
+would have launched the full 1,802-file dataset, hours of
+work and an unapproved bill. The scope and the dataset
+version are therefore re-applied by code after planning.
+Table XIV lists the checks. Because LLM planning
+cannot be reproducible by determinism, reproducibility is
+obtained by materialisation: a rerun replays the stored
+plan instead of asking the agent again, and the hash is the
+identity of a measurement. Plans with identical canonical
+representations produce the same SHA-256 hash.
+Matching hashes are treated as plan identity under the
+assumption of negligible cryptographic collision
+probability; strict content identity can be verified by
+comparing the stored canonical plans. Different hashes do
+not alone imply incomparable conditions, because
+controlled experimental arms may intentionally differ.
+Comparability additionally requires the same evaluation
+protocol, data and controlled context.
+
+Fig. 8.​
+Application container contract and onboarding. A
+specification drives the code generator; the container exposes
+health, options, evaluation and attribute declarations; onboarding
+registers the probe, the metrics and the dashboards.
+
+Algorithm 2 gives the onboarding procedure. Its two
+outputs are what turns an application into new knowledge
+about models: the attributes are added to the metric
+catalogue with an owner, a unit and a direction, and every
+model that is subsequently run on the application acquires
+measured values of them.
+TABLE XV. ​
+Element
+Health
+Options
+Evaluation
+Attributes
+Provenance
+Variables
+
+APPLICATION CONTAINER CONTRACT
+
+Content
+liveness and readiness endpoints (/livez, /readyz)
+datasets, configurations and modes the application
+offers (GET probe options)
+submit an evaluation for model(s), dataset version,
+configuration; return per-case and aggregate
+measurements
+declaration of owned attributes: name, unit, direction,
+category
+dataset version, configuration identifier, prompt
+identity, warnings
+stand address, network, dataset, application,
+framework, model-set and evaluation configuration
+identifiers
+The run parameters observed for the chatbot are app_config_id,
+framework_config_id, pinned_model_set_id, dataset_version and
+evaluation_config_id.
+
+12
+
+Algorithm 2. Onboarding a reference application.
+Input: application container C, specification Spec, datasets D
+Output: registered probe, catalogue entries, dashboards
+1 if C.adapter missing or variables reference unsupported dataset/instance
+2 C.adapter ← Generate(Spec, variables) // specification-driven
+3 if not SmokeTest(C) then reject // health, options, one case
+4 Σ ← C.attribute_declaration()
+5 for each σ ∈ Σ: assert unique name, owner = probe, unit, direction
+6 register probe(C.modes, C.prompt_slots, D) in registry
+7 add σ ∈ Σ to metric catalogue with owner; bump metamodel schema
+8 provision Grafana: data source, per-application dashboard,
+panels derived from Σ (direction-aware, unit-aware)
+9 link probe to existing models; list missing attributes per model
+10 return probe id
+
+Generating Grafana dashboard definitions from
+attribute declarations is part of the onboarding design;
+successful import into a live Grafana server was not
+measured in this study.
+TABLE XVI. ​
+Registry
+Probe registry
+Metric catalogue
+Model metamodels
+Analytical UI
+Grafana
+
+EFFECTS OF ONBOARDING A NEW APPLICATION
+Effect
+probe with modes, prompt slots and dataset versions
+new attributes with owner, unit and direction
+attributes appear as “not measured” until a run completes
+use case, metrics and evaluations are listed without UI
+changes
+data source and dashboard panels for the new attributes
+
+Chatbot observation: the chat.* metrics appear on the Metrics page, owned by
+p2_chatbot, with measurement counts.
+
+The metric catalogue associates each chat.*
+measurement with its owning probe, unit, direction,
+context and count; unmeasured attributes remain
+explicitly absent rather than taking a numerical value of
+zero (Table XVI).
+F.​ Specification-Driven Generation of Agent Code
+Each container is parameterised by template variables
+(Table XV). In most cases a variable only selects among
+existing assets: another dataset version, another
+application configuration, another model set. For the
+remaining
+cases
+the testbed relies on the
+specification-driven techniques developed in the authors’
+earlier work, in which a technology-neutral specification
+is the operational artefact from which code is regenerated
+[45], [46], [77]. When a variable refers to a dataset or an
+instance of the reference application for which no adapter
+exists, for example a new chatbot instance over a different
+documentation corpus, the generation hook produces or
+modifies the adapter code from the application
+specification. The generated adapter must pass the smoke
+test of Algorithm 2 before it can be registered, and the
+measurements it produces carry the dataset version and
+configuration identifier like any other. We stress that this
+paper evaluates the contract and the measurement
+machinery; the quality of generated adapters is not
+evaluated here and is listed among the open items in
+Section IX-J.
+G.​ Prompt Identity, Cost Accounting and Credentials
+Three properties concern what is recorded about every
+call. Prompt identity. The inherited P1 stand called its
+templates directly and recorded nothing about the text sent
+to the model, so every earlier run was, strictly,
+unreproducible. Templates are now accepted as source
+plus the identity under which they were registered; the
+stand verifies that the source hashes to that identity and
+binds only variables the mode provides, then records the
+variant identifier and the hash on the run. Omitting a
+prompt records the built-in under its own name and hash.
+
+A regression test asserts that the new path renders
+byte-identically to the old, so earlier results remain
+comparable. Cost separation. The tested model, the judge
+and the agents are counted as three numbers that are never
+summed, because the first is a property of the model and
+the other two are the price of measuring it (Table XVII).
+TABLE XVII. ​
+Spend
+Ct
+Cj
+Cg
+
+THREE-WAY COST SEPARATION
+
+Role
+model under test
+judge scoring the output
+planner, understanding, triage,
+aggregator
+
+Belongs to
+property of the model
+price of measuring
+price of measuring
+
+The three cost components are reported separately; their sum is used only when
+explicitly labelled as total experimental cost, as in Equation (10), and is not treated
+as a property of the model under test.
+
+The judge’s spend was found to be a substantial
+fraction of the tested model’s, and it had been invisible
+because the stand discarded it. Credentials. No service
+stores a gateway key. Each request carries the caller’s own
+key, so every model call is billed to whoever asked for it;
+the Launch page of the interface states that the key is kept
+in memory and that the core stores only a fingerprint. The
+key crosses a process boundary inside the task message
+and is mitigated operationally (a broker without
+persistence, host port or default password) but not yet
+cryptographically.
+H.​ Dashboards: Grafana Registration and the Analytical
+Interface
+Two complementary analytical views consume the
+common measurement store. Per-application Grafana
+panels show observed metric series and execution health,
+while a deterministic API provides filtered measurement
+and comparison data. Testbed metrics include conversion
+scores, judge criteria, static validation, file completion,
+refusals, latency, tokens and separate cost components.
+The work implements dashboard definitions from attribute
+declarations, but does not measure end-to-end automated
+provisioning effort. The architecture of the resulting
+measurement and dashboard views is shown in Fig. 9.
+
+Fig. 9.​
+Measurement store and attribute catalogue determine
+context-aware dashboard definitions and execution-health views;
+live deployment of generated dashboard definitions was not
+evaluated.
+
+The registration rests on a small set of rules that map
+the declaration of an attribute, its unit, direction and
+category, to a panel (Table XVIII, Algorithm 3). The
+dashboard variables are the run context and the dataset
+version, so that a panel can only ever show values of one
+context class (Lemma 1); an attribute that is not yet
+measured is shown as an explicit “not measured” panel
+instead of an empty graph or a zero. These are design
+rules of the testbed. Their implementation for a new
+application, and the effort that it saves, have not been
+evaluated quantitatively in this work.
+
+13
+
+Algorithm 3. Provisioning dashboards from attribute declarations.
+Input: probe p, attribute set Σp, data source S
+Output: dashboard Bp registered in Grafana
+1 create data source S if absent (read-only role on the measurement store)
+2 B ← new dashboard titled by p; variables ← {run context κ, dataset
+version d, model}
+3 for each σ ∈ Σp
+4 panel ← Template(σ.unit, σ.direction, σ.category) // Table of panel
+rules
+5 query ← SELECT value, n, run FROM measurements WHERE
+attribute = σ AND context = $κ AND dataset = $d
+6 if no rows then panel ← “not measured”
+7 add panel to B
+8 add cost panel (three spends, reported separately) and run-health panel
+9 register Bp; return identifier
+
+Implementation status: The dashboard provisioning
+rules describe the intended onboarding contract. Their
+fully automatic deployment to a live Grafana instance, and
+the effort saved relative to manual onboarding, were not
+evaluated quantitatively.
+TABLE XVIII. ​
+
+RULES MAPPING ATTRIBUTE DECLARATIONS TO
+DASHBOARD PANELS
+
+Attribute type
+ratio or percentage,
+higher is better
+count or iterations,
+lower is better
+latency (ms)
+cost (USD), tokens
+categorical verdict
+text evidence
+not measured
+cross-model view
+run health
+
+Panel
+
+Rule
+
+gauge and per-run
+trend
+
+thresholds from the declaration;
+direction-aware colour
+
+stat and trend
+
+direction reversed
+
+time series; percentile
+bars
+stacked bars by spend
+role
+state timeline;
+distribution
+link to run report
+explicit “not
+measured” panel
+Pareto scatter;
+comparison table
+warnings, plan hash,
+prompt hash
+
+median and tail
+tested, judge and agent costs
+shown separately
+PASS, FAIL, degraded;
+ACCEPTED, FAILED,
+BLOCKED
+text is evidence, not a value
+never zero, never blank
+only within one context class;
+evidence count shown
+provenance beside every result
+
+interactive behaviour is not used as experimental
+evidence. The comparison API enforces the context
+constraints of Equation (4): measurements generated
+using different datasets, evaluation protocols or controlled
+configurations cannot be combined as if directly
+comparable. Incomplete model usage, missing semantic
+scores and unavailable cost records are returned with
+explicit warnings rather than converted to zero-valued
+measurements.
+I.​ Data Model and API Surface
+The blackboard holds a small number of entities, and
+every API path maps onto them (Table XX). Registries
+describe what exists: models and their families, probes,
+attributes, datasets, techniques and prompt variants. Goals
+carry the request, the caller’s key fingerprint and the state
+of settlement. Plans are frozen and keyed by hash. Runs
+point to a plan, a model, a mode and a prompt variant and
+own their measurements. Agent prompts and agent spend
+record the text and the cost of every agent call. Because
+measurements have a single write path, the metamodel
+views are projections that can be recomputed, and they do
+not contain information that the underlying rows lack.
+Two views deserve attention. The metamodel of a model
+lists the measured attributes together with an explicit list
+of what was not measured. The comparison view prevents
+direct comparisons between measurements obtained under
+different evaluation contexts, thereby enforcing the
+comparability constraints defined in Equation (4).
+TABLE XX. ​
+
+PRINCIPAL ENTITIES AND INTERFACES
+
+Entity or path
+
+Role
+
+POST /v1/goals (dry_run option)
+GET /v1/goals/{id}, /cost
+GET /v1/models, /v1/probes,
+/v1/prompts/{id}
+GET /v1/probes/{id}/options
+
+Design rules of the onboarding step; not evaluated quantitatively.
+GET /v1/metamodels
+
+The analytical interface is a single-page application
+over a deterministic backend. Scores and comparisons
+originate from server-side aggregations; client-side
+computation is limited to presentation. The main interface
+areas and their analytic functions are defined in Table
+XIX.
+TABLE XIX. ​
+Area
+
+AREAS OF THE ANALYTICAL INTERFACE
+Content
+
+models, use cases, metrics, evaluations;
+Explore
+filters; raw JSON parameters
+KPI tiles, leaderboard for a chosen
+Analytics: Summary
+metric, breakdown charts
+Analytics: Model
+model passport: gauges per metric,
+performance
+evaluation reports
+Analytics: Compare per-category scores; per-metric delta;
+models / evaluations context warning
+objectives with direction; frontier with
+Analytics: Pareto
+evidence counts
+choose probe, model(s), dataset,
+Launch
+configuration; preview plan; start
+conversational recommendation using
+Agent
+the analytical API as tools
+
+Nature
+read-only
+catalogue
+deterministic
+deterministic
+deterministic
+server-side
+calls the core
+LLM-backed
+
+Technology: React, Vite, TanStack Query, React Router, Tailwind with Radix
+primitives, Recharts; a typed API client surfaces network, HTTP and validation
+errors through shared components.
+
+The conversational recommendation component is
+architecturally
+separate
+from
+the deterministic
+measurement and Pareto selection procedures, and its
+
+analytical API: GET /models,
+/use-cases, /metrics, /evaluations
+analytical API: POST /analytics/*
+Blackboard tables
+
+plan a goal; with dry_run only a plan
+preview is returned and no goal is written
+state, runs, assessment; three-way cost
+registries; variant ids are readable
+coordinates and may contain slashes
+datasets and configurations that a probe
+offers (chatbot integration)
+per-model profile with an explicit list of
+missing attributes
+raw catalogue with filters and pagination
+breakdown, compare-models,
+compare-evaluations, Pareto
+registries, goals, frozen plans, runs,
+measurements, agent prompts, agent spend
+
+The listed endpoints describe the implemented control and analytical interfaces.
+
+J.​ Operational Properties
+Automated verification comprises 93 tests for the
+MAS Core, 21 for the P1 evaluation service and 232
+backend tests for the integrated chatbot evaluation
+interface. Metric-library versions are pinned for a given
+evaluation context because changing the scoring
+implementation changes the measurement instrument.
+VI.​
+
+REFERENCE APPLICATIONS
+
+The three reference applications provide distinct,
+implemented
+evaluation
+environments:
+Oracle-to-PostgreSQL translation with differential
+behavioural
+verification,
+documentation-grounded
+question answering with retrieval and tool-use
+diagnostics, and enterprise workflow automation with
+observable side effects. Table XXI summarises their
+experimental configurations; Sections VI-A–VI-C
+describe the associated task and measurement contracts.
+
+14
+
+TABLE XXI. ​
+Purpose
+Probe
+Orchestration
+Dataset
+Ground truth
+Judge
+Integration
+
+Migration
+Oracle PL/SQL → PostgreSQL
+P2 (own stand), P1 (conversion)
+LangGraph repair loop
+1,448 tasks; 216 units; 1,802 files (P1)
+real Oracle run; expert references
+P1 judge; semantic judge in depth study
+own stand; MCP and API
+
+OVERVIEW OF THE REFERENCE APPLICATIONS
+Chatbot
+documentation-grounded assistant
+P3, id p2_chatbot
+LangGraph
+mvp_scenarios v6, 10 scenarios
+expected sources, tools, answers
+semantic_judge_v1
+integrated in MAS Core
+
+Automation
+support tasks over Jira, Confluence, Outlook
+P4 (own stand)
+4 interchangeable frameworks
+pilot.v4, 49 samples
+expected tool operations, final states
+none (effects observed)
+own stand
+Experimental configurations and dataset sizes used in this study.
+
+A.​ Migration Agent: Oracle PL/SQL to PostgreSQL
+The migration agent converts a directory of Oracle SQL
+and PL/SQL files into PostgreSQL files and, for every
+database object, reports how it was converted, which checks
+were completed and what could not be verified. The pipeline
+and routing were designed by A. Seletska, the integrations
+by O. Ilchuk and the measurement of quality by D.
+Kostetskyi. It does not connect to an Oracle database; it
+works only with the files it is given. The migration sequence
+from parsing to validation and bounded repair is shown in
+Fig. 10.
+
+escalation, and termination conditions under predefined
+execution and retry budgets.
+
+Complexity
+0 – 0.30
+
+TABLE XXII. ​
+
+MIGRATION STRATEGIES
+
+Strategy
+
+Mechanism
+Ora2Pg plus exact rules (e.g. NVL →
+COALESCE); no tokens
+less expensive configured model
+more capable model; large packages;
+escalations
+
+STATIC
+
+> 0.30 – 0.65 CHEAP
+> 0.65
+
+STRONG
+
+Models in the breadth study: gpt-5.4-nano, gpt-5.4-mini, gpt-5; in the depth study:
+DeepSeek-V4-Flash (cheap) and DeepSeek-V4-Pro (strong).
+
+TABLE XXIII. ​
+Feature family
+source size
+control flow
+data access
+Oracle-specific features
+dependencies and cycles
+package size
+Fig. 10.​ Migration pipeline: files are split into migration units, ordered
+by a dependency graph, routed by a complexity score, generated,
+validated in PostgreSQL 16, and repaired or escalated on failure.
+
+Decomposition. The parser splits each file into migration
+units (table, view, sequence, function, procedure, package,
+trigger, query or data-changing statement) while preserving
+the original source text. A package remains one unit because
+its members share state. Each unit carries a parse
+confidence: full, partial, lexical-only or failed, and a low
+confidence excludes the deterministic converter. Ordering.
+A dependency graph places required objects before their
+users; mutually dependent objects form one migration group
+(a strongly connected component), and the condensation is a
+directed acyclic graph that is processed in topological order.
+A failing group blocks its dependants while independent
+branches continue. The same decomposition idea underlies
+the earlier study of task decomposition for specification
+generation by the same team.
+Routing. A deterministic weighted score in [0, 1]
+estimates the difficulty of each group from source size,
+control flow, data access, Oracle-specific features,
+dependencies, cycles, package size and parse quality. Scores
+up to 0.30 select the STATIC strategy (Ora2Pg and
+deterministic rules, no model tokens), scores above 0.30 and
+up to 0.65 select a cheaper model, and higher scores a
+stronger model (Table XXII). Large packages go directly to
+the strong model, and low analysis confidence promotes a
+unit to a stronger strategy. Every routing decision records a
+reason. The individual feature families of the complexity
+score are detailed in Table XXIII. The bounded migration,
+validation, and repair procedure is formalised in Algorithm
+4, which defines the iterative correction process, strategy
+
+parse quality
+
+INPUTS OF THE COMPLEXITY SCORE
+Role in routing
+longer sources raise the score
+branching and loops raise the score
+cursors, bulk operations, dynamic SQL
+constructs without a PostgreSQL equivalent
+coupling, mutually dependent groups
+large packages go directly to the strong model
+low confidence moves a unit to a stronger
+strategy
+
+Weighted formula with YAML-configured weights; not a trained classifier.
+
+Algorithm 4. Bounded migrate–validate–repair loop for one migration
+group.
+Input: group g, dependency signatures, budget (2 repairs/strategy, 2
+escalations, 5 attempts, 900 s)
+Output: status, verification level, PostgreSQL text
+1 s ← Route(score(g), parse confidence, type, size); sql ← Generate(s, g,
+signatures)
+2 repeat while attempts < 5 and elapsed < 900 s
+3 attempts ← attempts + 1; r ← Validate(sql)
+4 // static → install → structure → fixed scenarios
+5 if r.pass then return ACCEPTED, level(r)
+6 if r.infra_error then return INCONCLUSIVE
+7 if repairs(s) < 2 then sql ← Repair(sql, r.diagnostics); repairs(s) += 1
+8 else if escalations < 2 and next(s) exists then s ← next(s); sql ←
+Generate(s, g, signatures); escalations += 1
+9 else return FAILED
+10 return FAILED // attempts or time exhausted; dependants become
+BLOCKED
+
+Generation and validation. The model receives the
+Oracle source, all members of a mutually dependent group,
+the signatures of dependencies already migrated, the names
+of missing dependencies and conversion guidance; it returns
+structured PostgreSQL and notes. It does not choose the
+order, compute its own complexity or decide whether its
+output is correct. Validation runs against a PostgreSQL 16
+database kept for the run: static analysis, installation,
+structural checks, generated behaviour scenarios and
+derivable invariants. Scenarios are created once per group
+and reused after repairs so that tests cannot drift to fit a
+candidate. The strongest completed check is recorded as the
+verification level (Table XXIV), and a group takes the result
+of its least successful member.
+
+15
+
+TABLE XXIV. ​
+Term
+CHECKED_STATIC
+VERIFIED_INSTALL
+VERIFIED_BEHAVIO
+R
+ACCEPTED
+FAILED
+BLOCKED
+INCONCLUSIVE
+UNSUPPORTED
+
+VERIFICATION LEVELS AND UNIT STATUSES
+Meaning
+static checks passed; object could not be installed
+PostgreSQL installed or accepted the object
+installed and generated behaviour checks passed
+passed every check available for the unit
+attempted but still failing
+an upstream unit failed; never tried
+infrastructure unavailable; not a verdict on the SQL
+could not be attempted
+
+Interfaces. The same service layer is exposed through a
+command line, an HTTP API with asynchronous jobs and an
+MCP server, so that an orchestrating model can discover
+tools and follow a run through structured resources. Provider
+credentials stay in server-side configuration and are never
+tool arguments. An optional integration generates a repair
+agent with EvoAgentX in an isolated project that
+communicates through a small versioned JSON protocol; it
+only produces candidates, and installation and scenario
+execution in the main process remain authoritative.
+Evaluation corpora. Two corpora answer two questions.
+The breadth corpus is a grammar-clean subset of paired
+Oracle fragments and human-written PostgreSQL
+references: 1,000 pairs drawn with seed 42 produced 1,448
+migration tasks. The depth corpus consists of 216 migration
+units from 34 complete Oracle PL/SQL example files from a
+public repository, each executed on a real Oracle instance
+(Oracle 26ai Free in Docker), so that a translation can be
+compared with what Oracle printed and raised. The first
+measures how often the agent’s own checks pass and how
+close the output is to a reference; the second measures
+whether the translation behaves like Oracle.
+B.​ Chatbot Agent: Documentation-Grounded Assistant
+The chatbot is a developer-support assistant that answers
+questions over a body of documentation, retrieving
+passages, calling tools and citing sources. Its evaluation
+framework measures how well different LLMs and chatbot
+configurations work for documentation-based question
+answering and where a failure occurs: in execution, tool
+routing, retrieval, grounding or answer generation. It runs
+the real chatbot with selected retrieval and model
+configurations, scores it against a versioned dataset and
+saves the evidence. Ground truth is never passed to the
+chatbot; expected sources, tool behaviour and answer
+content are used only by the evaluation engine. Its execution
+and evaluation stages are summarised in Fig. 11.
+
+Application, model, evaluation and experiment
+configurations are stored separately, and every run saves the
+configuration actually used. Six metric groups evaluate the
+components separately (Table XXV); two methods are used.
+Deterministic checks cover execution, tools, retrieval and
+citation structure. A judge, semantic_judge_v1, scores
+faithfulness, answer correctness, answer relevance and task
+completion with fixed criteria; its scores support analysis
+and comparison but do not by themselves decide PASS or
+FAIL. The judge is an evaluation component built on an
+existing LLM, not a separately trained model.
+TABLE XXV. ​
+Group
+Execution
+Agent /
+tools
+
+Measurements
+execution success, tool execution success
+tool selection, tool arguments, forbidden
+calls
+recall@K, precision@K, R-precision,
+MRR, metadata
+citation compliance, validity,
+completeness, source match; faithfulness
+
+Method
+deterministic
+
+Answer
+quality
+
+correctness, relevance, task completion
+
+judge
+
+Operational
+
+latency, tokens, retries, iterations, LLM
+calls
+
+deterministic
+
+Retrieval
+Grounding
+
+deterministic
+deterministic
+deterministic;
+judge
+
+The metric groups are registered as chat.* attributes in the metamodel, with explicit
+ownership, measurement context, and provenance.
+
+Execution contract. The execution layer runs one
+conversation through the existing LangGraph chatbot under
+a selected configuration and returns a factual result to the
+evaluation layer. It does not rebuild the chatbot, does not see
+ground truth and does not compute metrics. A run plan
+expands every combination of sample, application
+configuration, model set and repeat, records the outcome of
+each execution and hands each result across a
+framework-neutral boundary (Table XXVI). Per-run settings
+(chat model, router model, decoding parameters, retrieval
+strategy, Top-K, reranker state, enabled tools) are injected at
+run time, which was verified in focused tests and by baseline
+and alternative-model smoke runs; model selection is
+therefore explicit and not merely recorded as metadata. Each
+execution starts from a fresh thread and state and uses a
+dedicated evaluation principal with memory isolation, and
+21 execution tests cover, among others, the mechanical
+rejection of ground-truth fields, the preservation of retrieved
+chunks after serialisation and the capture of successful and
+failed tool attempts.
+TABLE XXVI. ​
+
+EXECUTION CONTRACT OF THE CHATBOT EVALUATION
+
+Object
+
+Content
+sample id, dataset version, ordered user turns only
+(no ground truth)
+retrieval strategy, Top-K, reranker state, enabled
+tools, identifier
+chat model, router model; optional temperature,
+top-p, token limit, structured output
+dataset version, configurations, model sets,
+repeats, concurrency, failure handling
+invokes the chatbot turn by turn; converts runtime
+data into a RunResult
+answer, structured citations, ordered tool calls and
+results, retrieval evidence, statuses, typed errors
+boundary through which the result is handed to the
+evaluation layer
+
+ExecutableSample
+AppConfiguration
+ModelSet
+RunPlan
+ChatbotAdapter
+RunResult
+RunResultConsumer
+Fig. 11.​ Chatbot evaluation workflow. The real chatbot is executed on a
+versioned sample; deterministic metrics and a semantic judge produce
+results that feed aggregation and an evaluation agent.
+
+CHATBOT METRIC GROUPS
+
+Chatbot evaluation execution contract and interfaces.
+
+Preflight and datasets. Before evaluation, the runner
+verifies readiness of the database, prompt registry, LLM
+
+16
+
+gateway and configured tool services. Experiments use the
+versioned mvp_scenarios v6 dataset. Expected answers,
+sources and tool actions are held in the evaluator, and never
+supplied to the tested chatbot. Some expected labels have
+not been independently validated through execution, so
+corresponding measurements are restricted to their declared
+evidence level.
+The evaluation agent. A stateful LangGraph agent
+observes the computed metrics, decides on a diagnostic
+action, updates its state and decides again until it can name
+the failing layer. It does not change metric values or
+verdicts. Its five diagnostic tools (Table XXVII) are internal
+functions and not tools of the chatbot. The agent applies
+causal gating: it examines execution first, then routing and
+tools, retrieval, grounding and answer quality, and the first
+failing layer is the root cause (Fig. 12). For example, if the
+documentation-search tool was never called, routing is the
+cause and retrieval, which never ran, is not assigned a
+separate cause. A deterministic fallback replaces the agent’s
+controller if the model is unavailable.
+
+Fig. 12.​
+
+Integration. The chatbot evaluation API executes the
+configured chatbot, collects structured execution evidence
+and writes measurements into the MAS Core store. The
+integrated evaluation path passed an end-to-end validation,
+including deterministic retrieval and tool-call checks.
+Semantic metrics are emitted only when the specified judge
+is available, while missing token usage and incomplete
+citations generate explicit warnings. These integration
+checks establish the measurement path but do not substitute
+for application-quality evaluation.
+C.​ Automation Agent: Enterprise Support Tasks
+The automation system handles inbound Jira,
+Confluence or Outlook events with a single LLM agent that
+reasons in a loop and acts through fifteen canonical business
+operations, five per system. Every execution starts from a
+fresh state, carries no memory from earlier executions, reads
+knowledge without changing it and is bounded to ten steps.
+Failures are typed outcomes, never hidden or fabricated. The
+system has five layers (Fig. 13): entry points; strategy
+selection; prompt orchestration, model-call interception and
+tool management; business integrations, which are live
+systems in production and a frozen world state in evaluation;
+and infrastructure for configuration, retries, evidence and
+authentication.
+
+Causal gating: layers are examined in dependency order.
+
+TABLE XXVII. ​
+
+DIAGNOSTIC TOOLS OF THE EVALUATION AGENT
+
+Tool
+
+Analyses
+
+diagnose_execution
+diagnose_agent_tools
+
+runtime and tool failures
+tool selection and
+arguments
+
+diagnose_retrieval
+
+sources and ranking
+
+diagnose_grounding
+
+source support, citations
+
+diagnose_answer_qualit
+y
+
+correctness, relevance,
+completion
+
+Example finding
+error during a tool call
+required search tool not
+called
+a required document not
+found
+one of two source groups
+cited
+required information missing
+
+Algorithm 5. Causal-gated diagnosis with optional targeted re-test.
+Input: run result R with metrics, policy Π of allowed actions, candidates Cand
+Output: diagnosis, optional accepted candidate
+1 L ← [execution, tools, retrieval, grounding, answer_quality]; root_cause ←
+none
+2 for each layer l in L in order
+3 if R.passes(l) then continue
+4 d ← diagnose_l(R) // action chosen by controller from Π
+5 root_cause ← l; evidence ← d; break // downstream layers not assigned
+6 if root_cause ≠ none and approved candidate c ∈ Cand exists
+7 rerun same scenario with c; compare target metrics with baseline
+8 if PASS is restored or a prespecified target-metric improvement is
+confirmed then mark c as a candidate for validation
+9 return root_cause, evidence, candidate status; do not mutate the live system
+
+TABLE XXVIII. ​
+Role
+Chat model
+Semantic 

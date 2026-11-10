@@ -1,0 +1,2240 @@
+{
+ "pb": {
+  "inn": "Price rows from vendor price pages, entered or imported by an operator with a source id and snapshot date.",
+  "out": "One price row per provider, model, service tier, context band, region and effective_from, with rates, multipliers and flags.",
+  "store": "Writes append-only price rows. Reads vendor snapshots. Never edits or deletes a row.",
+  "fail": "Fail closed for billing decisions: a missing row returns PRICE_MISSING and the calculator marks the cost unpriced. A wrong price silently misstates spend.",
+  "req": "RQ-B-012, RQ-B-013, RQ-B-014, RQ-B-015, RQ-B-016, RQ-B-017, RQ-B-004, RQ-B-018, RQ-B-010, RQ-B-025, RQ-B-027, RQ-B-026",
+  "src": [
+   "A:199",
+   "A:201",
+   "A:225",
+   "A:270",
+   "A:214",
+   "A:069",
+   "A:176",
+   "A:258",
+   "A:159",
+   "A:281",
+   "A:252",
+   "A:255",
+   "A:177",
+   "A:232",
+   "A:233",
+   "A:148",
+   "A:121",
+   "A:280",
+   "A:182",
+   "C:010"
+  ],
+  "prop": "The insert-time check of cache rates against vendor multipliers and the tolerance of 0.0001 USD per million tokens are DevX proposals.",
+  "hard": "Open: Gemini implicit cache 75 percent [A:121] against 90 percent [A:280], stored per model and date. Anthropic minimum prefix conflicts [A:199 against C:051], larger value kept. Together H100 price $3 per hour [A:277] against $5.49 [A:278] does not touch rows. Azure PTU to tokens per minute is not in the corpus. Model names such as Fable 5.1 are quoted as written and cannot be verified.",
+  "line": "anthropic/sonnet-5.5/standard/all/global/<date>\nin 2 out 10 read .10 w5m 2.5 w1h 4 USD/1M tok",
+  "dumb": "The price book is a list of what each model costs, with a start date on every line. Old lines stay forever, so any past request can be re-priced exactly.",
+  "deep": {
+   "purpose": "Hold every price the calculator needs as immutable, versioned rows, so each request is costed against the row that was valid when it ran. Prices are snapshots from vendor pages, never constants in code.",
+   "expected": [
+    "Row key is (provider, model_id, service_tier, context_band, region, effective_from). Model id is the exact string the provider returns.",
+    "Rates per million tokens: input, output, cache_read, cache_write_5m, cache_write_1h, reasoning (default equals output).",
+    "Multipliers carry applies_to (input, output, cached, all) and an order flag that says whether they apply before or after the cache discount. Kinds: batch, flex, priority, fast, region, residency.",
+    "Flags per row: batch_stacks_with_cache (true, false, unknown), band_scope (marginal or all_tokens), input_includes_cached, reasoning_in_output, billed_units_source.",
+    "Cache fields: min_prefix, TTLs, max_breakpoints, storage_rate. Limit fields: rpm, tpm, rpd, batch_max_requests, batch_window, 429_billed, auto_fallback.",
+    "Lifecycle fields: effective_from, expires_at, source_id, snapshot_date, last_verified_at, confidence."
+   ],
+   "not_expected": [
+    "No in-place edits. A price change adds a row with a new effective_from.",
+    "No partial-name model matching. An unknown id returns PRICE_MISSING.",
+    "No plan or subscription rows here. Those live in the plan-units table (pplan).",
+    "No cost computation. The calculator (calc) reads rows and does the arithmetic."
+   ],
+   "algorithm": {
+    "name": "Append-only versioned lookup with effective-date selection",
+    "formula": "row = argmax(effective_from) over rows where key matches and effective_from <= request_time and (expires_at is null or request_time < expires_at)",
+    "steps": [
+     "On insert, validate required fields and that source_id and snapshot_date are present.",
+     "Check cache rates against vendor multipliers (read, 5m write 1.25x, 1h write 2x). Flag mismatches for review.",
+     "Assign a monotonic price_row_id and write the row. Never update.",
+     "On lookup, filter by provider, exact model_id, service_tier, region, then choose the context band that contains total prompt tokens.",
+     "Among candidates pick the greatest effective_from not after request time. Return the row and price_row_id.",
+     "If the row is stale (plife flag) return it with price_status=stale so budget logic can refuse to act on it."
+    ],
+    "params": {
+     "stale_after_days": "30 [A:214, R5 section 2]",
+     "expiry_warning_days": "30 [R5 section 2]",
+     "haiku_5.5_band_split": "100K tokens [A:199]",
+     "long_context_split_anthropic_gemini_xai": "200K tokens [A:270, A:225]",
+     "price_unit": "USD per 1M tokens"
+    }
+   },
+   "math": {
+    "definitions": [
+     "base_input = list input rate of the row in USD per million tokens.",
+     "m_read, m_w5, m_w1h = vendor cache multipliers on base_input.",
+     "stored_rate = rate saved in the row.",
+     "derived_rate = base_input x multiplier.",
+     "band = context band chosen from total prompt tokens."
+    ],
+    "formula_full": "derived_read = base_input x m_read; derived_w5 = base_input x 1.25; derived_w1h = base_input x 2; flag if |stored - derived| > 0.0001",
+    "derivation": "Anthropic documents read 0.1x, 5m write 1.25x and 1h write 2x. Read is 0.05x on Opus 5.5 and Sonnet 5.5, and 0.025x on Fable 5.1 and Mythos 5.1 [A:199, A:283, C:010]. A stored rate that breaks its own multiplier is a typing error or a vendor change, so the insert check catches both.",
+    "worked_example": "Sonnet 5.5: input $2, read 0.05x gives $0.10, 5m write 1.25x gives $2.50, 1h write 2x gives $4 [A:283, A:199, C:010]. All three match the stored row. Sonnet 4.5: input $3, read 0.1x gives $0.30, 5m $3.75, 1h $6. Haiku 5.5 needs two rows: $0.10 in and $0.50 out up to 100K, $0.50 in and $2.50 out above [C:010].",
+    "complexity": "Insert O(1). Lookup O(log n) on an index of the row key, then O(b) over b bands, where b is small.",
+    "failure_modes": [
+     "Vendor changes a multiplier and the check flags every row of that family.",
+     "Two rows share one effective_from: the insert is rejected.",
+     "Band missing for a prompt size: PRICE_MISSING, never a neighbouring band."
+    ],
+    "calibration": "The weekly canary (canary) compares computed cost with invoices. A drift above 1 percent sends a stale signal back to plife."
+   },
+   "security": [
+    "Only an operator role from the authorisation component can insert rows. Each insert is written to the audit log.",
+    "Rows are immutable at the storage layer, so a compromised service cannot rewrite history.",
+    "Price pages are fetched by a separate job. The job stores source_id and a hash of the page, so tampering is visible."
+   ],
+   "performance": {
+    "slo": "Lookup under 5 ms at the 95th percentile (P95) from an in-memory cache (DevX proposal, no corpus source).",
+    "complexity": "O(log n) per lookup.",
+    "scaling": "Rows are small and read-heavy. Cache the active rows per gateway instance and refresh on a version counter."
+   },
+   "edge_cases": [
+    "Anthropic Haiku 5.5 has two bands by prompt size, so one model has two active rows.",
+    "xAI above 200K reprices every token including cached ones, so band_scope is all_tokens for that row [A:225].",
+    "Models with no write premium (pre-5.6 OpenAI, DeepSeek) store cache_write at 1x of input.",
+    "A promo that expires leaves a gap. The row for the list price must already exist, or lookup returns PRICE_MISSING.",
+    "Aggregators such as OpenRouter add a premium on top of the model row, so they need their own provider rows."
+   ],
+   "tests": [
+    {
+     "name": "derive_match",
+     "given": "Sonnet 5.5 row with input 2.00 and read 0.10",
+     "expect": "insert accepted, no mismatch flag"
+    },
+    {
+     "name": "derive_mismatch",
+     "given": "Sonnet 5.5 row with input 2.00 and read 0.20",
+     "expect": "insert flagged PRICE_MULTIPLIER_MISMATCH"
+    },
+    {
+     "name": "effective_date",
+     "given": "rows A from Jan 1 and B from Mar 1, request on Feb 10",
+     "expect": "row A returned"
+    },
+    {
+     "name": "exact_model",
+     "given": "request model id 'claude-sonnet-5' with only 'claude-sonnet-5-5' in the book",
+     "expect": "PRICE_MISSING, no partial match"
+    },
+    {
+     "name": "band_select",
+     "given": "Haiku 5.5, 120,000 prompt tokens",
+     "expect": "row with context_band >100000, input $0.50"
+    },
+    {
+     "name": "immutable",
+     "given": "attempt to update an inserted row",
+     "expect": "write rejected, audit event written"
+    }
+   ],
+   "cost_levers": [
+    "Correct rows let the cache planner see real write premiums and skip caching that cannot pay back.",
+    "Exact tier and band rows prevent over-billing estimates that lead to needless budget stops."
+   ],
+   "feedback_events": [
+    "pb.row_inserted",
+    "pb.row_flagged_mismatch",
+    "pb.lookup_missing"
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.pb.row_inserted",
+     "fields": [
+      "price_row_id",
+      "provider",
+      "model_id",
+      "service_tier",
+      "context_band",
+      "effective_from",
+      "source_id"
+     ],
+     "when": "A new row is written."
+    },
+    {
+     "name": "token_economics.pb.lookup_missing",
+     "fields": [
+      "provider",
+      "model_id",
+      "service_tier",
+      "tokens_total"
+     ],
+     "when": "Lookup finds no row."
+    },
+    {
+     "name": "token_economics.pb.multiplier_mismatch",
+     "fields": [
+      "price_row_id",
+      "field",
+      "stored",
+      "derived"
+     ],
+     "when": "Insert check fails."
+    }
+   ],
+   "papers": [
+    {
+     "ref": "A:069",
+     "key_idea": "Sticker price reversed the ranking in 106 of 336 comparisons (32 percent), up to 28x.",
+     "how": "Justifies per-row tier and band data and cost per task over list price."
+    }
+   ],
+   "repos": [
+    {
+     "ref": "A:232",
+     "name": "Langfuse",
+     "take": "Model-based pricing with tier conditions such as input>200000. No retroactive recalculation of history."
+    },
+    {
+     "ref": "C:060",
+     "name": "LiteLLM",
+     "take": "Provider normalisation and price maps to study. Token Economics keeps its own versioned book."
+    }
+   ],
+   "industry": "Langfuse and LiteLLM keep model price tables with usage tiers. Langfuse stores ingested cost ahead of inferred cost and does not recalculate history. Token Economics adds expiry, flags for stacking and band scope, and an append-only rule."
+  }
+ },
+ "plife": {
+  "inn": "Price rows and plan rows with expires_at, last_verified_at and the canary stale signal.",
+  "out": "A flag on each row (ok, expiring, stale, expired) and an alert to operators.",
+  "store": "Reads pb and pplan rows. Writes lifecycle flags in a separate flag table, never inside the immutable rows.",
+  "fail": "Fail closed for billing decisions: a stale row blocks budget actions and the system alerts. Observation continues on the last good price.",
+  "req": "RQ-B-026, RQ-B-027, RQ-B-029, RQ-B-036",
+  "src": [
+   "A:214",
+   "A:121",
+   "A:280",
+   "A:148",
+   "A:069",
+   "C:011",
+   "C:115"
+  ],
+  "prop": "Flag names, the alert channel and the rule that stale rows still allow observation are DevX proposals. The 30 day thresholds are from R5.",
+  "hard": "Open: the right staleness threshold is unknown. R5 experiment 9 (monthly price-list diff) should calibrate it. Plan promos change on fixed dates that need manual entry.",
+  "line": "row 4172 sonnet-5.5 verified 41d ago -> stale\nbilling decisions blocked, alert sent to ops",
+  "dumb": "Prices go out of date. This part checks every day, and when a price is too old it stops the system from acting on it and tells a person.",
+  "deep": {
+   "purpose": "Stop old or expired prices from driving budget decisions. Vendors change prices, cache discounts and promos on their own schedule, so a row can be wrong without any code change.",
+   "expected": [
+    "A daily job flags rows within 30 days of expires_at as expiring.",
+    "The same job flags rows with last_verified_at older than 30 days as stale.",
+    "Rows past expires_at are expired. Expired promos fall back to the list price row and raise an alert.",
+    "A stale signal from the canary (drift above 1 percent) marks the row stale at once.",
+    "Budget logic reads the flag and refuses to act on a stale or expired row. Observation continues and labels the cost."
+   ],
+   "not_expected": [
+    "No rewriting of price rows. Flags live outside the immutable rows.",
+    "No automatic price scraping decisions. A person verifies and inserts the new row.",
+    "No blocking of requests for stale rows on observe-only routes."
+   ],
+   "algorithm": {
+    "name": "Daily sweep with threshold flags",
+    "formula": "flag = expired if now >= expires_at; expiring if expires_at - now <= 30d; stale if now - last_verified_at > 30d or canary_stale",
+    "steps": [
+     "Run daily at a fixed hour and scan active rows.",
+     "Compute days_to_expiry and days_since_verified for each row.",
+     "Write the flag to the flag table with a reason code.",
+     "Emit one alert per row per state change, not per day.",
+     "On expiry of a promo row, confirm a list-price row exists. If not, alert as severity high."
+    ],
+    "params": {
+     "stale_days": "30 [R5 section 2]",
+     "expiry_warning_days": "30 [R5 section 2]",
+     "canary_drift_threshold": "1 percent [R5 experiment 1, DevX proposal as a trigger]"
+    }
+   },
+   "security": [
+    "Flag writes need a service role. Operators cannot clear a stale flag without a new verified row.",
+    "Alerts carry row ids and no content."
+   ],
+   "performance": {
+    "slo": "Sweep finishes within 5 minutes and the alert fires within 15 minutes of a state change (DevX proposal).",
+    "complexity": "O(n) rows per sweep.",
+    "scaling": "Only active rows are scanned. Cost is negligible next to request traffic."
+   },
+   "edge_cases": [
+    "Copilot promos end Dec 1 and Dec 31 2026. The sweep must warn 30 days before each date [A:214].",
+    "Azure charges for 12h cache writes on GPT-5.6+ from Nov 1 2026, so that row needs a dated successor [A:148].",
+    "A row with no expires_at is only governed by the 30 day verification rule.",
+    "Gemini cache discount differs by source, 75 against 90 percent. Low confidence rows should reach stale sooner [A:121, A:280]."
+   ],
+   "tests": [
+    {
+     "name": "expiring",
+     "given": "row expires_at in 20 days",
+     "expect": "flag expiring, one alert"
+    },
+    {
+     "name": "stale_by_age",
+     "given": "last_verified_at 31 days ago",
+     "expect": "flag stale, billing blocked"
+    },
+    {
+     "name": "promo_fallback",
+     "given": "promo row expired, list row present",
+     "expect": "calc uses list row, alert sent"
+    },
+    {
+     "name": "promo_no_fallback",
+     "given": "promo row expired, no list row",
+     "expect": "severity high alert, PRICE_MISSING on lookup"
+    },
+    {
+     "name": "canary_signal",
+     "given": "canary drift 1.4 percent on a row",
+     "expect": "flag stale at once"
+    }
+   ],
+   "cost_levers": [
+    "Prevents decisions on wrong prices, such as a tier choice based on a promo that ended.",
+    "Early alerts avoid weeks of silent cost error."
+   ],
+   "feedback_events": [
+    "plife.row_expiring",
+    "plife.row_stale",
+    "plife.promo_expired"
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.plife.flag_changed",
+     "fields": [
+      "price_row_id",
+      "old_flag",
+      "new_flag",
+      "reason"
+     ],
+     "when": "A flag changes state."
+    },
+    {
+     "name": "token_economics.plife.sweep_done",
+     "fields": [
+      "rows_scanned",
+      "rows_flagged",
+      "duration_ms"
+     ],
+     "when": "Daily sweep ends."
+    }
+   ],
+   "papers": [
+    {
+     "ref": "A:069",
+     "key_idea": "Price rankings reversed in 32 percent of 336 comparisons.",
+     "how": "Shows why prices must be re-verified and not treated as constants."
+    }
+   ],
+   "repos": [],
+   "industry": "Langfuse does not recalculate historical cost after a price change. Token Economics follows that rule and adds expiry and stale flags so that current decisions use fresh rows."
+  }
+ },
+ "pplan": {
+  "inn": "Plan facts from vendor pages: fee, unit, included quantity, credit value, reset rule, overage, model weighting.",
+  "out": "One plan row per plan with its native unit and limits.",
+  "store": "Writes append-only plan rows. Reads vendor pages. Read by the quota tracker (planq).",
+  "fail": "Fail open for observation: a missing plan row means the tracker shows native units only, with no shadow cost. Plan figures never gate requests.",
+  "req": "RQ-B-028, RQ-B-030, RQ-B-031, RQ-B-029",
+  "src": [
+   "C:009",
+   "C:010",
+   "C:114",
+   "C:115",
+   "C:119",
+   "C:120",
+   "C:015",
+   "C:116",
+   "C:117",
+   "A:214",
+   "C:057",
+   "A:161",
+   "A:146",
+   "C:011"
+  ],
+  "prop": "None for the row fields. Plan row updates by hand each month are a DevX proposal.",
+  "hard": "Open: Anthropic publishes no limit-to-token conversion [C:010]. Plan figures are approximate and short-lived: caps doubled May 2026 and a 50 percent weekly boost expired 2026-07-13 [C:011]. Copilot legacy premium-request billing against new credit billing [C:116, A:214]. Kiro credits per token not stated [A:161].",
+  "line": "codex plus: $20/mo, 15-80 msgs per 5h, credit~$0.04\nsource C:114 verified <date>",
+  "dumb": "Subscriptions do not count tokens. They count messages, credits or requests, so this table records each plan in its own unit.",
+  "deep": {
+   "purpose": "Describe subscription and credit plans in their native units, so spend on a plan is tracked without converting to tokens, which no vendor allows.",
+   "expected": [
+    "Fields: plan, fee, unit, included_qty (nullable), credit_usd, reset_rule, overage_rate, model_weighting (nullable), expires_at, source_id.",
+    "Unit values: api-rate tokens, credits, premium requests, requests per day, messages per 5 hours, pool multiple.",
+    "Rows for Claude: Pro $20, Max $100 and $200, Team $20 to $125 per seat. Codex: Plus $20, Pro $100 and $200. Cursor: Plus $8 base with 4x, 15x and 50x pools. Copilot: credits at $0.01. Gemini CLI: 1,000 to 2,000 requests per day.",
+    "Each row has a source id and a snapshot date. Rows are append-only like price rows."
+   ],
+   "not_expected": [
+    "No token-per-plan conversion for Claude. It is not published.",
+    "No dollar figure for subscription traffic. Only the shadow API cost is computed elsewhere.",
+    "No enforcement. Plan rows inform dashboards and the quota tracker."
+   ],
+   "algorithm": {
+    "name": "Typed plan record with native unit",
+    "formula": "remaining_units = included_qty - used_units (null included_qty means unmetered or unknown)",
+    "steps": [
+     "Each plan row names one unit. The tracker stores usage in that unit only.",
+     "credit_usd converts credits to dollars where the vendor states it (Copilot 1 credit = $0.01 [A:214]; Codex 1 credit about $0.04 [C:114]).",
+     "model_weighting holds per-model weights, such as Copilot reasoning 5x or 20x and review 13x [C:117].",
+     "reset_rule holds the window (5 hours, weekly, monthly).",
+     "Rows expire with promos and are re-verified by plife."
+    ],
+    "params": {
+     "copilot_credit_usd": "0.01 [A:214]",
+     "codex_credit_usd": "about 0.04 [C:114]",
+     "gemini_gsu_output_weight": "5, cached 0.1, 675 tokens per GSU [A:146]",
+     "cursor_pool_multiples": "4x, 15x, 50x on the $8 base [C:119]"
+    }
+   },
+   "security": [
+    "Plan rows hold no user data. They are public vendor facts.",
+    "Edits need the operator role and are audited."
+   ],
+   "performance": {
+    "slo": "Reads from cache, same as the price book (DevX proposal).",
+    "complexity": "O(1) lookup by plan id.",
+    "scaling": "A few dozen rows. No scaling concern."
+   },
+   "edge_cases": [
+    "Plan has included_qty null (Anthropic does not publish limits). The tracker shows usage only.",
+    "Copilot moved from premium requests to credits, so two versions of the plan coexist in history [C:116, A:214].",
+    "Cursor Pro moved from 500 requests to a usage pool [C:015].",
+    "Gemini CLI quota differs by auth method, from 250 per day on a free API key to 2,000 [C:057]."
+   ],
+   "tests": [
+    {
+     "name": "native_unit",
+     "given": "Claude Max row",
+     "expect": "unit is messages per 5 hours, no token conversion field"
+    },
+    {
+     "name": "credit_value",
+     "given": "Copilot row with 250 credits used",
+     "expect": "shadow value $2.50 at $0.01 per credit"
+    },
+    {
+     "name": "expired_promo",
+     "given": "Copilot promo row past Dec 31 2026",
+     "expect": "plife flags expired, falls back to list row"
+    },
+    {
+     "name": "null_included",
+     "given": "Anthropic plan row",
+     "expect": "included_qty null, remaining_units null"
+    }
+   ],
+   "cost_levers": [
+    "Lets teams see whether a subscription beats API billing for each developer using shadow cost."
+   ],
+   "feedback_events": [
+    "pplan.row_inserted"
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.pplan.row_inserted",
+     "fields": [
+      "plan",
+      "unit",
+      "fee",
+      "source_id"
+     ],
+     "when": "A new plan row is written."
+    }
+   ],
+   "papers": [],
+   "repos": [],
+   "industry": "Cursor, Copilot and Claude each use a different unit. The corpus gives no common conversion, so Token Economics keeps native units and reports a shadow API cost next to them."
+  }
+ },
+ "norm": {
+  "inn": "Raw provider usage object, response id, model id and headers from the stream observer (tee).",
+  "out": "One normalised record with five mutually exclusive token buckets and the provider's billed units when reported.",
+  "store": "Reads the price-row flags input_includes_cached and reasoning_in_output. Writes nothing durable; passes the record on.",
+  "fail": "Fail closed on the record: unknown keys or impossible counts go to quarantine with a code. The user response is never touched, so the request path fails open.",
+  "req": "RQ-B-001, RQ-B-002, RQ-B-003, RQ-B-004, RQ-B-019, RQ-B-015",
+  "src": [
+   "A:199",
+   "A:233",
+   "A:190",
+   "A:197",
+   "A:251",
+   "A:157",
+   "A:159",
+   "A:182",
+   "A:177",
+   "A:232",
+   "A:216",
+   "A:204",
+   "A:221",
+   "A:231"
+  ],
+  "prop": "Quarantine codes and the 0 token tolerance for bucket sums are DevX proposals.",
+  "hard": "Open: Gemini candidate-token split against total is not in the corpus. Mistral and Groq cached-token field names are not in the corpus. Bedrock Nova caching is implicit and not reported as reads [A:157]. DeepSeek native field names were seen in corpus text only [A:182].",
+  "line": "in 17903 (cached 17817) out 188 -> fresh 86\nbuckets: 86 / 17817 / 0 / 0 / 188",
+  "dumb": "Providers count tokens in different ways. This part rewrites every count into the same five boxes so nothing is counted twice.",
+  "deep": {
+   "purpose": "Turn each provider's usage object into five exclusive buckets: fresh_input, cache_read, cache_write_5m, cache_write_1h, output. Reasoning tokens stay inside output.",
+   "expected": [
+    "Anthropic: fresh = input_tokens (already excludes cache); cache_read = cache_read_input_tokens; writes from cache_creation.ephemeral_5m and ephemeral_1h; total_input = read + creation + input_tokens [A:199].",
+    "OpenAI Chat and Responses, xAI, OpenRouter: prompt_tokens or input_tokens include cached, so fresh = prompt - cached_tokens [A:233, A:202, A:221].",
+    "Bedrock Converse: total input = inputTokens + cacheRead + cacheWrite, so buckets map directly [A:157, A:159].",
+    "Gemini: cachedContentTokenCount (REST) or cached_content_token_count (SDK) is subtracted from prompt tokens [A:143, A:121].",
+    "Reasoning tokens are never added to output because output_tokens already includes them (1,186 output holds 1,024 reasoning) [A:197, A:251].",
+    "Where the vendor reports billed units, they are carried next to the token buckets (Cohere 6,772 billed against 7,596 tokens) [A:177]."
+   ],
+   "not_expected": [
+    "No cost computation. The calculator does that.",
+    "No deduplication. The dedupe guard follows.",
+    "No silent conversion of unknown fields. An unknown key quarantines the record.",
+    "No content storage. Only counts and ids pass through."
+   ],
+   "algorithm": {
+    "name": "Per-provider bucket mapping with conservation check",
+    "formula": "fresh = prompt_total - cached_read - cache_write (when input_includes_cached); output includes reasoning",
+    "steps": [
+     "Identify the provider and wire format from the route and response shape.",
+     "Check the usage object keys against the allow-list for that wire format. Unknown key: quarantine with USAGE_UNKNOWN_KEY.",
+     "Map fields to buckets using the price-row flag input_includes_cached.",
+     "Check that all buckets are zero or more. Cached above prompt total gives USAGE_BUCKET_OVERFLOW.",
+     "Check conservation: fresh + read + write_5m + write_1h equals the provider's total input. Mismatch gives USAGE_SUM_MISMATCH.",
+     "Attach inference_geo, service_tier, speed and billed units if present, and pass on."
+    ],
+    "params": {
+     "unknown_key_policy": "reject, never convert [A:233]",
+     "reasoning_handling": "inside output, never added [A:197]",
+     "sum_tolerance_tokens": "0 (DevX proposal)"
+    }
+   },
+   "math": {
+    "definitions": [
+     "P = prompt_tokens as the provider reports them.",
+     "K = cached read tokens.",
+     "W5, W1h = cache write tokens by TTL class.",
+     "F = fresh_input after normalisation.",
+     "O = output tokens including reasoning."
+    ],
+    "formula_full": "inclusive providers: F = P - K - W; exclusive providers (Anthropic): F = input_tokens, total_input = F + K + W5 + W1h; always O = output_tokens",
+    "derivation": "Anthropic reports the buckets separately [A:199]. OpenAI, xAI and OpenRouter include cached tokens inside the prompt count [A:233, A:221, A:231]. Summing the inclusive count with the cached count double-counts K. Subtraction gives the exclusive form.",
+    "worked_example": "OpenAI: prompt_tokens 17,903 with cached 17,817 and 188 output gives F = 86, K = 17,817, O = 188, total 18,091 [A:233]. Cloudflare: 1,000 input with 600 read and 200 write gives F = 200 [A:190]. Reasoning: output 1,186 already holds 1,024 reasoning, total 1,261 with input 75 [A:197, A:251].",
+    "complexity": "O(1) per response. Allow-list lookup is constant time.",
+    "failure_modes": [
+     "A gateway in the path adds extra usage keys and defeats conversion [A:233].",
+     "Cached above prompt total after a provider bug.",
+     "A provider changes a field name and every record quarantines."
+    ],
+    "calibration": "The weekly canary compares the normalised totals with vendor usage reports. A systematic gap points to a mapping fault."
+   },
+   "security": [
+    "Records hold counts and ids only. No prompt text reaches this component.",
+    "Quarantined raw usage objects are kept without content and expire with metadata retention.",
+    "The allow-list is code reviewed. A new provider field never passes by default."
+   ],
+   "performance": {
+    "slo": "Under 1 ms per record at the 95th percentile (P95) and off the response path (DevX proposal).",
+    "complexity": "O(1) per response.",
+    "scaling": "Stateless. Scales with gateway instances."
+   },
+   "edge_cases": [
+    "Streaming responses report usage only in the last event. The normaliser waits for it.",
+    "A response with cached tokens and no cache write field gives W = 0, not an error.",
+    "Bedrock Nova caching is implicit and not reported as reads [A:157]. Reads show 0 and cost is overstated.",
+    "DeepSeek reports hit and miss tokens (prompt_cache_hit_tokens, prompt_cache_miss_tokens), so cache_read = hit and F = miss [A:182].",
+    "Provider returns a prompt cache miss reason (OpenAI diagnostics). It is stored as metadata only [A:204]."
+   ],
+   "tests": [
+    {
+     "name": "openai_inclusive",
+     "given": "prompt 17903, cached 17817, output 188",
+     "expect": "F=86, K=17817, O=188"
+    },
+    {
+     "name": "anthropic_exclusive",
+     "given": "input 200, read 600, creation 200 (5m), output 100",
+     "expect": "F=200, K=600, W5=200, O=100, total_input 1000"
+    },
+    {
+     "name": "reasoning_once",
+     "given": "output 1186 with reasoning 1024",
+     "expect": "O=1186, not 2210"
+    },
+    {
+     "name": "unknown_key",
+     "given": "usage object with key 'gateway_extra'",
+     "expect": "quarantine USAGE_UNKNOWN_KEY, no row"
+    },
+    {
+     "name": "overflow",
+     "given": "prompt 100, cached 150",
+     "expect": "quarantine USAGE_BUCKET_OVERFLOW"
+    },
+    {
+     "name": "deepseek",
+     "given": "hit 900, miss 100, output 50",
+     "expect": "K=900, F=100, O=50"
+    }
+   ],
+   "cost_levers": [
+    "Correct buckets are the base for every saving claim, since a double-counted cache read hides real spend.",
+    "Exposes caller cache hit rates for the cache planner."
+   ],
+   "feedback_events": [
+    "norm.record_ok",
+    "norm.record_quarantined"
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.norm.record_ok",
+     "fields": [
+      "provider",
+      "model_id",
+      "fresh",
+      "cache_read",
+      "cache_write_5m",
+      "cache_write_1h",
+      "output"
+     ],
+     "when": "A record is normalised."
+    },
+    {
+     "name": "token_economics.norm.quarantined",
+     "fields": [
+      "provider",
+      "code",
+      "key"
+     ],
+     "when": "A record fails a check."
+    }
+   ],
+   "papers": [],
+   "repos": [
+    {
+     "ref": "A:232",
+     "name": "Langfuse",
+     "take": "Usage buckets that are mutually exclusive, with ingested cost winning over inferred cost."
+    },
+    {
+     "ref": "C:060",
+     "name": "LiteLLM",
+     "take": "Provider normalisation reference."
+    }
+   ],
+   "industry": "Langfuse requires mutually exclusive usage buckets, and OpenAI's inclusive counts are converted by subtraction. LiteLLM maps over 100 providers to one shape. Token Economics adds a conservation check and a reject rule for unknown keys."
+  }
+ },
+ "dedupe": {
+  "inn": "Normalised usage records from norm, plus session and resume signals from the joiner.",
+  "out": "At most one record per provider response id, with the final output token count.",
+  "store": "Reads and writes a seen-id set (response id to ledger key) with a time-limited expiry. Reads the last cumulative total per session.",
+  "fail": "Fail open on the response path. On store outage the guard passes records and marks them dedupe_unchecked, and the ledger unique key catches repeats later.",
+  "req": "RQ-B-005, RQ-B-006, RQ-B-007",
+  "src": [
+   "A:216",
+   "A:217",
+   "C:002"
+  ],
+  "prop": "The seen-id expiry of 24 hours and the delta method for resumed totals are DevX proposals. The corpus only lists the pitfalls.",
+  "hard": "Open: how Codex and non-Anthropic harnesses report message ids and resumes is not in the corpus. Exact rules for SDK placeholder tokens beyond 'use the final result' are not in the corpus [A:216].",
+  "line": "msg_01 seen 3x (3 tool calls), placeholder out=1\nkeep final: out=412, write 1 row",
+  "dumb": "Sometimes the same answer is reported twice, or a resumed chat repeats old totals. This part keeps exactly one row per answer.",
+  "deep": {
+   "purpose": "Make sure each provider response is costed once. It removes repeats from parallel tool calls, dual reporting paths, placeholder token counts and resumed session totals.",
+   "expected": [
+    "Key is the provider response id (for Anthropic, the message id). One row per key.",
+    "Parallel tool calls that share a message id collapse to one row [A:216].",
+    "Placeholder per-step output_tokens are ignored. The final result carries the real output count [A:216].",
+    "A call seen through both SDK telemetry and the gateway is counted once. The gateway row wins, and the telemetry row is stored as a cross-check [A:216, A:217].",
+    "On session resume, only the new spend is booked. Earlier spend is already in the resumed total [A:216]."
+   ],
+   "not_expected": [
+    "No cost computation.",
+    "No dropping of distinct calls with equal token counts. Only the id decides.",
+    "No guessing a missing id. A record with no id is stored with a synthetic key and flagged."
+   ],
+   "algorithm": {
+    "name": "Idempotent upsert by response id with final-result precedence",
+    "formula": "row(key) = final record if final seen else latest partial; resumed_delta = new_total - last_total(session)",
+    "steps": [
+     "Compute key = provider + response id.",
+     "If key is unseen, hold the record as partial until a final usage event arrives or a timeout passes.",
+     "If key is seen and the new record is final, replace the partial. If both are final and equal, drop the repeat. If both are final and differ, keep the first and raise DEDUPE_CONFLICT.",
+     "Collapse sibling tool-call records with the same message id into one record.",
+     "For resumed sessions, subtract the last stored cumulative total for the session before booking.",
+     "Pass the single record to the calculator."
+    ],
+    "params": {
+     "seen_id_expiry": "24 hours (DevX proposal)",
+     "partial_wait": "30 seconds (DevX proposal)",
+     "key": "provider + response id [A:216]"
+    }
+   },
+   "math": {
+    "definitions": [
+     "n = records received for one response id.",
+     "f = number of final records among them.",
+     "T_new = cumulative session total on resume.",
+     "T_last = last stored cumulative total."
+    ],
+    "formula_full": "rows = 1 for every distinct key; booked_spend_on_resume = T_new - T_last",
+    "derivation": "A resumed session reports a total that already includes earlier spend [A:216]. Adding the new total to the stored sum counts the earlier spend twice. Subtracting the last stored total books only the new part.",
+    "worked_example": "Illustrative arithmetic: three parallel tool calls share message id msg_01 and arrive as 3 records, so n = 3 and the guard writes 1 row. A session stored at $4.00 resumes and reports $4.50. The booked delta is $0.50, not $4.50.",
+    "complexity": "O(1) expected per record with a hash set. Memory grows with ids seen in the expiry window.",
+    "failure_modes": [
+     "Store outage lets repeats through. The unique ledger key stops them later.",
+     "Expiry too short lets a late replay create a second row.",
+     "A resume with a reset total gives a negative delta. It is booked as zero and flagged."
+    ],
+    "calibration": "Compare ledger row count with provider request counts in invoices and OTel api_request events each week."
+   },
+   "security": [
+    "The seen-id set holds ids and hashes only, no content.",
+    "A replayed transcript cannot overwrite a gateway row, since gateway rows win."
+   ],
+   "performance": {
+    "slo": "Decision under 2 ms at the 95th percentile (P95) (DevX proposal).",
+    "complexity": "O(1) expected per record.",
+    "scaling": "Partition the seen-id set by tenant. Expiry bounds memory."
+   },
+   "edge_cases": [
+    "Anthropic parallel tool calls share one message id across several assistant records.",
+    "SDK sends placeholder output_tokens per step, then the true count in the final result [A:216].",
+    "Gateway and SDK telemetry both report the same call [A:216, A:217].",
+    "Resume after a crash can replay the last response, so the same id arrives twice.",
+    "Subagent calls have their own response ids and must not be merged with the parent."
+   ],
+   "tests": [
+    {
+     "name": "parallel_calls",
+     "given": "3 records share msg_01, last has output 412",
+     "expect": "1 row, output 412"
+    },
+    {
+     "name": "placeholder",
+     "given": "partial output 1 then final output 412",
+     "expect": "row output 412"
+    },
+    {
+     "name": "dual_path",
+     "given": "same id from gateway and OTel",
+     "expect": "1 ledger row, source gateway, OTel kept as cross-check"
+    },
+    {
+     "name": "resume_delta",
+     "given": "stored total $4.00, resumed total $4.50",
+     "expect": "book $0.50"
+    },
+    {
+     "name": "conflict",
+     "given": "two finals for one id with 400 and 412 output",
+     "expect": "keep first, flag DEDUPE_CONFLICT"
+    }
+   ],
+   "cost_levers": [
+    "Removes phantom spend that would make budgets stop work early.",
+    "Keeps cache hit rates honest, since a repeat read inflates the ratio."
+   ],
+   "feedback_events": [
+    "dedupe.dropped",
+    "dedupe.conflict"
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.dedupe.dropped",
+     "fields": [
+      "response_id",
+      "reason",
+      "path"
+     ],
+     "when": "A repeat record is dropped."
+    },
+    {
+     "name": "token_economics.dedupe.conflict",
+     "fields": [
+      "response_id",
+      "tokens_a",
+      "tokens_b"
+     ],
+     "when": "Two finals disagree."
+    }
+   ],
+   "papers": [],
+   "repos": [
+    {
+     "ref": "C:003",
+     "name": "ccusage",
+     "take": "Reads local JSONL cost data for many agent CLIs. Study how it handles repeated message records."
+    }
+   ],
+   "industry": "Agent SDK cost data is a client-side estimate with known traps: double counting, placeholder tokens, subagent exclusion and resumed totals. Token Economics treats each trap as a rule on the ledger path."
+  }
+ },
+ "calc": {
+  "inn": "Deduplicated bucket record, the chosen price row (pb), request tier and region, tool fees.",
+  "out": "Cost in USD with price_row_id, cost_source and auth_mode, ready for the ledger.",
+  "store": "Reads price rows. Writes nothing itself; emits a cost row to the ledger.",
+  "fail": "Fail open on the request path (response already sent). Pricing failure writes an unpriced row and keeps the reservation as the spend bound, because a zero price would hide real spend.",
+  "req": "RQ-B-012, RQ-B-002, RQ-B-009, RQ-B-018, RQ-B-016, RQ-B-019, RQ-B-020, RQ-B-021, RQ-B-022, RQ-B-023, RQ-B-024, RQ-B-013, RQ-B-014, RQ-B-031",
+  "src": [
+   "A:199",
+   "A:225",
+   "A:252",
+   "A:219",
+   "A:195",
+   "A:177",
+   "A:214",
+   "A:201",
+   "A:176",
+   "A:270",
+   "A:224",
+   "A:237",
+   "C:010",
+   "A:232",
+   "A:233",
+   "A:197",
+   "A:242",
+   "A:234",
+   "A:216",
+   "C:002"
+  ],
+  "prop": "The unpriced status, the rule that calc runs off the request path, and rounding to 1e-9 USD are DevX proposals. The six-step order is from R5.",
+  "hard": "Open: stacking of batch and cache for Mistral is not stated [A:174]. OpenAI flex percentage is not stated [A:195]. Together batch is 'up to 50 percent' [A:275]. Priority multipliers differ: Mistral 1.75x after cache discount [A:176], xAI 2x on all token types with cache applied first [A:225], OpenAI fast 2x [A:209]. Claude Code average input per call is 84K in one source and above 200,000 in another [C:054], so band tests need real totals.",
+  "line": "sonnet-5.5 I=200 Cr=600 Cw5=200 O=100\ncost=$0.00196 src=gateway row=4172",
+  "dumb": "This part multiplies the counted tokens by the right price and adds up the bill for one request. It always notes which price it used and whether the number is a guess or a real bill.",
+  "deep": {
+   "purpose": "Compute the cost of one request with an ordered formula, so the same usage always gives the same dollars, and label where the figure came from.",
+   "expected": [
+    "Follows the six-step order from R5 exactly: normalise, band, base, tier multipliers, extras, plan billing.",
+    "Stores price_row_id, cost_source (client, gateway or bill) and auth_mode on every cost row.",
+    "Prefers provider-reported cost when present. Computed cost is stored beside it [A:232, A:233].",
+    "Applies long-context repricing to every bucket when band_scope is all_tokens (xAI above 200K) [A:225, A:270].",
+    "Applies Priority and regional multipliers after the cache discount [A:176, A:225].",
+    "Unknown price gives price_status=unpriced, never zero [A:242].",
+    "Failed or expired batch and flex requests cost 0 [A:219, A:195]."
+   ],
+   "not_expected": [
+    "No hard-coded prices. Every rate comes from a price row.",
+    "No token conversion for plan billing. Claude plan quota has no published token conversion [C:010].",
+    "No budget decisions. Budgets read the ledger.",
+    "No cost for reasoning on top of output. Reasoning is part of output and billed at the output rate."
+   ],
+   "algorithm": {
+    "name": "Ordered per-request cost formula (R5 section 2)",
+    "formula": "Base = (I*in + C_r*read + C_w5*w5 + C_w1h*w1h + (O+R)*out) / 1e6",
+    "steps": [
+     "1. Normalise buckets to the vendor's accounting (Anthropic reports them separately [A:199]; others include cached in input). Use vendor billed units [A:177].",
+     "2. Band from total prompt tokens; if band_scope = all_tokens reprice every bucket [A:225].",
+     "3. Base = (I*in + C_r*read + C_w5*w5 + C_w1h*w1h + (O+R)*out) / 1e6.",
+     "4. Apply tier multipliers per applies_to and order. Batch cache component only if stacking flag is true; else bill reads at the batch input rate [A:252]. Use expected, not ideal, hit rate in batch [A:219].",
+     "5. Add per-call tool fees, storage, per-review fees [A:225, A:214]. Failed batch or flex = 0 [A:219, A:195].",
+     "6. Plan billing: marginal $ = 0 inside the pool, overage after. Track vendor units (credits, requests x multiplier). Report shadow API cost plus amortised fee. No token conversion for Claude [C:010]."
+    ],
+    "params": {
+     "I": "uncached input tokens (fresh_input)",
+     "C_r": "cache read tokens",
+     "C_w5": "cache write tokens, 5 minute TTL",
+     "C_w1h": "cache write tokens, 1 hour TTL",
+     "O": "output tokens",
+     "R": "reasoning tokens (billed as output; zero when already inside O)",
+     "in/read/w5/w1h/out": "USD per 1M tokens from the price row [A:199]",
+     "band_scope": "marginal or all_tokens, per row [A:225]",
+     "stacking_flag": "true, false or unknown, per row [A:252, A:255, A:281]",
+     "long_context_threshold": "200K (Anthropic, Gemini, xAI), 100K (Haiku 5.5) [A:270, C:010]"
+    }
+   },
+   "math": {
+    "definitions": [
+     "I, C_r, C_w5, C_w1h, O, R: token counts per bucket for one request.",
+     "in, read, w5, w1h, out: USD per million tokens from the price row.",
+     "M_k: tier multiplier k with applies_to and order.",
+     "B = Base cost in USD.",
+     "X = extras: tool fees, storage, review fees."
+    ],
+    "formula_full": "Base = (I*in + C_r*read + C_w5*w5 + C_w1h*w1h + (O+R)*out) / 1e6; cost = apply(M_1..M_k, Base) + X; if status is failed batch or flex, cost = 0; if plan billing, marginal = 0 inside pool",
+    "derivation": "Step 3 prices each exclusive bucket at its own rate. Reasoning tokens bill as output, so R joins O at the out rate. When the normaliser already counted reasoning inside O, R is zero, which avoids double counting [A:197]. Step 2 runs first because the band decides which rates apply to all buckets. Step 4 runs after the cache rates are set so Priority and regional multipliers apply after the cache discount [A:176, A:225]. Without stacking, batch applies to input and output but cache reads bill at the batch input rate [A:252].",
+    "worked_example": "Sonnet 5.5, rates $2 in, $10 out, $2.50 w5, $4 w1h, $0.10 read [A:283, A:199]. Buckets I=200, C_r=600, C_w5=200, O=100 (illustrative split from the Cloudflare example [A:190]). Base = (200*2 + 600*0.10 + 200*2.50 + 100*10) / 1e6 = (400 + 60 + 500 + 1000) / 1e6 = $0.00196. Batch with stacking: x0.5 gives $0.00098. Band case: Opus 4.6 with 210,000 fresh input and 1,000 output above 200K uses $10 and $37.50: (210000*10 + 1000*37.5) / 1e6 = $2.1375 against $1.075 at $5 and $25 [A:270].",
+    "complexity": "O(1) per request: five multiplications, a few multipliers.",
+    "failure_modes": [
+     "Wrong band flag gives a 2x error on long prompts.",
+     "Unknown stacking flag: assume no stacking for the estimate and flag unknown.",
+     "Missing price row: unpriced row, reservation stays as the spend bound.",
+     "Rounding drift: use integer micro-dollars or decimal types, never binary floats."
+    ],
+    "calibration": "Weekly canary compares computed cost with vendor usage or invoices. Target error under 1 percent (DevX proposal from R5)."
+   },
+   "security": [
+    "Computes only from counts and price rows. No content is read.",
+    "Price rows are immutable, so a user cannot change a past cost by editing a price.",
+    "Cost rows are signed by the ledger writer. Clients cannot submit costs that are stored as gateway cost."
+   ],
+   "performance": {
+    "slo": "Under 1 ms per request at the 95th percentile (P95) (DevX proposal).",
+    "complexity": "O(1) per request.",
+    "scaling": "Stateless. Scales with the ledger writers."
+   },
+   "edge_cases": [
+    "xAI above 200K reprices all tokens including cached ones [A:225].",
+    "Mistral Priority multiplies after the cache discount [A:176].",
+    "Groq does not stack batch and cache, so reads bill at the batch input rate [A:252].",
+    "Failed batch or flex request costs zero [A:219, A:195].",
+    "Provider reports its own cost. The reported value is stored and preferred [A:232].",
+    "Fast mode toggled mid-conversation bills the whole context uncached, so the buckets must reflect it.",
+    "Models with no cache write premium use write rate equal to input [A:201]."
+   ],
+   "tests": [
+    {
+     "name": "base_formula",
+     "given": "Sonnet 5.5 I=200 Cr=600 Cw5=200 O=100",
+     "expect": "cost $0.00196"
+    },
+    {
+     "name": "batch_stack",
+     "given": "same usage, batch, stacking true",
+     "expect": "cost $0.00098"
+    },
+    {
+     "name": "long_context",
+     "given": "Opus 4.6 210,000 fresh input, 1,000 output",
+     "expect": "cost $2.1375"
+    },
+    {
+     "name": "no_price",
+     "given": "model id missing from price book",
+     "expect": "price_status unpriced, cost null, reservation kept"
+    },
+    {
+     "name": "failed_batch",
+     "given": "expired batch request",
+     "expect": "cost 0"
+    },
+    {
+     "name": "reasoning_once",
+     "given": "output 1186 includes reasoning 1024, R passed as 0",
+     "expect": "charged on 1186 output tokens only"
+    },
+    {
+     "name": "provider_cost",
+     "given": "response carries cost 0.0021, computed 0.0020",
+     "expect": "stored cost 0.0021 with computed beside it"
+    }
+   ],
+   "cost_levers": [
+    "Accurate tier and band pricing exposes where batch, flex or caching save money.",
+    "Cost per request feeds routing, tier choice and cache planning."
+   ],
+   "feedback_events": [
+    "calc.cost_row",
+    "calc.unpriced",
+    "calc.provider_cost_mismatch"
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.calc.cost_row",
+     "fields": [
+      "ledger_key",
+      "price_row_id",
+      "cost_usd",
+      "cost_source",
+      "auth_mode",
+      "price_status"
+     ],
+     "when": "A cost row is emitted."
+    },
+    {
+     "name": "token_economics.calc.unpriced",
+     "fields": [
+      "provider",
+      "model_id",
+      "service_tier"
+     ],
+     "when": "No price row found."
+    },
+    {
+     "name": "token_economics.calc.provider_delta",
+     "fields": [
+      "ledger_key",
+      "computed_usd",
+      "reported_usd"
+     ],
+     "when": "Provider cost differs from computed."
+    }
+   ],
+   "papers": [
+    {
+     "ref": "A:069",
+     "key_idea": "Sticker price misleads: total cost reversed the ranking in 32 percent of comparisons.",
+     "how": "Cost is computed per request from usage, not taken from list price."
+    }
+   ],
+   "repos": [
+    {
+     "ref": "A:232",
+     "name": "Langfuse",
+     "take": "Tier conditions on price rows and ingested cost beating inferred cost."
+    },
+    {
+     "ref": "C:060",
+     "name": "LiteLLM",
+     "take": "Cost maps per provider to compare against."
+    }
+   ],
+   "industry": "Langfuse computes cost from usage buckets and price tiers, and prefers cost sent by the client. LiteLLM computes cost per provider. Token Economics adds an explicit step order, per-row flags for stacking and band scope, and a cost_source label."
+  }
+ },
+ "led": {
+  "inn": "Cost rows from the calculator, true-ups from the reserve step (bres), and plan rows from the quota tracker (planq).",
+  "out": "Append-only rows for budgets, reconciliation, hit-rate monitoring, turn caps, evaluation and the metadata mirror.",
+  "store": "Writes ledger rows. Reads nothing in the write path. Never updates or deletes.",
+  "fail": "Fail closed for budgets: if the ledger cannot write, the gateway keeps the reservation as the spend bound and retries from a local queue. The user response is not blocked.",
+  "req": "RQ-B-009, RQ-B-010, RQ-B-011, RQ-B-007, RQ-B-012, RQ-B-013, RQ-B-023",
+  "src": [
+   "A:232",
+   "A:233",
+   "A:055",
+   "A:217",
+   "A:216",
+   "C:002",
+   "A:242",
+   "C:028"
+  ],
+  "prop": "Row schema beyond the key, the supersede link and the local retry queue are DevX proposals.",
+  "hard": "Open: the error bound of ledger estimates against invoices is unknown for every provider (R1 needs experiment 8). Reconciliation tolerance is not in the corpus. Ledger key fields for non-Anthropic harnesses are not fully confirmed.",
+  "line": "key: anth|sonnet-5.5|std|fast0|eff:hi|geo:us|ttl5m\nrow 91 price_row=4172 cost=0.00196 src=gateway",
+  "dumb": "The ledger is a notebook where every request is written once and never erased. Fixes are added as new lines, so the history always stays readable.",
+  "deep": {
+   "purpose": "Keep the single record of what each request cost, with the exact price row and cost source, so budgets, reports and audits use the same numbers.",
+   "expected": [
+    "Ledger key includes exact model id, service tier, speed, effort, inference geo, caller id, session id, TTL class [A:232, A:055, A:217].",
+    "Row holds the five token buckets, cost_usd, price_row_id, cost_source, auth_mode, provider cost if reported, price_status.",
+    "Append-only. A correction is a new row that names the row it supersedes.",
+    "A unique constraint on provider response id stops repeats that slip past the dedupe guard.",
+    "Plan rows (native units plus shadow API cost) share the table and a row_type field.",
+    "Failed and retried attempts are rows too, tagged with task id and attempt number [C:028]."
+   ],
+   "not_expected": [
+    "No updates or deletes.",
+    "No prompt or response content.",
+    "No budget logic. The budget store reads spend from the ledger.",
+    "No re-pricing of history when prices change [A:232]."
+   ],
+   "algorithm": {
+    "name": "Append-only keyed log with supersede links",
+    "formula": "row_id = monotonic; unique(provider, response_id, row_type); superseded_by = null until corrected",
+    "steps": [
+     "Receive a cost row. Validate required fields and the key parts.",
+     "Insert with a unique check on provider and response id. A duplicate returns the existing row and counts a dedupe hit.",
+     "Emit change events to budgets (spend), hit monitor (cache rows), turn cap (turns), canary and reconciler.",
+     "Mirror a metadata-only copy to the metadata store.",
+     "For a correction, insert a new row with supersedes = old row_id. Readers use the latest row in each chain."
+    ],
+    "params": {
+     "key_fields": "model_id, service_tier, speed, effort, inference_geo, caller_id, session_id, ttl_class [A:232, A:055, A:217]",
+     "row_types": "request, true_up, plan, correction (DevX proposal)",
+     "partition": "by tenant and day (DevX proposal)"
+    }
+   },
+   "security": [
+    "Storage forbids updates and deletes at the database role level.",
+    "Rows hold ids and counts, no content. Retention is enforced by the retention component.",
+    "Tenant id is part of every query path to prevent cross-tenant reads."
+   ],
+   "performance": {
+    "slo": "Write under 10 ms at the 95th percentile (P95) and 99.9 percent durable before acknowledging (DevX proposal).",
+    "complexity": "O(1) per insert with indexed keys.",
+    "scaling": "Partition by tenant and day. Archive old partitions per retention policy."
+   },
+   "edge_cases": [
+    "Same call reported by gateway and SDK telemetry: one row, gateway source [A:216, A:217].",
+    "Resumed session totals must not be re-booked [A:216].",
+    "Reservation true-up replaces the reservation. The reservation row stays, the true-up row supersedes it.",
+    "Subagent rows carry the subagent caller id and the parent session id [A:217].",
+    "A price correction never changes old rows. A new row can supersede a mispriced one with a note."
+   ],
+   "tests": [
+    {
+     "name": "unique_response",
+     "given": "insert two rows with the same provider and response id",
+     "expect": "second insert returns first row, no new row"
+    },
+    {
+     "name": "no_update",
+     "given": "update a stored row",
+     "expect": "rejected by database role"
+    },
+    {
+     "name": "supersede",
+     "given": "correction row with supersedes=91",
+     "expect": "readers see the new row, old row stays"
+    },
+    {
+     "name": "key_fields",
+     "given": "row missing inference_geo",
+     "expect": "rejected with LEDGER_KEY_INCOMPLETE"
+    },
+    {
+     "name": "failed_attempt",
+     "given": "retry attempt 2 of task t9",
+     "expect": "row with task_id t9, attempt 2, cost included in task total"
+    }
+   ],
+   "cost_levers": [
+    "One trustworthy cost trail lets budgets, routing and cache planning act on real spend.",
+    "Failed attempts in the ledger expose waste such as 32 percent of spend in failed runs [C:028]."
+   ],
+   "feedback_events": [
+    "led.row_written",
+    "led.duplicate",
+    "led.correction"
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.led.row_written",
+     "fields": [
+      "ledger_key",
+      "row_type",
+      "cost_usd",
+      "price_row_id",
+      "cost_source"
+     ],
+     "when": "A row is appended."
+    },
+    {
+     "name": "token_economics.led.duplicate",
+     "fields": [
+      "provider",
+      "response_id"
+     ],
+     "when": "A unique check hits."
+    },
+    {
+     "name": "token_economics.led.write_failed",
+     "fields": [
+      "reason",
+      "queue_depth"
+     ],
+     "when": "Write fails and the local queue grows."
+    }
+   ],
+   "papers": [],
+   "repos": [
+    {
+     "ref": "A:232",
+     "name": "Langfuse",
+     "take": "Usage and cost fields on observations, with history left unchanged after price updates."
+    },
+    {
+     "ref": "C:003",
+     "name": "ccusage",
+     "take": "Local JSONL cost estimates for Claude Code, useful for transcript replay checks."
+    }
+   ],
+   "industry": "Gateways such as LiteLLM and Langfuse log per-request usage and cost. Token Economics adds the price row id, the cost source label and an append-only rule so an auditor can recompute any row."
+  }
+ },
+ "rec": {
+  "inn": "Ledger estimates per provider key and day, and provider invoices or usage exports.",
+  "out": "A reconciliation ratio per provider, key and period, with a verdict and the largest contributing rows.",
+  "store": "Reads ledger rows and invoice data. Writes reconciliation records and ratios to the metadata store.",
+  "fail": "Fail open: a failed run only delays the report. It never blocks traffic. Missing invoice data gives status no_invoice, not a pass.",
+  "req": "RQ-B-033, RQ-B-034",
+  "src": [
+   "A:216",
+   "C:002",
+   "C:004",
+   "A:233",
+   "A:242",
+   "A:234"
+  ],
+  "prop": "Daily and per-key grain, the tolerance and the contributor ranking are DevX proposals. The corpus gives the monthly ratio and says tolerance is not in it.",
+  "hard": "Open: reconciliation tolerance is not in the corpus. The error bound of ledger estimates is unknown for every provider. Bedrock, Vertex and Foundry usage does not appear in Anthropic dashboards [C:005 in R4], so those need their own invoice feeds. Gateway budgets are soft caps that can overshoot [A:234].",
+  "line": "anthropic 2026-10 est=$98.60 bill=$100.00\nratio=0.986 verdict=within 2%",
+  "dumb": "Our own numbers are estimates. This part compares them with the real bill from each vendor and shows how far apart they are.",
+  "deep": {
+   "purpose": "Compare ledger estimates with provider invoices so a pricing, bucket or tier error shows up as a ratio. Only the invoice is a bill, and client or gateway figures are estimates.",
+   "expected": [
+    "Ratio = ledger estimate / provider invoice, per provider and per period, at least monthly [A:216].",
+    "Daily comparison against usage exports where a provider offers them (DevX proposal).",
+    "Splits the gap by model, tier, key and bucket to find the cause.",
+    "Marks the period no_invoice when invoice data is missing.",
+    "Handles providers whose usage is billed outside the Anthropic console, such as Bedrock and Vertex, through their own feeds."
+   ],
+   "not_expected": [
+    "No correction of ledger rows. A fix goes through a correction row and a price update.",
+    "No payment or invoice approval.",
+    "No blocking of traffic on a bad ratio."
+   ],
+   "algorithm": {
+    "name": "Ratio per provider and key with contributor ranking",
+    "formula": "ratio = sum(ledger_cost) / invoice_amount; gap_usd = invoice_amount - sum(ledger_cost)",
+    "steps": [
+     "Pull ledger rows for the invoice period, grouped by provider, key, model and tier.",
+     "Load the invoice or usage export for the same period and key.",
+     "Sum ledger cost, using the cost recorded at request time (price rows are frozen).",
+     "Compute ratio and gap.",
+     "Rank contributors by absolute gap in USD and by share of tokens.",
+     "Send the ratio to the canary and store the record."
+    ],
+    "params": {
+     "period": "monthly minimum [A:216]; daily proposed",
+     "tolerance": "not in corpus, set from pilot (DevX proposal)",
+     "initial_review_band": "1 percent, shared with the canary target (DevX proposal)"
+    }
+   },
+   "math": {
+    "definitions": [
+     "E = sum of ledger cost estimates for the period.",
+     "B = invoice amount for the period.",
+     "r = E / B.",
+     "g = B - E."
+    ],
+    "formula_full": "r = E / B; g = B - E; flag if |r - 1| > tolerance",
+    "derivation": "The ledger holds costs computed at request time from price rows [A:232]. The invoice is the bill. Their ratio is a direct measure of pricing and bucket error. A ratio below 1 means under-estimated spend.",
+    "worked_example": "Illustrative arithmetic, not corpus data: E = $98.60 and B = $100.00 give r = 0.986 and g = $1.40. With a 1 percent review band the period is flagged. With E = $99.50, r = 0.995 and it passes.",
+    "complexity": "O(n) rows per period, grouped in the database. Reports run in batch.",
+    "failure_modes": [
+     "Invoice covers more than gateway traffic (direct calls by developers), so r looks low.",
+     "Invoice includes credits or taxes that the ledger does not model.",
+     "Timezone and cut-off differences shift rows between periods.",
+     "BYOK traffic is not counted by some gateways [A:245 in R2]."
+    ],
+    "calibration": "Run for two pilot months, set tolerance from observed ratios, then compare against the canary."
+   },
+   "security": [
+    "Invoice data is financial. Access needs the finance role and is logged.",
+    "Only totals and ids are stored. No invoice PDFs are kept in the metadata store.",
+    "Reports exclude content by design."
+   ],
+   "performance": {
+    "slo": "Monthly report within one hour of invoice arrival (DevX proposal).",
+    "complexity": "O(n) rows per period.",
+    "scaling": "Batch grouped queries on ledger partitions."
+   },
+   "edge_cases": [
+    "Invoice currency or credits differ from ledger USD.",
+    "A promo discount applies only on the invoice.",
+    "Batch cost is booked when the batch completes, so a month boundary splits a batch.",
+    "A key was deleted during the month. Rows keep the key id.",
+    "Provider reports cost in billed units, not tokens [A:177]."
+   ],
+   "tests": [
+    {
+     "name": "within_band",
+     "given": "E=99.50, B=100.00, band 1 percent",
+     "expect": "ratio 0.995, verdict within"
+    },
+    {
+     "name": "outside_band",
+     "given": "E=98.60, B=100.00, band 1 percent",
+     "expect": "ratio 0.986, flagged, contributors ranked"
+    },
+    {
+     "name": "no_invoice",
+     "given": "no invoice data for the period",
+     "expect": "status no_invoice, no verdict"
+    },
+    {
+     "name": "grain",
+     "given": "two keys with different ratios",
+     "expect": "separate records per key"
+    }
+   ],
+   "cost_levers": [
+    "Finds wrong tier or band pricing that hides real spend.",
+    "Confirms the savings claims in dashboards against bills."
+   ],
+   "feedback_events": [
+    "rec.ratio_computed",
+    "rec.flagged"
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.rec.ratio",
+     "fields": [
+      "provider",
+      "key_id",
+      "period",
+      "estimate_usd",
+      "invoice_usd",
+      "ratio"
+     ],
+     "when": "A reconciliation record is written."
+    },
+    {
+     "name": "token_economics.rec.flagged",
+     "fields": [
+      "provider",
+      "period",
+      "ratio",
+      "top_contributor"
+     ],
+     "when": "Ratio is outside the review band."
+    }
+   ],
+   "papers": [
+    {
+     "ref": "A:216",
+     "key_idea": "Client-side cost is an estimate, and the reconciliation ratio is monthly.",
+     "how": "Defines the ratio and the need to reconcile to invoices."
+    }
+   ],
+   "repos": [],
+   "industry": "Teams compare gateway or client cost estimates with vendor invoices to find drift. The corpus has no tolerance, so Token Economics sets it from a two-month pilot."
+  }
+ },
+ "canary": {
+  "inn": "Computed cost per provider and tier, plus vendor usage reports or invoices, and reconciliation ratios from rec.",
+  "out": "Weekly drift value per provider and tier, and a stale signal to the price-row lifecycle when drift exceeds 1 percent.",
+  "store": "Reads ledger and rec records. Writes canary results to the metadata store.",
+  "fail": "Fail open: a missed canary delays detection but never blocks traffic. A missed run raises its own alert after one skipped week.",
+  "req": "RQ-B-035, RQ-B-036",
+  "src": [
+   "A:216",
+   "C:002",
+   "A:069",
+   "A:214",
+   "A:148",
+   "A:121",
+   "A:280"
+  ],
+  "prop": "The weekly cadence, the 1 percent trigger and the stale signal path are DevX proposals taken from the R5 design. They are not corpus measurements.",
+  "hard": "Open: the corpus has no tolerance for reconciliation. The 1 percent target is a design aim from R5 experiment 1 (two weeks, computed against invoiced cost per provider and tier). Sample size per tier is not defined.",
+  "line": "week 44 anth batch drift +1.4% (target 1.0%)\nrow 4172 flagged stale -> plife",
+  "dumb": "Each week this part checks that our price math matches what the vendors actually report. If the gap is bigger than one percent, it tells the price book to distrust that price.",
+  "deep": {
+   "purpose": "Catch price-book errors early. Prices change, discounts differ by source and tiers are easy to get wrong, so a weekly comparison finds drift before a bill does.",
+   "expected": [
+    "Runs weekly per provider and per service tier.",
+    "Computes drift = (computed - vendor reported) / vendor reported over the week.",
+    "Emits a stale signal to plife when absolute drift is above 1 percent.",
+    "Attaches the likely cause: price row, band, stacking flag or bucket mapping.",
+    "Reports skipped weeks as a failure."
+   ],
+   "not_expected": [
+    "No automatic price changes. A person verifies and inserts a new row.",
+    "No traffic blocking.",
+    "No use of content data."
+   ],
+   "algorithm": {
+    "name": "Weekly computed-versus-reported drift check",
+    "formula": "drift = (computed_cost - vendor_cost) / vendor_cost",
+    "steps": [
+     "Select the week window and the (provider, tier) groups with traffic.",
+     "Sum computed cost per group from ledger rows.",
+     "Fetch vendor usage or invoice cost for the same window.",
+     "Compute drift and compare with the trigger.",
+     "If drift exceeds the trigger, send a stale signal for the rows used in that group.",
+     "Write the result and the contributing price_row_ids."
+    ],
+    "params": {
+     "cadence": "weekly (R5 design, DevX proposal)",
+     "trigger": "1 percent (R5 experiment 1 target, DevX proposal)",
+     "pilot_length": "2 weeks [R5 experiment 1]"
+    }
+   },
+   "math": {
+    "definitions": [
+     "C = computed cost for the group and week.",
+     "V = vendor reported cost for the same group and week.",
+     "d = drift.",
+     "T = trigger, 0.01."
+    ],
+    "formula_full": "d = (C - V) / V; stale if |d| > T",
+    "derivation": "If every bucket and rate are right, C equals V. Any rate, band, multiplier or bucket error moves C away from V. A relative measure lets one threshold cover providers with different spend.",
+    "worked_example": "Illustrative arithmetic: C = $101.40 and V = $100.00 give d = +0.014, or 1.4 percent, so the group is flagged stale. With C = $100.60, d = 0.6 percent and it passes.",
+    "complexity": "O(g) groups per week. Trivial.",
+    "failure_modes": [
+     "Vendor report lags, so the week has partial data.",
+     "Tiny groups give noisy ratios.",
+     "Mixed tiers hide an error in one tier."
+    ],
+    "calibration": "After the two-week pilot, set the trigger from observed drift per provider."
+   },
+   "security": [
+    "Vendor report credentials live in the secrets vault and are read-only.",
+    "Results hold no content.",
+    "A stale signal needs the canary service identity so a user cannot fake one."
+   ],
+   "performance": {
+    "slo": "Weekly run completes within 1 hour (DevX proposal).",
+    "complexity": "O(g) groups.",
+    "scaling": "Runs as a scheduled batch."
+   },
+   "edge_cases": [
+    "Promo or discount shows on the vendor report and not in the price row.",
+    "Gemini cache discount 75 against 90 percent shows up as drift on cached tokens [A:121, A:280].",
+    "Azure 12h write charge from Nov 1 2026 appears as drift on that date [A:148].",
+    "A week with very little traffic produces no verdict.",
+    "Vendor report in billed units, not tokens, needs the units flag."
+   ],
+   "tests": [
+    {
+     "name": "flag_stale",
+     "given": "C=101.40, V=100.00",
+     "expect": "drift 1.4 percent, stale signal sent"
+    },
+    {
+     "name": "pass",
+     "given": "C=100.60, V=100.00",
+     "expect": "drift 0.6 percent, no signal"
+    },
+    {
+     "name": "missed_week",
+     "given": "scheduler skipped week 44",
+     "expect": "alert canary_missed"
+    },
+    {
+     "name": "small_group",
+     "given": "group with 3 requests",
+     "expect": "no verdict, status low_volume"
+    }
+   ],
+   "cost_levers": [
+    "Early detection avoids weeks of mispriced decisions on tier choice and cache planning."
+   ],
+   "feedback_events": [
+    "canary.drift",
+    "canary.stale_signal"
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.canary.drift",
+     "fields": [
+      "provider",
+      "tier",
+      "week",
+      "computed_usd",
+      "vendor_usd",
+      "drift"
+     ],
+     "when": "Weekly check ends."
+    },
+    {
+     "name": "token_economics.canary.stale_signal",
+     "fields": [
+      "price_row_id",
+      "drift"
+     ],
+     "when": "Drift exceeds the trigger."
+    }
+   ],
+   "papers": [
+    {
+     "ref": "A:069",
+     "key_idea": "Price rankings reversed in 32 percent of 336 comparisons.",
+     "how": "Shows prices move and list price alone is unreliable."
+    }
+   ],
+   "repos": [],
+   "industry": "No corpus source describes a price canary. This is a DevX design from R5 that follows the usual drift check between computed and vendor-reported cost."
+  }
+ },
+ "planq": {
+  "inn": "Plan rows from pplan, usage in native units from adapters and local transcripts, and ledger shadow costs.",
+  "out": "Per user and plan: units used, units left, reset time, shadow API cost and amortised fee.",
+  "store": "Reads pplan and ledger. Writes plan rows to the ledger with row_type plan.",
+  "fail": "Fail open: plan tracking never blocks requests. Missing units show as unknown.",
+  "req": "RQ-B-030, RQ-B-031, RQ-B-032",
+  "src": [
+   "C:010",
+   "C:119",
+   "C:057",
+   "C:116",
+   "C:114",
+   "C:115",
+   "A:146",
+   "A:161",
+   "C:011",
+   "C:120",
+   "C:117"
+  ],
+  "prop": "The calibration method and the confidence band are DevX proposals from R5 experiment 4. The corpus has no Claude token conversion.",
+  "hard": "Open: Anthropic does not publish a limit-to-token conversion [C:010]. Codex weekly caps hit after about 2 million tokens is user-reported [C:115]. Plan figures change fast: caps doubled May 2026 and a weekly boost expired 2026-07-13 [C:011]. Kiro credits per token is not in the corpus.",
+  "line": "claude max: 42/50 msgs 5h window, resets 17:40\nshadow API $11.20, fee share $6.67/wk",
+  "dumb": "Subscription plans count messages or credits, not tokens. This part tracks those units, and also shows what the same use would have cost on the pay-per-token API.",
+  "deep": {
+   "purpose": "Track plan spend in native units without converting to tokens, and show a shadow API cost so users can compare a plan with API billing.",
+   "expected": [
+    "Stores usage in the plan's unit: messages per 5 hours, credits, premium requests, requests per day, pool multiples.",
+    "Marginal dollars are zero inside the included pool and the overage rate applies after it [R5 formula step 6].",
+    "Shadow API cost is computed by the calculator from tokens at list rates. The tracker stores it beside the units.",
+    "Amortised fee is the plan fee spread over the period.",
+    "Weights per model apply where the plan states them, such as Copilot review 13x or reasoning 5x and 20x [C:117].",
+    "Reset windows follow the plan reset_rule."
+   ],
+   "not_expected": [
+    "No conversion of Claude plan limits to tokens [C:010].",
+    "No blocking when units run out. The plan provider enforces its own limits.",
+    "No dollar bill for subscription traffic."
+   ],
+   "algorithm": {
+    "name": "Native-unit tracker with shadow cost",
+    "formula": "marginal_usd = 0 while used_units <= included_qty; else (used_units - included_qty) x overage_rate",
+    "steps": [
+     "Read the user's plan row and reset window.",
+     "Add usage in native units, weighted by model_weighting where it exists.",
+     "Compute remaining units and the next reset time.",
+     "Ask the calculator for shadow API cost on the same traffic.",
+     "Compute amortised fee = fee x (days elapsed / days in period).",
+     "Write a plan row to the ledger and update the dashboard feed."
+    ],
+    "params": {
+     "copilot_credit_usd": "0.01 [A:214]",
+     "codex_credit_usd": "about 0.04 [C:114]",
+     "claude_window": "5 hours, prompt counts approximate [C:010]",
+     "gemini_cli_daily_requests": "1,000 to 2,000, 250 for unpaid Flash [C:057]"
+    }
+   },
+   "math": {
+    "definitions": [
+     "Q = included_qty in native units (nullable).",
+     "U = used units.",
+     "o = overage_rate in USD per unit.",
+     "S = shadow API cost for the same traffic.",
+     "F = plan fee.",
+     "d = days elapsed, D = days in period."
+    ],
+    "formula_full": "marginal = 0 if U <= Q else (U - Q) x o; amortised_fee = F x d / D; plan_value = S - amortised_fee",
+    "derivation": "A plan is a fixed fee that buys a pool of units. Inside the pool the extra dollar cost of one more request is zero. The shadow cost S answers what the same tokens would cost on the API, so the difference to the amortised fee shows whether the plan pays.",
+    "worked_example": "Illustrative arithmetic with corpus unit values: Copilot 250 credits used at $0.01 per credit is $2.50 at API-list rates [A:214]. Codex 100 credits at about $0.04 is about $4 [C:114]. Plan Pro fee $20 per month at day 15 of 30 gives an amortised fee of $10. If S = $14, plan_value = $4.",
+    "complexity": "O(1) per update per user.",
+    "failure_modes": [
+     "Unit weights wrong after a vendor change.",
+     "Plan row expired and not replaced.",
+     "Usage from other devices not visible to the tracker.",
+     "Shadow cost uses a stale price row."
+    ],
+    "calibration": "One developer-week per plan: log quota used against shadow API cost and fit dollars per unit with a band (R5 experiment 4, DevX proposal)."
+   },
+   "security": [
+    "Usage per user is personal data. It is stored per tenant, and dashboards show aggregates by default.",
+    "No credentials for vendor accounts are stored here. Vendor dashboards are read through exports.",
+    "Plan rows carry ids, not content."
+   ],
+   "performance": {
+    "slo": "Update within 60 seconds of a usage event (DevX proposal).",
+    "complexity": "O(1) per update.",
+    "scaling": "Per user state. Partition by tenant."
+   },
+   "edge_cases": [
+    "Plan with null included_qty: show usage only.",
+    "Pool resets mid-window when a plan changes.",
+    "Cursor pool multiples of 4x, 15x and 50x on the $8 base [C:119].",
+    "Gemini GSU weights output 5 and cached 0.1 [A:146].",
+    "User on two plans at once (personal and team)."
+   ],
+   "tests": [
+    {
+     "name": "inside_pool",
+     "given": "used 42 of 50 messages",
+     "expect": "marginal 0, remaining 8"
+    },
+    {
+     "name": "overage",
+     "given": "used 60 of 50 with overage rate $0.04",
+     "expect": "marginal $0.40"
+    },
+    {
+     "name": "amortise",
+     "given": "fee $20, day 15 of 30",
+     "expect": "amortised $10"
+    },
+    {
+     "name": "null_pool",
+     "given": "Anthropic plan with null included_qty",
+     "expect": "usage shown, remaining unknown"
+    },
+    {
+     "name": "weighted",
+     "given": "Copilot review request with 13x weight",
+     "expect": "13 units booked"
+    }
+   ],
+   "cost_levers": [
+    "Shows when a plan beats API billing and when heavy users should move.",
+    "Highlights teams paying overage that a different plan would cover."
+   ],
+   "feedback_events": [
+    "planq.units_updated",
+    "planq.near_limit"
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.planq.update",
+     "fields": [
+      "user_id",
+      "plan",
+      "unit",
+      "used",
+      "remaining",
+      "shadow_usd"
+     ],
+     "when": "Usage is recorded."
+    },
+    {
+     "name": "token_economics.planq.overage",
+     "fields": [
+      "user_id",
+      "plan",
+      "overage_units"
+     ],
+     "when": "Usage passes the pool."
+    }
+   ],
+   "papers": [],
+   "repos": [],
+   "industry": "Copilot, Cursor and Codex each bill in a different unit, and Anthropic does not publish limit-to-token conversion. The tracker therefore reports native units and a shadow API cost."
+  }
+ },
+ "meta": {
+  "inn": "Metadata-only mirror rows from the ledger, attributed rows from attr, and retention rules.",
+  "out": "Query-ready tables for dashboards and anomaly checks. No prompt or response content.",
+  "store": "Writes and reads metadata tables (usage, cost, ids, hit rates, canary results). Retention expiry set by the retention component.",
+  "fail": "Fail open: dashboards may lag, and requests are never blocked. The ledger remains the source of truth and can rebuild the store.",
+  "req": "RQ-B-041, RQ-B-042, RQ-B-037, RQ-B-046, RQ-B-047, RQ-B-045",
+  "src": [
+   "A:217",
+   "C:074",
+   "C:052",
+   "C:054",
+   "C:076",
+   "C:003"
+  ],
+  "prop": "Expiry rules and the rebuild-from-ledger approach are DevX proposals.",
+  "hard": "Open: retention duration is not in the corpus. Claude Code transcripts are kept about 30 days according to one source [C:003]. Cardinality limits on OTel attributes are listed but their effect on cost is not measured.",
+  "line": "sess s9 prompt p3 agent=subagent:explore\nmodel opus-5.5 cacheRead 18k cost 0.021 meta-only",
+  "dumb": "This is the store behind the charts. It keeps counts, costs and ids, and never keeps what anyone typed.",
+  "deep": {
+   "purpose": "Hold the data that dashboards and anomaly checks read. It keeps usage, cost and ids without content, so it is safe to share broadly.",
+   "expected": [
+    "Holds the UsageEvent fields: harness, session_id, prompt_id, agent, model, input, output, cache_read, cache_write, cost_estimate_usd, cost_source, auth_mode.",
+    "Adds price_row_id, query_source, skill name, MCP server name, effort, speed and task id where known [A:217].",
+    "Stores per-caller cache hit rates, cache miss events and reconciliation or canary results.",
+    "Rows carry an expires_at set by the retention policy.",
+    "Rebuildable from the ledger if lost."
+   ],
+   "not_expected": [
+    "No prompts, tool inputs, tool outputs or responses.",
+    "No secrets or provider keys.",
+    "No source of truth role. The ledger holds that."
+   ],
+   "algorithm": {
+    "name": "Columnar metadata store with retention",
+    "formula": "hit_rate = cache_read / (fresh + cache_read + cache_write) per caller, model and prefix hash",
+    "steps": [
+     "Receive mirrored ledger rows and attributed rows.",
+     "Validate against the content-free schema. Reject rows with unknown text fields.",
+     "Store with tenant id, partition by day.",
+     "Maintain rollups: spend per caller, per model, per user (median and 95th percentile (P95)), hit rate.",
+     "Set expires_at and let the retention job delete expired partitions.",
+     "On request, rebuild rollups from the ledger."
+    ],
+    "params": {
+     "hit_rate": "cache_read / (fresh + read + write) [C:052]",
+     "cache_miss_event": "more than 5 percent and at least 2,000 tokens reprocessed [C:076]",
+     "partition": "tenant and day (DevX proposal)"
+    }
+   },
+   "security": [
+    "Schema validation rejects free-text fields, so content cannot enter by accident.",
+    "Row access is scoped by tenant, and user-level views follow the authorisation roles.",
+    "Content logging stays off by default [A:217]."
+   ],
+   "performance": {
+    "slo": "Rollup lag under 5 minutes (DevX proposal).",
+    "complexity": "O(1) per insert, rollups incremental.",
+    "scaling": "Partition by tenant and day, archive old partitions."
+   },
+   "edge_cases": [
+    "Hook, OTel and gateway rows for one prompt must join on session_id and prompt_id [C:074].",
+    "OTel may be missing when a developer turns it off, so rows carry a source field.",
+    "A rollup has a high-cardinality dimension such as repository. Limit by config.",
+    "Rows from a transcript replay are labelled client estimate [R4 edge: trans to joiner].",
+    "Transcript retention is about 30 days, so replay data must be copied early [C:003]."
+   ],
+   "tests": [
+    {
+     "name": "no_content",
+     "given": "row with a field named prompt_text",
+     "expect": "rejected by schema"
+    },
+    {
+     "name": "hit_rate",
+     "given": "fresh 100, read 900, write 0",
+     "expect": "hit rate 0.90"
+    },
+    {
+     "name": "expiry",
+     "given": "row with expires_at yesterday",
+     "expect": "removed by retention job"
+    },
+    {
+     "name": "rebuild",
+     "given": "drop rollups then rebuild from ledger",
+     "expect": "rollups equal original"
+    }
+   ],
+   "cost_levers": [
+    "Fast, cheap queries on cost and hit rate point teams to the biggest savings."
+   ],
+   "feedback_events": [
+    "meta.rollup_updated",
+    "meta.row_rejected"
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.meta.row_rejected",
+     "fields": [
+      "reason",
+      "field"
+     ],
+     "when": "Schema validation fails."
+    },
+    {
+     "name": "token_economics.meta.rollup",
+     "fields": [
+      "dimension",
+      "rows",
+      "lag_ms"
+     ],
+     "when": "A rollup refresh ends."
+    }
+   ],
+   "papers": [],
+   "repos": [],
+   "industry": "Claude Code OTel exports metrics and events with attribution attributes, and content logging is opt-in. Token Economics keeps the same metadata-only default [A:217]."
+  }
+ },
+ "attr": {
+  "inn": "Joined rows from the joiner: gateway, hook and OTel rows by session id and prompt id, with cost_source.",
+  "out": "Spend by caller, subagent, session, task, repository and model, written to the metadata store.",
+  "store": "Reads the ledger and joined rows. Writes attributed rows to meta.",
+  "fail": "Fail open: if the join is incomplete, rows are stored as unattributed with the missing key. Requests are never blocked.",
+  "req": "RQ-B-008, RQ-B-006, RQ-B-037, RQ-B-038, RQ-B-039, RQ-B-040",
+  "src": [
+   "A:216",
+   "A:217",
+   "C:002",
+   "C:074",
+   "C:052",
+   "C:028",
+   "C:122",
+   "A:207",
+   "C:054",
+   "C:023"
+  ],
+  "prop": "The unattributed fallback and the task id rule for non-SDK harnesses are DevX proposals.",
+  "hard": "Open: Codex equivalents of prompt.id and query_source are not in the corpus. A measured agent-team token multiplier is not in the corpus; R6 says the system must measure it. Hooks can be disabled by developers, so hook-based attribution can have gaps [C:074].",
+  "line": "s9/p3 main=$0.42 subagent:explore=$0.11\ntask t9 attempts=3 spend=$0.95 success=1",
+  "dumb": "This part works out who spent what, such as which person, which helper agent and which task. It also adds failed attempts to the task, so a task shows its true cost.",
+  "deep": {
+   "purpose": "Give every dollar an owner: caller, subagent, session, task, repository and model. Without it a high account hit rate or a low mean can hide the real problem.",
+   "expected": [
+    "Joins gateway, hook and OTel rows on session_id and prompt_id. Hook prompt_id equals OTel prompt.id [C:074].",
+    "Uses query_source (main, subagent, auxiliary), agent.name, skill.name and mcp_server.name to attribute subagents separately [A:217, A:216].",
+    "Counts a call once even if SDK telemetry and the gateway both reported it [A:216].",
+    "Adds failed and retried attempts to the task total, so cost per successful task = total over all attempts / successes [C:122, C:028].",
+    "Computes failed-run waste share and spend after the first repeated failure signature [C:028].",
+    "Stores unattributed rows with the missing join key."
+   ],
+   "not_expected": [
+    "No content access.",
+    "No blame scoring of users. Output is spend, not performance.",
+    "No budget enforcement."
+   ],
+   "algorithm": {
+    "name": "Key join with precedence and task roll-up",
+    "formula": "CPS(task) = sum(cost of all attempts) / successes",
+    "steps": [
+     "Take a joined row. Prefer gateway cost; keep OTel and hook rows as cross-checks.",
+     "Resolve caller from the virtual key and from OTel query_source.",
+     "Attach task id and attempt number when the harness provides them, else derive a session-level task.",
+     "Roll up spend by dimension (caller, subagent, session, task, repository, model).",
+     "Compute failed-run waste share = failed spend / total spend.",
+     "Flag the point where the first repeated failure signature appears and sum spend after it.",
+     "Write attributed rows to meta."
+    ],
+    "params": {
+     "join_keys": "session_id, prompt_id [C:074]",
+     "caller_source": "query_source values main, subagent, auxiliary [A:217]",
+     "baseline_failed_spend_share": "32 percent of spend, 17 percent of tasks [C:028]",
+     "baseline_spend_after_first_repeat": "51 percent [C:028]"
+    }
+   },
+   "security": [
+    "Attribution uses ids. It stores no prompts or code.",
+    "User-level views follow the authorisation roles, and the default dashboard shows teams.",
+    "Hook rows are untrusted input. The gateway row wins on conflict."
+   ],
+   "performance": {
+    "slo": "Attributed rows within 5 minutes of the request (DevX proposal).",
+    "complexity": "O(1) per row for join, incremental roll-ups.",
+    "scaling": "Partition by tenant and session."
+   },
+   "edge_cases": [
+    "Subagent calls have no cache from the parent [C:052].",
+    "A resumed session must not add earlier spend again [A:216].",
+    "Hooks disabled: attribution falls back to gateway ids.",
+    "SDK reports placeholder output tokens per step, final result carries the count [A:216].",
+    "The same task ran on two harnesses with different ids."
+   ],
+   "tests": [
+    {
+     "name": "join",
+     "given": "hook p3 and OTel prompt.id p3 and gateway row",
+     "expect": "one attributed row with cost from gateway"
+    },
+    {
+     "name": "subagent",
+     "given": "query_source agent.builtin.general-purpose",
+     "expect": "spend credited to subagent, not main"
+    },
+    {
+     "name": "cps",
+     "given": "task with 3 attempts costing $0.30, $0.40, $0.25, one success",
+     "expect": "CPS $0.95"
+    },
+    {
+     "name": "waste",
+     "given": "failed spend $32 of $100",
+     "expect": "waste share 0.32"
+    },
+    {
+     "name": "unattributed",
+     "given": "row with no prompt_id",
+     "expect": "stored with missing_key prompt_id"
+    }
+   ],
+   "cost_levers": [
+    "Shows which callers, subagents and tasks drive spend, so the biggest lever is chosen first.",
+    "Failed-run waste (32 percent of spend in C:028) is a direct target for the loop guard."
+   ],
+   "feedback_events": [
+    "attr.row_attributed",
+    "attr.unattributed"
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.attr.row",
+     "fields": [
+      "session_id",
+      "prompt_id",
+      "caller",
+      "query_source",
+      "model_id",
+      "cost_usd"
+     ],
+     "when": "A row is attributed."
+    },
+    {
+     "name": "token_economics.attr.unattributed",
+     "fields": [
+      "session_id",
+      "missing_key"
+     ],
+     "when": "A join key is missing."
+    }
+   ],
+   "papers": [
+    {
+     "ref": "C:028",
+     "key_idea": "Failed runs are 17 percent of tasks and 32 percent of spend. 51 percent of spend falls after the first repeated failure.",
+     "how": "Sets the waste share metrics."
+    },
+    {
+     "ref": "C:023",
+     "key_idea": "Same-task runs differ up to 30x in tokens.",
+     "how": "Task-level, not token-level, attribution."
+    }
+   ],
+   "repos": [
+    {
+     "ref": "C:003",
+     "name": "ccusage",
+     "take": "Local JSONL usage reports for many agent CLIs, a source for replay."
+    }
+   ],
+   "industry": "Claude Code OTel attaches prompt.id, query_source, agent.name and skill.name to metrics and events. Token Economics joins them with gateway rows and prefers the gateway cost."
+  }
+ },
+ "logp": {
+  "inn": "Tenant policy flags and client OTel settings (OTEL_LOG_USER_PROMPTS and related).",
+  "out": "The effective content-logging policy per tenant and harness, with an audited opt-in and expiry.",
+  "store": "Reads and writes policy records through the policy store. Writes opt-in events to the audit log.",
+  "fail": "Fail closed for content: if the policy is unreadable, content logging stays off. Metadata collection continues.",
+  "req": "RQ-B-042, RQ-B-043, RQ-B-044",
+  "src": [
+   "A:217"
+  ],
+  "prop": "Per-tenant opt-in with expiry, the audit event and the enforcement through managed settings are DevX proposals. The corpus says content logging is opt-in.",
+  "hard": "Open: Codex OpenTelemetry (OTel) event names and logging flags are not in the corpus. Retention duration for opted-in content is not in the corpus. Developers can change local env vars unless managed settings pin them.",
+  "line": "tenant t3: OTEL_LOG_USER_PROMPTS=off (default)\noptin: none; audit: none",
+  "dumb": "By default Token Economics keeps counts and costs only, never what people wrote. A team can switch content logging on, but it is written down and expires.",
+  "deep": {
+   "purpose": "Keep content out of the system by default. Prompt, tool and response logging are opt-in switches in Claude Code, and this component holds the policy for them.",
+   "expected": [
+    "Default state: OTEL_LOG_USER_PROMPTS, OTEL_LOG_TOOL_DETAILS, OTEL_LOG_TOOL_CONTENT, OTEL_LOG_ASSISTANT_RESPONSES and OTEL_LOG_RAW_API_BODIES are all off [A:217].",
+    "Pins the values through managed settings so developers cannot turn content logging on locally.",
+    "An opt-in names the tenant, the flags, the reason and an expiry date, and is written to the audit log.",
+    "The OTel receiver drops content fields if a client sends them without an active opt-in.",
+    "Policy is versioned in the policy store."
+   ],
+   "not_expected": [
+    "No content storage by default.",
+    "No silent opt-in by a client env var.",
+    "No retention logic. The retention component owns expiry."
+   ],
+   "algorithm": {
+    "name": "Default-off policy with expiring opt-in",
+    "formula": "effective_flag = opted_in(tenant, flag) and now < opt_in_expiry",
+    "steps": [
+     "Load the tenant policy. Default every content flag to off.",
+     "On opt-in, require role, reason and expiry, then write the audit event.",
+     "Push the effective flags to the managed settings and to the OTel receiver.",
+     "The receiver strips content attributes whose flag is off.",
+     "A daily check expires opt-ins past their date and logs the change."
+    ],
+    "params": {
+     "content_flags": "OTEL_LOG_USER_PROMPTS, OTEL_LOG_TOOL_DETAILS, OTEL_LOG_TOOL_CONTENT, OTEL_LOG_ASSISTANT_RESPONSES, OTEL_LOG_RAW_API_BODIES [A:217]",
+     "default": "off",
+     "max_opt_in_days": "30 (DevX proposal)"
+    }
+   },
+   "security": [
+    "Opt-in needs an admin role and a recorded reason.",
+    "The receiver strips content fields at ingress, so a client mistake cannot store content.",
+    "Raw API bodies can hold secrets, so that flag needs a second approver (DevX proposal)."
+   ],
+   "performance": {
+    "slo": "Policy change reaches the receiver within 5 minutes (DevX proposal).",
+    "complexity": "O(1) per tenant lookup.",
+    "scaling": "Small policy table."
+   },
+   "edge_cases": [
+    "A developer sets OTEL_LOG_RAW_API_BODIES locally. The receiver drops the bodies.",
+    "Opt-in expires mid-session. Logging stops at the next flush.",
+    "Harness has no content flags in the corpus, such as Codex. Policy marks it unknown and treats it as off.",
+    "Two tenants share a gateway. Policy applies per tenant id."
+   ],
+   "tests": [
+    {
+     "name": "default_off",
+     "given": "new tenant, no opt-in",
+     "expect": "all five flags effective off"
+    },
+    {
+     "name": "optin_expiry",
+     "given": "opt-in for 7 days, day 8",
+     "expect": "flags off, audit event written"
+    },
+    {
+     "name": "strip_content",
+     "given": "client sends user_prompt with flag off",
+     "expect": "content attribute removed, metadata kept"
+    },
+    {
+     "name": "no_reason",
+     "given": "opt-in without a reason",
+     "expect": "rejected"
+    }
+   ],
+   "cost_levers": [
+    "Metadata-only collection keeps storage and review cost low and removes the need for content redaction."
+   ],
+   "feedback_events": [
+    "logp.optin",
+    "logp.optin_expired",
+    "logp.content_stripped"
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.logp.optin",
+     "fields": [
+      "tenant_id",
+      "flags",
+      "expiry",
+      "actor"
+     ],
+     "when": "An opt-in is created."
+    },
+    {
+     "name": "token_economics.logp.content_stripped",
+     "fields": [
+      "tenant_id",
+      "flag",
+      "source"
+     ],
+     "when": "Content is removed at ingress."
+    }
+   ],
+   "papers": [],
+   "repos": [],
+   "industry": "Claude Code OTel splits metadata from content, and content logging is off unless a developer sets the OTEL_LOG variables [A:217]. Token Economics keeps that split and adds a central record."
+  }
+ },
+ "dash": {
+  "inn": "Rollups from the metadata store: cost, tokens, hit rate, waste share, per user and per caller.",
+  "out": "Dashboards and reports: median and 95th percentile (P95) per user, hit rate per caller, waste share, cost per successful task, reconciliation ratio.",
+  "store": "Reads meta rollups and rec, canary and planq records. Writes saved reports.",
+  "fail": "Fail open: a stale or missing dashboard shows a last-updated stamp. Guard metrics sent to rollback triggers use cached values and alert on staleness.",
+  "req": "RQ-B-048, RQ-B-049, RQ-B-039, RQ-B-040, RQ-B-046, RQ-B-047",
+  "src": [
+   "C:054",
+   "C:101",
+   "A:213",
+   "C:116",
+   "C:052",
+   "C:076",
+   "C:028",
+   "C:027",
+   "C:024",
+   "A:069",
+   "C:122"
+  ],
+  "prop": "Layout, refresh rate and the choice of which guard metrics feed rollback are DevX proposals. Metric definitions are from R6.",
+  "hard": "Open: baselines in C:054 come from one gateway with selection bias (mean $108, median $23, P95 $291). A mean alone hides the tail, so P95 is mandatory. A measured agent-team multiplier is not in the corpus.",
+  "line": "user median $23  P95 $291  mean $108\ncaller cron-nightly hit 0.4% (acct 77%) ALERT",
+  "dumb": "This is the screen where people see what AI costs them. It shows the typical user and the heavy users, and it flags a job that is wasting money even when the overall numbers look fine.",
+  "deep": {
+   "purpose": "Show spend and waste in forms that lead to action. Views: median and 95th percentile (P95) per user, hit rate per caller against its own baseline, failed-run waste, and cost per successful task.",
+   "expected": [
+    "Spend per user as mean, median and P95. Baseline reference: Claude Code active mean $108, median $23, P95 $291 [C:054].",
+    "Cache hit rate per caller, model and prefix hash. Each caller is compared to its own baseline. An account rate of 77 percent hid a cron at about 0 percent [C:052].",
+    "Cache miss events: more than 5 percent and at least 2,000 tokens reprocessed [C:076].",
+    "Failed-run waste share and spend after the first repeated failure (baselines 32 percent and 51 percent [C:028]).",
+    "Cost per successful task as the headline, never token savings alone [C:024, A:069].",
+    "Reconciliation ratio and canary drift per provider. Plan units and shadow cost per user.",
+    "Guard metrics for the rollback triggers: success floor, CPS, hit rate, empty patches, p95 latency, billed against estimate divergence."
+   ],
+   "not_expected": [
+    "No content views.",
+    "No ranking of individuals as performance scores.",
+    "No savings claim without a baseline arm."
+   ],
+   "algorithm": {
+    "name": "Rollup views with percentile and baseline comparison",
+    "formula": "P95 per user over a window; hit_rate(caller) vs baseline(caller)",
+    "steps": [
+     "Read rollups from the metadata store for the chosen window and tenant.",
+     "Compute mean, median and P95 per user from per-user totals.",
+     "Compare each caller's hit rate with its own trailing baseline.",
+     "Compute waste share = failed spend / total and CPS = total spend / successes.",
+     "Show the reconciliation ratio, canary drift and plan units.",
+     "Publish the guard metrics to the rollback component every few minutes."
+    ],
+    "params": {
+     "percentiles": "median and P95 [C:054, C:101]",
+     "miss_event": "more than 5 percent and at least 2,000 tokens [C:076]",
+     "baseline_window": "trailing 14 days (DevX proposal)",
+     "budget_alert_thresholds": "75, 90 and 100 percent [A:213, C:116]"
+    }
+   },
+   "security": [
+    "User-level views need a role. Default views show team aggregates.",
+    "No content fields exist in the source data.",
+    "Exports are logged in the audit log."
+   ],
+   "performance": {
+    "slo": "Dashboard loads under 3 seconds at the 95th percentile (P95), data lag under 5 minutes (DevX proposal).",
+    "complexity": "Reads precomputed rollups.",
+    "scaling": "Rollups by tenant and day."
+   },
+   "edge_cases": [
+    "A caller with few requests gives a noisy hit rate. Show the sample size.",
+    "A new caller has no baseline. Show absolute value only.",
+    "Gateway-derived baselines have selection bias [C:054].",
+    "Spend of subagents must not roll into the parent without a label."
+   ],
+   "tests": [
+    {
+     "name": "percentile",
+     "given": "user totals 10, 20, 30, 40, 100",
+     "expect": "median 30, P95 above 40, mean 40"
+    },
+    {
+     "name": "own_baseline",
+     "given": "caller baseline 0.90, now 0.40 while account is 0.77",
+     "expect": "alert on caller"
+    },
+    {
+     "name": "waste_share",
+     "given": "failed spend $32 of $100",
+     "expect": "0.32 shown"
+    },
+    {
+     "name": "cps_headline",
+     "given": "spend $0.95 over 1 success",
+     "expect": "CPS $0.95, no token-savings headline"
+    }
+   ],
+   "cost_levers": [
+    "Pointing at the tail (P95) and the worst caller finds the largest saving.",
+    "Waste share points at loop guard and turn cap targets."
+   ],
+   "feedback_events": [
+    "dash.guard_metrics",
+    "dash.caller_alert"
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.dash.view",
+     "fields": [
+      "view",
+      "tenant_id",
+      "role"
+     ],
+     "when": "A dashboard is opened."
+    },
+    {
+     "name": "token_economics.dash.guard_metrics",
+     "fields": [
+      "metric",
+      "value",
+      "baseline"
+     ],
+     "when": "Guard metrics are published."
+    }
+   ],
+   "papers": [
+    {
+     "ref": "C:052",
+     "key_idea": "Account hit rate 77 percent hid a cron near 0 percent; blanket 1h TTL made the bill 8.6 percent worse.",
+     "how": "Hit rate is shown per caller against its own baseline."
+    },
+    {
+     "ref": "A:069",
+     "key_idea": "Price rank reversed in 32 percent of comparisons.",
+     "how": "Rank by cost per task, not list price."
+    }
+   ],
+   "repos": [],
+   "industry": "Gateway vendors publish per-agent hit rates and spend percentiles from their own traffic [C:054], with selection bias. Token Economics computes the same views from the customer's own ledger."
+  }
+ },
+ "anom": {
+  "inn": "Cost and token series per caller, model and tenant from the metadata store.",
+  "out": "Alerts on outliers, with the series, the baseline and the likely driver.",
+  "store": "Reads meta series. Writes alert records and a per-series baseline state.",
+  "fail": "Fail open: it only alerts. A broken detector never blocks traffic. A silent detector raises a heartbeat alert.",
+  "req": "RQ-B-050, RQ-B-051",
+  "src": [
+   "A:213",
+   "C:116",
+   "C:054",
+   "C:028",
+   "C:136"
+  ],
+  "prop": "The whole method is a DevX proposal. The corpus has no anomaly-detection method beyond budget alerts at 75, 90 and 100 percent. The outlier method is chosen by Token Economics. No source supplies it.",
+  "hard": "Open: no corpus method, threshold or false-alert rate. Budget alerts at 75, 90 and 100 percent are sourced [A:213, C:116] and live in the alert component. The detector needs a pilot to set thresholds.",
+  "line": "cron-nightly cost/day $4 -> $31 (z=7.2, 14d base)\nalert: new tool schema bloat? top driver: input",
+  "dumb": "This part watches the spend lines and shouts when something jumps far above normal. It only warns, it never stops anything.",
+  "deep": {
+   "purpose": "Catch sudden or slow cost jumps that fixed budget thresholds miss, such as a cron that loses its cache or a loop that runs all night.",
+   "expected": [
+    "Runs on daily and hourly series per caller and per model.",
+    "Uses a trailing median and median absolute deviation (MAD) baseline and flags a score above a set limit (DevX proposal).",
+    "Attaches the likely driver: input, output, cache read, cache write, or request count.",
+    "Suppresses repeat alerts for one series for a set period.",
+    "Publishes a heartbeat so a silent detector is itself an alert."
+   ],
+   "not_expected": [
+    "No traffic blocking. Budgets and the loop guard block.",
+    "No content use.",
+    "No claim of a corpus-backed method."
+   ],
+   "algorithm": {
+    "name": "Median and MAD outlier score (DevX proposal)",
+    "formula": "z = 0.6745 x (x - median) / MAD over a trailing window",
+    "steps": [
+     "Aggregate the series per caller and model at hourly and daily grain.",
+     "Keep a trailing window (14 days proposed) with at least 7 points.",
+     "Compute median and MAD. Score the newest point.",
+     "If the score exceeds the limit (proposed 5) and the absolute rise exceeds a floor in USD, raise an alert.",
+     "Break the rise into bucket and request-count drivers.",
+     "Write the alert and start a suppression window."
+    ],
+    "params": {
+     "window_days": "14 (DevX proposal)",
+     "min_points": "7 (DevX proposal)",
+     "score_limit": "5 (DevX proposal)",
+     "absolute_floor_usd": "set per tenant (DevX proposal)",
+     "budget_alert_levels": "75, 90, 100 percent, handled by the alert component [A:213, C:116]"
+    }
+   },
+   "security": [
+    "Alerts carry series ids and numbers, no content.",
+    "Alert routing goes through the configured channels with tenant scope.",
+    "Thresholds changes are audited."
+   ],
+   "performance": {
+    "slo": "Hourly alert within 15 minutes of the hour closing (DevX proposal).",
+    "complexity": "O(w) per series for window w.",
+    "scaling": "Series count equals callers times models. Evaluate in batch."
+   },
+   "edge_cases": [
+    "New caller with under 7 points: no alert, status warming up.",
+    "Planned load test looks like an anomaly. Allow a silence window by operators.",
+    "Price change shifts cost for every caller at once. Alert once at the model level.",
+    "Weekend dips cause false alarms in a day-based window.",
+    "Failed runs are 32 percent of spend on average [C:028], so a spike in failures is a driver, not an anomaly by itself."
+   ],
+   "tests": [
+    {
+     "name": "spike",
+     "given": "series 4,4,5,4,4,5,4 then 31",
+     "expect": "alert raised, driver input"
+    },
+    {
+     "name": "warming",
+     "given": "series with 3 points",
+     "expect": "no alert, status warming_up"
+    },
+    {
+     "name": "suppress",
+     "given": "two spikes in one hour on one series",
+     "expect": "one alert"
+    },
+    {
+     "name": "heartbeat",
+     "given": "detector silent for 2 hours",
+     "expect": "heartbeat alert fires"
+    },
+    {
+     "name": "price_change",
+     "given": "all callers +20 percent after a price row change",
+     "expect": "one model-level alert"
+    }
+   ],
+   "cost_levers": [
+    "Early alerts catch cost leaks such as lost cache or loops before the invoice."
+   ],
+   "feedback_events": [
+    "anom.alert",
+    "anom.heartbeat_missed"
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.anom.alert",
+     "fields": [
+      "series",
+      "score",
+      "value",
+      "baseline",
+      "driver"
+     ],
+     "when": "A series crosses the limit."
+    },
+    {
+     "name": "token_economics.anom.heartbeat",
+     "fields": [
+      "last_run",
+      "series_count"
+     ],
+     "when": "The detector finishes a run."
+    }
+   ],
+   "papers": [],
+   "repos": [],
+   "industry": "The corpus covers budget alerts at 75, 90 and 100 percent [A:213, C:116] and nothing more. Median and MAD scoring is a common, simple method and is a proposal here."
+  }
+ }
+}

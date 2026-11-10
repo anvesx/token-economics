@@ -1,0 +1,2586 @@
+[
+ {
+  "n": 1,
+  "name": "Heavy starting context",
+  "why": "The first-call prefix (system prompt, tool schemas, CLAUDE.md, skill listings) is re-read on every call; $248 of the $430 is never-called MCP tool definitions.",
+  "detect_api": "First request tokens minus the user prompt; flag a prefix above 10k tokens, and split it by tools[] size versus system size.",
+  "detect_cli": "OpenTelemetry/transcript first-call input tokens; /context breakdown; tools[] from prompt_snapshot.",
+  "fix_api": "Cache the stable prefix with cache_control on the last tool and system block, and defer rarely used tools behind a lookup path (compressed MCP proxy). Class 0 alert first, then class 2.",
+  "fix_cli": "Keep deferred tool loading on (ENABLE_TOOL_SEARCH auto/default), CLAUDE.md under 200 lines, disable-model-invocation on rare skills; remove unused MCP servers (class 3).",
+  "class": "2",
+  "techniques": [
+   {
+    "name": "Deferred tool loading (tool search)",
+    "kind": "setting",
+    "how": "Tool schemas load only when needed; ENABLE_TOOL_SEARCH=auto loads upfront until deferrable schemas reach 10% of the window; deferred is the default.",
+    "effect": "Example context shows MCP tools deferred at 120 tokens; auto-defer saved about 13.2k tokens in one self-measured setup.",
+    "loses": "Needs a lookup step; ENABLE_TOOL_SEARCH=false loads everything upfront.",
+    "src": [
+     "C:079",
+     "C:019"
+    ],
+    "paper": "Anthropic, Explore the context window; bswen, How MCP Tool Definitions Inflate Your AI Agent Token Costs"
+   },
+   {
+    "name": "mcp-compressor (MCP proxy with get_tool_schema / invoke_tool)",
+    "kind": "system",
+    "how": "Proxy replaces a server's tools with get_tool_schema, invoke_tool and optional list_tools, at verbosity levels full/brief/minimal/none.",
+    "effect": "94-tool GitHub server: 17,600 to 3,900 (low), 2,200 (strong), 500 (max) tokens; quality impact 'almost no' per Atlassian's own evaluation.",
+    "loses": "Self-reported by vendor; needs on-demand schema access kept; namespacing prefixes such as mcp__atlassian__*.",
+    "src": [
+     "C:022"
+    ],
+    "paper": "Atlassian, MCP Compression: Preventing tool bloat in AI agents"
+   },
+   {
+    "name": "Tool Attention (ISO score plus lazy schema loader)",
+    "kind": "algorithm",
+    "how": "Embedding Intent-Schema Overlap score gates tools; a compact summary pool is kept and full JSON schemas are promoted only for top-k tools.",
+    "effect": "Simulated 120-tool, six-server benchmark: tool tokens per turn 47.3k to 2.4k (-95%).",
+    "loses": "Projection from simulation, not measured on live agents.",
+    "src": [
+     "C:021"
+    ],
+    "paper": "arXiv 2604.21816, Tool Attention Is All You Need (Sadani, Kumar)"
+   }
+  ],
+  "methodology": "Paired CPS test: same task set with and without deferral or proxy; track task success and tool-call errors next to starting tokens (C:022 evaluates quality with on-demand access kept).",
+  "gaps": "No measured live-agent numbers for Tool Attention. Hermes' $182 non-MCP share (system prompt, CLAUDE.md) has no specific corpus technique beyond the 200-line target."
+ },
+ {
+  "n": 2,
+  "name": "Cache-write premium",
+  "why": "Cache writes cost 1.25x (5m) or 2x (1h) base input, so every write pays a premium that only reads repay.",
+  "detect_api": "Sum cache_creation_input_tokens times price times (write multiplier minus 1); split ephemeral_5m versus ephemeral_1h fields.",
+  "detect_cli": "Same usage fields via OpenTelemetry cache creation tokens per session; claude -p 'hello' --output-format json shows usage.cache_creation.",
+  "fix_api": "Use 1h only where reuse gaps fall between 5 minutes and an hour; drop breakpoints nobody reuses. Class 0 alert, TTL change is class 2.",
+  "fix_cli": "Set promptCacheTtl / CLAUDE_CODE_PROMPT_CACHE_TTL for main, subagentPromptCacheTtl for helpers (v2.1.242+); FORCE_PROMPT_CACHING_5M=1 or ENABLE_PROMPT_CACHING_1H=1.",
+  "class": "2",
+  "techniques": [
+   {
+    "name": "TTL-tier matching (5m vs 1h by reuse gap)",
+    "kind": "technique",
+    "how": "One read repays a 5m write (1.35x vs 2x); 1h needs two reads. 1h fits side-agents running longer than 5 minutes but under an hour.",
+    "effect": "Blanket 1h made one deployment's bill 8.6% worse because 98% of reuse landed within about 34 seconds.",
+    "loses": "Self-reported blog, one deployment.",
+    "src": [
+     "A:199",
+     "C:052"
+    ],
+    "paper": "Claude prompt caching docs; dev.to, Your cache hit rate is lying to you. It's the caller mix"
+   },
+   {
+    "name": "Targeted 1h write on the dispatch turn",
+    "kind": "technique",
+    "how": "Write 1h only on the turn that spawns long-running children; dynamic content goes after the stable prefix.",
+    "effect": "Dispatch-turn 1h -6.0%; dynamic content after stable prefix -7.6%; all three fixes combined -13.6%.",
+    "loses": "Blog measurement, depends on caller mix.",
+    "src": [
+     "C:052"
+    ],
+    "paper": "dev.to, Your cache hit rate is lying to you"
+   },
+   {
+    "name": "Per-caller by TTL hit-rate logging",
+    "kind": "methodology",
+    "how": "Log hit rate per caller times TTL tier; a breakpoint nobody reuses costs 25% extra on 5m and 100% on 1h.",
+    "effect": "Not measured beyond the examples above.",
+    "loses": "Needs a caller label Token Economics must derive.",
+    "src": [
+     "C:052"
+    ],
+    "paper": "dev.to, Your cache hit rate is lying to you"
+   }
+  ],
+  "methodology": "Replay a week of traffic and compute cost under 5m versus 1h per caller using the 1.25x/2x/0.1x multipliers (A:199); ship only where CPS falls.",
+  "gaps": "Doc and transcripts disagreed on subagent TTL (C:052); verify with the usage.cache_creation check before trusting it."
+ },
+ {
+  "n": 3,
+  "name": "Cold cache at session and agent start",
+  "why": "The first call of the main session and of each helper writes the whole prefix, because a subagent's first request does not read the parent cache.",
+  "detect_api": "First call per derived conversation key with cache_creation_input_tokens above 0 and cache_read 0; gateway cannot see session ids; Token Economics derives a conversation key (prefix hash plus idle gap).",
+  "detect_cli": "session_id/agent start events plus first-call usage; /usage Prompt cache (main) line.",
+  "fix_api": "Keep the prefix byte-stable across sessions (static head, volatile content after it) and pre-warm shared prefixes. Class 2.",
+  "fix_cli": "Use forks (inherit and hit) instead of fresh subagents where possible; keep startup git status stable; sessions share cache only by machine and directory.",
+  "class": "2",
+  "techniques": [
+   {
+    "name": "Pre-warming with max_tokens: 0",
+    "kind": "technique",
+    "how": "Send a request with max_tokens 0 and an explicit breakpoint on the shared block, same thinking and effort config; billed as a write with zero output.",
+    "effect": "Not measured in corpus.",
+    "loses": "Costs a write; wasted if nothing follows.",
+    "src": [
+     "A:199"
+    ],
+    "paper": "Claude prompt caching docs"
+   },
+   {
+    "name": "Persistent per-type static prefix",
+    "kind": "technique",
+    "how": "Give each agent type a stable prefix so children read a warm cache; cwd, date and branch go after it.",
+    "effect": "-1.0% alone; combined -13.6% with the other two fixes.",
+    "loses": "Small alone; cron/scheduled sessions still ran about 0% hit.",
+    "src": [
+     "C:052"
+    ],
+    "paper": "dev.to, Your cache hit rate is lying to you"
+   },
+   {
+    "name": "Fork and fan-out hold",
+    "kind": "setting",
+    "how": "A fork inherits the parent cache; a workflow fan-out holds all but the first agent up to 5s so they can read its cache.",
+    "effect": "Not measured in corpus.",
+    "loses": "Subagents (not forks) still start cold.",
+    "src": [
+     "C:055"
+    ],
+    "paper": "Claude Code docs, How Claude Code uses prompt caching"
+   }
+  ],
+  "methodology": "Compare first-call cw tokens per helper before and after a stable-prefix change on matched tasks; keep success rate and CPS as the guard.",
+  "gaps": "No corpus source for a gateway-level conversation key; DevX proposal: derive it from prefix hash plus idle gap."
+ },
+ {
+  "n": 4,
+  "name": "Cache expired after a break",
+  "why": "After an idle gap beyond the TTL (5m on API keys, 1h on subscriptions) the entire history is rewritten at the write premium.",
+  "detect_api": "Rewrite (cw above max(5000, 0.5*ctx)) after a gap at or above the TTL on the same conversation key.",
+  "detect_cli": "Timestamps between calls in the transcript plus ttl; /usage likely-cause text.",
+  "fix_api": "Choose TTL by gap histogram; keepalive only if the gap fits the crossover. Class 0 alert, TTL change class 2.",
+  "fix_cli": "promptCacheTtl, idleCompaction=false (v2.1.290+); compact at natural breaks (a cold /compact reprocesses history uncached).",
+  "class": "2",
+  "techniques": [
+   {
+    "name": "Keepalive crossover rule",
+    "kind": "technique",
+    "how": "Keepalive pings pay off only below a 62.5 minute break (5 x 1.25 / 0.10); TTL runs from request start.",
+    "effect": "Rule derived in the source; no field measurement.",
+    "loses": "Self-reported blog arithmetic.",
+    "src": [
+     "C:052"
+    ],
+    "paper": "dev.to, Your cache hit rate is lying to you"
+   },
+   {
+    "name": "TTL settings and idleCompaction",
+    "kind": "setting",
+    "how": "Main-conversation TTL is 1h on subscriptions, 5m on API key; promptCacheTtl and idleCompaction control it.",
+    "effect": "Not measured in corpus.",
+    "loses": "Needs v2.1.242 or later.",
+    "src": [
+     "C:055"
+    ],
+    "paper": "Claude Code docs, How Claude Code uses prompt caching"
+   },
+   {
+    "name": "1h block for long gaps",
+    "kind": "technique",
+    "how": "Use 1h when prompts come less often than every 5 minutes but more often than every hour.",
+    "effect": "Not measured in corpus.",
+    "loses": "2x write cost.",
+    "src": [
+     "A:199"
+    ],
+    "paper": "Claude prompt caching docs"
+   }
+  ],
+  "methodology": "Histogram of inter-call gaps per key; simulate TTL choices with the multipliers; A/B on a subset.",
+  "gaps": "No corpus measurement of subscription 1h behaviour beyond the docs."
+ },
+ {
+  "n": 5,
+  "name": "Many agents",
+  "why": "Each helper agent is a separate model loop with its own context, so fan-out multiplies billed turns and prefix tokens.",
+  "detect_api": "No session or helper id in API traffic. Derive a conversation key from prefix hash plus idle gap, then count distinct short-lived keys per parent and their cost share.",
+  "detect_cli": "SubagentStart/SubagentStop hooks and transcript sidechains: helper count, turns and cost per parent session.",
+  "fix_api": "Gateway cap on concurrent derived conversations per parent; route helper-shaped requests to a cheaper model (orchestrator pattern, cheap workers). DevX proposal for the gateway rule.",
+  "fix_cli": "Set CLAUDE_CODE_SUBAGENT_MODEL or model: haiku on helper definitions; Codex agents.default_subagent_model, reasoning_effort, agents.max_concurrent_threads_per_session and rollout_budget.",
+  "class": "2",
+  "techniques": [
+   {
+    "name": "Orchestrator pattern with cheap workers and fan-out budget cap",
+    "kind": "methodology",
+    "how": "A strong planner delegates to cheaper worker models, and total fan-out is capped by a budget.",
+    "effect": "84-98% cost reduction at the worker rate, with a floor cost per delegation and a brief-granularity optimum.",
+    "loses": "Delegation floor cost makes tiny tasks net negative.",
+    "src": [
+     "C:012"
+    ],
+    "paper": "Orchestrator / cheap-worker cost analysis (C:012)"
+   },
+   {
+    "name": "Subagent model routing and concurrency settings",
+    "kind": "setting",
+    "how": "Pin helper agents to a small model and limit concurrent threads and rollout budget through harness settings.",
+    "effect": "Not measured in corpus as a multiplier; no measured subagent multiplier exists.",
+    "loses": "Weaker helper may need retries, erasing the saving.",
+    "src": [
+     "C:072",
+     "C:052"
+    ],
+    "paper": "Claude Code subagent docs; cache TTL study"
+   },
+   {
+    "name": "Heavier harness with subagents inflates cost",
+    "kind": "methodology",
+    "how": "Paired comparison of harness configurations on the same tasks shows added subagent machinery raised cost.",
+    "effect": "Cost increased versus the lighter harness (see source for setting).",
+    "loses": "Result is one benchmark setting.",
+    "src": [
+     "A:051"
+    ],
+    "paper": "A:051 harness cost comparison"
+   }
+  ],
+  "methodology": "Paired A/B on identical tasks: subagents on versus capped or cheap-model, compare total cost per resolved task and pass rate.",
+  "gaps": "No measured subagent multiplier. C:013's 5-10x claim is a vendor blog. Gateway-side detection has no corpus source (DevX proposal)."
+ },
+ {
+  "n": 6,
+  "name": "Long history replay",
+  "why": "Every call resends the whole conversation, so a 100k-plus history is re-read (at cache-read price) on every later turn.",
+  "detect_api": "Gateway: per request, input+cache_read+cache_creation tokens minus the first request of the same conversation key, flagged above 100k (hermes A1 constant; set from P0 baseline).",
+  "detect_cli": "gateway signal only; join to session via the x-claude-code-session-id header the gateway receives (C:001) or OTel session.id (A:217).",
+  "fix_api": "Add `context_management` edits: tool result clearing first (trigger 30-40k, keep 5, clear_at_least 3-5k), compaction as last resort near the window. Both are Class 2, applied only after a paired CPS win.",
+  "fix_cli": "Claude Code: let auto-compact run, steer it with Compact Instructions in CLAUDE.md or /compact focus; Codex: set model_auto_compact_token_limit and experimental_compact_prompt_file; start a new thread between phases with a handoff file.",
+  "class": "2",
+  "techniques": [
+   {
+    "name": "Production clearing settings (trigger 30-40k, keep 5, clear_at_least 3,000-5,000)",
+    "kind": "setting",
+    "how": "Cookbook advises lowering the trigger to 30-40k input tokens for production, keeping 5 tool uses and forcing at least 3,000-5,000 tokens freed per clear so the cache rewrite is worth it.",
+    "effect": "Guidance only; not measured as a saving in the corpus.",
+    "loses": "Defaults of 100,000 / keep 3 fire late; the 30-40k advice has no head-to-head test.",
+    "src": [
+     "C:066",
+     "C:065"
+    ],
+    "paper": "Memory & context management with Claude (cookbook); Context editing on the Claude Developer Platform"
+   },
+   {
+    "name": "Server-side compaction (compact_20260112)",
+    "kind": "setting",
+    "how": "Beta context edit that fires at `trigger` (default 150K, minimum 50K), summarises the conversation into a typed compaction block, accepts custom `instructions` and `pause_after_compaction`.",
+    "effect": "Cookbook: peak 335,279 to 169,164 tokens with a 2,783-token summary; high-level facts kept 3/3, obscure specifics 0/3. Single run. Figures are from A:271.",
+    "loses": "Loses verbatim detail; next turn rebuilds the cache; on short sessions the summary call costs more than it saves.",
+    "src": [
+     "A:271",
+     "C:065"
+    ],
+    "paper": "Context engineering: memory, compaction, and tool clearing (Claude cookbook)"
+   },
+   {
+    "name": "Compact within a phase, new thread between phases (handoff file)",
+    "kind": "methodology",
+    "how": "Compact only inside one verifiable phase; at a phase boundary have the agent write a handoff file (docs/plans/*.md), start a clean thread and pass only that file.",
+    "effect": "not measured in corpus",
+    "loses": "Costs one write turn; loses anything not written to the file.",
+    "src": [
+     "C:035",
+     "C:112"
+    ],
+    "paper": "Context Management Across Codex Surfaces (Developer Toolkit); Context Compaction Showdown (Vaughan)"
+   }
+  ],
+  "methodology": "Paired replay on sampled long sessions: arms raw, clearing, compaction; metric cost per successful task with caching on, plus a probe set of high-level and obscure facts after the edit (the A:271 probe design). Sweep clearing trigger 30k/60k/100k.",
+  "gaps": "No measured dollar saving for history edits in a coding-agent bill: C:024 puts conversation history under 1% of billed cost and caps all visible-token compression near 5%, which conflicts with hermes's 10.5% estimate for this row."
+ },
+ {
+  "n": 7,
+  "name": "Interrupted turns",
+  "why": "Interrupting a response wastes the output already generated and often forces a re-ask.",
+  "detect_api": "No corpus source. DevX proposal: streams closed early by client plus follow-up near-duplicate request.",
+  "detect_cli": "Interrupt hook and Esc events in transcripts, followed by a similar prompt.",
+  "fix_api": "No corpus source; DevX proposal: alert on abort rate.",
+  "fix_cli": "Esc keeps everything; /rewind to restore; queue corrections instead of interrupting; Codex agents.interrupt_message and Interrupt hook.",
+  "class": "0",
+  "techniques": [
+   {
+    "name": "Esc interrupt semantics",
+    "kind": "setting",
+    "how": "Esc stops the turn and keeps all context.",
+    "effect": "Not measured.",
+    "loses": "Kept partial output still costs tokens.",
+    "src": [
+     "C:080"
+    ],
+    "paper": "Claude Code best practices"
+   },
+   {
+    "name": "/rewind checkpoint restore",
+    "kind": "system",
+    "how": "Restore conversation or code to an earlier checkpoint.",
+    "effect": "Not measured.",
+    "loses": "Loses later work.",
+    "src": [
+     "C:087"
+    ],
+    "paper": "Claude Code checkpointing docs"
+   },
+   {
+    "name": "Queued corrections",
+    "kind": "technique",
+    "how": "Queue a message instead of interrupting; Codex Interrupt hook and agents.interrupt_message.",
+    "effect": "Not measured.",
+    "loses": "Delays the correction.",
+    "src": [
+     "C:089",
+     "C:104"
+    ],
+    "paper": "Claude Code and Codex docs"
+   }
+  ],
+  "methodology": "Count aborts per session and tokens discarded; compare with queued corrections.",
+  "gaps": "Billing of aborted streams has no corpus source."
+ },
+ {
+  "n": 8,
+  "name": "Sessions that never end",
+  "why": "A new task starts inside an old session, so 20k+ tokens of unrelated prior context ride along on every call.",
+  "detect_api": "Gateway: derive a conversation key (prefix hash plus idle gap, 30 min per hermes); flag a first-of-task request whose context exceeds prefix plus new prompt by 20k+ tokens.",
+  "detect_cli": "Hook SessionStart/UserPromptSubmit (C:074) plus transcript compaction count; task boundary from tag or 30 min gap; SessionEnd reason shows clear vs resume.",
+  "fix_api": "Gateway cannot start a new task itself. Alert with the carried tokens; if a tag or gap marks a boundary, apply tool result clearing at that point (Class 2) or tell the client to reset the thread.",
+  "fix_cli": "Claude Code: /clear between unrelated tasks (re-loads CLAUDE.md and project context); Codex: /new between phases; recommend a fresh session after three compactions with a structured handoff.",
+  "class": "2",
+  "techniques": [
+   {
+    "name": "Phase-boundary reset with handoff file",
+    "kind": "methodology",
+    "how": "Compact within a phase, open a new thread at the next phase, pass only a handoff file the user reads line by line.",
+    "effect": "not measured in corpus",
+    "loses": "The handoff is hand-written state; omissions are lost.",
+    "src": [
+     "C:035"
+    ],
+    "paper": "Context Management Across Codex Surfaces (Developer Toolkit)"
+   },
+   {
+    "name": "Three-compactions rule",
+    "kind": "methodology",
+    "how": "Each compaction summarises a summary, so loss compounds; after three or more, start a fresh session with a structured handoff. /context shows depth.",
+    "effect": "not measured in corpus",
+    "loses": "Heuristic from one blog; no threshold study.",
+    "src": [
+     "C:112",
+     "C:106"
+    ],
+    "paper": "Context Compaction Showdown: Codex CLI, Claude Code and 5 Other Agents; Mastering Context Compaction in Codex CLI"
+   },
+   {
+    "name": "Sub-agent architecture",
+    "kind": "technique",
+    "how": "Give each focused subtask a sub-agent with a clean window; the lead keeps a plan and receives a condensed result.",
+    "effect": "not measured in corpus here",
+    "loses": "Sub-agents repeat startup context (rows 5/13).",
+    "src": [
+     "A:084",
+     "C:112"
+    ],
+    "paper": "Effective context engineering for AI agents (Anthropic)"
+   }
+  ],
+  "methodology": "Mine sessions that crossed a task boundary and replay them with a reset at the boundary vs without; compare cost per successful task and first-attempt success on the follow-up task.",
+  "gaps": "Corpus gives no task-boundary detector and no measured saving from /clear; hermes's 20k line has no stated basis."
+ },
+ {
+  "n": 9,
+  "name": "No clear direction",
+  "why": "The agent reads and searches broadly before its first edit because the task or target files were not stated, and every result stays in history and is re-billed each turn.",
+  "detect_api": "Per derived conversation key, count Read/Grep/Glob tool_use blocks in assistant responses before the first Edit/Write tool_use; flag above 15 (hermes constant, no stated basis; set from the P0 baseline).",
+  "detect_cli": "PostToolUse hook or OTel claude_code.tool_result events (tool_name, prompt.id) give the same count per prompt.id; join to the first edit-tool event.",
+  "fix_api": "Gateway cannot supply direction. Alert only, then DevX proposal: route read-only exploration turns to a cheaper model (Claude Code does this with the Explore subagent on Haiku, C:072) after a paired test.",
+  "fix_cli": "Class 3: specific prompts, plan mode (Shift+Tab), an LSP code-intelligence plugin so one go-to-definition replaces grep plus reads, and a codebase-overview skill. Keep the built-in Explore subagent so reads stay out of the main context.",
+  "class": "3",
+  "techniques": [
+   {
+    "name": "Specific task specification (full spec vs bare user story)",
+    "kind": "methodology",
+    "how": "Give the agent a structured spec with the target files and expected behaviour instead of a plain problem description. The study varies spec detail on SWE-bench Verified tasks at three thinking efforts and measures token spend.",
+    "effect": "Cutting a full spec to a plain prose problem description raised spend 29.7% and turns 16.4%, 2,700 runs, Kimi K3.",
+    "loses": "Prompt sensitivity is task-dependent (13% to 115%); one model; run-to-run spread of x1.34 is unchanged by the prompt.",
+    "src": [
+     "C:027"
+    ],
+    "paper": "Can your AI agent be cheaper? Investigating the effects of task specifications on token spend in agentic coding tasks (Smekal, Stanford)"
+   },
+   {
+    "name": "Code intelligence (language server) plugins plus codebase-overview skill",
+    "kind": "setting",
+    "how": "A language server answers definitions and references directly, so one call replaces a grep followed by reading several candidate files. A skill describing architecture and key directories gives the agent the map up front.",
+    "effect": "not measured in corpus (doc states the mechanism only).",
+    "loses": "Needs the language server binary on each machine; typed languages only per the doc.",
+    "src": [
+     "A:215",
+     "C:083"
+    ],
+    "paper": "Manage costs effectively (Claude Code), Anthropic; Set up Claude Code in a monorepo or large codebase, Anthropic"
+   },
+   {
+    "name": "Plan mode and Explore subagent isolation",
+    "kind": "technique",
+    "how": "Plan mode has the agent explore and propose an approach before editing, so a wrong direction is caught early. The Explore subagent runs read-only search in its own context and returns a summary, and can be pinned to model: haiku.",
+    "effect": "not measured in corpus.",
+    "loses": "Subagents do not share the parent prompt cache (C:055) and agent teams use about 7x tokens in plan mode (A:215).",
+    "src": [
+     "A:215",
+     "C:072",
+     "C:055"
+    ],
+    "paper": "Manage costs effectively (Claude Code); Create custom subagents, Anthropic; How Claude Code uses prompt caching, Anthropic"
+   },
+   {
+    "name": "Aider tree-sitter repo map (--map-tokens)",
+    "kind": "system",
+    "how": "Builds a dependency graph from tree-sitter definitions and ranks symbols with a graph-ranking algorithm to fit a token budget (default 1k), so the model sees structure without reading files.",
+    "effect": "not measured in corpus.",
+    "loses": "Budget is a target not a ceiling: issue reports show 16,000 tokens at --map-tokens 1024; map is doubled when no files are added.",
+    "src": [
+     "C:040",
+     "C:127"
+    ],
+    "paper": "How to Manage the Aider Context Window and Token Budgets; How to Reduce Aider Token Usage (Tokenade blogs)"
+   }
+  ],
+  "methodology": "Paired A/B on matched tasks: vague prompt vs specific prompt (C:027 design: repeat each arm, report mean and spread), with and without LSP plugin. Metric: billed cost per successful task, plus reads before first edit. Run 3 repeats per arm because run spread is about x1.34.",
+  "gaps": "No corpus source measures the cost of exploration itself or a read-count threshold. Kiro has no source in the CLI corpus. No billed saving for LSP plugins or plan mode."
+ },
+ {
+  "n": 10,
+  "name": "Restarting too often",
+  "why": "A fresh session soon after the last one rebuilds the same context (re-reads files, re-issues setup) at cold-cache prices.",
+  "detect_api": "Gateway: new conversation key within 3600 s of the previous one for the same caller and project, with cache_creation high and overlapping prefix; cost = calls before the first edit.",
+  "detect_cli": "Hook SessionStart source (startup/resume/clear/compact/fork) and SessionEnd reason (C:074); gap under RESTART_GAP 3600 s.",
+  "fix_api": "Class 0 alert. Where the client supports it, keep the cache warm (TTL choice is a Class 2 change).",
+  "fix_cli": "Resume the session instead of starting anew (the whole conversation resends, unchanged prefix still reads from cache within the TTL); persist state in auto memory or a handoff file; use idleCompaction=false if idle compaction itself triggers rewrites.",
+  "class": "3",
+  "techniques": [
+   {
+    "name": "Resume a session (cache-aware)",
+    "kind": "setting",
+    "how": "Resume resends the whole conversation; the unchanged prefix still hits the cache within the cache lifetime, one hour on a Claude subscription by default, five minutes otherwise.",
+    "effect": "Resume benefit not quantified in corpus.",
+    "loses": "After a break longer than the TTL nothing is cached and resume reprocesses history uncached; /compact then costs the most.",
+    "src": [
+     "C:055"
+    ],
+    "paper": "How Claude Code uses prompt caching (Anthropic)"
+   },
+   {
+    "name": "Auto memory (MEMORY.md index + topic files)",
+    "kind": "system",
+    "how": "Claude writes four kinds of notes itself to ~/.claude/projects/<project>/memory/; the first 200 lines or 25KB of MEMORY.md load each session. Toggle autoMemoryEnabled, CLAUDE_CODE_DISABLE_AUTO_MEMORY, autoMemoryDirectory.",
+    "effect": "not measured in corpus",
+    "loses": "Loaded every session so it is a standing token cost; a wrong note repeats in every session.",
+    "src": [
+     "C:077"
+    ],
+    "paper": "How Claude remembers your project (Anthropic)"
+   },
+   {
+    "name": "Handoff file between threads",
+    "kind": "methodology",
+    "how": "Write docs/plans/<task>.md before ending the thread; start the next thread from it.",
+    "effect": "not measured in corpus",
+    "loses": "Hand-maintained.",
+    "src": [
+     "C:035"
+    ],
+    "paper": "Context Management Across Codex Surfaces (Developer Toolkit)"
+   }
+  ],
+  "methodology": "Compare matched task pairs started as new session vs resumed/handoff: cost per successful task and tokens before first edit.",
+  "gaps": "No measured saving for restart avoidance; resume economics beyond the TTL rule are not quantified."
+ },
+ {
+  "n": 11,
+  "name": "Stale tool results carried forward",
+  "why": "File reads and command output stay in context 30+ calls after use, and are re-read on every call.",
+  "detect_api": "Gateway: tool_result blocks that remain in the messages array 30 calls after first appearing; tokens (plus image tokens) times later cache-read price until compaction (hermes A5).",
+  "detect_cli": "gateway signal only (transcript tool_use_id gives the same).",
+  "fix_api": "Inject context_management clear_tool_uses_20250919 with trigger 30-40k, keep 5, clear_at_least 3-5k and exclude_tools for results that cannot be re-fetched; or gateway-side masking with a rolling window. Both Class 2.",
+  "fix_cli": "Claude Code microcompact/tool trimming already runs before LLM summary (C:112); Aider: /drop files; Codex: compact within phase. Masking with a tuned M needs harness support.",
+  "class": "2",
+  "techniques": [
+   {
+    "name": "Tool result clearing (clear_tool_uses_20250919)",
+    "kind": "setting",
+    "how": "Server replaces the oldest tool results with placeholder text once input exceeds `trigger` (default 100,000), keeps the last `keep` (default 3) pairs, skips if `clear_at_least` tokens cannot be freed, and honours `exclude_tools`.",
+    "effect": "Cookbook run, one synthetic task: peak context 335,279 to 173,137 tokens. No dollars, single run. Figures are from A:271.",
+    "loses": "Invalidates the cached prefix on every clear, so each clear pays a cache write; cleared content is gone unless re-fetched.",
+    "src": [
+     "C:065",
+     "A:271"
+    ],
+    "paper": "Context editing on the Claude Developer Platform (Anthropic); Context engineering: memory, compaction, and tool clearing (Anthropic cookbook)"
+   },
+   {
+    "name": "Observation masking (rolling window M)",
+    "kind": "algorithm",
+    "how": "Replace tool observations older than the last M turns with a short placeholder (for example 'Previous 8 lines omitted'); the agent's own reasoning and actions stay.",
+    "effect": "SWE-agent, M=10: cost per instance cut by more than half in most setups (Gemini 2.5 Flash $0.41 to $0.18); solve rate not significantly lower. Qwen3-Coder solve rate 54.8% masked vs 53.4% raw.",
+    "loses": "Needs re-tuning per scaffold; masking loses at 7 events or fewer (-45% to -149% savings); only +8.6% net on a 9-event average task set.",
+    "src": [
+     "C:130",
+     "C:133"
+    ],
+    "paper": "The Complexity Trap: Observation Masking vs LLM Summarization (JetBrains Research); Evaluating Memory Condensation Strategies for Coding Agents in Data-Driven Scientific Discovery"
+   },
+   {
+    "name": "Observation masking vs LLM summarisation hybrid",
+    "kind": "algorithm",
+    "how": "Combine masking of old observations with LLM summarisation of the turn history rather than either alone.",
+    "effect": "Cost down a further 7% vs masking alone and 11% vs summary alone (SWE-agent/OpenHands).",
+    "loses": "Adds an LLM call and one more knob set.",
+    "src": [
+     "C:130"
+    ],
+    "paper": "The Complexity Trap (JetBrains Research)"
+   },
+   {
+    "name": "Garbage-collector view: liveness and write barriers",
+    "kind": "methodology",
+    "how": "Clearing is garbage collection with no liveness knowledge; protect results the agent builds on via exclude_tools and write state to memory before clearing.",
+    "effect": "not measured in corpus",
+    "loses": "Opinion piece; exclude_tools is described as crude.",
+    "src": [
+     "C:067"
+    ],
+    "paper": "Context Editing Looks Like a Feature. It's Actually a Garbage Collector Without Write Barriers"
+   }
+  ],
+  "methodology": "Arms raw/clearing/masking on sampled traffic; billed cost with caching on, count of cache rewrites caused by clears, and re-fetch rate of cleared files (agent re-reads).",
+  "gaps": "Cache-aware break-even for clearing (yield vs rewrite) is not measured in the corpus; masking effect at 8-10 events is mixed (C:133)."
+ },
+ {
+  "n": 12,
+  "name": "Bigger model than needed",
+  "why": "Simple tasks and helper calls run on the most expensive model when a cheaper one gives the same result.",
+  "detect_api": "Classify difficulty per call (simple categories, helper calls) and compare the model used with sonnet-5-5 price delta; gateway needs a difficulty classifier.",
+  "detect_cli": "Transcript model field per turn and subagent; flag Opus/Fable on simple-category turns and helper subagents.",
+  "fix_api": "Class 2 after a paired CPS win: RouteLLM matrix-factorization router or FrugalGPT cascade at the gateway; escalate only flagged hard tasks.",
+  "fix_cli": "Set subagent model (frontmatter or CLAUDE_CODE_SUBAGENT_MODEL), the opusplan alias (Opus plans, Sonnet executes), and availableModels allowlists.",
+  "class": 2,
+  "techniques": [
+   {
+    "name": "RouteLLM matrix-factorization router",
+    "kind": "algorithm",
+    "how": "Learns P(win) between strong and weak model from preference data using query embeddings; threshold sets the strong-model share.",
+    "effect": "Over 2x cost reduction without quality loss; 95% of GPT-4 score at 50% calls (MT Bench).",
+    "loses": "BERT and causal-LLM routers near random on low-data training.",
+    "src": [
+     "A:001"
+    ],
+    "paper": "RouteLLM (arXiv 2406.18665)"
+   },
+   {
+    "name": "FrugalGPT LLM cascade",
+    "kind": "algorithm",
+    "how": "A scoring function rates each answer in [0,1]; query models in order and stop at threshold tau.",
+    "effect": "Matches GPT-4 with up to 98% lower cost.",
+    "loses": "Needs a trained scorer and thresholds.",
+    "src": [
+     "A:021"
+    ],
+    "paper": "FrugalGPT (Chen, Zaharia, Zou)"
+   },
+   {
+    "name": "Hybrid LLM router",
+    "kind": "algorithm",
+    "how": "Predicts query difficulty and routes small or large; threshold tunable at test time.",
+    "effect": "Up to 40% fewer large-model calls, no quality drop.",
+    "loses": "Depends on difficulty predictor.",
+    "src": [
+     "A:003"
+    ],
+    "paper": "Hybrid LLM (Microsoft Research)"
+   },
+   {
+    "name": "Classifier routing, Cost per task",
+    "kind": "methodology",
+    "how": "Cheap yes/no complexity classifier routes between Flash-Lite and Flash; escalate flagged tasks only.",
+    "effect": "Router solved 50/50; regex plus length heuristic fell to 70.6% held-out.",
+    "loses": "50 hand-labelled prompts, single runs; routing and caching pull apart.",
+    "src": [
+     "A:052"
+    ],
+    "paper": "Cost per task (Google blog)"
+   }
+  ],
+  "methodology": "Use PGR/CPT(x%) from RouteLLM: minimum strong-model share to reach a target quality, plus paired CPS on your own tasks.",
+  "gaps": "Price Reversal (A:069) warns cheaper listed models can cost more (32% of pairs). Router attack risk (A:010). Corpus has no gateway difficulty classifier specific to coding."
+ },
+ {
+  "n": 13,
+  "name": "Fork context duplication",
+  "why": "A forked subagent inherits the parent prefix, so every fork re-sends the whole parent context.",
+  "detect_api": "Requests sharing a long identical prefix hash with a parent but different tails; cache_read versus cache_creation tokens in usage.",
+  "detect_cli": "SubagentStart hook with fork flag; transcript sidechain input tokens versus parent prefix size.",
+  "fix_api": "Keep prefix byte-identical so forks read cache; avoid forks after the 5-minute TTL lapses. Prefix-stability guard, class 1.",
+  "fix_cli": "CLAUDE_CODE_FORK_SUBAGENT=0 to use a fresh subagent, with omitClaudeMd and a short brief; keep the warm cache alive.",
+  "class": "2",
+  "techniques": [
+   {
+    "name": "Fork subagent reads the parent prompt cache",
+    "kind": "system",
+    "how": "Fork shares the parent prefix so the excess is cache-read priced; a non-fork subagent starts its own cache.",
+    "effect": "Excess is cheap unless the cache is dead.",
+    "loses": "After the 5-minute cliff the fork pays full creation price.",
+    "src": [
+     "C:055",
+     "C:052"
+    ],
+    "paper": "Claude Code subagent docs; prompt cache TTL analysis"
+   },
+   {
+    "name": "Cache TTL study (stable prefix, dynamic content last)",
+    "kind": "methodology",
+    "how": "Measured waits against the 5-minute TTL; 96% of waits fall in the cliff. Stable per-type prefix and dynamic content after it.",
+    "effect": "Combined fixes -13.6%; stable prefix -1.0%; dynamic after prefix -7.6%; blanket 1h TTL +8.6% worse.",
+    "loses": "Blanket 1h TTL costs more.",
+    "src": [
+     "C:052"
+    ],
+    "paper": "C:052 prompt cache analysis"
+   },
+   {
+    "name": "Sub-agent context isolation",
+    "kind": "technique",
+    "how": "Run exploration in a fresh context and return a 1,000-2,000 token summary.",
+    "effect": "Net saving not measured in corpus.",
+    "loses": "Isolation cost can exceed the benefit for small tasks.",
+    "src": [
+     "A:084"
+    ],
+    "paper": "A:084 context engineering guide"
+   }
+  ],
+  "methodology": "Compare fork on versus off on matched tasks measuring cache-read share, total cost and pass rate.",
+  "gaps": "Net saving from subagent isolation is not in the corpus."
+ },
+ {
+  "n": 14,
+  "name": "Large tool-call arguments",
+  "why": "Long plans, whole-file writes and big shell heredocs are billed as output tokens at the higher output rate and then stay in history as input on every later turn.",
+  "detect_api": "In assistant response content, tokenise json of each tool_use input (non-edit, non-agent tools); flag above 1,000 tokens (hermes A66). Count against usage.output_tokens.",
+  "detect_cli": "Gateway signal only for size; OTel tool_result gives tool_name and OTEL_LOG_TOOL_DETAILS=1 adds parameters (C:002).",
+  "fix_api": "Use the provider text_editor tool and token-efficient tool use where the model supports it; once the context passes a trigger, clear old tool calls with clear_tool_inputs=true in context editing.",
+  "fix_cli": "Aider: use edit format diff or udiff, not whole. Claude Code: skill or rule to persist and revise scripts instead of regenerating variants (DevSkills principle). Context editing is API-only, no CLI flag in corpus.",
+  "class": "2",
+  "techniques": [
+   {
+    "name": "Aider edit formats (diff / udiff vs whole)",
+    "kind": "setting",
+    "how": "diff returns search/replace blocks and udiff a simplified unified diff, so output scales with the change, while whole returns a full copy of every changed file.",
+    "effect": "not measured in corpus (blog asserts the whole default can outweigh all other costs).",
+    "loses": "Weaker models fail diff formats; blog says use whole only when the model cannot do better.",
+    "src": [
+     "C:127"
+    ],
+    "paper": "How to Reduce Aider Token Usage (Tokenade blog)"
+   },
+   {
+    "name": "Token-efficient tool use beta and text_editor tool",
+    "kind": "setting",
+    "how": "Header token-efficient-tools-2025-02-19 makes tool calls shorter in output tokens. The text_editor tool makes targeted edits to portions of a file instead of rewriting it.",
+    "effect": "Up to 70% output-token cut, 14% average, vendor-reported, Claude 3.7 Sonnet only.",
+    "loses": "Limited to one model generation in the source; vendor numbers, no method.",
+    "src": [
+     "A:068"
+    ],
+    "paper": "Token-saving updates on the Anthropic API, Anthropic"
+   },
+   {
+    "name": "Context editing clear_tool_inputs",
+    "kind": "setting",
+    "how": "With clear_tool_uses, setting clear_tool_inputs=true clears the tool call parameters as well as results once the trigger is passed; the API replaces them with placeholder text.",
+    "effect": "not measured in corpus.",
+    "loses": "Invalidates the cached prefix, so set clear_at_least to make the rewrite worthwhile; cleared content is unrecoverable.",
+    "src": [
+     "C:065",
+     "A:271"
+    ],
+    "paper": "Context editing on the Claude Developer Platform, Anthropic; Context engineering: memory, compaction, and tool clearing (Claude cookbook)"
+   },
+   {
+    "name": "DevSkills principle: persist and revise scripts (SimScrpt)",
+    "kind": "technique",
+    "how": "One developer-written principle tells the agent to persist and revise scripts instead of creating similar variants. The paper counts similar script generation as a cost-inefficient behaviour.",
+    "effect": "SimScrpt in up to 68% of tasks and up to 9.57% of task cost; all 7 principles together cut cost 7.88-41.73% in 6 of 8 settings.",
+    "loses": "One setting lost 1.5 pp Pass@1; the authors own the winning method.",
+    "src": [
+     "A:059"
+    ],
+    "paper": "Analyzing and Mitigating Cost-Inefficient Behaviors in Coding Agents"
+   }
+  ],
+  "methodology": "Replay sampled traffic with the treatment, then a paired run per harness. Metric: billed cost per success, output tokens per task, Pass@1. For diff formats also track failed-edit rate, since a failed diff costs a retry.",
+  "gaps": "Corpus has no measured share for plan-sized tool arguments beyond 1.4% of billed cost (C:024). No Codex or Kiro setting that limits argument size."
+ },
+ {
+  "n": 15,
+  "name": "Agent startup cost",
+  "why": "Each subagent starts by loading CLAUDE.md, git status, skills and a roster, paying that fixed cost per spawn.",
+  "detect_api": "First request of a derived helper conversation: system-prompt and tool-block token count, repeated across spawns.",
+  "detect_cli": "SubagentStart hook plus first-turn input tokens in the sidechain transcript.",
+  "fix_api": "Identical prefix across helpers with cache_control breakpoints so startup is cache-read priced.",
+  "fix_cli": "omitClaudeMd for helpers, skip skill preloads, use Explore/Plan agent types, keep description tokens under the 15k warning.",
+  "class": "1",
+  "techniques": [
+   {
+    "name": "Subagent startup context contents",
+    "kind": "system",
+    "how": "Helper loads CLAUDE.md, git status, preloaded skills, sibling roster and tool descriptions; description tokens above 15k warn.",
+    "effect": "Size not measured per helper in corpus.",
+    "loses": "Dropping CLAUDE.md loses project rules.",
+    "src": [
+     "C:072"
+    ],
+    "paper": "Claude Code subagents documentation"
+   },
+   {
+    "name": "Stable per-type prefix",
+    "kind": "technique",
+    "how": "Keep one fixed prefix per agent type and put dynamic content after it.",
+    "effect": "-1.0% stable prefix; -7.6% dynamic content after prefix (C:052).",
+    "loses": "Blanket 1h TTL is +8.6% worse.",
+    "src": [
+     "C:052"
+    ],
+    "paper": "C:052 prompt cache analysis"
+   },
+   {
+    "name": "Prompt caching with cache_control",
+    "kind": "technique",
+    "how": "Mark the static prefix as cacheable so repeat spawns read it.",
+    "effect": "Not measured here for spawns.",
+    "loses": "Prefix change invalidates cache.",
+    "src": [
+     "A:199"
+    ],
+    "paper": "A:199 prompt caching documentation"
+   }
+  ],
+  "methodology": "Measure first-turn tokens before and after omitting each startup item; check helper task success.",
+  "gaps": "No per-helper startup size measurement in corpus."
+ },
+ {
+  "n": 16,
+  "name": "Model switch rewrote the cache",
+  "why": "Each model has its own cache, so a mid-session model change rewrites the whole prefix on the next request.",
+  "detect_api": "Rewrite where the model field differs from the previous call on the same key (cascade step 2 after compaction).",
+  "detect_cli": "Model per call in the transcript; PreModelSwitch hook events; /model events.",
+  "fix_api": "No corpus source for a gateway guard; DevX proposal: sticky model per conversation key with a switch guard that warns when the cache is warm. Class 2.",
+  "fix_cli": "Pick model and effort at session start; use a PreModelSwitch hook to confirm; avoid opusplan toggles and skills whose frontmatter names a model.",
+  "class": "2",
+  "techniques": [
+   {
+    "name": "PreModelSwitch hook and model confirmation",
+    "kind": "setting",
+    "how": "A hook can require or skip confirmation; /model confirms only while the cache is warm.",
+    "effect": "Not measured in corpus.",
+    "loses": "Confirms but does not block intended routing.",
+    "src": [
+     "C:055"
+    ],
+    "paper": "Claude Code docs, How Claude Code uses prompt caching"
+   },
+   {
+    "name": "Cache diagnostics reason model_changed",
+    "kind": "technique",
+    "how": "Providers report why a miss happened (model_changed, tools_changed, reasoning_effort_changed and others) against a baseline response id.",
+    "effect": "Not measured in corpus.",
+    "loses": "OpenAI GPT-5.6+ only.",
+    "src": [
+     "A:204"
+    ],
+    "paper": "OpenAI, Prompt cache diagnostics"
+   },
+   {
+    "name": "DevX proposal: sticky model plus switch guard",
+    "kind": "methodology",
+    "how": "Gateway pins model per conversation key and routes only at session boundaries. No corpus source.",
+    "effect": "Not measured.",
+    "loses": "Blocks cheap-model downgrades mid-task.",
+    "src": [],
+    "paper": "DevX proposal (C:055 supplies the invalidation facts)"
+   }
+  ],
+  "methodology": "Compare CPS with and without a pinned model on paired tasks; count rewrites caused by switches.",
+  "gaps": "No corpus source for a gateway-side guard."
+ },
+ {
+  "n": 17,
+  "name": "Old replies replayed",
+  "why": "The model's earlier prose answers are re-read on every later call though rarely needed.",
+  "detect_api": "Gateway: sum of text blocks in earlier assistant messages, times later cache-read price (hermes A6).",
+  "detect_cli": "gateway signal only.",
+  "fix_api": "Compaction (compact_20260112) rewrites dialogue; masking does NOT touch assistant text. Treat as low priority: history is small in billed cost.",
+  "fix_cli": "Compact Instructions in CLAUDE.md or /compact focus so the summary keeps decisions and drops narration; Codex experimental_compact_prompt_file.",
+  "class": "2",
+  "techniques": [
+   {
+    "name": "Server-side compaction (compact_20260112)",
+    "kind": "setting",
+    "how": "Beta context edit that fires at `trigger` (default 150K, minimum 50K), summarises the conversation into a typed compaction block, accepts custom `instructions` and `pause_after_compaction`.",
+    "effect": "Cookbook: peak 335,279 to 169,164 tokens with a 2,783-token summary; high-level facts kept 3/3, obscure specifics 0/3. Single run. Figures are from A:271.",
+    "loses": "Loses verbatim detail; next turn rebuilds the cache; on short sessions the summary call costs more than it saves.",
+    "src": [
+     "A:271",
+     "C:065"
+    ],
+    "paper": "Context engineering: memory, compaction, and tool clearing (Claude cookbook)"
+   },
+   {
+    "name": "LLM-Summary condenser",
+    "kind": "algorithm",
+    "how": "Every N turns an LLM summarises older turns into one block, keeping the last M verbatim (N=21, M=10 in the study).",
+    "effect": "Qwen3-Coder solve rate 53.8% vs 53.4% raw; summary cost up to 7.2% of instance; runs lengthen (52 vs 44 turns).",
+    "loses": "Costs more than masking; trajectory elongation.",
+    "src": [
+     "C:130",
+     "C:133"
+    ],
+    "paper": "The Complexity Trap (JetBrains Research); Memory Condensation Strategies (arXiv)"
+   },
+   {
+    "name": "LLMLingua-2 token-classification compression",
+    "kind": "algorithm",
+    "how": "A trained classifier keeps or drops each token of the prompt, with no LLM generation step.",
+    "effect": "Abstract: 3x-6x faster than prior compressors, 1.6x-2.9x end-to-end latency gain at 2x-5x compression. Cost saving not measured on agents.",
+    "loses": "Compressors saved nothing or lost in the one large agent study; keep off by default (C:024).",
+    "src": [
+     "A:081",
+     "C:024"
+    ],
+    "paper": "LLMLingua-2: Data Distillation for Efficient and Faithful Task-Agnostic Prompt Compression (Tsinghua/Microsoft)"
+   }
+  ],
+  "methodology": "Paired replay: raw vs compaction with a recall probe of decisions made in earlier assistant turns; cost per successful task.",
+  "gaps": "No corpus measurement isolates assistant-text replay; C:024 puts all history under 1% of billed cost."
+ },
+ {
+  "n": 18,
+  "name": "Clarification loops",
+  "why": "Each question the agent asks adds a turn and re-sends the context.",
+  "detect_api": "Assistant turns ending in a question with no tool call, followed by a short user reply.",
+  "detect_cli": "Transcript turns with no tool call ending in a question mark; Notification or elicitation events.",
+  "fix_api": "Add persistence prompt text via system prompt injection at the gateway (class 2).",
+  "fix_cli": "Bias-to-action prompts, plan mode, interview-then-SPEC.md pattern.",
+  "class": "2",
+  "techniques": [
+   {
+    "name": "Persistence / bias-to-action prompting",
+    "kind": "technique",
+    "how": "Tell the agent to proceed and not ask unless blocked; give stop conditions.",
+    "effect": "Cost of asking not measured in corpus.",
+    "loses": "Wrong assumptions on ambiguous tasks.",
+    "src": [
+     "A:208",
+     "A:205",
+     "A:249"
+    ],
+    "paper": "Model prompting guides"
+   },
+   {
+    "name": "Plan mode",
+    "kind": "setting",
+    "how": "Plan first, approve once, then execute.",
+    "effect": "Not measured.",
+    "loses": "Extra planning turn.",
+    "src": [
+     "C:095",
+     "A:053"
+    ],
+    "paper": "Claude Code docs; A:053"
+   },
+   {
+    "name": "Interview-then-SPEC.md",
+    "kind": "methodology",
+    "how": "One structured interview writes a spec, then a fresh session executes.",
+    "effect": "Not measured.",
+    "loses": "Upfront cost.",
+    "src": [
+     "C:080"
+    ],
+    "paper": "Claude Code best practices"
+   }
+  ],
+  "methodology": "A/B bias-to-action prompt versus control on matched tasks: clarification count, cost, success.",
+  "gaps": "Cost of clarification is not measured."
+ },
+ {
+  "n": 19,
+  "name": "Screenshot accumulation",
+  "why": "Every screenshot stays in context and is re-billed each turn until compaction, so old images keep costing input tokens.",
+  "detect_api": "Count image blocks in request messages per call; estimate tokens as w*h/750 (hermes formula); flag images older than N turns still carried.",
+  "detect_cli": "Transcript scan for image blocks in tool_result entries; PostToolUse hook counts screenshots per session and their age in turns.",
+  "fix_api": "Class 0 alert first. Then, after a paired CPS win, mask images older than M turns with a placeholder (observation masking). DevX proposal: downscale before forwarding (no corpus source).",
+  "fix_cli": "Rely on Claude Code's oldest-image eviction past its cap; DevX proposal: a PostToolUse hook that downsizes screenshots. Context editing clear_tool_uses can clear old tool results.",
+  "class": 2,
+  "techniques": [
+   {
+    "name": "Observation masking",
+    "kind": "technique",
+    "how": "Rolling window of M=10 turns keeps recent observations and replaces older ones with a placeholder.",
+    "effect": "About half the cost of the raw agent at a solve rate matching LLM-Summary (SWE-bench Verified, SWE-agent).",
+    "loses": "Tuned per agent (M=58 for OpenHands); paper tests text observations, so images are an extrapolation.",
+    "src": [
+     "C:130"
+    ],
+    "paper": "The Complexity Trap (JetBrains, arXiv 2508.21433)"
+   },
+   {
+    "name": "Claude Code oldest-image eviction",
+    "kind": "system",
+    "how": "When the next request would pass the image or PDF cap, Claude Code removes a batch of the oldest images and PDFs.",
+    "effect": "Costs one slower turn per batch while the cache reprocesses from the earliest changed message.",
+    "loses": "Claude can no longer see removed images.",
+    "src": [
+     "C:055",
+     "A:071"
+    ],
+    "paper": "How Claude Code uses prompt caching"
+   },
+   {
+    "name": "Context editing: clear_tool_uses_20250919",
+    "kind": "setting",
+    "how": "Clears old tool results past a trigger (example 30000 input tokens), keeps the last N tool uses, and clear_at_least ensures each clear is worth the cache write.",
+    "effect": "not measured in corpus",
+    "loses": "Clearing invalidates the cache prefix; extracts do not say whether images are cleared.",
+    "src": [
+     "C:065",
+     "A:268"
+    ],
+    "paper": "Context editing on the Claude Developer Platform"
+   }
+  ],
+  "methodology": "Paired A/B on the same tasks: baseline vs masking or downscale, metric cost per successful task, check task success does not drop before enabling.",
+  "gaps": "no corpus source for image downscale or the w*h/750 formula. DevX proposal: Pillow downscale to a max edge before forwarding. Corpus does not confirm context editing clears images."
+ },
+ {
+  "n": 20,
+  "name": "Visual iteration loops",
+  "why": "Each edit-then-screenshot cycle adds a fresh image and a model turn, so a long loop multiplies image tokens.",
+  "detect_api": "Per session, count edit-tool-call then image-bearing tool-result cycles; flag more than 3 per task.",
+  "detect_cli": "Transcript or hook sequence: Edit/Write followed by a screenshot tool result; count cycles per prompt.",
+  "fix_api": "Class 0 alert, then mask old screenshots after each cycle (observation masking). DevX proposal: cap cycles at N and force a text summary.",
+  "fix_cli": "Eviction of oldest images (Claude Code) bounds the cost; DevX proposal: a hook that warns on the 4th cycle. Lower effort for subagents doing the loop (A:282).",
+  "class": 2,
+  "techniques": [
+   {
+    "name": "Observation masking",
+    "kind": "technique",
+    "how": "Keep the last M=10 turns of observations and mask the rest, so each loop iteration drops the prior screenshot.",
+    "effect": "About half the cost of the raw agent, matching LLM-Summary solve rate (SWE-bench Verified).",
+    "loses": "Masking loses at 7 events or fewer (C:133 as noted); text-only evidence.",
+    "src": [
+     "C:130"
+    ],
+    "paper": "The Complexity Trap (JetBrains, arXiv 2508.21433)"
+   },
+   {
+    "name": "Claude Code oldest-image eviction",
+    "kind": "system",
+    "how": "Removes a batch of the oldest images when the cap is near.",
+    "effect": "One slower turn per batch.",
+    "loses": "Earlier screenshots become invisible to the model.",
+    "src": [
+     "C:055"
+    ],
+    "paper": "How Claude Code uses prompt caching"
+   },
+   {
+    "name": "Effort parameter",
+    "kind": "setting",
+    "how": "output_config.effort low to max changes tool-call count and verbosity; lower effort gives fewer tool calls.",
+    "effect": "not measured in corpus for visual loops",
+    "loses": "Behavioural signal, not a budget; run a sweep on your own evals.",
+    "src": [
+     "A:282"
+    ],
+    "paper": "Effort parameter (Claude)"
+   }
+  ],
+  "methodology": "Replay recorded UI tasks with and without the cycle cap; compare success rate and cost per successful task.",
+  "gaps": "no corpus source for a visual-loop cap or the 3-cycle threshold. DevX proposal: threshold calibrated per task type."
+ },
+ {
+  "n": 21,
+  "name": "Cache not reused",
+  "why": "Writes never read back, missing caching, or a prefix below the minimum cacheable length mean the premium or full price is paid for nothing.",
+  "detect_api": "cw never followed by cr (A35); uncached input above 10k (A21); prefix below minimum with both cache fields 0 (A24).",
+  "detect_cli": "Same usage fields; headers show a gateway stripping cache_control if cw is always 0.",
+  "fix_api": "Inject cache_control at the system message or second-to-last user turn; lengthen sub-minimum prompts. Class 0, then 2.",
+  "fix_cli": "Ensure gateways forward cache_control and the anthropic-beta header; read /usage hit ratio and the likely cause.",
+  "class": "2",
+  "techniques": [
+   {
+    "name": "cache_control_injection_points",
+    "kind": "system",
+    "how": "LiteLLM injects the cache marker at the system message or second-to-last user turn without client edits.",
+    "effect": "Cache hit costs about 10% of fresh input.",
+    "loses": "Needs a LiteLLM proxy; vendor blog.",
+    "src": [
+     "C:060"
+    ],
+    "paper": "LiteLLM, 5 ways to cut Claude Code costs with LiteLLM"
+   },
+   {
+    "name": "Automatic caching and minimum-length rules",
+    "kind": "technique",
+    "how": "Top-level cache_control caches automatically; below the model minimum both cache fields are 0 with no error.",
+    "effect": "Minimums 512 to 4,096 tokens depending on model.",
+    "loses": "Silent failure; verify with usage fields.",
+    "src": [
+     "A:199",
+     "C:051"
+    ],
+    "paper": "Claude prompt caching docs; Start Debugging, Add Prompt Caching to an Anthropic SDK App"
+   },
+   {
+    "name": "Prompt lengthening to cross the threshold",
+    "kind": "technique",
+    "how": "Extend a 900-token prompt to 1100 tokens so it can hit.",
+    "effect": "50% hit rate saves 33%, 70% saves 55%.",
+    "loses": "OpenAI case; extra tokens cost if hit rate stays low.",
+    "src": [
+     "A:202"
+    ],
+    "paper": "OpenAI, Prompt Caching 201"
+   }
+  ],
+  "methodology": "Hit-rate wrapper from usage fields (C:051), then paired CPS A/B with injection on.",
+  "gaps": "Gateway stripping cache_control is documented only in C:055; no measured prevalence."
+ },
+ {
+  "n": 22,
+  "name": "Correction churn",
+  "why": "A correction adds turns and a wrong attempt stays in context.",
+  "detect_api": "Correction regex on user turns; no corpus source for the regex. DevX proposal.",
+  "detect_cli": "Same correction matcher over transcript user turns; /rewind use.",
+  "fix_api": "Alert only (class 0).",
+  "fix_cli": "Specific first prompt; /clear after two failed corrections; repeated corrections into CLAUDE.md; /rewind.",
+  "class": "3",
+  "techniques": [
+   {
+    "name": "Two-failed-corrections then /clear",
+    "kind": "methodology",
+    "how": "After two failed fixes, clear context and restart with a better prompt.",
+    "effect": "Not measured.",
+    "loses": "Loses context.",
+    "src": [
+     "C:080"
+    ],
+    "paper": "Claude Code best practices"
+   },
+   {
+    "name": "/rewind restore",
+    "kind": "system",
+    "how": "Roll back to before the wrong attempt.",
+    "effect": "Not measured.",
+    "loses": "Discards work.",
+    "src": [
+     "C:087"
+    ],
+    "paper": "Claude Code checkpointing"
+   },
+   {
+    "name": "TokenEconomizer micro-skills",
+    "kind": "technique",
+    "how": "Short skills that encode repeated fixes.",
+    "effect": "-11.8% and -14.3% in two settings.",
+    "loses": "Benchmark only.",
+    "src": [
+     "C:028"
+    ],
+    "paper": "TokenEconomizer"
+   },
+   {
+    "name": "DevSkills",
+    "kind": "technique",
+    "how": "Reusable guidance from past corrections.",
+    "effect": "See row 31.",
+    "loses": "Benchmark only.",
+    "src": [
+     "A:059"
+    ],
+    "paper": "A:059"
+   }
+  ],
+  "methodology": "Track correction rate before and after CLAUDE.md additions.",
+  "gaps": "CORRECTION_RE text is not in the corpus."
+ },
+ {
+  "n": 23,
+  "name": "Agents racing the cache",
+  "why": "Parallel helpers that start within seconds each write the same prefix because the cache entry exists only after the first response starts.",
+  "detect_api": "Calls with the same prefix hash within 10s, both cw above 5k.",
+  "detect_cli": "Subagent start timestamps and first-call usage per session_id.",
+  "fix_api": "DevX proposal: single-flight lock; the first request goes alone, the rest wait for its first response. No corpus source for the lock itself. Class 2.",
+  "fix_cli": "Prefer forks; workflow fan-out already holds all but the first agent up to 5s.",
+  "class": "2",
+  "techniques": [
+   {
+    "name": "Wait for first response before parallel requests",
+    "kind": "technique",
+    "how": "The entry becomes available only after the first response begins; send the rest after.",
+    "effect": "Not measured in corpus.",
+    "loses": "Adds latency to the fan-out.",
+    "src": [
+     "A:199"
+    ],
+    "paper": "Claude prompt caching docs"
+   },
+   {
+    "name": "Workflow fan-out hold",
+    "kind": "setting",
+    "how": "Holds all but the first agent up to 5s so they read its cache.",
+    "effect": "Not measured in corpus.",
+    "loses": "Beyond 5s the race returns.",
+    "src": [
+     "C:055"
+    ],
+    "paper": "Claude Code docs, How Claude Code uses prompt caching"
+   },
+   {
+    "name": "Batch caching: 1h block plus one shared-prefix request first",
+    "kind": "technique",
+    "how": "Best effort; send one shared-prefix request first, using a 1h block.",
+    "effect": "Not measured in corpus.",
+    "loses": "Best effort only.",
+    "src": [
+     "A:199"
+    ],
+    "paper": "Claude prompt caching docs"
+   }
+  ],
+  "methodology": "Measure duplicate cw tokens before and after a hold on a fan-out workload.",
+  "gaps": "No corpus source for a gateway lock; labelled DevX proposal."
+ },
+ {
+  "n": 24,
+  "name": "Too much tool output",
+  "why": "One large Read, MCP or fetch result enters history and is paid again at cache-read price on every later call until compaction.",
+  "detect_api": "Tool_result block tokens in the next request body for non-Bash tools; flag above 4,000, charge tokens minus 2,000 (hermes BIG_RESULT/BIG_KEEP, unvalidated).",
+  "detect_cli": "Gateway signal only for size; PostToolUse hook gives tool_response and OTel tool_result gives tool_name and duration (C:002).",
+  "fix_api": "Cap and paginate in the tool server (25,000 token default is Anthropic's own), and set clear_tool_uses with a trigger, keep, clear_at_least and exclude_tools. Gateway truncation of tool_result is a DevX proposal and must be applied identically every turn to keep the prefix stable.",
+  "fix_cli": "Codex: tool_output_token_limit (default 12,000; 8,000 and 6,000 in examples). Claude Code: PostToolUse updatedToolOutput hook to cap results; never truncate tracebacks or edit anchors. Observation masking only above about 10 events.",
+  "class": "2",
+  "techniques": [
+   {
+    "name": "Tool-response pagination, range selection, filtering, truncation",
+    "kind": "methodology",
+    "how": "Anthropic's tool-writing guide advises combining pagination, range selection, filtering and truncation with sensible defaults, and steering the agent with the truncation message. Claude Code caps tool responses at 25,000 tokens.",
+    "effect": "Concise vs detailed Slack response: 72 vs 206 tokens in the guide's example.",
+    "loses": "Truncation can cut needed content; the guide says to give helpful steering text.",
+    "src": [
+     "A:284"
+    ],
+    "paper": "Writing effective tools for AI agents, Anthropic"
+   },
+   {
+    "name": "Observation masking (rolling window M)",
+    "kind": "algorithm",
+    "how": "Replace tool observations older than the last M turns with a placeholder, keeping all reasoning and actions: o'_i = p_i if i < t - M, else o_i.",
+    "effect": "M=10 cut Gemini 2.5 Flash cost $0.41 to $0.18 (-56.1%); Qwen3-Coder solve rate 54.8% vs 53.4% raw; DiscoveryBench: +8.6% token saving, only method that saved.",
+    "loses": "At 7 events or fewer it lost 45% to 149%; window needs tuning per scaffold; SWE-agent only.",
+    "src": [
+     "C:130",
+     "C:133"
+    ],
+    "paper": "The Complexity Trap: Observation Masking vs LLM Summarization (JetBrains Research); Evaluating Memory Condensation Strategies for Coding Agents in Data-Driven Scientific Discovery"
+   },
+   {
+    "name": "Server-side tool-result clearing (clear_tool_uses_20250919)",
+    "kind": "system",
+    "how": "When input tokens pass a trigger (default 100,000; docs example 30,000) the API clears the oldest tool results, keeps the last N (default 3), and honours clear_at_least and exclude_tools.",
+    "effect": "Cookbook, one synthetic task: peak context 335,279 (file reads 96.3%) down to 173,137, no dollars measured.",
+    "loses": "Clearing invalidates the cached prefix; single run; reads not re-fetched are lost.",
+    "src": [
+     "C:065",
+     "A:271"
+    ],
+    "paper": "Context editing on the Claude Developer Platform; Context engineering cookbook, Anthropic"
+   },
+   {
+    "name": "Codex tool_output_token_limit",
+    "kind": "setting",
+    "how": "Config key setting the token budget for storing each tool output in history; default 12,000.",
+    "effect": "not measured in corpus.",
+    "loses": "Smaller cap means less is kept and large files get re-read after compaction (issue 16812 pattern).",
+    "src": [
+     "C:104",
+     "C:106"
+    ],
+    "paper": "Codex configuration reference, OpenAI; Mastering Context Compaction in Codex CLI (Vaughan blog)"
+   }
+  ],
+  "methodology": "Sweep the cap at 6k, 12k and 25k on replayed traffic; metric billed cost per success, re-read count and turn of first edit (C:024 design: paired, provider-billed, cache reset between arms). For masking sweep M at 5, 10, 20 per scaffold.",
+  "gaps": "No corpus measurement of billed saving from a size cap. Corpus holds no Kiro setting. LLMLingua on agent tool output is untested in corpus (A:079 covers prose prompts)."
+ },
+ {
+  "n": 25,
+  "name": "Noisy and repeated terminal output",
+  "why": "Build, install, test and lint output is mostly passing lines and repeats, but it sits in history and is re-billed every turn.",
+  "detect_api": "Bash tool_result above 4,000 tokens; duplicate-line share above 0.5 on 20+ normalised lines; repeated traceback key (md5 of last 5 normalised lines) or repeated linter result hash (hermes A87, A82, A84).",
+  "detect_cli": "Gateway signal only; PostToolUse hook receives the command and output; Aider /tokens shows the context breakdown (C:127).",
+  "fix_api": "Gateway cannot rewrite a command. Use clear_tool_uses for old results, a tool-server cap, or a subagent for noisy commands. Output compressors stay off by default.",
+  "fix_cli": "Claude Code PreToolUse hook that rewrites test commands to pipe through grep for FAIL/ERROR with head -100 (updatedInput). Delegate verbose runs to a subagent. Codex tool_output_token_limit. Never pipe compressed output into shell counting.",
+  "class": "2",
+  "techniques": [
+   {
+    "name": "PreToolUse hook rewriting the command (updatedInput)",
+    "kind": "technique",
+    "how": "Hook inspects tool_input.command for npm test, pytest or go test and returns an updated command piped through grep -A 5 for FAIL/ERROR/error: and head -100. The doc also describes a hook that greps ERROR from a 10,000-line log.",
+    "effect": "Doc says tens of thousands of tokens down to hundreds; no measurement.",
+    "loses": "Can drop critical lines: a pytest rule had 56.1% marker recall at 31.9% saving before a fix; only one hook may rewrite the same input.",
+    "src": [
+     "A:215",
+     "C:090",
+     "C:024"
+    ],
+    "paper": "Manage costs effectively (Claude Code); Automate actions with hooks (guide), Anthropic; Token Reduction Is Not Cost Reduction"
+   },
+   {
+    "name": "RTK deterministic CLI proxy and Headroom API proxy (measured, off by default)",
+    "kind": "system",
+    "how": "RTK is a PreToolUse hook that routes shell commands through a CLI proxy with strategy-based compression; Headroom sits at ANTHROPIC_BASE_URL and optimises payloads in flight.",
+    "effect": "RTK -2.7% billed cost (not significant); RTK-ML cut 38.4% of tool-output tokens but cost +6.8%; Headroom +48.4%; Codex Headroom -12.49%.",
+    "loses": "Sign flips by harness; compression delayed the first edit and raised repeated searches; compressed grep fed to a shell pipeline gave silently wrong counts.",
+    "src": [
+     "C:024",
+     "C:028"
+    ],
+    "paper": "Token Reduction Is Not Cost Reduction (Weinberger and Hozez, PointFive); TokenEconomizer (Li et al., UC Berkeley and Microsoft Research)"
+   },
+   {
+    "name": "Preservation-first filter rules with marker recall gate",
+    "kind": "methodology",
+    "how": "Score a filter by savings and by the share of task-critical marker lines kept. The pytest rule was changed to preserve traceback lines.",
+    "effect": "Original rule 31.9% savings at 56.1% recall; fixed rule 15.3% savings at 99.2% recall, 24 pytest observations.",
+    "loses": "Halves the nominal saving; interactive task success was not run.",
+    "src": [
+     "C:024"
+    ],
+    "paper": "Token Reduction Is Not Cost Reduction"
+   },
+   {
+    "name": "Delegate verbose operations to subagents",
+    "kind": "technique",
+    "how": "Running tests or reading logs in a subagent keeps the verbose output in its context and returns a summary to the main thread.",
+    "effect": "not measured in corpus.",
+    "loses": "The subagent's own requests still bill; no shared cache with parent.",
+    "src": [
+     "A:215",
+     "C:055"
+    ],
+    "paper": "Manage costs effectively (Claude Code); How Claude Code uses prompt caching"
+   }
+  ],
+  "methodology": "Per C:024: paired runs, billed cost per successful task, cache reset between arms, plus 99% marker recall on a labelled set of failing logs before any filter goes live. Prove the hook is active (byte-diff output) before reading results.",
+  "gaps": "No corpus source for build or install output (xcodebuild, npm install) filtering. Vendor 75-80% claims for git/ls/grep are unmeasured (C:024)."
+ },
+ {
+  "n": 26,
+  "name": "Repeated tasks across sessions",
+  "why": "The same request is solved again from scratch in a later session of the project, paying the whole exploration again.",
+  "detect_api": "Gateway: first user message of a conversation key with word overlap 60%+ against an earlier conversation of the same caller/project (hermes #15), flagged as spend-to-review.",
+  "detect_cli": "UserPromptSubmit hook first prompt per session (C:074) with project id; same overlap rule.",
+  "fix_api": "Class 0 alert only. A semantic response cache (Portkey simple/semantic cache) is a Class 2 candidate but unproven for multi-turn agent tasks, so it stays off.",
+  "fix_cli": "Turn recurring tasks into a skill or CLAUDE.md note, or let auto memory save them; TokenEconomizer-style micro-skills are the closest measured method.",
+  "class": "3",
+  "techniques": [
+   {
+    "name": "TokenEconomizer experience-grounded micro-skills",
+    "kind": "system",
+    "how": "External controller condenses past trajectories into digests, an LLM proposes micro-skills with regex detectors, activates one only after confirmation on several tasks with non-overlapping edited files and a need-rate threshold, retires it when a trace contradicts it.",
+    "effect": "Token cost down 18.4-30.9% across Claude Code, Codex, Copilot CLI with comparable pass@1 (within 3 points); cumulative savings positive by task six.",
+    "loses": "Costs more on early tasks; micro-skills go stale; tasks were independent SWE-Bench issues.",
+    "src": [
+     "C:028"
+    ],
+    "paper": "Experience-Driven Black-Box Cost Control for Coding Agents (TokenEconomizer; Berkeley/Microsoft)"
+   },
+   {
+    "name": "Semantic cache (Portkey simple and semantic modes)",
+    "kind": "system",
+    "how": "Gateway returns a stored response when a new request's embedding matches a cached one; simple mode needs an exact match.",
+    "effect": "not measured for agent tasks in corpus",
+    "loses": "Wrong-answer risk when the repo changed; targets repetitive single-turn chat.",
+    "src": [
+     "A:240",
+     "A:113",
+     "A:115"
+    ],
+    "paper": "Simple and semantic cache (Portkey); GPT Semantic Cache; MeanCache"
+   },
+   {
+    "name": "Auto memory / CLAUDE.md",
+    "kind": "setting",
+    "how": "Persist solved procedures as notes that load next session.",
+    "effect": "Memory run: session 2 peak 172,623 vs 333,977 tokens without memory (4 of 8 documents re-read).",
+    "loses": "Single synthetic run.",
+    "src": [
+     "C:077",
+     "A:271"
+    ],
+    "paper": "How Claude remembers your project; Context engineering cookbook"
+   }
+  ],
+  "methodology": "Cross-session sequence test as in C:028: ordered task stream per repo, cumulative cost vs default, pass@1 within 3 points, report break-even task index.",
+  "gaps": "No corpus technique detects 'same task' beyond word overlap; semantic caching evidence is single-turn only."
+ },
+ {
+  "n": 27,
+  "name": "Failed, retried and polling calls",
+  "why": "Repeated failing attempts keep re-sending growing context with no progress.",
+  "detect_api": "Repeated near-identical tool-error results and requests in one derived conversation.",
+  "detect_cli": "Failure-signature normalization over transcript tool errors; repeat count.",
+  "fix_api": "Rate-based circuit breaker and loop guard at gateway.",
+  "fix_cli": "Percentile turn budget, redirect then abort; maxTurns; fix error messages; constrained decoding for schema failures.",
+  "class": "2",
+  "techniques": [
+   {
+    "name": "TokenEconomizer failure-loop guard",
+    "kind": "system",
+    "how": "Normalize failure signatures, set turn budget Bi = beta times Q_p, rule trigger then LLM judge, redirect then abort; forced stop at kappa=2.5.",
+    "effect": "17% of tasks and 32% of spend failed; 51% of spend after first repetition; guard alone gives single-digit savings.",
+    "loses": "36 of 50 successful runs also repeat a signature.",
+    "src": [
+     "C:028"
+    ],
+    "paper": "TokenEconomizer"
+   },
+   {
+    "name": "Turn-control (fixed p75, dynamic limits)",
+    "kind": "algorithm",
+    "how": "Cap turns at a percentile, then grow dynamically p25 to p50.",
+    "effect": "24-68% with fixed p75, further 12-24% dynamic.",
+    "loses": "Capability wall on hard tasks.",
+    "src": [
+     "C:025",
+     "C:132"
+    ],
+    "paper": "Turn-control study"
+   },
+   {
+    "name": "Rate-based circuit breaker",
+    "kind": "algorithm",
+    "how": "Trip when error rate exceeds a threshold.",
+    "effect": "Not measured here.",
+    "loses": "False trips.",
+    "src": [
+     "C:062"
+    ],
+    "paper": "C:062"
+   },
+   {
+    "name": "Actionable tool errors and constrained decoding",
+    "kind": "technique",
+    "how": "Clear error messages; constrained decoding for schema-invalid output.",
+    "effect": "Not measured.",
+    "loses": "Summaries mask failure signals (C:130).",
+    "src": [
+     "A:284",
+     "A:098",
+     "A:097",
+     "A:059",
+     "C:130"
+    ],
+    "paper": "Tool design guide; constrained decoding papers; A:059 ReTest"
+   }
+  ],
+  "methodology": "Replay logged failure loops with guard on; measure saved spend and tasks wrongly stopped.",
+  "gaps": "Polling-loop specific technique has no source beyond the generic breaker and A:059 ReTest."
+ },
+ {
+  "n": 28,
+  "name": "Repeated screenshots",
+  "why": "Identical or back-to-back screenshots pay image tokens again for no new information.",
+  "detect_api": "Hash image bytes per request (md5 repeat, A114/A112); flag a retake after a failed browser call (A120).",
+  "detect_cli": "Transcript: consecutive screenshot tool calls, identical image hash, retake after a tool error.",
+  "fix_api": "Class 0 alert. DevX proposal: perceptual-hash dedup returning the earlier image reference (no corpus source); mask older copies (observation masking).",
+  "fix_cli": "Oldest-image eviction (Claude Code); DevX proposal: a PreToolUse hook that blocks a screenshot repeated with no intervening edit.",
+  "class": 2,
+  "techniques": [
+   {
+    "name": "Observation masking",
+    "kind": "technique",
+    "how": "Replace observations outside a 10-turn window with a placeholder.",
+    "effect": "About half the cost of the raw agent at matched solve rate (SWE-bench Verified).",
+    "loses": "Text observations only in the paper.",
+    "src": [
+     "C:130"
+    ],
+    "paper": "The Complexity Trap (JetBrains, arXiv 2508.21433)"
+   },
+   {
+    "name": "Claude Code oldest-image eviction",
+    "kind": "system",
+    "how": "Drops oldest images and PDFs past the cap.",
+    "effect": "One slower turn per batch.",
+    "loses": "Removed images cannot be seen.",
+    "src": [
+     "C:055",
+     "A:071"
+    ],
+    "paper": "How Claude Code uses prompt caching"
+   },
+   {
+    "name": "Image input pricing",
+    "kind": "methodology",
+    "how": "1 input image token is billed as 1 token and a cached image token at 0.1, so a repeat under a cache costs less than a fresh one.",
+    "effect": "pricing fact only",
+    "loses": "Needs a warm cache.",
+    "src": [
+     "A:146"
+    ],
+    "paper": "Vertex Provisioned Throughput"
+   }
+  ],
+  "methodology": "Count duplicate hashes on a week of traffic, estimate savings as repeats times image tokens, then A/B the dedup on a sample.",
+  "gaps": "no corpus source for perceptual-hash dedup. DevX proposal only."
+ },
+ {
+  "n": 29,
+  "name": "Progress narration",
+  "why": "Text beside tool calls ('now I will...') adds output tokens that cost the highest rate and carry no result.",
+  "detect_api": "Assistant text over 50 tokens in a response that also has a tool_use block (A54).",
+  "detect_cli": "Transcript: assistant text blocks over 50 tokens adjacent to tool calls.",
+  "fix_api": "Class 1/2: set text.verbosity or response style default, and drop preamble prompting. Cap with max_tokens as a ceiling (guard, not a fix).",
+  "fix_cli": "Output styles (outputStyle setting) or prompt text to remove preambles; Codex advice is to remove preamble prompting. Lower effort gives terser tool calls.",
+  "class": 2,
+  "techniques": [
+   {
+    "name": "text.verbosity",
+    "kind": "setting",
+    "how": "Sets default detail low, medium or high; task-specific length goes in the prompt.",
+    "effect": "not measured in corpus",
+    "loses": "Broad brevity prompts can make answers too short.",
+    "src": [
+     "A:205"
+    ],
+    "paper": "GPT-5.6 guide"
+   },
+   {
+    "name": "Remove tool preambles",
+    "kind": "technique",
+    "how": "Delete prompting for upfront plans and status updates; preambles are steerable in frequency.",
+    "effect": "not measured in corpus",
+    "loses": "Hurts user visibility; preambles can cause early stopping when prompted.",
+    "src": [
+     "A:249",
+     "A:208"
+    ],
+    "paper": "Codex prompting guide; GPT-5 prompting guide"
+   },
+   {
+    "name": "Effort parameter",
+    "kind": "setting",
+    "how": "output_config.effort affects all output, including text and tool calls; lower gives fewer, terser calls.",
+    "effect": "not measured in corpus",
+    "loses": "Behavioural signal, not a budget.",
+    "src": [
+     "A:282"
+    ],
+    "paper": "Effort parameter (Claude)"
+   }
+  ],
+  "methodology": "A/B narration-off vs on; metric output tokens per task and task success.",
+  "gaps": "no corpus source for a numeric saving from removing narration. Claude Opus 5 does not shorten with lower effort (A:200); prompt explicitly."
+ },
+ {
+  "n": 30,
+  "name": "Whole-file reads",
+  "why": "A Read with no offset or limit pulls the full file (over 5,000 tokens) into history when a slice would answer the question.",
+  "detect_api": "Read tool_use with no offset and limit in input, and the following tool_result above 5,000 tokens (hermes A71); charge tokens minus 2,000.",
+  "detect_cli": "Gateway signal only; PreToolUse hook sees tool_input without offset or limit.",
+  "fix_api": "Alert, then Class 2 DevX proposal: return a path reference or the first N lines with a steering note for an oversized unsliced read (A:284 truncation guidance). Clearing handles file reads already in history.",
+  "fix_cli": "Claude Code: Read deny rules for generated and vendored paths; LSP plugin for symbol lookup; PreToolUse hook to block oversize unsliced reads is a DevX proposal. Codex: tool_output_token_limit. After compaction Claude Code returns files over 5,000 tokens as a path reference.",
+  "class": "2",
+  "techniques": [
+   {
+    "name": "Code intelligence plugin (go to definition) instead of reading files",
+    "kind": "setting",
+    "how": "A language server returns the definition or references directly so the agent does not read through candidate files to locate a symbol.",
+    "effect": "not measured in corpus.",
+    "loses": "Needs a language server per language; typed languages named in the doc.",
+    "src": [
+     "A:215",
+     "C:083"
+    ],
+    "paper": "Manage costs effectively (Claude Code); Set up Claude Code in a monorepo or large codebase, Anthropic"
+   },
+   {
+    "name": "Path-reference stub for oversized files",
+    "kind": "technique",
+    "how": "Claude Code re-reads up to five recent files after compaction and returns any file over 5,000 tokens as a path reference, shown as Referenced file, without content.",
+    "effect": "not measured in corpus.",
+    "loses": "The agent must read again if it needs the content.",
+    "src": [
+     "C:079"
+    ],
+    "paper": "Explore the context window, Anthropic"
+   },
+   {
+    "name": "Tool-response range selection and truncation guidance",
+    "kind": "methodology",
+    "how": "Offer pagination and range parameters with defaults on any tool that can return a large file, and word the truncation message so the agent makes small targeted reads.",
+    "effect": "72 vs 206 tokens for concise vs detailed response in the guide's example.",
+    "loses": "Can hide needed content.",
+    "src": [
+     "A:284"
+    ],
+    "paper": "Writing effective tools for AI agents, Anthropic"
+   },
+   {
+    "name": "Large-file re-read after compaction (failure case)",
+    "kind": "methodology",
+    "how": "Codex issue 16812: a 93 KB analysis, 58 KB plan and 610 KB OpenAPI spec had to be re-read after every compaction. Mitigation given: lower tool_output_token_limit and put durable facts in AGENTS.md.",
+    "effect": "not measured in corpus.",
+    "loses": "Smaller limit keeps less context.",
+    "src": [
+     "C:106"
+    ],
+    "paper": "Mastering Context Compaction in Codex CLI (Vaughan blog)"
+   }
+  ],
+  "methodology": "Replay, then paired A/B on the guard: billed cost per success, extra Read calls with offset, first-edit turn (C:024 reports compression delayed first edit 0.94 turns). Count outlier reads over 5,000 tokens before and after.",
+  "gaps": "No corpus source gives a read-size threshold or a measured saving for forcing slices. Hook-based read blocking is a DevX proposal."
+ },
+ {
+  "n": 31,
+  "name": "Duplicate reading across agents",
+  "why": "A helper re-reads files the parent already read because it does not share context.",
+  "detect_api": "Same file contents appearing in multiple derived conversations under one parent.",
+  "detect_cli": "Repeated Read/Grep on identical paths across sidechains in transcripts.",
+  "fix_api": "No corpus source for gateway side. DevX proposal: cache identical read results across helpers.",
+  "fix_cli": "Use fork when parent context is needed; ask helpers to return paths and line ranges (DevX proposal); apply DevSkills guidance.",
+  "class": "2",
+  "techniques": [
+   {
+    "name": "DevSkills (reuse context, justify re-reads)",
+    "kind": "technique",
+    "how": "Skill instructs the agent to state a hypothesis, reuse context and justify re-reads.",
+    "effect": "SubRetrv cost behaviour reduced 51.52% and 43.57% in two settings.",
+    "loses": "Benchmark settings only.",
+    "src": [
+     "A:059"
+    ],
+    "paper": "A:059 cost-inefficient agent behaviors (SubRetrv, SimScrpt, ReTest)"
+   },
+   {
+    "name": "Fork versus fresh subagent choice",
+    "kind": "system",
+    "how": "Fork inherits parent context so no re-read; fresh helper starts cold.",
+    "effect": "Not measured.",
+    "loses": "Fork inherits full parent prefix cost.",
+    "src": [
+     "C:072"
+    ],
+    "paper": "Claude Code subagents documentation"
+   },
+   {
+    "name": "Structure-aware retrieval (CodeGraph)",
+    "kind": "technique",
+    "how": "Graph-based retrieval to avoid re-reading.",
+    "effect": "Raised cost by up to 28.14% in the source.",
+    "loses": "Cost increase, so not a fix.",
+    "src": [
+     "A:059"
+    ],
+    "paper": "A:059"
+   }
+  ],
+  "methodology": "Count repeated reads per task before and after DevSkills; check pass rate unchanged.",
+  "gaps": "No gateway-side source."
+ },
+ {
+  "n": 32,
+  "name": "Agent coordination chatter",
+  "why": "Teammates exchange messages and idle-wake, and each message re-enters context.",
+  "detect_api": "No gateway source. DevX proposal: count derived conversations that alternate with near-identical prefixes.",
+  "detect_cli": "Team mailbox message count, TeammateIdle hook events, per-teammate tokens.",
+  "fix_api": "No corpus source; DevX proposal only.",
+  "fix_cli": "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=0; drop roster via disallowedTools on SendMessage; TeammateIdle hook.",
+  "class": "2",
+  "techniques": [
+   {
+    "name": "Mailbox messaging (one message per recipient)",
+    "kind": "system",
+    "how": "Teams exchange mailbox messages, one per recipient; idle teammates wake via hook.",
+    "effect": "Not measured in corpus.",
+    "loses": "Disabling teams loses parallel collaboration.",
+    "src": [
+     "C:081"
+    ],
+    "paper": "Claude Code agent teams documentation"
+   },
+   {
+    "name": "Drop roster by disabling SendMessage",
+    "kind": "setting",
+    "how": "The sibling roster only appears with SendMessage; disallowedTools removes it.",
+    "effect": "Not measured.",
+    "loses": "No peer messaging.",
+    "src": [
+     "C:072"
+    ],
+    "paper": "Claude Code subagents documentation"
+   },
+   {
+    "name": "Delegation floor cost and brief granularity",
+    "kind": "methodology",
+    "how": "Each delegation has a fixed cost; brief granularity has an optimum.",
+    "effect": "84-98% at worker rate for orchestrator case.",
+    "loses": "Too fine briefs net negative.",
+    "src": [
+     "C:012"
+    ],
+    "paper": "C:012 orchestrator analysis"
+   }
+  ],
+  "methodology": "A/B teams on versus off on matched multi-part tasks; compare cost per resolved task.",
+  "gaps": "No API-side source."
+ },
+ {
+  "n": 33,
+  "name": "Large images and PDFs",
+  "why": "One large image or PDF can cost thousands of input tokens in a single call, then keeps being re-sent.",
+  "detect_api": "Image over 1,200 tokens (A111), cost (itok-800) times input price; PDF read (A115); same document as page images and text (A116/A117).",
+  "detect_cli": "Transcript: Read of a PDF or large image, tool result token size, same file read twice in different forms.",
+  "fix_api": "Class 0 alert, then DevX proposal: downscale oversized images and extract PDF text first (no corpus source). Clear after use via clear_tool_uses.",
+  "fix_cli": "Prefer pdftotext or OCR text (named in hermes); Claude Code evicts oldest images/PDFs past its cap. DevX proposal: a hook that downsizes images on Read.",
+  "class": 2,
+  "techniques": [
+   {
+    "name": "Context editing: clear_tool_uses_20250919",
+    "kind": "setting",
+    "how": "Clears large tool results after a trigger, with exclude_tools and clear_at_least to protect the cache.",
+    "effect": "not measured in corpus",
+    "loses": "Clearing breaks the cache prefix; extracts do not say it clears images.",
+    "src": [
+     "C:065",
+     "A:268"
+    ],
+    "paper": "Context editing on the Claude Developer Platform"
+   },
+   {
+    "name": "Claude Code image/PDF eviction",
+    "kind": "system",
+    "how": "Removes a batch of oldest images and PDFs when caps would be exceeded.",
+    "effect": "One slower turn per batch.",
+    "loses": "Model loses sight of removed documents.",
+    "src": [
+     "C:055",
+     "A:071"
+    ],
+    "paper": "How Claude Code uses prompt caching"
+   },
+   {
+    "name": "Observation masking",
+    "kind": "technique",
+    "how": "Rolling window of recent observations, placeholder for the rest.",
+    "effect": "About half cost at matched solve rate (text tasks).",
+    "loses": "Extrapolation to PDFs.",
+    "src": [
+     "C:130"
+    ],
+    "paper": "The Complexity Trap (JetBrains, arXiv 2508.21433)"
+   }
+  ],
+  "methodology": "Compare answer quality on a document QA set for image vs extracted-text input; gate on equal accuracy.",
+  "gaps": "no corpus source for image downscale, pdftotext or ocrmypdf choice. DevX proposal; hermes names pdftotext and ocrmypdf."
+ },
+ {
+  "n": 34,
+  "name": "Broad or unbounded searches",
+  "why": "A grep or find with no path, glob or type limit returns hundreds of matches that stay in history and push the agent to read more.",
+  "detect_api": "Grep/Glob tool_use with no path, glob or type input, or Bash grep/rg/find; result above 100 lines or 1,000 tokens (hermes A73, A79).",
+  "detect_cli": "Gateway signal only; PostToolUse hook gets tool_input and the result.",
+  "fix_api": "Alert. DevX proposal: cap search tool results in the tool server and return a steering message to narrow the query (A:284). Clearing for old results.",
+  "fix_cli": "Claude Code: language-server plugin for symbol lookup; built-in searches already respect .gitignore; Read deny rules also drop denied paths from Grep and Glob (best effort). Hook to cap output. Aider: repo map with --map-tokens.",
+  "class": "2",
+  "techniques": [
+   {
+    "name": "Structural retrieval with ast-grep hybrid (RTK-ML)",
+    "kind": "algorithm",
+    "how": "Query-aware ranking and ast-grep structural matches replace raw ripgrep output, grouping and ranking hits under a token budget.",
+    "effect": "ripgrep 310.9 matches, 2,905 tokens, 0.66 precision vs hybrid 170.9, 2,090 tokens, 0.995 precision (8 tasks, 38 queries); retrieval-quality proxy only.",
+    "loses": "Whole RTK-ML arm raised billed cost 6.8%; no task success recorded for this test.",
+    "src": [
+     "C:024"
+    ],
+    "paper": "Token Reduction Is Not Cost Reduction"
+   },
+   {
+    "name": "Code intelligence (LSP) navigation",
+    "kind": "setting",
+    "how": "Go-to-definition replaces a grep followed by reading several candidate files.",
+    "effect": "not measured in corpus.",
+    "loses": "Typed languages; binary per machine.",
+    "src": [
+     "A:215",
+     "C:083"
+    ],
+    "paper": "Manage costs effectively (Claude Code); Set up Claude Code in a monorepo, Anthropic"
+   },
+   {
+    "name": "DevSkills: state a hypothesis before retrieval, justify re-reads",
+    "kind": "methodology",
+    "how": "Principles written by developers tell the agent to state a concrete hypothesis before retrieving, reuse available context and justify necessary re-reads; addresses subsumed retrieval.",
+    "effect": "Subsumed retrieval in 64.33-92.33% of tasks and 5.01-11.41% of cost; SubRetrv fell 51.52% and 43.57% in one config.",
+    "loses": "One setting lost 1.5 pp Pass@1; a structure-aware retrieval tool raised cost up to 28.14%.",
+    "src": [
+     "A:059"
+    ],
+    "paper": "Analyzing and Mitigating Cost-Inefficient Behaviors in Coding Agents"
+   },
+   {
+    "name": "Aider repo map with --map-tokens",
+    "kind": "setting",
+    "how": "Graph-ranked tree-sitter symbol map under a token budget (default 1k) lets the model find files without searching; 0 disables it.",
+    "effect": "not measured in corpus.",
+    "loses": "Budget is soft; map grows when no files are added.",
+    "src": [
+     "C:040",
+     "C:127"
+    ],
+    "paper": "How to Manage the Aider Context Window and Token Budgets; How to Reduce Aider Token Usage"
+   }
+  ],
+  "methodology": "Paired run with the search cap or LSP on: billed cost per success, repeated-search count and match precision against test-grounded gold (C:024 method). Check that no compressed search output feeds a shell pipeline.",
+  "gaps": "No corpus source on the right result-line cap; the 100-line threshold is hermes's, unvalidated."
+ },
+ {
+  "n": 35,
+  "name": "Bloated JSON and query results",
+  "why": "Large JSON or DB results carry many unused fields, IDs and serialisation wrappers, and the whole payload is re-billed every turn.",
+  "detect_api": "tool_result text that parses as JSON above a size line; unused-field share needs a later-use check, so alert only (hermes A98-A100, thresholds not given).",
+  "detect_cli": "Gateway signal only; MCP tool names visible via OTel with OTEL_LOG_TOOL_DETAILS=1 (C:002).",
+  "fix_api": "Fix at the tool or MCP server: return high-signal fields and add a response_format enum (concise/detailed). Gateway-side field projection is a DevX proposal, needs per-tool schema and a recall test.",
+  "fix_cli": "Codex tool_output_token_limit and enabled_tools filtering; Claude Code PostToolUse updatedToolOutput hook to project fields with jq (DevX proposal). Prefer CLI tools such as gh over MCP servers per the doc.",
+  "class": "3",
+  "techniques": [
+   {
+    "name": "response_format enum (concise vs detailed) and high-signal fields",
+    "kind": "technique",
+    "how": "Tools return names and content, not uuid, mime_type or 256px_image_url, and expose a ResponseFormat enum so the agent picks concise or detailed. The guide likens extra formats to GraphQL field choice.",
+    "effect": "Concise 72 tokens vs detailed 206 tokens, about one third, one Slack example.",
+    "loses": "Agent may need IDs for follow-up calls; best format varies by task and model, test it.",
+    "src": [
+     "A:284"
+    ],
+    "paper": "Writing effective tools for AI agents, Anthropic"
+   },
+   {
+    "name": "Tool-result clearing for re-fetchable payloads",
+    "kind": "system",
+    "how": "clear_tool_uses removes old API and file results the agent can fetch again.",
+    "effect": "Cookbook peak 335,279 to 173,137 tokens, single synthetic run. Figures are from A:271.",
+    "loses": "Cache rewrite per clear; not for results that cannot be re-fetched (use exclude_tools).",
+    "src": [
+     "A:271",
+     "C:065"
+    ],
+    "paper": "Context engineering cookbook; Context editing on the Claude Developer Platform, Anthropic"
+   },
+   {
+    "name": "LLMLingua coarse-to-fine prompt compression (untested on JSON)",
+    "kind": "algorithm",
+    "how": "A budget controller allocates compression per segment, then token-level iterative compression drops low-information tokens using a small LM's perplexity.",
+    "effect": "GSM8K 2,366 to 117 tokens at 77.33 EM vs 78.85 (about 20x).",
+    "loses": "Tested on prose prompts; byte-exact JSON and agent traces are not in the corpus; C:024 saw compression break exactness.",
+    "src": [
+     "A:079",
+     "A:081",
+     "C:024"
+    ],
+    "paper": "LLMLingua (Jiang et al., Microsoft Research); LLMLingua-2 (Pan et al., Microsoft Research); Token Reduction Is Not Cost Reduction"
+   }
+  ],
+  "methodology": "For each MCP tool with large JSON: A/B concise vs detailed format on replayed tasks; metric billed cost per success and tool-selection and retrieval accuracy (the guide asks you to test response structure per task).",
+  "gaps": "No corpus source for JSON minification, TOON-style formats or SQL column pruning. Field projection at a gateway is a DevX proposal."
+ },
+ {
+  "n": 36,
+  "name": "Wordy and repeated output",
+  "why": "Whole-file rewrites, echoed questions, repeated paragraphs and reprinted code inflate output tokens.",
+  "detect_api": "Write of a file already read; question echo (A52 Jaccard 0.7); repeated paragraph 300+ chars (A53); reprinted code 300+ chars (A58); stop_reason max_tokens (A60).",
+  "detect_cli": "Transcript: whole-file Write after Read of the same file, repeated text blocks, reprinted code blocks.",
+  "fix_api": "Class 1: set max_tokens on every call (C:073 guard) and track stop_reason; class 2: verbosity default and concise response_format.",
+  "fix_cli": "Prefer edit-style tools over whole-file Write; output style setting for concise replies. Claude Code caps tool responses at 25,000 tokens.",
+  "class": 1,
+  "techniques": [
+   {
+    "name": "Constrained-CoT (CCoT)",
+    "kind": "technique",
+    "how": "Prompt asks for concise output; conciseness metrics measure redundancy and information flow.",
+    "effect": "not extracted",
+    "loses": "Over-brevity can hurt accuracy.",
+    "src": [
+     "A:103"
+    ],
+    "paper": "Constrained-CoT"
+   },
+   {
+    "name": "text.verbosity",
+    "kind": "setting",
+    "how": "Default level of detail low, medium or high, set per request.",
+    "effect": "not measured in corpus",
+    "loses": "Can be too brief.",
+    "src": [
+     "A:205"
+    ],
+    "paper": "GPT-5.6 guide"
+   },
+   {
+    "name": "response_format concise",
+    "kind": "technique",
+    "how": "Enum letting the tool return concise vs detailed output.",
+    "effect": "72 vs 206 tokens in the Slack example",
+    "loses": "Extra call if detail needed.",
+    "src": [
+     "A:284"
+    ],
+    "paper": "Writing effective tools for AI agents"
+   },
+   {
+    "name": "max_tokens ceiling",
+    "kind": "setting",
+    "how": "A hard cap on output length.",
+    "effect": "maxOutputTokens=300 did not cut thinking on easy tasks and broke 7 of 25 hard ones.",
+    "loses": "Truncation; a ceiling, not a reducer.",
+    "src": [
+     "A:052"
+    ],
+    "paper": "Cost per task (Google blog)"
+   }
+  ],
+  "methodology": "Compare output tokens and edit success with whole-file vs diff edits on the same tasks.",
+  "gaps": "no corpus source opened for diff-vs-whole-file edit format savings or shingle echo detection. DevX proposal: edit-format switch tested by paired CPS."
+ },
+ {
+  "n": 37,
+  "name": "Web pages and search results",
+  "why": "Fetched pages and search results are long, overlap each other, and are refetched, so the same text is billed repeatedly.",
+  "detect_api": "Page over 4,000 tokens (A101); more than 10 distinct URLs (A103); 8-word-shingle overlap 0.5+ (A104); same URL refetched (A105); overlapping chunks (A107); refetch after compaction (A110).",
+  "detect_cli": "Transcript: WebFetch/WebSearch tool results by size and URL repeat; hook counts distinct URLs per session.",
+  "fix_api": "Class 0 alert; class 2 after a test: query-aware pruning of results (Provence, LongLLMLingua), cap web_search with max_uses, paginate and filter tool output. Response cache is a DevX proposal with correctness risk.",
+  "fix_cli": "Claude Code caps tool responses at 25,000 tokens; design MCP tools with pagination and a concise response_format. Subagent for fetches keeps pages out of the main context.",
+  "class": 2,
+  "techniques": [
+   {
+    "name": "Provence",
+    "kind": "algorithm",
+    "how": "Context pruning as sequence labelling, unified with reranking, so irrelevant sentences are dropped.",
+    "effect": "Negligible to no performance drop; 49% compression noted at one point.",
+    "loses": "Needs a trained pruner.",
+    "src": [
+     "A:087"
+    ],
+    "paper": "Provence (arXiv 2501.16214)"
+   },
+   {
+    "name": "LongLLMLingua",
+    "kind": "algorithm",
+    "how": "Query-aware prompt compression for long contexts.",
+    "effect": "+21.4% on NaturalQuestions with about 4x fewer tokens (GPT-3.5-Turbo); 94.0% cost cut on LooGLE.",
+    "loses": "Compression can drop needed facts.",
+    "src": [
+     "A:080"
+    ],
+    "paper": "LongLLMLingua (arXiv 2310.06839)"
+   },
+   {
+    "name": "Self-Route",
+    "kind": "algorithm",
+    "how": "Model self-reflection routes each query to RAG or long context.",
+    "effect": "Cost down 65% on Gemini-1.5-Pro and 39% on GPT-4o at comparable quality.",
+    "loses": "Pure RAG is worse than long context.",
+    "src": [
+     "A:117"
+    ],
+    "paper": "Retrieval Augmented Generation or Long-Context LLMs?"
+   },
+   {
+    "name": "Tool-response design",
+    "kind": "technique",
+    "how": "Pagination, filtering, truncation and a response_format enum; concise 72 tokens vs detailed 206 in the Slack example.",
+    "effect": "72 vs 206 tokens in the example",
+    "loses": "Model may need a second call.",
+    "src": [
+     "A:284"
+    ],
+    "paper": "Writing effective tools for AI agents"
+   }
+  ],
+  "methodology": "Paired replay of research tasks with pruned vs full pages; metric answer accuracy and cost per successful task.",
+  "gaps": "no corpus source for 8-word-shingle dedup or ETag refetch skipping. Semantic caching exists in corpus (A:240 Portkey, A:113) but correctness is unproven; DevX proposal."
+ },
+ {
+  "n": 38,
+  "name": "Copied history",
+  "why": "Background text, chat transcripts and forked conversations are pasted or duplicated, so the same tokens enter context twice.",
+  "detect_api": "Gateway: 400+ char paragraphs whose whitespace-normalised hash was seen in an earlier prompt of the project (A7); prompts of 2,000+ tokens with 4+ Human:/Assistant: markers (A8); shared message prefix with an earlier conversation (A9).",
+  "detect_cli": "Transcript entry uuids shared with earlier sessions (A9 needs CLI uuids); otherwise gateway signal.",
+  "fix_api": "Class 0 alert; no corpus algorithm. DevX proposal: hash paragraphs at the gateway and warn with a suggested CLAUDE.md or memory note.",
+  "fix_cli": "Move repeated background into CLAUDE.md or path-scoped rules (target under 200 lines); fork with /fork, whose first request reads the parent's cache; use a handoff file instead of pasting transcripts.",
+  "class": "3",
+  "techniques": [
+   {
+    "name": "Fork inherits parent prefix",
+    "kind": "setting",
+    "how": "A fork keeps the parent's system prompt, tools and history exactly, so its first request reads the parent's cache; /fork copies add isolation text at the end only.",
+    "effect": "not measured in corpus",
+    "loses": "Forks still replay the parent history; subagents do not inherit it.",
+    "src": [
+     "C:055"
+    ],
+    "paper": "How Claude Code uses prompt caching (Anthropic)"
+   },
+   {
+    "name": "CLAUDE.md under 200 lines + path-scoped rules",
+    "kind": "setting",
+    "how": "Instructions loaded once per session; rules with paths: load on demand; survives /compact by re-read from disk.",
+    "effect": "not measured in corpus",
+    "loses": "Loaded every session; long files reduce adherence.",
+    "src": [
+     "C:077"
+    ],
+    "paper": "How Claude remembers your project (Anthropic)"
+   },
+   {
+    "name": "Handoff file",
+    "kind": "methodology",
+    "how": "Replace pasted transcripts with a short curated file the next thread reads.",
+    "effect": "not measured in corpus",
+    "loses": "Hand-maintained.",
+    "src": [
+     "C:035"
+    ],
+    "paper": "Context Management Across Codex Surfaces (Developer Toolkit)"
+   }
+  ],
+  "methodology": "Count duplicated tokens per project before and after moving background to CLAUDE.md; check task success unchanged.",
+  "gaps": "No corpus source for dedup of pasted text; the thresholds are hermes's own, unsupported."
+ },
+ {
+  "n": 39,
+  "name": "Compaction cost",
+  "why": "Compaction writes a summary (an LLM call) and the next turn rewrites the cache from scratch.",
+  "detect_api": "Gateway: sudden context drop plus cache_creation spike on the following request; summary call visible as a separate request. Cost = summary output tokens plus the rewrite premium.",
+  "detect_cli": "PreCompact/PostCompact hooks with trigger manual or auto (C:074); compact_boundary entries in transcripts.",
+  "fix_api": "Set compact trigger high enough that it fires rarely (default 150K, minimum 50K) and supply `instructions` so one pass keeps the right facts; prefer clearing for re-fetchable results. Class 2.",
+  "fix_cli": "Codex: model_auto_compact_token_limit (clamped to 90% of window) and experimental_compact_prompt_file; Claude Code: PreCompact hook, Compact Instructions, idleCompaction=false; count compactions and restart at three.",
+  "class": "2",
+  "techniques": [
+   {
+    "name": "Server-side compaction (compact_20260112)",
+    "kind": "setting",
+    "how": "Beta context edit that fires at `trigger` (default 150K, minimum 50K), summarises the conversation into a typed compaction block, accepts custom `instructions` and `pause_after_compaction`.",
+    "effect": "Cookbook: peak 335,279 to 169,164 tokens with a 2,783-token summary; high-level facts kept 3/3, obscure specifics 0/3. Single run. Figures are from A:271.",
+    "loses": "Loses verbatim detail; next turn rebuilds the cache; on short sessions the summary call costs more than it saves.",
+    "src": [
+     "A:271",
+     "C:065"
+    ],
+    "paper": "Context engineering: memory, compaction, and tool clearing (Claude cookbook)"
+   },
+   {
+    "name": "Cache-warm delay rule",
+    "kind": "methodology",
+    "how": "Delay compaction while the cache is warm; compact only when full-window quality loss exceeds the cache-invalidation cost. One compaction on a 125,000-token context costs $0.40, about 21 cached turns.",
+    "effect": "$0.40 per 125K compaction (secondary source).",
+    "loses": "Secondary blog; sources disagree on whether compaction destroys or reuses the cache.",
+    "src": [
+     "C:112",
+     "C:055"
+    ],
+    "paper": "Context Compaction Showdown (Vaughan); How Claude Code uses prompt caching (Anthropic)"
+   },
+   {
+    "name": "Codex compaction tuning",
+    "kind": "setting",
+    "how": "model_auto_compact_token_limit (effective limit min(user, 0.9 x window)) and a custom compact prompt; every compaction is an LLM call.",
+    "effect": "not measured in corpus",
+    "loses": "Multiple compactions reduce accuracy; no threshold study.",
+    "src": [
+     "C:106"
+    ],
+    "paper": "Mastering Context Compaction in Codex CLI (Vaughan)"
+   }
+  ],
+  "methodology": "Compaction break-even sweep at 50K, 100K, 200K contexts with accuracy after 1, 2 and 3 compactions (the design R3 also lists); billed cost with caching on.",
+  "gaps": "Compaction threshold comparison (50% vs 90% vs window minus 33,000) has no head-to-head in the corpus."
+ },
+ {
+  "n": 40,
+  "name": "Git and GitHub output",
+  "why": "Full diffs, lockfile diffs, log metadata, repeated status and whole PR or issue histories are large and mostly unread, and stay in history.",
+  "detect_api": "Bash tool_use matching git diff/show/log/status or gh pr/issue view; result above 4,000 tokens; lockfile sections above 500; identical git status hash twice (hermes A91-A96).",
+  "detect_cli": "Gateway signal only; hook sees the command; OTel tool_result has tool_name.",
+  "fix_api": "No corpus technique. DevX proposal: tool-server or gateway caps on diffs, with the agent steered to git diff --stat, --name-only, pathspec excludes for lockfiles and git log --oneline -n.",
+  "fix_cli": "Claude Code PreToolUse updatedInput hook rewriting git diff/log commands to bounded forms (mechanism from A:215, command list DevX proposal). Subagent for review. Beware skills that inject full git diff HEAD or gh pr view --comments with the dynamic-context syntax.",
+  "class": "2",
+  "techniques": [
+   {
+    "name": "PreToolUse command rewrite (updatedInput)",
+    "kind": "technique",
+    "how": "Hook inspects the Bash command and returns a bounded replacement; the doc's example does this for test runners. Applying it to git commands is a DevX proposal.",
+    "effect": "not measured in corpus.",
+    "loses": "Only one hook may rewrite the same input; rewritten output can hide lines the agent needs.",
+    "src": [
+     "A:215",
+     "C:090"
+    ],
+    "paper": "Manage costs effectively (Claude Code); Automate actions with hooks (guide), Anthropic"
+   },
+   {
+    "name": "Deterministic CLI output compression (vendor claim, unverified)",
+    "kind": "system",
+    "how": "A commercial command-output compressor claims 75-80% savings for git diff, git log, ls and grep; the paper found only the vendor's reference literals, no paired billed run.",
+    "effect": "not measured in corpus (vendor claim only).",
+    "loses": "C:024 found hook compression gave -2.7% to +48.4% billed cost, so token cuts do not imply cost cuts.",
+    "src": [
+     "C:024"
+    ],
+    "paper": "Token Reduction Is Not Cost Reduction"
+   },
+   {
+    "name": "Dynamic context injection and subagent delegation",
+    "kind": "methodology",
+    "how": "Skills can inject command output such as git diff HEAD or gh pr diff before the model sees the skill, so size is bounded only by the command. A forked Explore or Plan agent starts without git status and CLAUDE.md to keep context small.",
+    "effect": "not measured in corpus.",
+    "loses": "Injected diff is unbounded unless the command is bounded.",
+    "src": [
+     "C:075"
+    ],
+    "paper": "Extend Claude with skills, Anthropic"
+   }
+  ],
+  "methodology": "Replay traces with the rewrite on; metric billed cost per success and rate of follow-up git calls (the agent re-asking for the full diff). Hold out PR review tasks where the full diff is needed.",
+  "gaps": "Corpus has no measured technique for git or GitHub output. Named git flags are DevX proposals, not from a source."
+ },
+ {
+  "n": 41,
+  "name": "Dependency, vendor and generated files",
+  "why": "Reads and search hits in node_modules, build output, lockfiles and generated code add tokens with no task value and widen later searches.",
+  "detect_api": "Read path or search result lines (5 or more) matching node_modules, .venv, dist, build, target, vendor, __pycache__, or generated patterns (.lock, .min.js, .map, _pb2.py) in tool_use input and result (hermes A76, A77).",
+  "detect_cli": "Gateway signal only; PreToolUse hook sees file_path.",
+  "fix_api": "No gateway technique in corpus. DevX proposal: strip dependency-path results from tool output in the tool server and alert on first hit.",
+  "fix_cli": "Claude Code: permissions.deny Read rules for dist, build, generated and vendor paths in .claude/settings.json (searches already respect .gitignore); a Read deny rule does not stop a Bash grep -r. Blog also claims a .claudeignore, not in the official doc.",
+  "class": "3",
+  "techniques": [
+   {
+    "name": "permissions.deny Read rules",
+    "kind": "setting",
+    "how": "Add rules such as Read(./**/dist/**/*) and Read(./**/vendor/**/*) to .claude/settings.json; the built-in Grep and Glob omit denied paths on a best-effort basis, and file commands in Bash are covered.",
+    "effect": "not measured in corpus.",
+    "loses": "A Bash grep -r over a directory with denied files still includes them; subprocesses that open files are not covered.",
+    "src": [
+     "C:083"
+    ],
+    "paper": "Set up Claude Code in a monorepo or large codebase, Anthropic"
+   },
+   {
+    "name": "Respect .gitignore in content search",
+    "kind": "setting",
+    "how": "Claude Code content searches skip paths in .gitignore (node_modules, dist, build) with no configuration.",
+    "effect": "not measured in corpus.",
+    "loses": "Only for ignored paths; checked-in vendor code needs deny rules.",
+    "src": [
+     "C:083"
+    ],
+    "paper": "Set up Claude Code in a monorepo or large codebase, Anthropic"
+   },
+   {
+    "name": ".claudeignore exclusion list (blog claim)",
+    "kind": "setting",
+    "how": "Blog lists node_modules, build, dist, .venv, vendor, *.lock, *.min.js, generated and __pycache__ for exclusion.",
+    "effect": "Blog claims about 60% less context retrieval; no method given, unverified.",
+    "loses": "Official doc in corpus does not mention .claudeignore; use permissions.deny.",
+    "src": [
+     "C:056"
+    ],
+    "paper": "Claude Code Cost Optimization: A Benchmark-Backed Playbook for Cutting Token Spend (blog)"
+   },
+   {
+    "name": "Cline strict path filtering (failure description)",
+    "kind": "methodology",
+    "how": "Cline docs describe directory listings and searches without strict path filtering pulling node_modules, target and dist trees into history.",
+    "effect": "not measured in corpus.",
+    "loses": "Description only, no fix measured.",
+    "src": [
+     "C:126"
+    ],
+    "paper": "How to Monitor and Optimize Token Usage in Cline"
+   }
+  ],
+  "methodology": "Before enabling deny rules, count how often the dependency reads were followed by an edit to that path (should be near zero). Then paired run, billed cost per success and a check that no task needed the denied path.",
+  "gaps": "No measured saving from an official source. No Codex or Kiro ignore setting in the corpus. API-agent gateway fix is a DevX proposal."
+ },
+ {
+  "n": 42,
+  "name": "Verbose agent reports and briefs",
+  "why": "A long helper report re-enters the parent context and is re-billed every later turn.",
+  "detect_api": "Response size of helper-shaped conversation versus the next parent request growth.",
+  "detect_cli": "SubagentStop output tokens; parent context growth after return.",
+  "fix_api": "Truncate or summarize helper results at gateway (observation masking); cap output tokens.",
+  "fix_cli": "Prompt cap such as Max 30 lines; short summaries back; maxTurns; tool_output_token_limit (25k default).",
+  "class": "1",
+  "techniques": [
+   {
+    "name": "Report length cap in prompt",
+    "kind": "technique",
+    "how": "Instruct the helper to return at most 30 lines or a 1,000-2,000 token summary.",
+    "effect": "Not measured in corpus.",
+    "loses": "Summary may drop detail.",
+    "src": [
+     "C:035",
+     "C:080",
+     "A:084"
+    ],
+    "paper": "Claude Code docs and best practices; context engineering guide"
+   },
+   {
+    "name": "tool_output_token_limit",
+    "kind": "setting",
+    "how": "Caps tool result size; 25k default.",
+    "effect": "Not measured.",
+    "loses": "Truncated results can hide needed data.",
+    "src": [
+     "C:110",
+     "A:284"
+    ],
+    "paper": "Codex config docs; tool design guide"
+   },
+   {
+    "name": "Observation masking (M=10)",
+    "kind": "algorithm",
+    "how": "Replace old observations beyond the last M=10 with placeholders.",
+    "effect": "See source; summaries mask failure signals.",
+    "loses": "Hides failure signals.",
+    "src": [
+     "C:130"
+    ],
+    "paper": "C:130 trajectory elongation study"
+   }
+  ],
+  "methodology": "Compare parent cost and pass rate with cap versus without on matched tasks.",
+  "gaps": "No measured effect of report caps."
+ },
+ {
+  "n": 43,
+  "name": "Repeated reads of unchanged files",
+  "why": "The same file is read again with no edit between, so a second copy of its tokens is added to history and re-billed each turn.",
+  "detect_api": "Same Read (path, offset, limit) in tool_use input twice with no Edit/Write of that path between; duplicate tool_result tokens (hermes A72). Cross-agent re-reads need helper identity (row 24 style, C).",
+  "detect_cli": "Hook transcript gives agent id for cross-agent repeats; OTel tool_result and PostToolUse give path. Gateway signal for same-agent repeats.",
+  "fix_api": "Alert. Repeat-read stub ('unchanged since turn N') at a gateway is a DevX proposal and edits history, so apply at ingestion only. For old copies use clear_tool_uses; keep reads out of the main thread with subagents.",
+  "fix_cli": "Claude Code: DevSkills principle (reuse context, justify re-reads) in a skill or CLAUDE.md; durable facts in CLAUDE.md or AGENTS.md so they survive compaction; Codex lower tool_output_token_limit. Claude Code appends a system-reminder on file change.",
+  "class": "2",
+  "techniques": [
+   {
+    "name": "DevSkills anti-repetition principles (SubRetrv, ReTest)",
+    "kind": "methodology",
+    "how": "Seven principles: state a hypothesis before retrieval, reuse context, justify re-reads, rerun tests only when code or evidence changes, break unproductive loops.",
+    "effect": "Cost cut 7.88-41.73% in 6 of 8 settings; subsumed retrieval is 5.01-11.41% of cost, test re-execution up to 5.39%.",
+    "loses": "One setting lost 1.5 pp Pass@1; replicate locally.",
+    "src": [
+     "A:059"
+    ],
+    "paper": "Analyzing and Mitigating Cost-Inefficient Behaviors in Coding Agents"
+   },
+   {
+    "name": "Observation masking",
+    "kind": "algorithm",
+    "how": "Older tool observations, including earlier copies of a file, are replaced by a placeholder outside a rolling window of M turns.",
+    "effect": "M=10: -56.1% cost (Gemini 2.5 Flash); loses at 7 events or fewer (-45% to -149%).",
+    "loses": "Edits history so it breaks the cache unless applied at a trigger.",
+    "src": [
+     "C:130",
+     "C:133"
+    ],
+    "paper": "The Complexity Trap (JetBrains Research); Evaluating Memory Condensation Strategies for Coding Agents"
+   },
+   {
+    "name": "TokenEconomizer micro-skill injection",
+    "kind": "system",
+    "how": "An external controller learns repeated per-repository actions and injects operational micro-skills so facts are not rediscovered; key for a repeated action is the normalised command's first 6 tokens or tool plus file base name.",
+    "effect": "Average cost -18.4 to -30.9% overall; micro-skills alone -11.8% and -14.3% in Claude Code settings.",
+    "loses": "Learned over a task stream, costs more on early tasks, comparable success only.",
+    "src": [
+     "C:028"
+    ],
+    "paper": "TokenEconomizer: Experience-Driven Black-Box Cost Control for Coding Agents (Li et al., UC Berkeley and Microsoft Research)"
+   },
+   {
+    "name": "Persistent project memory (CLAUDE.md, AGENTS.md)",
+    "kind": "setting",
+    "how": "Facts that must survive compaction belong in AGENTS.md, which Codex re-reads at session start and after compaction, instead of in re-read files.",
+    "effect": "not measured in corpus.",
+    "loses": "Codex AGENTS.md truncates at 32 KiB; Claude Code advice is under 200 lines.",
+    "src": [
+     "C:106",
+     "C:036"
+    ],
+    "paper": "Mastering Context Compaction in Codex CLI; Codex Context Management: Auto-Compact and /context (blogs)"
+   }
+  ],
+  "methodology": "Detector first on matched history. Then A/B with the DevSkills text (A:059 design: held-out tasks, repeats, Pass@1 tracked) and report re-read count, billed cost per success and Pass@1. Test masking window M at 5, 10, 20.",
+  "gaps": "No corpus implementation of a gateway repeat-read stub or measured cache impact of one. No Kiro or Aider re-read control in corpus."
+ },
+ {
+  "n": 44,
+  "name": "Re-learning the codebase",
+  "why": "Each session re-reads the same files before first edit because what earlier sessions learned was never saved.",
+  "detect_api": "Gateway: Read tool_use paths before the first edit, seen in 2+ earlier conversations of the same project (needs project key from caller/header).",
+  "detect_cli": "Transcript/hook Read paths per project across sessions; PostToolUse hook gives tool_input.file_path (C:074).",
+  "fix_api": "Class 0 alert; recommend a memory file. Gateway cannot save notes.",
+  "fix_cli": "Enable auto memory (autoMemoryEnabled) and CLAUDE.md; Aider repo map (tree-sitter + PageRank, --map-tokens budget) gives a ranked symbol map instead of re-exploring; TokenEconomizer micro-skills.",
+  "class": "3",
+  "techniques": [
+   {
+    "name": "TokenEconomizer experience micro-skills",
+    "kind": "system",
+    "how": "Learns repository facts (commands, test invocations, edited files) from earlier trajectories and injects them as micro-skills confirmed across non-overlapping tasks.",
+    "effect": "Tokens down 18.4-30.9%; micro-skill injection alone -11.8% and -14.3% in two Claude Code settings.",
+    "loses": "Skills go stale; cost rises on first tasks.",
+    "src": [
+     "C:028"
+    ],
+    "paper": "Experience-Driven Black-Box Cost Control for Coding Agents (TokenEconomizer)"
+   },
+   {
+    "name": "Memory tool and notes (memory_20250818)",
+    "kind": "system",
+    "how": "Agent writes /memories files and views them in later sessions.",
+    "effect": "Session 2 with memory: peak 172,623 tokens vs 333,977 without (reads 4 of 8 documents). Single synthetic run.",
+    "loses": "Notes can go out of date; Pokemon example shows over-writing makes recall costly.",
+    "src": [
+     "A:271",
+     "A:269",
+     "C:077"
+    ],
+    "paper": "Context engineering cookbook; The components of agent memory (Anthropic)"
+   },
+   {
+    "name": "Aider repo map",
+    "kind": "algorithm",
+    "how": "Tree-sitter extracts symbols, a graph is ranked with a PageRank variant, and the top symbols are emitted within a token budget (default 1k, up to 4k for large repos).",
+    "effect": "Built in 0.4 s cold; token saving not measured.",
+    "loses": "Standing charge sent every turn; may omit what the task needs.",
+    "src": [
+     "C:041",
+     "C:127"
+    ],
+    "paper": "Claude Code vs Aider benchmarks (C:041); How to Reduce Aider Token Usage (C:127)"
+   }
+  ],
+  "methodology": "Sequential task stream per repo as in C:028: with vs without memory/micro-skills, tokens before first edit, pass@1 within 3 points.",
+  "gaps": "Corpus has no per-file exploration cost figure; savings from CLAUDE.md alone are not measured."
+ },
+ {
+  "n": 45,
+  "name": "High effort on trivial turns",
+  "why": "Reasoning tokens are billed as output; a trivial reply with thousands of reasoning tokens wastes the highest-priced tokens.",
+  "detect_api": "One call, no tools, reply 300 tokens or fewer, output minus reply over 3,000 tokens; cost (reasoning - 1,000) * out_price.",
+  "detect_cli": "Transcript usage per turn plus effort setting; same signature on short chat turns.",
+  "fix_api": "Class 2 after a paired win: set output_config.effort per request (low for simple turns); per-message effort keeps the cache. max_tokens as hard limit with adaptive thinking.",
+  "fix_cli": "effortLevel setting, CLAUDE_CODE_EFFORT_LEVEL env var, --effort flag; maxEffortLevel as managed cap. Codex: model_reasoning_effort.",
+  "class": 2,
+  "techniques": [
+   {
+    "name": "Effort parameter",
+    "kind": "setting",
+    "how": "output_config.effort low to max governs thinking, text and tool calls; per-message effort preserves the prompt cache.",
+    "effect": "not measured in corpus",
+    "loses": "Behavioural signal; run an effort sweep.",
+    "src": [
+     "A:282",
+     "A:200"
+    ],
+    "paper": "Effort parameter (Claude); extended thinking tips"
+   },
+   {
+    "name": "Prompt-Induced Waste (effort arm)",
+    "kind": "methodology",
+    "how": "Paired comparison of effort, prompt and harness on cost per successful task.",
+    "effect": "Effort-only arm gave 91% of the full-stack reduction (about 75% under DeepSeek Harness vs about 19% in Claude Code).",
+    "loses": "Effort can add cost without benefit or help on hard tasks.",
+    "src": [
+     "C:026"
+    ],
+    "paper": "Prompt-Induced Waste in Coding Agents"
+   },
+   {
+    "name": "Overthinking evidence",
+    "kind": "methodology",
+    "how": "o1-like models use 1,953% more tokens on 2+3; self-training cuts output 48.6%.",
+    "effect": "48.6% fewer tokens at maintained accuracy",
+    "loses": "Needs training; not a gateway fix.",
+    "src": [
+     "A:089"
+    ],
+    "paper": "Do NOT Think That Much for 2+3=?"
+   }
+  ],
+  "methodology": "Paired bootstrap, McNemar and Holm on cost per successful task, per C:026, across effort levels.",
+  "gaps": "NoWait (A:091) and ALP (A:096) need decoding or training control, not available at a gateway. Codex multipliers (C:105) are community estimates."
+ },
+ {
+  "n": 46,
+  "name": "Tool discovery and skill loading",
+  "why": "Repeated ToolSearch calls and skill file reads add tokens; big invoked skill bodies are charged until compaction.",
+  "detect_api": "Gateway signal only: tool_use names for ToolSearch above 2 per conversation key.",
+  "detect_cli": "Hook events: ToolSearch calls beyond 2 per session; Read of /skills/ paths not ending SKILL.md; invoked skill bodies above 3k tokens.",
+  "fix_api": "Keep a stable wrapper (get_tool_schema/invoke_tool) so discovery is one step. Class 0.",
+  "fix_cli": "Trim skill descriptions (capped at 1,536 characters), set skillOverrides to name-only, or disable-model-invocation on rare skills. Class 3.",
+  "class": "3",
+  "techniques": [
+   {
+    "name": "skillOverrides and disable-model-invocation",
+    "kind": "setting",
+    "how": "States on, name-only, user-invocable-only, off; disable-model-invocation keeps a skill out of context until /name.",
+    "effect": "Not measured in corpus.",
+    "loses": "Model can no longer auto-invoke.",
+    "src": [
+     "C:075",
+     "C:079"
+    ],
+    "paper": "Claude Code, Extend Claude with skills; Anthropic, Explore the context window"
+   },
+   {
+    "name": "Skill re-attach budget",
+    "kind": "setting",
+    "how": "After compaction invoked skills return at 5,000 tokens each, 25,000 total, most recent first.",
+    "effect": "Not measured in corpus.",
+    "loses": "Large skills consume the budget.",
+    "src": [
+     "C:075",
+     "C:079"
+    ],
+    "paper": "Claude Code, Extend Claude with skills"
+   },
+   {
+    "name": "On-demand schema access",
+    "kind": "system",
+    "how": "get_tool_schema/invoke_tool proxy keeps a stable wrapper, cache-friendly.",
+    "effect": "See row 1: 17,600 to 500 tokens.",
+    "loses": "Namespacing prefixes.",
+    "src": [
+     "C:022"
+    ],
+    "paper": "Atlassian, MCP Compression"
+   }
+  ],
+  "methodology": "Count ToolSearch and skill reads per session before and after trimming; guard on task success.",
+  "gaps": "No corpus source for the A:65 ToolSearch threshold; DevX proposal."
+ },
+ {
+  "n": 47,
+  "name": "Usage while idle",
+  "why": "Prompts fired with no human hook activity (loops, scheduled reruns) keep spending tokens while nobody is working.",
+  "detect_api": "Gateway sees only timing and regularity: fixed-interval or off-hours calls with identical prefix. A138 flags cross-session scheduled reruns.",
+  "detect_cli": "Hook data: prompts with no hook record within 15 seconds, counted only after the first hook record.",
+  "fix_api": "Class 0 alert with budget alerts. DevX proposal: per-key schedule rate limit.",
+  "fix_cli": "Class 3: stop or schedule the loop; Claude Code idleCompaction setting (v2.1.290+) compacts idle one-hour-TTL conversations. Handoff file moves a task between threads.",
+  "class": 3,
+  "techniques": [
+   {
+    "name": "Idle compaction",
+    "kind": "setting",
+    "how": "After idle on the one-hour TTL, Claude Code can compact the conversation; idleCompaction false turns it off.",
+    "effect": "not measured in corpus",
+    "loses": "Compaction rewrites the prefix and costs a cache miss.",
+    "src": [
+     "C:055"
+    ],
+    "paper": "How Claude Code uses prompt caching"
+   },
+   {
+    "name": "Handoff file",
+    "kind": "methodology",
+    "how": "A handoff file and two prompts move a task between threads without re-planning.",
+    "effect": "not measured in corpus",
+    "loses": "Manual discipline.",
+    "src": [
+     "C:035"
+    ],
+    "paper": "Context Management Across Codex Surfaces"
+   },
+   {
+    "name": "Budget alerts",
+    "kind": "system",
+    "how": "Alerts at 75%, 90% and 100% of a set budget.",
+    "effect": "not measured in corpus",
+    "loses": "Alerts, not enforcement; Copilot premium-request scope.",
+    "src": [
+     "A:213"
+    ],
+    "paper": "Overview of request-based billing (legacy)"
+   }
+  ],
+  "methodology": "Backtest the 15-second no-hook rule on recorded sessions and review flagged prompts manually before alerting.",
+  "gaps": "no corpus source for detecting idle usage at a gateway; A:053 and hook docs not opened. DevX proposal: regularity (fixed-interval) detector."
+ },
+ {
+  "n": 48,
+  "name": "MCP tool schema bloat",
+  "why": "Every unused mcp__ tool definition is re-read each call; median session carries about 91k tokens of MCP definitions.",
+  "detect_api": "Hash and size of tools[] by namespace prefix; flag tools never called.",
+  "detect_cli": "prompt_snapshot.tools[] versus tool_use calls per server; /context.",
+  "fix_api": "Replace schemas with a compressing MCP proxy (get_tool_schema/invoke_tool). Class 2.",
+  "fix_cli": "Disable rarely used servers (class 3); in Codex use enabled_tools or disabled_tools allow/deny lists.",
+  "class": "3",
+  "techniques": [
+   {
+    "name": "mcp-compressor",
+    "kind": "system",
+    "how": "MCP proxy replacing tools with get_tool_schema/invoke_tool.",
+    "effect": "94-tool server: 17,600 to 500 tokens at max.",
+    "loses": "Quality depends on on-demand schema access.",
+    "src": [
+     "C:022"
+    ],
+    "paper": "Atlassian, MCP Compression"
+   },
+   {
+    "name": "Server disable and Codex tool allow/deny lists",
+    "kind": "setting",
+    "how": "mcp_servers.<id>.enabled, enabled_tools, disabled_tools applied after enabled_tools; omit tools from direct, deferred or code_mode surfaces.",
+    "effect": "GitHub MCP with 93 tools is about 55,000 tokens per turn.",
+    "loses": "Loses the disabled tools.",
+    "src": [
+     "C:104",
+     "C:107"
+    ],
+    "paper": "Codex configuration reference; Vaughan, Codex CLI Performance Optimisation"
+   },
+   {
+    "name": "Code execution mode and mcp2cli",
+    "kind": "technique",
+    "how": "Code-mode tool calls and CLI list/help lookups at about 16 and 120 tokens per tool.",
+    "effect": "Up to 98.7% reduction reported; 96-99% under the source's \"token savings measured\" label.",
+    "loses": "Simulation or vendor claim.",
+    "src": [
+     "C:019"
+    ],
+    "paper": "bswen, How MCP Tool Definitions Inflate Your AI Agent Token Costs"
+   },
+   {
+    "name": "Tool consolidation and curation",
+    "kind": "methodology",
+    "how": "Consolidate and namespace tools; minimal viable tool set.",
+    "effect": "Not measured in corpus.",
+    "loses": "Redesign effort.",
+    "src": [
+     "A:284",
+     "A:084"
+    ],
+    "paper": "Anthropic, Writing effective tools for AI agents; Effective context engineering"
+   }
+  ],
+  "methodology": "Per server, compare calls versus tokens; disable one server at a time on paired tasks and watch success.",
+  "gaps": "Vercel server 212 tools/140k tokens has no specific corpus fix."
+ },
+ {
+  "n": 49,
+  "name": "Unused skills/plugins",
+  "why": "Skill and agent listings are injected every session even when never invoked.",
+  "detect_api": "Gateway signal only: system prompt skill_listing text never matched by a Skill tool_use.",
+  "detect_cli": "skill_listing and agent_listing_delta entries versus Skill invocations.",
+  "fix_api": "Not applicable at the gateway; alert only. Class 0.",
+  "fix_cli": "Retire stale skills, set skillOverrides off or name-only, disableBundledSkills. Class 3.",
+  "class": "3",
+  "techniques": [
+   {
+    "name": "skillOverrides states and disableBundledSkills",
+    "kind": "setting",
+    "how": "Skills can be on, name-only, user-invocable-only or off; description plus when_to_use is truncated at 1,536 characters.",
+    "effect": "Example listing costs about 450 tokens.",
+    "loses": "Skill no longer auto-triggers.",
+    "src": [
+     "C:075",
+     "C:079"
+    ],
+    "paper": "Claude Code, Extend Claude with skills"
+   },
+   {
+    "name": "/doctor prompt-audit and CLAUDE.md linting",
+    "kind": "methodology",
+    "how": "Audit instructions; CLAUDE.md under 200 lines; path-scoped rules load only on matching reads; claudeMdExcludes for monorepos.",
+    "effect": "Not measured in corpus.",
+    "loses": "Imports do not reduce cost.",
+    "src": [
+     "C:077"
+    ],
+    "paper": "Claude Code, How Claude remembers your project"
+   },
+   {
+    "name": "Plugin skills are appended",
+    "kind": "setting",
+    "how": "Plugin skills, commands, agents and hooks never invalidate the cache.",
+    "effect": "Not measured in corpus.",
+    "loses": "Still cost tokens each call.",
+    "src": [
+     "C:055"
+    ],
+    "paper": "Claude Code docs, How Claude Code uses prompt caching"
+   }
+  ],
+  "methodology": "Count invocations per skill over 30 days; retire those at zero and track starting tokens.",
+  "gaps": "Hermes' $15.60 is small; no corpus measurement of skill-listing cost beyond the 450-token example."
+ },
+ {
+  "n": 50,
+  "name": "No visibility",
+  "why": "Sessions with no hook or telemetry data leave categories, ratings and idle time unknown; a coverage gap, not a cost.",
+  "detect_api": "Gateway: share of requests with no caller key, session or project tag header; share of traffic that bypasses the gateway.",
+  "detect_cli": "Share of gateway sessions (x-claude-code-session-id) with no matching hook or OTel rows.",
+  "fix_api": "Require a virtual key per developer/team and a metadata header per request; ship events to Langfuse as a sidecar.",
+  "fix_cli": "Claude Code: CLAUDE_CODE_ENABLE_TELEMETRY=1 with OTEL_METRICS_EXPORTER/OTEL_LOGS_EXPORTER in managed settings (locked); hooks via allowManagedHooksOnly; Codex: [otel] exporter keys and hooks in config.toml (user-level, project-local otel is ignored).",
+  "class": "3",
+  "techniques": [
+   {
+    "name": "Claude Code OpenTelemetry",
+    "kind": "setting",
+    "how": "Telemetry flag plus exporters emits token and cost metrics and events tagged with session.id (OTEL_METRICS_INCLUDE_SESSION_ID); admin can lock exporters in managed settings; prompt text is redacted unless OTEL_LOG_USER_PROMPTS=1.",
+    "effect": "coverage; no saving",
+    "loses": "A developer can still set selectors to console or none unless managed settings lock them.",
+    "src": [
+     "A:217",
+     "C:002"
+    ],
+    "paper": "Monitoring usage (Claude Code OpenTelemetry) (Anthropic)"
+   },
+   {
+    "name": "Gateway tagging with session header",
+    "kind": "system",
+    "how": "Gateway on the request path records tokens/cost per request tagged to developer and team; Claude Code sends x-claude-code-session-id on every request; headers prefixed x-bf-lh- are copied to log metadata.",
+    "effect": "coverage; no saving",
+    "loses": "Needs the developer to route via the gateway (ANTHROPIC_BASE_URL).",
+    "src": [
+     "C:001",
+     "C:088"
+    ],
+    "paper": "Claude Code Token Usage: Monitor It with an AI Gateway; Run Claude Code through a gateway"
+   },
+   {
+    "name": "Managed hooks and Langfuse coding-agent tracing",
+    "kind": "system",
+    "how": "allowManagedHooksOnly and managed hooks cannot be disabled by user settings; Langfuse traces every agent LLM call via hooks or a gateway, per team, repository and model.",
+    "effect": "coverage; no saving",
+    "loses": "Hooks need harness support; unmanaged hooks can be disabled.",
+    "src": [
+     "C:074",
+     "A:234"
+    ],
+    "paper": "Hooks reference (Anthropic); Track and optimize coding agent usage (Langfuse)"
+   }
+  ],
+  "methodology": "Coverage audit: ratio of sessions with hook/OTel rows to gateway sessions, per harness and version; target set from the P0 baseline.",
+  "gaps": "Corpus does not say what coverage share is adequate."
+ }
+]

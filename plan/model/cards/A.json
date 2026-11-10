@@ -1,0 +1,3000 @@
+{
+ "gw": {
+  "inn": "HTTP request from a harness: bearer token or x-api-key, anthropic-beta header, JSON body.",
+  "out": "Forwarded request to a provider connector, the response stream passed through, or a 402 or 429 error.",
+  "store": "Reads signed policy bundle, key records via authk, route table. Writes request metadata only.",
+  "fail": "Fail open on observe routes (forward and mark usage unmetered). Fail closed on budget routes with 402, because an uncounted call breaks the cap.",
+  "req": "RQ-A-001, RQ-A-002, RQ-A-008, RQ-A-009, RQ-A-010, RQ-A-011, RQ-A-012, RQ-A-014, RQ-A-015, RQ-A-017, RQ-A-025, RQ-A-035, RQ-A-041, RQ-A-045, RQ-A-048, RQ-A-053, RQ-A-054",
+  "src": [
+   "A:193",
+   "C:088",
+   "C:001",
+   "C:060",
+   "A:234",
+   "C:052",
+   "C:054"
+  ],
+  "prop": "The 50 ms p95 overhead target is a DevX proposal.",
+  "hard": "Claude Code behaviour on a 402 is not in the corpus. Soft-budget overshoot is not quantified. Body rewrite of the model field is not documented as supported.",
+  "line": "POST /v1/messages  x-api-key: tk_live_a1\n-> tenant=acme model=claude-sonnet cache_control kept",
+  "dumb": "The gateway is a front door that every coding tool talks to first. It lets the call through, watches the answer, and says no when the money is gone.",
+  "deep": {
+   "purpose": "One HTTP proxy per route so Claude Code, Codex and Aider reach their provider only through Token Economics. A developer cannot disable a gateway the way they can disable a client hook [A:234]. It is the control point and the source of truth for usage.",
+   "expected": [
+    "Accept Anthropic Messages, OpenAI Responses and OpenAI Chat Completions on separate route prefixes.",
+    "Forward cache_control and every anthropic-beta value byte for byte [C:052].",
+    "Resolve the key through authk before any upstream call.",
+    "Return 402 when the key budget is spent and 429 when a rate cap fires.",
+    "Attach a request id and session id to every upstream call and log row.",
+    "Pull the signed policy bundle on a timer and keep the last good copy."
+   ],
+   "not_expected": [
+    "It never edits prompt text, reorders blocks or strips headers on the pass-through path.",
+    "It never stores prompt or response content by default.",
+    "It never routes Claude Code to a non-Claude model [A:193].",
+    "It never trusts a client-side cost figure."
+   ],
+   "algorithm": {
+    "name": "Route, resolve, reserve, forward, tee",
+    "formula": "allow = key_valid AND policy_ok AND reserve_ok; else 401, 403, 402 or 429",
+    "steps": [
+     "Match the route prefix to a wire protocol.",
+     "Call authk with the credential; reject with 401 if unknown.",
+     "Load the policy bundle and the fmode rule for this route.",
+     "Ask bres for a worst-case hold; on refusal return 402.",
+     "Open the upstream stream via the connector and start the tee.",
+     "Stream bytes to the client unchanged.",
+     "On stream end or error, hand usage to norm and release or true up the hold."
+    ],
+    "params": {
+     "route_prefixes": "/anthropic, /openai, /chat (DevX proposal)",
+     "policy_pull_interval_s": "30 (DevX proposal)",
+     "forwarded_headers": "anthropic-beta, anthropic-version, x-grok-conv-id, x-session-id [C:052, A:221, A:231]"
+    }
+   },
+   "security": [
+    "Admin and tenant tokens are separate from provider keys; provider keys come from the vault at call time.",
+    "Redact Authorization, x-api-key and cookie headers from every log line.",
+    "Terminate TLS (transport layer security) and refuse plain HTTP outside localhost.",
+    "Reject bodies above a size cap to stop memory exhaustion (DevX proposal)."
+   ],
+   "performance": {
+    "slo": "Under 50 ms added at p95 before first byte (DevX proposal).",
+    "complexity": "O(1) per request plus the stream copy, which is O(bytes).",
+    "scaling": "Stateless instances behind a load balancer; session stickiness is by key hash, not by instance."
+   },
+   "edge_cases": [
+    "Client sends anthropic-beta with a value Token Economics does not know: forward it unchanged.",
+    "Upstream closes the stream mid-response: return what was sent, log usage_missing, bill the hold as an estimate.",
+    "Policy bundle is stale or unsigned: keep the last good bundle, alert, never accept an unsigned one.",
+    "Client disconnects after the upstream charged: the tee keeps reading usage to the end.",
+    "Subscription OAuth token arrives: hand to b_oauth and mark auth_mode subscription."
+   ],
+   "tests": [
+    {
+     "name": "cache_control survives",
+     "given": "Claude Code request with two cache_control breakpoints and anthropic-beta",
+     "expect": "Upstream body equals client body; cache_read_input_tokens above 0 on the second call"
+    },
+    {
+     "name": "budget exhausted",
+     "given": "Key with remaining 0.00 USD on a budget route",
+     "expect": "HTTP 402 with error code budget_exhausted and no upstream call"
+    },
+    {
+     "name": "unknown key",
+     "given": "x-api-key not in tenant table",
+     "expect": "HTTP 401 and no upstream call"
+    },
+    {
+     "name": "observe route fail open",
+     "given": "Observer crashes on an observe-only route",
+     "expect": "Client still gets the full response; row has usage_missing true"
+    },
+    {
+     "name": "wrong protocol",
+     "given": "Codex posts Chat Completions to the Responses route",
+     "expect": "HTTP 400 with unsupported_wire_api"
+    }
+   ],
+   "cost_levers": [
+    "Preserve prompt caching: reading at 0.1x versus 1x input on Anthropic [A:199].",
+    "Enforce per-key budgets so runaway agents stop [C:136].",
+    "Keep one provider endpoint per session to hold the cache [A:231]."
+   ],
+   "feedback_events": [
+    "Cache read tokens fall after a Claude Code upgrade.",
+    "402 rate rises for one key.",
+    "Policy bundle pull fails twice in a row."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.gw.request",
+     "fields": [
+      "request_id",
+      "session_id",
+      "tenant",
+      "route",
+      "status",
+      "latency_ms"
+     ],
+     "when": "On every completed request"
+    },
+    {
+     "name": "token_economics.gw.reject",
+     "fields": [
+      "request_id",
+      "reason",
+      "tenant",
+      "key_id"
+     ],
+     "when": "On 401, 402, 403 or 429"
+    }
+   ],
+   "papers": [],
+   "repos": [
+    {
+     "ref": "C:060",
+     "name": "LiteLLM proxy",
+     "take": "Virtual keys, max_budget with budget_duration, cache_control_injection_points."
+    },
+    {
+     "ref": "C:001",
+     "name": "Bifrost",
+     "take": "HTTP 402 once a developer, team or customer budget is spent."
+    },
+    {
+     "ref": "C:088",
+     "name": "Claude apps gateway",
+     "take": "Forwards anthropic-beta values by construction."
+    }
+   ],
+   "industry": "LiteLLM, Bifrost, Portkey and Anthropic's own gateway all sit on the base URL with virtual keys and budgets. Corpus sources mark all cost figures as estimates [A:241, C:088]."
+  }
+ },
+ "authk": {
+  "inn": "Credential from the request: bearer token or x-api-key, plus request size.",
+  "out": "Tenant id, team id, agent id, key id, and a reserve request sent to bres.",
+  "store": "Reads tenant and key records, budget window. Writes nothing except a last-used timestamp.",
+  "fail": "Fail closed: an unresolved key gets 401, because spend with no owner cannot be budgeted.",
+  "req": "RQ-A-007, RQ-A-041, RQ-A-042, RQ-A-043, RQ-A-054",
+  "src": [
+   "C:060",
+   "C:001",
+   "A:245",
+   "A:193"
+  ],
+  "prop": "Key prefix format and cache TTL are DevX proposals.",
+  "hard": "BYOK spend was not counted by one gateway [A:245]. How Claude Code behaves when the key is revoked mid-session is not in the corpus.",
+  "line": "tk_live_a1 -> tenant=acme team=pay agent=ci-bot\nreserve 0.42 USD for max_tokens 8192",
+  "dumb": "This step reads the key on the request and works out who is paying. It then asks for a hold on the money before the call goes out.",
+  "deep": {
+   "purpose": "Map a virtual key to tenant, team and agent. A virtual key is a Token Economics key that stands in for the provider key. Every call is then budgeted and attributed.",
+   "expected": [
+    "Resolve a key in one lookup from a local cache with a short time to live (TTL).",
+    "Return tenant, team, agent, budget window ids and scopes.",
+    "Pass tenant id and request size to bres for a worst-case hold.",
+    "Reject revoked, expired or unknown keys.",
+    "Count spend made with a customer-supplied provider key as well [A:245]."
+   ],
+   "not_expected": [
+    "It never stores the provider key.",
+    "It never reads prompt content.",
+    "It never extends a budget; bst owns amounts."
+   ],
+   "algorithm": {
+    "name": "Key lookup and scope check",
+    "formula": "scope_ok = request.route IN key.scopes AND now < key.expires_at AND NOT key.revoked",
+    "steps": [
+     "Hash the presented key with a keyed hash and look it up.",
+     "Check revoked, expiry and route scope.",
+     "Load the tenant, team and agent ids.",
+     "Attach them to the request context.",
+     "Forward tenant id and request size to bres."
+    ],
+    "params": {
+     "cache_ttl_s": "10 (DevX proposal)",
+     "key_hash": "HMAC-SHA256 with a vault secret (DevX proposal)"
+    }
+   },
+   "security": [
+    "Store only key hashes; show the key once at creation.",
+    "Compare hashes in constant time.",
+    "Rate-limit failed lookups per source address (DevX proposal).",
+    "A revoked key must stop within one cache TTL."
+   ],
+   "performance": {
+    "slo": "Under 2 ms per lookup on a cache hit (DevX proposal).",
+    "complexity": "O(1) hash lookup.",
+    "scaling": "Local cache per gateway instance, invalidated by a revoke event."
+   },
+   "edge_cases": [
+    "Key valid but tenant suspended: 403 tenant_suspended.",
+    "Two keys share one agent id: spend still rolls up by agent.",
+    "Key cache holds a revoked key for up to one TTL: accept, and log the window.",
+    "Request with no credential on a route that allows anonymous local use: only on localhost."
+   ],
+   "tests": [
+    {
+     "name": "known key",
+     "given": "tk_live_a1 mapped to acme/pay/ci-bot",
+     "expect": "Context carries tenant acme, team pay, agent ci-bot"
+    },
+    {
+     "name": "revoked key",
+     "given": "Key revoked 5 s ago, TTL 10 s",
+     "expect": "Within TTL a revoke event purges the cache and the call gets 401"
+    },
+    {
+     "name": "route scope",
+     "given": "Key scoped to /anthropic used on /openai",
+     "expect": "HTTP 403 scope_denied"
+    },
+    {
+     "name": "expired key",
+     "given": "expires_at in the past",
+     "expect": "HTTP 401 key_expired"
+    }
+   ],
+   "cost_levers": [
+    "Per-key budgets stop runaway cost [C:136].",
+    "Agent-level ids let attr show who spent [C:052]."
+   ],
+   "feedback_events": [
+    "Many 401 from one source.",
+    "A key hits budget twice in a week."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.authk.resolve",
+     "fields": [
+      "key_id",
+      "tenant",
+      "team",
+      "agent",
+      "cache_hit"
+     ],
+     "when": "On every lookup"
+    },
+    {
+     "name": "token_economics.authk.deny",
+     "fields": [
+      "key_id",
+      "reason"
+     ],
+     "when": "On 401 or 403"
+    }
+   ],
+   "papers": [],
+   "repos": [
+    {
+     "ref": "C:060",
+     "name": "LiteLLM",
+     "take": "Virtual key model with budget and duration."
+    },
+    {
+     "ref": "C:001",
+     "name": "Bifrost",
+     "take": "Per-developer virtual keys."
+    }
+   ],
+   "industry": "Gateways map virtual keys to developers, teams and customers and enforce a budget at each level [C:001, C:060]."
+  }
+ },
+ "tee": {
+  "inn": "Provider response stream (server-sent events, SSE, or JSON) copied from the gateway.",
+  "out": "Raw usage object, response id, model id and headers, sent to norm.",
+  "store": "Reads response bytes in memory only. Writes the usage row and header subset, never content.",
+  "fail": "Fail open: a tee error must not change the client stream. The row is marked usage_missing and cost falls back to the reservation.",
+  "req": "RQ-A-003, RQ-A-004, RQ-A-009, RQ-A-012, RQ-A-013, RQ-A-017, RQ-A-018, RQ-A-019, RQ-A-048, RQ-A-054",
+  "src": [
+   "A:233",
+   "A:199",
+   "A:216",
+   "C:052"
+  ],
+  "prop": "Buffer size and the stall timeout are DevX proposals.",
+  "hard": "Gateways can add extra usage keys that defeat conversion [A:233]. Gemini candidate-token split is not in the corpus.",
+  "line": "usage{in:86,cached:17817,out:188} id=resp_7f\n-> norm (inclusive counts)",
+  "dumb": "The tee holds a copy of the answer as it goes by and reads the usage numbers off it. The person using the tool sees nothing different.",
+  "deep": {
+   "purpose": "Read token usage from the response without touching what the client receives. Usage arrives at the end of a stream or in the final event.",
+   "expected": [
+    "Copy each chunk to a side buffer after it is sent to the client.",
+    "Parse the final usage object per provider format.",
+    "Pass response id, model id, service tier and rate-limit headers.",
+    "Keep the raw usage object so unknown keys can be flagged [A:233].",
+    "Emit one record per provider response id."
+   ],
+   "not_expected": [
+    "It never alters, delays or reorders client bytes.",
+    "It never keeps text content after the usage is parsed.",
+    "It never computes cost; calc does that."
+   ],
+   "algorithm": {
+    "name": "Side-copy usage parser",
+    "formula": "client_bytes == provider_bytes; usage = parse(final_event)",
+    "steps": [
+     "Write the chunk to the client socket first.",
+     "Append a bounded copy to the parse buffer.",
+     "On message_delta, response.completed or the last SSE (server-sent events) chunk, parse usage.",
+     "Record headers: request id, rate-limit remaining, service tier.",
+     "Emit the raw usage object plus ids to norm."
+    ],
+    "params": {
+     "parse_buffer_bytes": "1 MiB, usage events only (DevX proposal)",
+     "stall_timeout_s": "120 (DevX proposal)"
+    }
+   },
+   "security": [
+    "Drop content blocks from the buffer once usage is parsed.",
+    "Redact headers that hold credentials.",
+    "Bound the buffer to stop memory growth from a hostile stream."
+   ],
+   "performance": {
+    "slo": "Under 1 ms added per chunk (DevX proposal).",
+    "complexity": "O(bytes) copy, O(1) parse.",
+    "scaling": "Per-connection, no shared state."
+   },
+   "edge_cases": [
+    "Stream ends without a usage event: emit usage_missing and keep the response id.",
+    "Provider sends placeholder per-step output_tokens: pass through, dedupe uses the final value [A:216].",
+    "Usage has an unknown key: pass raw and set unknown_keys true.",
+    "Client aborts early: continue reading to the end so usage is still captured.",
+    "Non-streaming JSON response: parse the body directly."
+   ],
+   "tests": [
+    {
+     "name": "identical bytes",
+     "given": "Provider stream of 40 chunks",
+     "expect": "Client receives the same 40 chunks in order"
+    },
+    {
+     "name": "inclusive usage",
+     "given": "prompt_tokens 17,903 with cached 17,817 [A:233]",
+     "expect": "Raw usage forwarded unchanged; norm computes fresh 86"
+    },
+    {
+     "name": "missing usage",
+     "given": "Stream cut after 10 chunks",
+     "expect": "usage_missing true, response id kept"
+    },
+    {
+     "name": "unknown key",
+     "given": "usage has extra field cache_tier_x",
+     "expect": "unknown_keys true, row flagged for review"
+    }
+   ],
+   "cost_levers": [
+    "Accurate usage is the base for every cost decision.",
+    "Per-caller cache fields allow per-caller hit rate [C:052]."
+   ],
+   "feedback_events": [
+    "usage_missing rate above 0.1% (DevX proposal).",
+    "New unknown usage keys from a provider."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.tee.usage",
+     "fields": [
+      "response_id",
+      "model",
+      "provider",
+      "unknown_keys",
+      "usage_missing"
+     ],
+     "when": "When a response ends"
+    }
+   ],
+   "papers": [],
+   "repos": [
+    {
+     "ref": "A:232",
+     "name": "Langfuse",
+     "take": "usage_details and cost_details; ingested cost overrides inferred."
+    }
+   ],
+   "industry": "Gateway observers log usage from the stream. Langfuse prefers ingested cost over inferred cost [A:232]."
+  }
+ },
+ "fmode": {
+  "inn": "Route identifier and its failure-mode rule from the policy bundle.",
+  "out": "Mode flag (open or closed) returned to gw.",
+  "store": "Reads the per-route rule table from pol. Writes nothing.",
+  "fail": "If the rule is missing, fail closed on any route with a budget. Fail open elsewhere (DevX proposal). A missing rule must not hide spend.",
+  "req": "RQ-A-002, RQ-A-012, RQ-A-041",
+  "src": [
+   "C:074",
+   "C:001",
+   "C:136"
+  ],
+  "prop": "Default for a missing rule is a DevX proposal.",
+  "hard": "Claude Code behaviour on a 402 is not in the corpus; test it. Which routes are observe paths is a deployment choice.",
+  "line": "route /anthropic budget=on  -> closed\nroute /export budget=off -> open",
+  "dumb": "This switch decides what happens when Token Economics itself breaks. Watching paths keep working, and spending paths stop.",
+  "deep": {
+   "purpose": "Apply the R4 rule: fail open for observation, fail closed for budgets [C:074, C:001]. A timed-out hook yields no decision on most Claude Code events, so the gateway must hold the line.",
+   "expected": [
+    "Return one mode per route on every request.",
+    "Return closed for any route with an active budget.",
+    "Return open for observe-only routes.",
+    "Log each time a failure triggered the mode.",
+    "Reload the rule table with every policy bundle."
+   ],
+   "not_expected": [
+    "It never changes budget amounts.",
+    "It never fails open on a budget route during a store outage.",
+    "It never depends on a client hook."
+   ],
+   "algorithm": {
+    "name": "Per-route mode lookup",
+    "formula": "mode = rule[route] if present else (closed if route.has_budget else open)",
+    "steps": [
+     "Read route id.",
+     "Look up the rule in the loaded bundle.",
+     "Apply the default if absent.",
+     "Return mode and reason."
+    ],
+    "params": {
+     "default_budget_route": "closed (DevX proposal)",
+     "default_observe_route": "open (DevX proposal)"
+    }
+   },
+   "security": [
+    "Rule table is part of the signed policy bundle.",
+    "A change to the table is an audited policy change.",
+    "Closed mode must not leak internal error text to the client."
+   ],
+   "performance": {
+    "slo": "In-memory lookup under 0.1 ms (DevX proposal).",
+    "complexity": "O(1).",
+    "scaling": "Bundle held per instance."
+   },
+   "edge_cases": [
+    "Budget store unreachable: budget routes return 503 with retry-after.",
+    "Observer down on observe route: pass through, flag the rows.",
+    "Route has a budget only for some keys: closed for those keys.",
+    "Policy bundle fails to load at boot: closed everywhere until a bundle loads."
+   ],
+   "tests": [
+    {
+     "name": "budget route",
+     "given": "Store down, route /anthropic with budget",
+     "expect": "HTTP 503 and no upstream call"
+    },
+    {
+     "name": "observe route",
+     "given": "Observer down, route /export",
+     "expect": "Request passes, row flagged unmetered"
+    },
+    {
+     "name": "missing rule",
+     "given": "Route /new not in table, key has budget",
+     "expect": "mode closed"
+    },
+    {
+     "name": "boot with no bundle",
+     "given": "No bundle available",
+     "expect": "All routes closed, alert raised"
+    }
+   ],
+   "cost_levers": [
+    "Closed mode on budget routes prevents unmetered spend."
+   ],
+   "feedback_events": [
+    "Mode closed fired more than once an hour.",
+    "Open fired on a route that later showed spend."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.fmode.trigger",
+     "fields": [
+      "route",
+      "mode",
+      "cause"
+     ],
+     "when": "When a failure forces a mode"
+    }
+   ],
+   "papers": [],
+   "repos": [],
+   "industry": "Bifrost returns 402 when a budget is spent [C:001]. Claude Code hooks fail open on timeout [C:074]."
+  }
+ },
+ "cap": {
+  "inn": "Harness name and version.",
+  "out": "Eight capability flags, each true, false or unknown.",
+  "store": "Reads the registry table. Writes updates after a capability test.",
+  "fail": "Fail closed to observe-only: an unknown flag is treated as false, so no control is assumed that has not been proven.",
+  "req": "RQ-A-005, RQ-A-006, RQ-A-025, RQ-A-044, RQ-A-046",
+  "src": [
+   "C:104",
+   "A:193",
+   "C:074",
+   "C:094",
+   "C:037",
+   "C:057"
+  ],
+  "prop": "Tri-state values and the test-before-trust rule are DevX proposals.",
+  "hard": "Codex hook schema, Codex ChatGPT sign-in through a custom provider and Codex budget flag are not in the corpus. modelRewrite for Claude Code is undocumented.",
+  "line": "claude-code: baseUrl=T hooksBlocking=T\ncodex: hooksBlocking=unknown budgetFlag=F",
+  "dumb": "This is a table that says what Token Economics can do with each coding tool. If it is not sure, it assumes it can only watch.",
+  "deep": {
+   "purpose": "Hold eight flags per harness: baseUrl, oauthPassthrough, hooksBlocking, otel, budgetFlag, headless, modelRewrite, transcriptPath. The policy engine reads them and degrades to observe-only when a flag is false.",
+   "expected": [
+    "Return all eight flags for every known harness.",
+    "Mark Aider as baseUrl true and the rest false or unknown [C:037, C:127].",
+    "Mark Codex budgetFlag false and hooksBlocking unknown [C:104].",
+    "Mark Claude Code budgetFlag true via --max-budget-usd [C:080, C:094].",
+    "Store a source id and a last-tested date on each flag."
+   ],
+   "not_expected": [
+    "It never infers a flag from a marketing page.",
+    "It never turns an unknown into true without a recorded test."
+   ],
+   "algorithm": {
+    "name": "Flag lookup with degrade",
+    "formula": "effective_flag = (flag == true) ? true : false; mode = observe_only if NOT baseUrl",
+    "steps": [
+     "Look up the harness and version.",
+     "Return the eight flags and their evidence.",
+     "Policy engine maps each false flag to a degraded behaviour.",
+     "A passing capability test updates the flag and its date."
+    ],
+    "params": {
+     "flags": "baseUrl, oauthPassthrough, hooksBlocking, otel, budgetFlag, headless, modelRewrite, transcriptPath [C:104]",
+     "unknown_handling": "treat as false (DevX proposal)"
+    }
+   },
+   "security": [
+    "Only an admin role can edit a flag.",
+    "A flag change is an audited event.",
+    "Never mark oauthPassthrough true without a passthrough test."
+   ],
+   "performance": {
+    "slo": "In-memory read (DevX proposal).",
+    "complexity": "O(1).",
+    "scaling": "Tiny table, loaded per instance."
+   },
+   "edge_cases": [
+    "New harness version changes a flag: version key falls back to the last known flags with a warning.",
+    "Harness has no entry: all flags unknown, observe-only.",
+    "Managed Work Cloud ignores model_provider, so baseUrl is false there [C:104].",
+    "Gemini CLI replaced by Antigravity CLI on 2026-06-18 for some users: entry needs a new row [C:057]."
+   ],
+   "tests": [
+    {
+     "name": "aider flags",
+     "given": "Lookup aider",
+     "expect": "baseUrl true, hooksBlocking unknown, otel unknown"
+    },
+    {
+     "name": "codex budget",
+     "given": "Lookup codex",
+     "expect": "budgetFlag false"
+    },
+    {
+     "name": "unknown treated false",
+     "given": "hooksBlocking unknown for codex",
+     "expect": "effective flag false and no hook-based rule applied"
+    },
+    {
+     "name": "unlisted harness",
+     "given": "Lookup cursor",
+     "expect": "baseUrl unknown, mode observe_only"
+    }
+   ],
+   "cost_levers": [
+    "Right flags stop the engine promising a cap the harness cannot take."
+   ],
+   "feedback_events": [
+    "A capability test fails after a harness upgrade.",
+    "A new harness appears in gateway user agents."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.cap.lookup",
+     "fields": [
+      "harness",
+      "version",
+      "degraded"
+     ],
+     "when": "When policy reads flags"
+    }
+   ],
+   "papers": [],
+   "repos": [],
+   "industry": "No corpus source describes a capability registry; this is the R4 adapter design."
+  }
+ },
+ "a_cc": {
+  "inn": "Claude Code environment and settings: ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN or apiKeyHelper, managed settings.",
+  "out": "Routed Claude Code traffic to gw, UsageEvent rows, cap flags for the harness.",
+  "store": "Reads cap flags and managed settings template. Writes managed settings payload and adapter state.",
+  "fail": "Fail open for observation, since hooks and OTel are optional. Fail closed for budgets at the gateway, because developers can disable hooks.",
+  "req": "RQ-A-001, RQ-A-002, RQ-A-003, RQ-A-005, RQ-A-007, RQ-A-008, RQ-A-009, RQ-A-015, RQ-A-016, RQ-A-020, RQ-A-024, RQ-A-025, RQ-A-047",
+  "src": [
+   "A:193",
+   "C:088",
+   "C:074",
+   "A:217",
+   "C:076",
+   "C:073",
+   "C:001"
+  ],
+  "prop": "",
+  "hard": "Anthropic does not support routing Claude Code to non-Claude models through a gateway [A:193]. Body rewrite of the model is undocumented. No hook rewrites the model of an ordinary request [C:074].",
+  "line": "ANTHROPIC_BASE_URL=https://gateway.example.com/anthropic\nallowedProviders=[customEndpoint]",
+  "dumb": "This part points Claude Code at Token Economics and locks that setting so it cannot be skipped. It also reads the extra signals Claude Code gives out.",
+  "deep": {
+   "purpose": "Implements the five adapter functions for Claude Code: route, identify, observe, cap, replay. Claude Code is the best-documented harness in the corpus: proxy, 30 hook events, OpenTelemetry (OTel), status line, headless mode [C:074, A:217, C:076].",
+   "expected": [
+    "route: emit ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN, or an apiKeyHelper, in managed settings [A:193, C:088].",
+    "route: pin the route with allowedProviders customEndpoint in managed settings.",
+    "identify: read session_id and prompt_id from hooks, and prompt.id from OTel [C:074].",
+    "observe: take usage from the gateway first, OTel and status line second.",
+    "cap: pass --max-budget-usd and --max-turns for headless runs [C:094, C:080].",
+    "replay: hand transcript_path files to trans."
+   ],
+   "not_expected": [
+    "It never relies on a hook for enforcement.",
+    "It never reroutes to a non-Claude model [A:193].",
+    "It never reads prompt text unless OTEL_LOG_USER_PROMPTS is set by the tenant."
+   ],
+   "algorithm": {
+    "name": "Managed settings generator",
+    "formula": "settings = base_url + auth + allowedProviders + OTel env + hook config",
+    "steps": [
+     "Read the harness flags from cap.",
+     "Write ANTHROPIC_BASE_URL and an auth token or apiKeyHelper.",
+     "Set CLAUDE_CODE_ENABLE_TELEMETRY=1 and OTEL_EXPORTER_OTLP_ENDPOINT to otelr.",
+     "Add an http hook handler pointing to hookr.",
+     "Set statusLine to forward rate_limits.* and cost.total_cost_usd.",
+     "Deploy as managed settings, which sit highest in the order [C:081, C:074]."
+    ],
+    "params": {
+     "settings_order": "user, project, local, --settings, managed last and highest [C:081, C:074]",
+     "auth_modes": "ANTHROPIC_AUTH_TOKEN, apiKeyHelper, subscription OAuth [A:193]"
+    }
+   },
+   "security": [
+    "Managed settings cannot be disabled by disableAllHooks set below managed level [C:074].",
+    "The auth token is a virtual key, never the provider key.",
+    "Do not set OTEL_LOG_* content opt-ins by default.",
+    "allowedProviders pins the route so a developer cannot bypass the gateway [A:193]."
+   ],
+   "performance": {
+    "slo": "Settings applied at session start; no per-call cost (DevX proposal).",
+    "complexity": "O(1) per session.",
+    "scaling": "One managed template per tenant."
+   },
+   "edge_cases": [
+    "Subscription OAuth with ANTHROPIC_BASE_URL only: gateway must forward the OAuth capability in anthropic-beta [A:193].",
+    "Claude Code upgrade strips a beta header: cache reads fall; re-test [C:052].",
+    "Developer sets a project-level settings override: managed settings win.",
+    "Subagent inherits the session model unless its definition sets model [C:072, C:073].",
+    "Traceparent is not sent to a gateway by default [A:217]."
+   ],
+   "tests": [
+    {
+     "name": "managed route",
+     "given": "Managed settings with base URL and allowedProviders",
+     "expect": "Claude Code calls reach gw; direct provider call is refused"
+    },
+    {
+     "name": "hook disabled",
+     "given": "Developer sets disableAllHooks in user settings",
+     "expect": "Managed http hook still fires; gateway budget still enforced"
+    },
+    {
+     "name": "api key mode",
+     "given": "apiKeyHelper returns virtual key",
+     "expect": "Gateway row has auth_mode api_key"
+    },
+    {
+     "name": "oauth mode",
+     "given": "Subscription token with anthropic-beta oauth value",
+     "expect": "Request forwarded; row auth_mode subscription, no dollar cost"
+    }
+   ],
+   "cost_levers": [
+    "Gateway budgets per virtual key [C:136].",
+    "Keep model changes at session start to protect the cache [C:055].",
+    "Status-line rate_limits give subscription window state [C:076]."
+   ],
+   "feedback_events": [
+    "Cache read share drops after upgrade.",
+    "Hooks stop arriving for one developer.",
+    "402 reaches Claude Code and the session stalls."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.a_cc.session",
+     "fields": [
+      "session_id",
+      "auth_mode",
+      "base_url_pinned",
+      "hooks_active"
+     ],
+     "when": "At session start"
+    },
+    {
+     "name": "token_economics.a_cc.cap_applied",
+     "fields": [
+      "flags",
+      "budget_usd",
+      "max_turns"
+     ],
+     "when": "When a headless cap is set"
+    }
+   ],
+   "papers": [],
+   "repos": [
+    {
+     "ref": "C:088",
+     "name": "Claude apps gateway",
+     "take": "Single sign-on, managed settings by group, OTLP metrics, anthropic-beta forwarded."
+    },
+    {
+     "ref": "C:003",
+     "name": "ccusage",
+     "take": "Local JSONL reports for replay."
+    }
+   ],
+   "industry": "Anthropic ships a gateway inside the claude binary and documents managed settings and OTel [C:088, A:217]. Third-party gateways such as LiteLLM and Bifrost serve the same base URL [C:060, C:001]."
+  }
+ },
+ "a_cx": {
+  "inn": "Codex CLI config: model_providers.<id>.base_url, env_key or auth.command, hooks table, otel table.",
+  "out": "Routed Codex traffic on the Responses wire, UsageEvent rows, cap flags.",
+  "store": "Reads cap flags. Writes a user-level config.toml snippet.",
+  "fail": "Fail open for observation and fail closed for budgets at the gateway. Codex has no budget flag in the corpus, so only the gateway can enforce.",
+  "req": "RQ-A-001, RQ-A-003, RQ-A-005, RQ-A-006, RQ-A-007, RQ-A-008, RQ-A-046, RQ-A-052",
+  "src": [
+   "C:104",
+   "C:097",
+   "C:035"
+  ],
+  "prop": "",
+  "hard": "Not in the corpus: hook stdin and exit-code schema, OTel metric names, ChatGPT sign-in through a custom provider, and any budget flag. Managed Work Cloud ignores model_provider.",
+  "line": "[model_providers.token-economics] wire_api=\"responses\"\nbase_url=\"https://gateway.example.com/openai\"",
+  "dumb": "This part sets up Codex so its calls go through Token Economics. It must live in the user's own config file, or Codex ignores it.",
+  "deep": {
+   "purpose": "Adapter for Codex CLI. Gateway must speak the Responses API because wire_api accepts only responses [C:104].",
+   "expected": [
+    "route: write model_providers.token-economics with base_url, wire_api responses and auth.command for the bearer token [C:104].",
+    "route: put model_provider in user-level config, never project config [C:104].",
+    "identify: map Codex session and thread ids to session_id; hook rows if schema proves out.",
+    "observe: take usage from the gateway; read OTel via the otel table.",
+    "cap: set tool_output_token_limit and model_auto_compact_token_limit style keys where present [C:104].",
+    "replay: read history.jsonl through trans."
+   ],
+   "not_expected": [
+    "It never writes openai_base_url or otel to a project file, because Codex ignores them there [C:104].",
+    "It never assumes hook payload fields before a test.",
+    "It never assumes a ChatGPT sign-in can use a custom provider."
+   ],
+   "algorithm": {
+    "name": "User-level config writer",
+    "formula": "config = model_provider + model_providers.token-economics + otel + hooks",
+    "steps": [
+     "Read cap flags for the Codex version.",
+     "Write model_providers.token-economics with base_url and wire_api responses.",
+     "Set auth.command to print the virtual key.",
+     "Add [otel] exporter to otelr with log_user_prompt false.",
+     "Add a hooks table only after the schema test passes.",
+     "Verify the file is user-level, not project-level."
+    ],
+    "params": {
+     "config_order": "CLI flags, project, profile, user, cloud-managed, /etc, defaults [C:097]",
+     "ignored_in_project": "openai_base_url, model_provider(s), notify, profile(s), otel [C:104]"
+    }
+   },
+   "security": [
+    "Keep bearer tokens out of the file by using auth.command.",
+    "otel.log_user_prompt false by default.",
+    "Do not enable features.network_proxy for model traffic; it governs tool traffic only [C:104]."
+   ],
+   "performance": {
+    "slo": "Config applied once per machine (DevX proposal).",
+    "complexity": "O(1).",
+    "scaling": "One template per tenant."
+   },
+   "edge_cases": [
+    "ChatGPT sign-in (requires_openai_auth): custom provider behaviour unknown, mark observe-only.",
+    "Cloud-orchestrated runs ignore local hooks and providers [C:104].",
+    "Project config tries to set a provider: Codex ignores it; adapter reports drift.",
+    "Wire mismatch (Chat Completions on a Responses route): gateway returns 400."
+   ],
+   "tests": [
+    {
+     "name": "user-level only",
+     "given": "model_provider set in project .codex/config.toml",
+     "expect": "Adapter check reports ignored; route not pinned"
+    },
+    {
+     "name": "responses wire",
+     "given": "Codex call through gw",
+     "expect": "Gateway log wire_api responses, usage parsed"
+    },
+    {
+     "name": "no budget flag",
+     "given": "Policy asks for a Codex budget flag",
+     "expect": "Flag false; gateway virtual-key budget used instead"
+    },
+    {
+     "name": "hook schema untested",
+     "given": "Hook rule requested for Codex",
+     "expect": "Rule not applied; capability flag unknown"
+    }
+   ],
+   "cost_levers": [
+    "Gateway budgets because Codex has no budget flag in the corpus.",
+    "Cap tool_output_token_limit style keys [C:104]."
+   ],
+   "feedback_events": [
+    "Codex version change alters config keys.",
+    "Usage rows from Codex show no cache fields."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.a_cx.config",
+     "fields": [
+      "version",
+      "provider_pinned",
+      "hooks_enabled"
+     ],
+     "when": "When config is generated"
+    }
+   ],
+   "papers": [],
+   "repos": [
+    {
+     "ref": "C:104",
+     "name": "Codex config reference",
+     "take": "model_providers keys, hooks events, otel table."
+    }
+   ],
+   "industry": "Codex's custom provider is the documented path to a gateway [C:104]. Hook and OTel details need a test in each deployment."
+  }
+ },
+ "a_ai": {
+  "inn": "Aider environment: OPENAI_API_BASE, OPENAI_API_KEY, --model, --map-tokens.",
+  "out": "Chat Completions traffic to gw and UsageEvent rows with gateway-computed cost.",
+  "store": "Reads cap flags. Writes env snippet.",
+  "fail": "Fail closed on budgets at the gateway. Aider has no hook or cap surface, so the gateway is the only enforcement point.",
+  "req": "RQ-A-001, RQ-A-003, RQ-A-005, RQ-A-006, RQ-A-008, RQ-A-045",
+  "src": [
+   "C:037",
+   "C:040",
+   "C:127"
+  ],
+  "prop": "",
+  "hard": "Aider hooks, OTel, transcript and headless surfaces are not in the corpus. Aider's own cost display is unreliable behind a router [C:040].",
+  "line": "OPENAI_API_BASE=https://gateway.example.com/chat\nOPENAI_API_KEY=tk_live_a1",
+  "dumb": "Aider only needs a web address and a key to talk to Token Economics. Token Economics then does all the counting, since Aider's own cost numbers can be wrong.",
+  "deep": {
+   "purpose": "Adapter for Aider and any OpenAI-compatible client. The harness does not know it is routed [C:037].",
+   "expected": [
+    "route: set OPENAI_API_BASE and OPENAI_API_KEY to the gateway and a virtual key.",
+    "identify: use the key, a custom header or a model suffix for session; no client ids available.",
+    "observe: gateway log only.",
+    "cap: gateway budget; --map-tokens is a repo-map size, not a hard cap [C:127].",
+    "replay: none; no transcript surface in the corpus."
+   ],
+   "not_expected": [
+    "It never trusts Aider's cost line when the model is unknown [C:040].",
+    "It never assumes hooks or OTel exist."
+   ],
+   "algorithm": {
+    "name": "Env generator with model check",
+    "formula": "unknown_model => cost shown by Aider is 0; Token Economics cost from price book",
+    "steps": [
+     "Write the two env variables.",
+     "Check every Aider --model id against cat.",
+     "If the id is unknown to Aider, warn that Aider assumes unlimited context and zero cost [C:040].",
+     "Rely on gateway cost for budgets."
+    ],
+    "params": {
+     "protocol": "Chat Completions [C:037]",
+     "map_tokens_default": "1k [C:127]"
+    }
+   },
+   "security": [
+    "Virtual key only; never the provider key.",
+    "No content logging at the gateway by default."
+   ],
+   "performance": {
+    "slo": "None beyond the gateway (DevX proposal).",
+    "complexity": "O(1).",
+    "scaling": "Stateless."
+   },
+   "edge_cases": [
+    "Aider shows zero cost for an unknown model: ignore; use gateway cost.",
+    "No session id from the client: derive from key plus a time window (DevX proposal).",
+    "Model id mismatch with the catalogue: reject with unknown_model, never partial match.",
+    "Aider hits a 402: surface message text the user can read."
+   ],
+   "tests": [
+    {
+     "name": "zero cost display",
+     "given": "Unknown --model in Aider",
+     "expect": "Gateway row has cost_usd above 0 from the price book"
+    },
+    {
+     "name": "route env",
+     "given": "OPENAI_API_BASE set to gw",
+     "expect": "Calls appear in the gateway log with harness aider"
+    },
+    {
+     "name": "no hooks",
+     "given": "Policy requests hook-based loop guard for aider",
+     "expect": "Rule skipped; gateway-side guard only"
+    },
+    {
+     "name": "unknown model",
+     "given": "--model foo-1",
+     "expect": "Gateway returns 400 unknown_model"
+    }
+   ],
+   "cost_levers": [
+    "Gateway budget and cat-priced cost for every Aider call [C:037].",
+    "Map tokens kept at default unless measured [C:127]."
+   ],
+   "feedback_events": [
+    "Aider upgrade changes request shape.",
+    "Gateway sees an id missing from cat."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.a_ai.request",
+     "fields": [
+      "harness",
+      "model",
+      "session_hint"
+     ],
+     "when": "On each Aider call"
+    }
+   ],
+   "papers": [],
+   "repos": [
+    {
+     "ref": "C:037",
+     "name": "Lynkr",
+     "take": "OpenAI-compatible translator in front of Aider."
+    }
+   ],
+   "industry": "Aider routes through any OpenAI-compatible router; the corpus has one blog source for Lynkr [C:037]."
+  }
+ },
+ "a_sdk": {
+  "inn": "Software development kit (SDK) calls: Claude Agent SDK result.usage, modelUsage, total_cost_usd, or an API client with a base URL.",
+  "out": "Routed calls to gw and UsageEvent rows with cost_source client or gateway.",
+  "store": "Reads SDK result objects. Writes a wrapper config.",
+  "fail": "Fail open for observation. Budgets are enforced at the gateway, because SDK totals are client-side estimates [A:216].",
+  "req": "RQ-A-001, RQ-A-003, RQ-A-004, RQ-A-019, RQ-A-020, RQ-A-021",
+  "src": [
+   "A:216",
+   "A:217",
+   "C:094"
+  ],
+  "prop": "",
+  "hard": "result.usage excludes subagents [A:216]. Resumed totals include earlier spend. Dual reporting between SDK telemetry and gateway is a trap.",
+  "line": "client = Anthropic(base_url=gateway_url)\nresult.total_cost_usd -> cost_source=client",
+  "dumb": "This part wraps code that calls the models from inside an app. It makes sure each call is counted once, not twice.",
+  "deep": {
+   "purpose": "Adapter for embedded use: the Agent SDK and plain API clients. SDK costs are client-side estimates; modelUsage has per-model cost and costBasis (list, managed, unknown) [A:216].",
+   "expected": [
+    "route: set base URL in the client constructor [C:088].",
+    "observe: read modelUsage per model and costBasis.",
+    "identify: add caller id through a header set by the wrapper.",
+    "cap: pass max_tokens on every call; budget at gateway.",
+    "dedupe: skip SDK rows whose response id is already in the gateway ledger."
+   ],
+   "not_expected": [
+    "It never sums result.usage on a resumed session without subtracting earlier spend [A:216].",
+    "It never treats total_cost_usd as a bill."
+   ],
+   "algorithm": {
+    "name": "Single-count rule",
+    "formula": "row counted = gateway row if present else SDK row (cost_source client)",
+    "steps": [
+     "Take the SDK result.",
+     "Look up the response id in the gateway rows.",
+     "If found, keep the gateway row and drop the SDK row.",
+     "If not found, store the SDK row labelled client.",
+     "Attach subagent spend separately via modelUsage and query_source."
+    ],
+    "params": {
+     "cost_basis_values": "list, managed, unknown [A:216]"
+    }
+   },
+   "security": [
+    "Wrapper adds only metadata headers.",
+    "No prompt text is copied into telemetry.",
+    "Virtual key supplied by environment, never source code."
+   ],
+   "performance": {
+    "slo": "None beyond the gateway (DevX proposal).",
+    "complexity": "O(1) per call.",
+    "scaling": "Library, scales with the host app."
+   },
+   "edge_cases": [
+    "Session resumed: totals include earlier spend; subtract the prior total.",
+    "Subagent spend missing from result.usage: read from OTel query_source [A:217].",
+    "Placeholder per-step output_tokens: use the final result [A:216].",
+    "costBasis unknown: label cost_source client and flag."
+   ],
+   "tests": [
+    {
+     "name": "dual report",
+     "given": "Same response id from gateway and SDK",
+     "expect": "One ledger row, cost_source gateway"
+    },
+    {
+     "name": "resume",
+     "given": "Resumed session with total 3.10 USD, prior 2.40",
+     "expect": "Row adds 0.70 USD"
+    },
+    {
+     "name": "subagent",
+     "given": "Parent result.usage 1.00 USD, subagent 0.40 USD via OTel",
+     "expect": "Two attributed rows"
+    },
+    {
+     "name": "unknown basis",
+     "given": "modelUsage costBasis unknown",
+     "expect": "cost_source client and review flag"
+    }
+   ],
+   "cost_levers": [
+    "Hard max_tokens on every call [C:025].",
+    "One count per call avoids false overspend alarms."
+   ],
+   "feedback_events": [
+    "SDK and gateway totals diverge by more than 5% (DevX proposal)."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.a_sdk.dedupe",
+     "fields": [
+      "response_id",
+      "kept",
+      "dropped"
+     ],
+     "when": "When SDK and gateway rows collide"
+    }
+   ],
+   "papers": [],
+   "repos": [
+    {
+     "ref": "A:216",
+     "name": "Claude Agent SDK",
+     "take": "modelUsage, costBasis, total_cost_usd."
+    }
+   ],
+   "industry": "Agent SDK users get per-turn usage and an estimated total; Langfuse and gateways add the bill-grade view [A:216, A:232]."
+  }
+ },
+ "a_cli": {
+  "inn": "Task spec and policy for a headless run: harness, model, budget, turn cap, JSON schema.",
+  "out": "A spawned claude -p or codex exec process, its JSON result and a UsageEvent row.",
+  "store": "Reads cap flags and policy. Writes run records.",
+  "fail": "Fail closed on budget. If the cap flags cannot be set, the run does not start. An uncapped headless run can spend without limit.",
+  "req": "RQ-A-003, RQ-A-004, RQ-A-014, RQ-A-021, RQ-A-050, RQ-A-052, RQ-A-053",
+  "src": [
+   "C:094",
+   "C:035",
+   "C:104",
+   "C:136"
+  ],
+  "prop": "",
+  "hard": "--max-turns flag text is in one source only [C:080]. Codex has no budget flag in the corpus. Resumed runs report whole-conversation totals.",
+  "line": "claude -p --max-budget-usd 2 --max-turns 20\n--output-format json --json-schema s.json",
+  "dumb": "This part lets Token Economics run a coding agent in the background as a worker. It sets the spend and turn limits before the run starts.",
+  "deep": {
+   "purpose": "Adapter that treats headless agents as backends: spawn, cap, parse, replay. Used by b_cc and b_cx.",
+   "expected": [
+    "Spawn claude -p with --output-format json and the cap flags [C:094].",
+    "Spawn codex exec, or codex exec resume --last, with user-level provider config [C:035, C:104].",
+    "Parse session id, usage and structured_output [C:094].",
+    "Treat exit 0 as success and non-zero as failure; record failed attempts as spend.",
+    "Keep stdin under the 10MB pipe cap [C:094]."
+   ],
+   "not_expected": [
+    "It never starts a run with no cap.",
+    "It never sums a resumed run's totals again.",
+    "It never treats the JSON cost as a bill."
+   ],
+   "algorithm": {
+    "name": "Capped spawn and parse",
+    "formula": "start iff budget_flag set OR gateway key has budget",
+    "steps": [
+     "Read flags from cap for the harness.",
+     "Build the command with budget, turn and schema flags.",
+     "Spawn and stream stdout.",
+     "Parse the final JSON result.",
+     "Write a UsageEvent with cost_source client unless the gateway also saw the call.",
+     "Record success flag from exit code and schema validation."
+    ],
+    "params": {
+     "stdin_cap": "10MB [C:094]",
+     "turn_cap_start": "P75 of own baseline, with reminder [C:025]"
+    }
+   },
+   "security": [
+    "Pass the virtual key by environment, never on the command line.",
+    "Use a restrictive --permission-mode for unattended runs [C:095].",
+    "Isolate working directory per run."
+   ],
+   "performance": {
+    "slo": "Spawn overhead under 1 s (DevX proposal).",
+    "complexity": "O(1) setup, run time depends on the task.",
+    "scaling": "Bounded by worker pool size."
+   },
+   "edge_cases": [
+    "--max-budget-usd stops remaining background work at the cap, so one more step may finish [C:094].",
+    "Non-zero exit with partial JSON: record cost from partial usage and mark failed.",
+    "Run resumed: report only the delta.",
+    "--bare skips hooks, skills, MCP, memory and CLAUDE.md [C:094]."
+   ],
+   "tests": [
+    {
+     "name": "cap set",
+     "given": "claude -p task with budget 2 USD",
+     "expect": "Command line contains --max-budget-usd 2"
+    },
+    {
+     "name": "exit failure",
+     "given": "Process exits 1 after 0.30 USD",
+     "expect": "Row stored as failed attempt with cost 0.30"
+    },
+    {
+     "name": "resume delta",
+     "given": "Resumed run total 5.00 USD, prior 3.20",
+     "expect": "Row cost 1.80"
+    },
+    {
+     "name": "no cap",
+     "given": "Policy lacks budget for codex exec and key has no budget",
+     "expect": "Run refused with uncapped_run"
+    }
+   ],
+   "cost_levers": [
+    "Cap turns at P75 with a reminder [C:025].",
+    "Count failed attempts in cost per success [C:028]."
+   ],
+   "feedback_events": [
+    "Cap fires on more than 20% of runs (DevX proposal)."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.a_cli.run",
+     "fields": [
+      "run_id",
+      "harness",
+      "budget_usd",
+      "turns",
+      "exit_code"
+     ],
+     "when": "When a run ends"
+    }
+   ],
+   "papers": [],
+   "repos": [],
+   "industry": "Headless flags are documented for Claude Code and Codex [C:094, C:035]."
+  }
+ },
+ "a_obs": {
+  "inn": "Local JSONL files, vendor exports and dashboard pages for harnesses with no routing surface.",
+  "out": "UsageEvent rows labelled observe-only with cost_source client or bill.",
+  "store": "Reads files and exports on a schedule. Writes rows to the ledger path via trans.",
+  "fail": "Fail open: a missed read only delays reporting. No control exists to fail closed.",
+  "req": "RQ-A-003, RQ-A-004, RQ-A-005, RQ-A-013, RQ-A-016, RQ-A-044, RQ-A-049",
+  "src": [
+   "C:003",
+   "A:056",
+   "C:057",
+   "C:117",
+   "C:119",
+   "A:263",
+   "C:121"
+  ],
+  "prop": "",
+  "hard": "No base-URL, hook or OTel surface is in the corpus for these tools [C:003]. Tools: Gemini CLI, Copilot CLI, Cursor, Amp, Kiro, OpenHands, Cline, Roo, Kilo, OpenCode.",
+  "line": "ccusage daily --json  (local JSONL)\n-> rows harness=cursor observe_only",
+  "dumb": "Some tools offer no way to plug Token Economics in. For these, Token Economics reads their reports and files and can only watch.",
+  "deep": {
+   "purpose": "Cover harnesses with no control surface. All control flags are false [C:003]. Vendor-side budgets are the only cap [A:263, C:119, A:056].",
+   "expected": [
+    "Read ccusage-style local JSONL for 15+ agent CLIs [C:003].",
+    "Read Kiro credit usage through the AWS Kiro Cost Optimizer export [A:056].",
+    "Read Copilot premium-request and Cursor pool reports as exports [A:263, C:119].",
+    "Label every row observe-only with a cost_source of client or bill.",
+    "Report plan quota in native units, never tokens [C:010]."
+   ],
+   "not_expected": [
+    "It never promises a cap.",
+    "It never converts plan quota to tokens.",
+    "It never scrapes pages the vendor blocks."
+   ],
+   "algorithm": {
+    "name": "Scheduled read and label",
+    "formula": "row.control = none; row.cost_source = client|bill",
+    "steps": [
+     "List configured sources and their read schedule.",
+     "Fetch or read each source.",
+     "Map fields into UsageEvent.",
+     "Store with harness, source id and read time.",
+     "Hand to trans for join and dedupe."
+    ],
+    "params": {
+     "read_interval": "hourly (DevX proposal)"
+    }
+   },
+   "security": [
+    "Read-only credentials for vendor APIs.",
+    "Local files read under the user's consent; metadata only.",
+    "No content fields are mapped."
+   ],
+   "performance": {
+    "slo": "Data lag under 24 h (DevX proposal).",
+    "complexity": "O(rows).",
+    "scaling": "One reader per source."
+   },
+   "edge_cases": [
+    "Gemini CLI token caching works for API key and Vertex only, not OAuth [C:121].",
+    "Local transcript retention can be 30 days [C:003]: copy early.",
+    "Vendor export format changes: reader fails and alerts.",
+    "Gemini CLI replaced by Antigravity CLI for some users on 2026-06-18 [C:057]."
+   ],
+   "tests": [
+    {
+     "name": "ccusage read",
+     "given": "JSONL with 3 sessions",
+     "expect": "3 rows harness set, observe_only true"
+    },
+    {
+     "name": "no control claim",
+     "given": "Policy asks a cap for cursor",
+     "expect": "Response: unsupported, observe-only"
+    },
+    {
+     "name": "native units",
+     "given": "Copilot export in premium requests",
+     "expect": "Row keeps premium requests, no token value"
+    },
+    {
+     "name": "vendor change",
+     "given": "Export lacks expected column",
+     "expect": "Reader error raised, no partial rows stored"
+    }
+   ],
+   "cost_levers": [
+    "Visibility on harnesses Token Economics cannot route."
+   ],
+   "feedback_events": [
+    "A harness gains a base-URL surface and can move to a full adapter."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.a_obs.read",
+     "fields": [
+      "source",
+      "rows",
+      "lag_h"
+     ],
+     "when": "After each scheduled read"
+    }
+   ],
+   "papers": [],
+   "repos": [
+    {
+     "ref": "C:003",
+     "name": "ccusage",
+     "take": "Local JSONL reports for 15+ agent CLIs."
+    },
+    {
+     "ref": "A:056",
+     "name": "Kiro Cost Optimizer",
+     "take": "Per-developer Kiro credit usage."
+    }
+   ],
+   "industry": "ccusage and vendor dashboards are the only view into these harnesses [C:003]."
+  }
+ },
+ "hookr": {
+  "inn": "Hook event JSON posted by the client: session_id, prompt_id, transcript_path, hook_event_name, tool fields.",
+  "out": "Hook rows to the joiner, tool events to the loop guard, optional block decisions.",
+  "store": "Reads event JSON. Writes metadata rows; no tool content by default.",
+  "fail": "Fail open. A hook timeout yields no decision on most Claude Code events [C:074]. Hooks can be disabled, so nothing critical depends on them.",
+  "req": "RQ-A-002, RQ-A-011, RQ-A-012, RQ-A-013, RQ-A-022, RQ-A-023, RQ-A-024, RQ-A-046",
+  "src": [
+   "C:074",
+   "C:090",
+   "C:104",
+   "A:234"
+  ],
+  "prop": "",
+  "hard": "Codex hook stdin and exit-code schema are not in the corpus. No Claude Code event rewrites the model of an ordinary request [C:074].",
+  "line": "PreToolUse prompt_id=p9 tool=Bash\n-> row session=s4 prompt=p9 event=PreToolUse",
+  "dumb": "The client tells Token Economics about each step it takes, such as running a tool. Token Economics keeps a short note of it and never depends on it for the rules.",
+  "deep": {
+   "purpose": "Receive Claude Code's 30 hook events and Codex's 14 events through an http handler [C:074, C:104]. Hooks add detail (prompt ids, tool events) but never carry enforcement.",
+   "expected": [
+    "Accept http handler POSTs with session_id, prompt_id, transcript_path, cwd, hook_event_name [C:074].",
+    "Return exit 0 with JSON for structured control, or exit 2 to block where policy needs it [C:074].",
+    "Use last_assistant_message on Stop and SubagentStop instead of transcript_path [C:074].",
+    "Forward repeated-read and failure events to the loop guard.",
+    "Cap each output string at 10,000 characters [C:074]."
+   ],
+   "not_expected": [
+    "It never stores tool_input or tool output by default.",
+    "It never relies on hooks for budget enforcement [A:234].",
+    "It never assumes a Codex field before a schema test."
+   ],
+   "algorithm": {
+    "name": "Event intake and signal fan-out",
+    "formula": "row = {session_id, prompt_id, event, tool_name, ts}; block only on policy exit 2",
+    "steps": [
+     "Authenticate the sender by a hook token.",
+     "Validate common fields.",
+     "Drop content fields unless the tenant opted in.",
+     "Write a hook row for the joiner.",
+     "If event is PreToolUse or PostToolUseFailure, emit a tool-event signal to loop.",
+     "If policy requires, return exit 2 with a reason."
+    ],
+    "params": {
+     "claude_events": "30 events listed in C:074",
+     "codex_events": "14 events listed in C:104",
+     "string_cap": "10,000 characters [C:074]"
+    }
+   },
+   "security": [
+    "Hook endpoint requires a per-tenant token.",
+    "Accept only http and command handlers; mcp_tool handlers are out of scope until tested.",
+    "onFailure block applies only to managed policy hooks [C:074].",
+    "Tool content never logged by default."
+   ],
+   "performance": {
+    "slo": "Respond under 200 ms at p95 so client timeouts are not hit (DevX proposal).",
+    "complexity": "O(1) per event.",
+    "scaling": "Stateless receivers; volume is a few events per tool call."
+   },
+   "edge_cases": [
+    "Hook disabled by the developer: rows missing; gateway rows still complete.",
+    "Timeout: Claude Code takes no decision on most events [C:074].",
+    "Multiple hooks disagree: deny wins [C:074].",
+    "transcript_path lags the turn [C:074]; use last_assistant_message.",
+    "PermissionRequest ignores exit 2 [C:074]."
+   ],
+   "tests": [
+    {
+     "name": "join ids",
+     "given": "PostToolUse with prompt_id p9",
+     "expect": "Row stored with prompt_id p9 for the joiner"
+    },
+    {
+     "name": "block",
+     "given": "Policy rule deny on Bash(rm *), exit 2 returned",
+     "expect": "Tool call blocked, row event=blocked"
+    },
+    {
+     "name": "content off",
+     "given": "tool_input present, tenant not opted in",
+     "expect": "Stored row has no tool_input"
+    },
+    {
+     "name": "timeout",
+     "given": "Receiver slow beyond client timeout",
+     "expect": "Client proceeds; gateway rows still complete"
+    }
+   ],
+   "cost_levers": [
+    "Repeated-read signals feed the loop guard, since 51% of spend followed the first repeated failure [C:028]."
+   ],
+   "feedback_events": [
+    "Hook arrival rate drops for a tenant.",
+    "Hook and gateway prompt counts diverge."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.hookr.event",
+     "fields": [
+      "session_id",
+      "prompt_id",
+      "event",
+      "blocked"
+     ],
+     "when": "On each hook POST"
+    }
+   ],
+   "papers": [],
+   "repos": [
+    {
+     "ref": "C:074",
+     "name": "Claude Code hooks reference",
+     "take": "Events, handlers, exit codes, field names."
+    }
+   ],
+   "industry": "Hooks run in the client, so a developer can disable them; managed hooks and gateways cannot be disabled by them [A:234, C:074]."
+  }
+ },
+ "otelr": {
+  "inn": "OpenTelemetry (OTel) metrics and log events over OTLP (OpenTelemetry protocol) from Claude Code or Codex.",
+  "out": "Metric rows and api_request rows to the joiner, metadata only.",
+  "store": "Reads OTLP payloads. Writes metadata rows; drops content attributes by default.",
+  "fail": "Fail open: OTel is a supplement. Loss only reduces detail, because the gateway log is the source of truth.",
+  "req": "RQ-A-011, RQ-A-013, RQ-A-019, RQ-A-020, RQ-A-046, RQ-A-047",
+  "src": [
+   "A:217",
+   "C:002",
+   "C:104",
+   "C:076"
+  ],
+  "prop": "",
+  "hard": "Codex OTel metric and event names are not in the corpus. The gateway cannot join client traces by default.",
+  "line": "claude_code.token.usage type=cacheRead 41200\nprompt.id=p9 query_source=repl_main_thread",
+  "dumb": "The client sends usage meters to Token Economics. Token Economics keeps the numbers and drops anything that looks like private text.",
+  "deep": {
+   "purpose": "Receive Claude Code OTel: metrics claude_code.token.usage and .cost.usage, events claude_code.api_request and others [A:217]. Supplies attribution (query_source, agent.name, skill.name, mcp_server.name).",
+   "expected": [
+    "Ingest claude_code.token.usage with types input, output, cacheRead, cacheCreation [A:217, C:002].",
+    "Ingest claude_code.api_request with prompt.id and gen_ai.request.model.",
+    "Store query_source and query_source_safe for subagent attribution [A:217].",
+    "Drop prompt, tool-content and API-body events unless opt-in is set.",
+    "Label cost.usage values as client estimate."
+   ],
+   "not_expected": [
+    "It never stores OTEL_LOG_USER_PROMPTS content by default.",
+    "It never sets the tenant's opt-ins.",
+    "It never treats claude_code.cost.usage as a bill."
+   ],
+   "algorithm": {
+    "name": "OTLP intake with content filter",
+    "formula": "keep = attribute in allowlist; drop = content attributes",
+    "steps": [
+     "Accept OTLP over http protobuf or JSON.",
+     "Match metric and event names to the allowlist.",
+     "Remove content-bearing events.",
+     "Map to UsageEvent fields with cost_source client.",
+     "Send rows to the joiner."
+    ],
+    "params": {
+     "enable": "CLAUDE_CODE_ENABLE_TELEMETRY=1 [A:217]",
+     "content_optins": "OTEL_LOG_USER_PROMPTS, _TOOL_DETAILS, _TOOL_CONTENT, _ASSISTANT_RESPONSES, _RAW_API_BODIES [A:217]",
+     "cardinality_options": "OTEL_METRICS_INCLUDE_ACCOUNT_UUID, _ENTRYPOINT, _REPOSITORY, _RESOURCE_ATTRIBUTES [A:217]"
+    }
+   },
+   "security": [
+    "Reject OTLP without the tenant header.",
+    "Strip content events at ingest even if sent.",
+    "Cardinality options are set by policy, not left on by default.",
+    "Codex otel.log_user_prompt and log_agent_responses stay false [C:104]."
+   ],
+   "performance": {
+    "slo": "Ingest lag under 60 s (DevX proposal).",
+    "complexity": "O(events).",
+    "scaling": "Batch exporters send on OTEL_METRIC_EXPORT_INTERVAL [A:217]."
+   },
+   "edge_cases": [
+    "Traceparent not propagated to the gateway by default [A:217].",
+    "Metric points arrive out of order: dedupe by timestamp and key.",
+    "Gateway and OTel both report one call: joiner keeps one [A:216].",
+    "Codex event names unknown: store raw names, map later."
+   ],
+   "tests": [
+    {
+     "name": "content dropped",
+     "given": "Event claude_code.user_prompt with prompt text",
+     "expect": "Stored row has no text field"
+    },
+    {
+     "name": "usage type",
+     "given": "token.usage type=cacheRead value 41,200",
+     "expect": "Row cache_read 41,200 with cost_source client"
+    },
+    {
+     "name": "subagent attribution",
+     "given": "query_source agent.custom.reviewer",
+     "expect": "Row attributed to agent reviewer"
+    },
+    {
+     "name": "missing tenant header",
+     "given": "OTLP with no header",
+     "expect": "HTTP 401, nothing stored"
+    }
+   ],
+   "cost_levers": [
+    "Per-agent attribution reveals which subagent spends [A:217]."
+   ],
+   "feedback_events": [
+    "OTel and gateway totals diverge."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.otelr.ingest",
+     "fields": [
+      "metric",
+      "points",
+      "dropped_content"
+     ],
+     "when": "Per OTLP batch"
+    }
+   ],
+   "papers": [],
+   "repos": [
+    {
+     "ref": "A:217",
+     "name": "Claude Code monitoring docs",
+     "take": "Metric and event names, attribution attributes."
+    }
+   ],
+   "industry": "Claude Code, Codex and Langfuse use OTel as a metadata channel [A:217, C:104, A:232]."
+  }
+ },
+ "trans": {
+  "inn": "Local transcript JSONL (JSON Lines) files and history.jsonl.",
+  "out": "Replayed UsageEvent rows labelled client estimate.",
+  "store": "Reads local files. Writes rows and a copy of the usage fields only.",
+  "fail": "Fail open: replay is a recovery path. A parse error skips that file and alerts.",
+  "req": "RQ-A-004, RQ-A-013, RQ-A-021, RQ-A-022, RQ-A-049",
+  "src": [
+   "C:003",
+   "C:074",
+   "C:104",
+   "C:076"
+  ],
+  "prop": "",
+  "hard": "Claude Code transcript retention is 30 days per one source [C:003]. Codex history.jsonl schema is not in the corpus.",
+  "line": "~/.claude/projects/x.jsonl 214 turns\n-> 214 rows cost_source=client",
+  "dumb": "If the live feed missed anything, Token Economics can rebuild it from the files the tool keeps on disk. Those numbers are labelled as guesses.",
+  "deep": {
+   "purpose": "Rebuild usage from local files when gateway or hook rows are missing. Persist copies, because the corpus notes 30-day retention [C:003].",
+   "expected": [
+    "Read transcript_path files and ccusage-style JSONL [C:074, C:003].",
+    "Read Codex history.jsonl when history.persistence is on [C:104].",
+    "Label rows cost_source client, never gateway or bill.",
+    "Skip response ids already in the ledger.",
+    "Copy files to storage before they expire."
+   ],
+   "not_expected": [
+    "It never replaces a gateway row.",
+    "It never stores message text.",
+    "It never treats replayed cost as exact."
+   ],
+   "algorithm": {
+    "name": "Replay with dedupe",
+    "formula": "emit row iff response_id NOT IN ledger",
+    "steps": [
+     "List new files by mtime.",
+     "Parse lines for usage fields and ids.",
+     "Drop content fields.",
+     "Check each response id against the ledger.",
+     "Emit rows labelled client estimate.",
+     "Archive the file."
+    ],
+    "params": {
+     "retention_seen": "30 days [C:003]",
+     "codex_history_keys": "history.persistence, history.max_bytes [C:104]"
+    }
+   },
+   "security": [
+    "Read only usage fields.",
+    "Local read happens on the developer machine; upload is metadata only.",
+    "Archive copies inherit the tenant retention rule."
+   ],
+   "performance": {
+    "slo": "Replay of 10,000 lines under 10 s (DevX proposal).",
+    "complexity": "O(lines).",
+    "scaling": "Run per machine; batch upload."
+   },
+   "edge_cases": [
+    "Transcript written asynchronously and lags the turn [C:074].",
+    "Resumed session repeats earlier turns: dedupe by response id.",
+    "File truncated mid-line: skip the partial line.",
+    "Schema changes between versions: parser reports unknown shape."
+   ],
+   "tests": [
+    {
+     "name": "replay count",
+     "given": "JSONL with 214 turns, none in ledger",
+     "expect": "214 rows, cost_source client"
+    },
+    {
+     "name": "dedupe",
+     "given": "Same response id already in ledger",
+     "expect": "Row skipped"
+    },
+    {
+     "name": "partial line",
+     "given": "Last line cut mid-JSON",
+     "expect": "Line skipped, file still processed"
+    },
+    {
+     "name": "content strip",
+     "given": "Line has message text",
+     "expect": "Stored row has no text"
+    }
+   ],
+   "cost_levers": [
+    "Recover spend that live feeds missed."
+   ],
+   "feedback_events": [
+    "Replay fills more than 5% of rows (DevX proposal): live feed has a gap."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.trans.replay",
+     "fields": [
+      "file",
+      "rows",
+      "skipped"
+     ],
+     "when": "After each file"
+    }
+   ],
+   "papers": [],
+   "repos": [
+    {
+     "ref": "C:003",
+     "name": "ccusage",
+     "take": "Local JSONL cost reports."
+    }
+   ],
+   "industry": "ccusage reads local logs for 15+ agent CLIs [C:003]."
+  }
+ },
+ "joiner": {
+  "inn": "Gateway rows, hook rows, OTel rows and replayed rows with session_id and prompt_id.",
+  "out": "One joined row per session and prompt id with cost_source, sent to attr.",
+  "store": "Reads the four row streams. Writes joined rows.",
+  "fail": "Fail open: an unjoined gateway row is still stored, so spend is never lost for lack of a match.",
+  "req": "RQ-A-004, RQ-A-011, RQ-A-019, RQ-A-020, RQ-A-048",
+  "src": [
+   "C:074",
+   "A:217",
+   "A:216",
+   "C:052"
+  ],
+  "prop": "Join window length is a DevX proposal.",
+  "hard": "The gateway and client traces do not join by default [A:217]. Hooks can be disabled, so hook rows can be absent.",
+  "line": "gw(s4,p9)+hook(s4,p9)+otel(p9)\n-> row s4/p9 cost_source=gateway",
+  "dumb": "Several reports describe the same step. This part matches them by id so each step is counted once.",
+  "deep": {
+   "purpose": "Join on session_id and prompt_id [C:074]. Hook prompt_id equals OTel prompt.id. Enforces single counting [A:216].",
+   "expected": [
+    "Key on (session_id, prompt_id).",
+    "Prefer gateway usage; fill detail from hooks and OTel.",
+    "Keep subagent rows separate by query_source [A:217].",
+    "Mark source precedence: bill, gateway, client.",
+    "Leave unmatched gateway rows as is."
+   ],
+   "not_expected": [
+    "It never adds two sources for one response id.",
+    "It never invents a prompt id.",
+    "It never sums resumed totals again [A:216]."
+   ],
+   "algorithm": {
+    "name": "Keyed merge with precedence",
+    "formula": "joined.cost_source = max_precedence(bill > gateway > client)",
+    "steps": [
+     "Index incoming rows by key.",
+     "Wait up to the join window for late rows.",
+     "Merge fields; take usage from the highest precedence.",
+     "Attach agent and skill names from OTel.",
+     "Emit to attr."
+    ],
+    "params": {
+     "join_window": "10 min (DevX proposal)",
+     "precedence": "bill, gateway, client [C:076, A:232]"
+    }
+   },
+   "security": [
+    "Rows carry ids and counts only.",
+    "Tenant id checked on every merge to prevent cross-tenant joins."
+   ],
+   "performance": {
+    "slo": "Join lag under 5 min (DevX proposal).",
+    "complexity": "O(1) per row with a keyed store.",
+    "scaling": "Partition by tenant and session."
+   },
+   "edge_cases": [
+    "Hook row arrives after the window: attach on late update.",
+    "Two gateway rows with one response id: dedupe.",
+    "No prompt id (Aider, SDK): key by session and response id.",
+    "Clock skew between sources: order by id, not time."
+   ],
+   "tests": [
+    {
+     "name": "three sources",
+     "given": "gw, hook and OTel rows for s4/p9",
+     "expect": "One joined row, cost_source gateway"
+    },
+    {
+     "name": "late hook",
+     "given": "Hook row 15 min after gw row",
+     "expect": "Row updated, no duplicate"
+    },
+    {
+     "name": "no prompt id",
+     "given": "Aider call",
+     "expect": "Keyed by session and response id"
+    },
+    {
+     "name": "subagent",
+     "given": "query_source agent.custom.x",
+     "expect": "Separate joined row with agent x"
+    }
+   ],
+   "cost_levers": [
+    "Correct attribution per caller and subagent [C:052]."
+   ],
+   "feedback_events": [
+    "Unjoined rate above 10% (DevX proposal)."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.joiner.join",
+     "fields": [
+      "session_id",
+      "prompt_id",
+      "sources",
+      "unjoined"
+     ],
+     "when": "On each emit"
+    }
+   ],
+   "papers": [],
+   "repos": [],
+   "industry": "Langfuse ingests via gateway or hooks and joins by trace [A:234, A:235]."
+  }
+ },
+ "p_anth": {
+  "inn": "Dispatched Messages API request from bres, with cache_control plan from cplan.",
+  "out": "Provider response stream and the usage object to the tee.",
+  "store": "Reads provider key from the vault at call time. Writes nothing.",
+  "fail": "Fail closed: on provider error the call returns the error or hands to fb. It never retries silently, because a retry can double the cost.",
+  "req": "RQ-A-009, RQ-A-018, RQ-A-026, RQ-A-027, RQ-A-035, RQ-A-036, RQ-A-043",
+  "src": [
+   "A:199",
+   "A:283",
+   "C:010",
+   "C:052",
+   "C:054",
+   "A:216",
+   "A:219"
+  ],
+  "prop": "",
+  "hard": "Minimum cacheable prefix conflicts: Sonnet 4.6 1,024 [A:199] vs 2,048 [C:051]; Opus 4.7 2,048 vs 4,096. Take the larger until tested. Prices are snapshots from the price book.",
+  "line": "POST /v1/messages cache_control{ttl:\"1h\"}\nusage{input:12,cache_read:41200,output:640}",
+  "dumb": "This part talks to Anthropic's models. It passes along the cache hints so repeated text is cheaper.",
+  "deep": {
+   "purpose": "Messages API connector: cache_control, tiers, anthropic-beta, usage fields. Read multiplier 0.1x, 5m write 1.25x, 1h write 2x. Exceptions: 0.05x for Opus 5.5 and Sonnet 5.5, 0.025x for Fable 5.1 [A:199, A:283, C:010] (price-list snapshot).",
+   "expected": [
+    "Send cache_control {type ephemeral, ttl 5m or 1h} with at most 4 breakpoints [A:199].",
+    "Put longer-TTL entries before shorter ones; send system as an array of blocks [A:199].",
+    "Forward anthropic-beta unchanged [C:052].",
+    "Return input_tokens, cache_creation_input_tokens, cache_read_input_tokens, cache_creation.ephemeral_5m and _1h, output_tokens, inference_geo [A:199].",
+    "Support max_tokens 0 pre-warm [A:199]."
+   ],
+   "not_expected": [
+    "It never reorders tools, system or messages; prefix order is tools, system, messages [A:199].",
+    "It never adds timestamps to the prefix.",
+    "It never uses batch with streaming, speed or fallbacks [A:219]."
+   ],
+   "algorithm": {
+    "name": "Cache-preserving dispatch",
+    "formula": "total_input = input_tokens + cache_read + cache_creation [A:199]",
+    "steps": [
+     "Load the provider key from the vault.",
+     "Apply the cplan breakpoints if present.",
+     "Check prefix size against the catalogue minimum; drop cache_control if below.",
+     "Send with anthropic-beta intact.",
+     "Stream back; pass the usage object to the tee.",
+     "Pass service tier and speed with the row."
+    ],
+    "params": {
+     "max_breakpoints": "4 [A:199]",
+     "lookback_blocks": "20 [A:199]",
+     "min_prefix": "512 to 4,096 by model [A:199]",
+     "ttl_values": "5m, 1h [A:199]"
+    }
+   },
+   "security": [
+    "Provider key only from the vault.",
+    "Cache is isolated per organisation, and per workspace on the Claude API [A:199].",
+    "Never log request bodies by default."
+   ],
+   "performance": {
+    "slo": "Adds under 5 ms over the gateway (DevX proposal).",
+    "complexity": "O(1) plus stream.",
+    "scaling": "Connection pool per org key."
+   },
+   "edge_cases": [
+    "Prefix under the minimum: no cache_control sent.",
+    "Fast mode toggle mid-session: fast and standard speed have separate caches [C:055].",
+    "Gateway or proxy strips beta header: cache reads fall to 0; alert [C:052].",
+    "Batch results kept 29 days; errored or expired not billed [A:219].",
+    "Above 200K input some models reprice (Opus 4.6 $10/$37.50) [A:270]."
+   ],
+   "tests": [
+    {
+     "name": "ttl order",
+     "given": "Request has 5m block before 1h block",
+     "expect": "Connector rejects or reorders per rule with error ttl_order"
+    },
+    {
+     "name": "below minimum",
+     "given": "Prefix 300 tokens on a 1,024 model",
+     "expect": "cache_control removed, row cache_write 0"
+    },
+    {
+     "name": "usage mapping",
+     "given": "Response cache_read 41,200, input 12, creation 0",
+     "expect": "total_input 41,212"
+    },
+    {
+     "name": "beta kept",
+     "given": "anthropic-beta present",
+     "expect": "Header identical upstream"
+    }
+   ],
+   "cost_levers": [
+    "Cache read at 0.1x versus fresh input [A:199].",
+    "TTL from reuse gap, not blanket 1h; blanket 1h made the bill 8.6% worse [C:052].",
+    "Batch 50% off for non-urgent work [A:219]."
+   ],
+   "feedback_events": [
+    "cache_read share falls below the caller's own baseline."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.p_anth.call",
+     "fields": [
+      "model",
+      "tier",
+      "cache_read",
+      "cache_write_5m",
+      "cache_write_1h",
+      "output"
+     ],
+     "when": "On each response"
+    }
+   ],
+   "papers": [],
+   "repos": [
+    {
+     "ref": "C:060",
+     "name": "LiteLLM",
+     "take": "cache_control_injection_points."
+    }
+   ],
+   "industry": "Anthropic documents the cache rules; gateways such as LiteLLM inject cache_control [A:199, C:060]."
+  }
+ },
+ "p_oai": {
+  "inn": "Dispatched Responses API request with prompt_cache_key from stick.",
+  "out": "Provider response stream and usage object to the tee.",
+  "store": "Reads provider key from the vault at call time. Writes nothing.",
+  "fail": "Fail closed: return the provider error or hand to fb. No silent retry, because retries cost money.",
+  "req": "RQ-A-010, RQ-A-018, RQ-A-026, RQ-A-028, RQ-A-029, RQ-A-030, RQ-A-035, RQ-A-036, RQ-A-043",
+  "src": [
+   "A:201",
+   "A:202",
+   "A:203",
+   "A:204",
+   "A:148",
+   "A:233",
+   "A:197",
+   "A:195",
+   "A:150"
+  ],
+  "prop": "",
+  "hard": "Cached discount history is 50%, 75% and 90% by model [A:202]. Flex discount percentage is not stated in A:195. Azure 12h write charges start Nov 1 2026 [A:148].",
+  "line": "prompt_cache_key=s4  prompt_cache_options{ttl:30m}\nusage.input_tokens_details.cached_tokens=17817",
+  "dumb": "This part talks to OpenAI models. It sends a key that keeps a session's repeated text on the same cache.",
+  "deep": {
+   "purpose": "Responses API connector: prompt_cache_key, prompt_cache_options, service_tier, usage detail fields. Routing hashes the first about 256 tokens plus the key. Above about 15 requests per minute per prefix and key, overflow misses [A:202, A:148].",
+   "expected": [
+    "Send prompt_cache_key per session [A:202].",
+    "On GPT-5.6 and later send prompt_cache_options.mode implicit or explicit and ttl 30m or 12h [A:201, A:204].",
+    "Before 5.6 use prompt_cache_retention in_memory or 24h with no write fee [A:201].",
+    "Return usage.input_tokens_details.cached_tokens and cache_write_tokens [A:204].",
+    "Pass service_tier flex when the tier selector chooses it [A:195]."
+   ],
+   "not_expected": [
+    "It never adds reasoning_tokens to output [A:197].",
+    "It never sends more than about 15 requests a minute for one prefix and key.",
+    "It never assumes prompt_tokens excludes cached tokens."
+   ],
+   "algorithm": {
+    "name": "Keyed dispatch with rate cap",
+    "formula": "cap: requests per (prefix, key) per minute <= 15 [A:148]",
+    "steps": [
+     "Build prompt_cache_key from the session id.",
+     "Check the per-key counter; shard the key if over the cap.",
+     "Set cache options by model generation.",
+     "Send; stream response.",
+     "Pass cached_tokens and cache_write_tokens to the tee.",
+     "Pass diagnostics (cache_hit, cache_miss) to hit."
+    ],
+    "params": {
+     "min_prefix": "1,024 tokens, hits in 128-token steps [A:201]",
+     "write_fee": "1.25x for 30m, 2.5x for 12h on GPT-5.6+ [A:201]",
+     "read": "0.1x, 0.05x on GPT-6.1 Sol and Terra [A:201]"
+    }
+   },
+   "security": [
+    "Provider key only from the vault.",
+    "Do not put user ids in prompt_cache_key; use the session hash.",
+    "Never log bodies."
+   ],
+   "performance": {
+    "slo": "Adds under 5 ms (DevX proposal).",
+    "complexity": "O(1) plus stream.",
+    "scaling": "Per-key counters kept in memory, sharded by key."
+   },
+   "edge_cases": [
+    "prompt_tokens includes cached: 17,903 with 17,817 cached means fresh 86 [A:233].",
+    "Flex 429 is not charged, no auto-fallback [A:195].",
+    "Overflow past 15 requests a minute causes misses [A:202].",
+    "Prefix of 102 tokens never pays a write [A:201].",
+    "Azure Global Batch completion_window 24h [A:152]."
+   ],
+   "tests": [
+    {
+     "name": "inclusive usage",
+     "given": "prompt_tokens 17,903, cached 17,817 [A:233]",
+     "expect": "Raw passed; norm gets fresh 86"
+    },
+    {
+     "name": "reasoning inside output",
+     "given": "output 1,186 of which reasoning 1,024 [A:197]",
+     "expect": "Output stays 1,186"
+    },
+    {
+     "name": "key shard",
+     "given": "20 requests a minute on one key",
+     "expect": "Key sharded so none exceeds 15"
+    },
+    {
+     "name": "flex 429",
+     "given": "service_tier flex returns 429",
+     "expect": "No charge; fb retries on standard"
+    }
+   ],
+   "cost_levers": [
+    "Cache read 0.1x on GPT-5.6+ [A:201].",
+    "One write plus 9 reads costs 2.15x instead of 10x [A:201].",
+    "Flex at batch rates for latency-tolerant work [A:195]."
+   ],
+   "feedback_events": [
+    "Cache hit falls near the 15 per minute cap."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.p_oai.call",
+     "fields": [
+      "model",
+      "tier",
+      "cached_tokens",
+      "cache_write_tokens",
+      "output"
+     ],
+     "when": "On each response"
+    }
+   ],
+   "papers": [],
+   "repos": [],
+   "industry": "OpenAI and Azure document prompt caching and flex; reported hit rates of 60% to 87% with a cache key are self-reported [A:202]."
+  }
+ },
+ "p_xai": {
+  "inn": "Dispatched chat request with x-grok-conv-id from the session.",
+  "out": "Provider response stream and usage object to the tee, with the context band.",
+  "store": "Reads provider key from the vault. Writes nothing.",
+  "fail": "Fail closed: return the error or hand to fb; no silent retry.",
+  "req": "RQ-A-018, RQ-A-026, RQ-A-030, RQ-A-031, RQ-A-035, RQ-A-043",
+  "src": [
+   "A:221",
+   "A:223",
+   "A:224",
+   "A:225"
+  ],
+  "prop": "",
+  "hard": "xAI cached-rate and band details come from price-list pages; Grok model names are quoted as in the corpus (Grok 4.7).",
+  "line": "x-grok-conv-id: s4  input 210,000 tokens\n-> band=200K+ all tokens at 2x",
+  "dumb": "This part talks to xAI models and sends a session tag for caching. Past 200,000 tokens, everything on that call costs double.",
+  "deep": {
+   "purpose": "xAI connector: x-grok-conv-id header or prompt_cache_key; cached rate is one quarter of input; 128-token blocks. At 200K and above all tokens reprice at 2x, cached included. Priority is 2x all token types; batch is 20% off [A:221 to A:225] (price-list).",
+   "expected": [
+    "Send x-grok-conv-id per session [A:221].",
+    "Report the total prompt size so calc can apply the 200K band [A:225].",
+    "Pass priority tier requests with the 2x flag [A:225].",
+    "Return input_tokens_details.cached_tokens [A:221].",
+    "Keep volatile text out of the prefix [A:224]."
+   ],
+   "not_expected": [
+    "It never puts the time at the top of the system prompt. That gave 87% vs 3% cache and 2.2 to 2.9x cost [A:224].",
+    "It never assumes the 200K band applies only to fresh tokens."
+   ],
+   "algorithm": {
+    "name": "Conversation-id dispatch",
+    "formula": "band = total_prompt_tokens >= 200,000 ? 'over200k' : 'base' [A:225]",
+    "steps": [
+     "Set x-grok-conv-id to the session hash.",
+     "Check prefix for volatile fields; warn if found.",
+     "Send; stream.",
+     "Pass cached_tokens, total prompt size and tier to the tee."
+    ],
+    "params": {
+     "cache_rate": "1/4 of input [A:221]",
+     "block": "128 tokens [A:221]",
+     "batch_discount": "20% [A:225]",
+     "priority": "2x [A:225]",
+     "us_endpoint": "1.1x [A:225]"
+    }
+   },
+   "security": [
+    "Provider key from the vault only.",
+    "Conversation id is a hash, never a user name."
+   ],
+   "performance": {
+    "slo": "Adds under 5 ms (DevX proposal).",
+    "complexity": "O(1) plus stream.",
+    "scaling": "Stateless."
+   },
+   "edge_cases": [
+    "Prompt crosses 200K mid-session: next calls reprice all tokens; alert.",
+    "Tool calls cost $5 per 1,000 [A:225].",
+    "Priority tier with cache: cache applied first, then 2x.",
+    "Missing conv id: cache hits fall."
+   ],
+   "tests": [
+    {
+     "name": "band",
+     "given": "Prompt 210,000 tokens",
+     "expect": "Row band over200k, scope all_tokens"
+    },
+    {
+     "name": "conv id",
+     "given": "Session s4 call",
+     "expect": "Header x-grok-conv-id equals hash of s4"
+    },
+    {
+     "name": "volatile prefix",
+     "given": "Timestamp in system prompt",
+     "expect": "Warning volatile_prefix raised"
+    },
+    {
+     "name": "priority",
+     "given": "Priority tier request",
+     "expect": "Row tier priority, multiplier 2.0"
+    }
+   ],
+   "cost_levers": [
+    "Cached input at 1/4 rate [A:221].",
+    "Stay under 200K where possible [A:225].",
+    "Batch 20% off [A:225]."
+   ],
+   "feedback_events": [
+    "Prompt size approaches 200K."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.p_xai.call",
+     "fields": [
+      "model",
+      "tier",
+      "band",
+      "cached_tokens"
+     ],
+     "when": "On each response"
+    }
+   ],
+   "papers": [],
+   "repos": [],
+   "industry": "xAI documents conversation ids and band repricing; the price pages are the source [A:221 to A:225]."
+  }
+ },
+ "p_gem": {
+  "inn": "Dispatched Gemini request with an optional CachedContent reference.",
+  "out": "Provider response and usage object to the tee, with cachedContentTokenCount.",
+  "store": "Reads provider key from the vault. Writes explicit-cache resource ids and expiry.",
+  "fail": "Fail closed: return the error or hand to fb. Explicit caches incur a storage fee, so an orphaned cache is deleted on failure.",
+  "req": "RQ-A-018, RQ-A-026, RQ-A-030, RQ-A-032, RQ-A-035, RQ-A-043",
+  "src": [
+   "A:121",
+   "A:143",
+   "A:231",
+   "A:237",
+   "A:280",
+   "A:281"
+  ],
+  "prop": "",
+  "hard": "Implicit discount 75% [A:121] vs 90% [A:280]. Minimum prefix conflicts: 1,024 Flash and 2,048 Pro [A:121, A:237] vs 4,096 and 6,144 for Gemini 3 and 4 [A:280]. Storage rate is not in the corpus except Gemini 2.5 Pro $4.50 per MTok per hour. Candidate-token split is not in the corpus.",
+  "line": "cachedContent: caches/c91  storage $4.50/MTok/h\nusage.cachedContentTokenCount=48000",
+  "dumb": "This part talks to Google's Gemini models. It can store a long prompt with Google for a small hourly fee.",
+  "deep": {
+   "purpose": "Gemini connector: implicit cache is on by default; explicit CachedContent has a storage fee (2.5 Pro $4.50 per MTok per hour). Prices tier at 200K (2.5 Pro $1.25 to $2.50 input). Batch 50%, stacking with cache to 95% on Gemini 3 and later but not on 2.5 [A:143, A:237, A:280, A:281] (price-list).",
+   "expected": [
+    "Read cachedContentTokenCount (REST) or cached_content_token_count (SDK) [A:143, A:121].",
+    "Create, reuse and delete CachedContent resources with a TTL.",
+    "Record storage hours for the calculator.",
+    "Report the 200K band.",
+    "Pass batch flag so calc applies the stacking rule per model [A:281]."
+   ],
+   "not_expected": [
+    "It never assumes the 75% or 90% discount; the price book decides.",
+    "It never leaves an explicit cache running without an owner.",
+    "It never assumes batch stacks on Gemini 2.5."
+   ],
+   "algorithm": {
+    "name": "Explicit cache lifecycle",
+    "formula": "keep explicit cache iff expected_reads x saving > storage_fee x hours",
+    "steps": [
+     "Check prefix against the model minimum in the catalogue.",
+     "If explicit is chosen, create CachedContent with a TTL.",
+     "Reference it in calls.",
+     "On expiry or low reuse, delete it.",
+     "Log storage hours."
+    ],
+    "params": {
+     "storage_example": "2.5 Pro $4.50 per MTok per hour [A:143]",
+     "batch_stack": "yes on Gemini 3+, no on 2.5 [A:281]"
+    }
+   },
+   "security": [
+    "Provider key from the vault only.",
+    "Cached content holds prompt text at the provider; delete on tenant offboarding.",
+    "No content stored by Token Economics."
+   ],
+   "performance": {
+    "slo": "Adds under 5 ms for calls (DevX proposal).",
+    "complexity": "O(1) plus stream.",
+    "scaling": "Cache resources tracked per tenant."
+   },
+   "edge_cases": [
+    "Gemini CLI caching works with API key and Vertex only, not OAuth [C:121].",
+    "Prefix below the minimum: no explicit cache.",
+    "Batch queue 72h outside SLA [A:281].",
+    "Cache TTL expires mid-session: re-create costs a write."
+   ],
+   "tests": [
+    {
+     "name": "cached count",
+     "given": "cachedContentTokenCount 48,000",
+     "expect": "Row cache_read 48,000"
+    },
+    {
+     "name": "orphan cleanup",
+     "given": "Call fails after cache creation",
+     "expect": "CachedContent deleted"
+    },
+    {
+     "name": "batch stack gem 2.5",
+     "given": "Batch flag on Gemini 2.5",
+     "expect": "stacks false in row"
+    },
+    {
+     "name": "band",
+     "given": "Prompt 250,000 tokens on a 200K-tier model",
+     "expect": "Row band over200k"
+    }
+   ],
+   "cost_levers": [
+    "Implicit cache at no storage fee.",
+    "Explicit cache only past the storage break-even.",
+    "Batch 50% [A:281]."
+   ],
+   "feedback_events": [
+    "Explicit cache read count stays below the break-even."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.p_gem.call",
+     "fields": [
+      "model",
+      "cached_tokens",
+      "explicit_cache",
+      "band"
+     ],
+     "when": "On each response"
+    },
+    {
+     "name": "token_economics.p_gem.cache_storage",
+     "fields": [
+      "cache_id",
+      "hours",
+      "tokens"
+     ],
+     "when": "On cache delete or expiry"
+    }
+   ],
+   "papers": [],
+   "repos": [],
+   "industry": "Gemini documents implicit and explicit caching; sources disagree on the discount [A:121, A:280]."
+  }
+ },
+ "p_rtr": {
+  "inn": "Dispatched request for Bedrock, OpenRouter or Vercel AI Gateway, with session id and routing options.",
+  "out": "Provider response and usage object to the tee.",
+  "store": "Reads provider key from the vault. Writes nothing.",
+  "fail": "Fail closed: return the error or hand to fb. Aggregator fallbacks are priced hops, never silent [A:227].",
+  "req": "RQ-A-010, RQ-A-018, RQ-A-026, RQ-A-033, RQ-A-034, RQ-A-043",
+  "src": [
+   "A:157",
+   "A:159",
+   "A:160",
+   "A:227",
+   "A:229",
+   "A:231",
+   "A:247",
+   "A:248",
+   "A:158"
+  ],
+  "prop": "",
+  "hard": "Vercel usage field names are not in the corpus [A:247]. Cloudflare AI Gateway is not in the corpus. OpenRouter default router costs 6.0% more per request (7.3% per MTok) [A:229].",
+  "line": "OpenRouter x-session-id: s4 order:[anthropic]\nallow_fallbacks:false require_parameters:true",
+  "dumb": "This part reaches models through middlemen such as Bedrock and OpenRouter. It pins each session to one provider so the cache keeps working.",
+  "deep": {
+   "purpose": "Aggregator connector. Bedrock Converse uses cachePoint and fields cacheReadInputTokens, cacheWriteInputTokens, inputTokens; total input is the sum [A:157, A:159]. OpenRouter uses session_id or x-session-id (max 256 chars), sticky routing with 60-minute expiry [A:231].",
+   "expected": [
+    "Bedrock: send cachePoint and sum the three input fields [A:157, A:159].",
+    "Bedrock InvokeModel: use cache_control [A:159].",
+    "OpenRouter: send x-session-id and set order, allow_fallbacks, require_parameters, data_collection [A:227, A:231].",
+    "OpenRouter: read prompt_tokens_details.cached_tokens, cache_write_tokens, cache_discount [A:231, A:227].",
+    "Vercel: session-affinity header, caching auto, cache_ttl [A:247, A:248]."
+   ],
+   "not_expected": [
+    "It never sends ttl to 5-minute-only Bedrock models [A:160].",
+    "It never relies on cache for Bedrock batch or Nova reads [A:160, A:157].",
+    "It never allows silent provider fallback that breaks the cache [A:227]."
+   ],
+   "algorithm": {
+    "name": "Aggregator pinning",
+    "formula": "provider_for_session = first choice; switch only through fb with priced cache loss",
+    "steps": [
+     "Detect backend family from the model id in cat.",
+     "Set session affinity (session_id, x-session-id or Vercel header).",
+     "Set routing options explicitly.",
+     "Send; stream.",
+     "Map usage per family and pass to the tee."
+    ],
+    "params": {
+     "openrouter_session_expiry": "60 minutes [A:231]",
+     "bedrock_tiers": "Flex, Standard, Priority, Reserved [A:159]",
+     "bedrock_batch": "50%, up to 168h, no caching [A:160]"
+    }
+   },
+   "security": [
+    "Provider keys from the vault.",
+    "Set data_collection explicitly for privacy [A:227].",
+    "Bring-your-own-key spend must still be counted [A:245]."
+   ],
+   "performance": {
+    "slo": "Adds under 5 ms (DevX proposal).",
+    "complexity": "O(1) plus stream.",
+    "scaling": "Stateless."
+   },
+   "edge_cases": [
+    "Nova: implicit caching, not billed or reported as reads, 20K max cacheable [A:157].",
+    "Default OpenRouter router adds 6.0% per request [A:229].",
+    "Provider fallback changes endpoint and loses the cache [A:231].",
+    "Usage lacks cache fields: record unknown, do not assume zero."
+   ],
+   "tests": [
+    {
+     "name": "bedrock sum",
+     "given": "inputTokens 100, read 900, write 0",
+     "expect": "total_input 1,000"
+    },
+    {
+     "name": "ttl guard",
+     "given": "5-minute-only Bedrock model with ttl 1h",
+     "expect": "ttl removed"
+    },
+    {
+     "name": "openrouter pin",
+     "given": "Session s4",
+     "expect": "x-session-id s4 and allow_fallbacks false"
+    },
+    {
+     "name": "session length",
+     "given": "session id 300 chars",
+     "expect": "Rejected, max 256"
+    }
+   ],
+   "cost_levers": [
+    "Sticky routing keeps cache hits [A:231].",
+    "Avoid the default router premium where latency allows [A:229]."
+   ],
+   "feedback_events": [
+    "Cache read share drops after a provider fallback."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.p_rtr.call",
+     "fields": [
+      "family",
+      "model",
+      "cache_read",
+      "provider_chosen"
+     ],
+     "when": "On each response"
+    }
+   ],
+   "papers": [],
+   "repos": [
+    {
+     "ref": "A:231",
+     "name": "OpenRouter",
+     "take": "Sticky routing, session_id."
+    },
+    {
+     "ref": "A:247",
+     "name": "Vercel AI Gateway",
+     "take": "Session affinity header."
+    }
+   ],
+   "industry": "OpenRouter and Vercel gateways both provide session affinity for cache hits [A:231, A:247]."
+  }
+ },
+ "b_cc": {
+  "inn": "Task, budget, turn cap and optional JSON schema from a_cli.",
+  "out": "A claude -p run result with session id, usage and structured_output.",
+  "store": "Reads policy and flags. Writes run records.",
+  "fail": "Fail closed on budget: no run starts without --max-budget-usd. A failed run is recorded as spend against the task.",
+  "req": "RQ-A-014, RQ-A-021, RQ-A-050, RQ-A-051, RQ-A-053",
+  "src": [
+   "C:094",
+   "C:080",
+   "C:073",
+   "C:095",
+   "C:136"
+  ],
+  "prop": "",
+  "hard": "--max-budget-usd stops remaining background work at the cap, so a step in flight may finish. Figures are client-side estimates. --max-turns flag text appears only in C:080.",
+  "line": "claude -p \"fix tests\" --bare --max-budget-usd 2\n--max-turns 20 --output-format json",
+  "dumb": "This part runs Claude Code as a background worker with a spending limit. It collects the result and the usage numbers.",
+  "deep": {
+   "purpose": "Backend runner for claude -p [C:094]. Flags: --output-format json, --json-schema, --bare, --permission-mode, --settings, --mcp-config, --agents, --allowedTools [C:094].",
+   "expected": [
+    "Run with --max-budget-usd and --max-turns on every run.",
+    "Return session id, usage and structured_output; exit 0 on success [C:094].",
+    "Use --bare for reproducible runs: it skips hooks, skills, MCP, plugins, memory and CLAUDE.md [C:094].",
+    "Pass hooks explicitly with --settings when needed [C:094].",
+    "Set model through --model or ANTHROPIC_MODEL [C:073]."
+   ],
+   "not_expected": [
+    "It never relies on the budget flag as a hard stop for in-flight work.",
+    "It never reads CLAUDE.md in --bare mode.",
+    "It never sums resumed totals again."
+   ],
+   "algorithm": {
+    "name": "Capped headless run",
+    "formula": "stop when cost_estimate >= max_budget_usd OR turns >= max_turns",
+    "steps": [
+     "Compose flags from policy.",
+     "Set ANTHROPIC_BASE_URL to gw so the gateway also meters.",
+     "Spawn and read JSON.",
+     "Validate structured_output against the schema.",
+     "Emit row; mark success from exit code and schema."
+    ],
+    "params": {
+     "stdin_cap": "10MB [C:094]",
+     "permission_mode": "default, acceptEdits, plan, auto, dontAsk, bypassPermissions [C:095]"
+    }
+   },
+   "security": [
+    "Never use bypassPermissions in shared runners without a sandbox (DevX proposal).",
+    "Virtual key via environment.",
+    "Per-run working directory."
+   ],
+   "performance": {
+    "slo": "Startup under 2 s (DevX proposal).",
+    "complexity": "O(1) setup.",
+    "scaling": "Worker pool."
+   },
+   "edge_cases": [
+    "Budget reached: remaining background work stops, one step may finish [C:094].",
+    "Resumed run reports whole-conversation totals [C:094].",
+    "Schema invalid: mark failed attempt.",
+    "Piped input above 10MB fails."
+   ],
+   "tests": [
+    {
+     "name": "flags present",
+     "given": "Run request",
+     "expect": "Command has --max-budget-usd and --max-turns"
+    },
+    {
+     "name": "bare hooks",
+     "given": "--bare run",
+     "expect": "No hook rows from the client"
+    },
+    {
+     "name": "schema fail",
+     "given": "structured_output breaks schema",
+     "expect": "Row success false, cost kept"
+    },
+    {
+     "name": "resume",
+     "given": "Prior total 3.20, new total 5.00",
+     "expect": "Row cost 1.80"
+    }
+   ],
+   "cost_levers": [
+    "Turn cap at P75 [C:025].",
+    "Count failed attempts in cost per success [C:028]."
+   ],
+   "feedback_events": [
+    "Budget cap hit rate high for a task class."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.b_cc.run",
+     "fields": [
+      "run_id",
+      "budget_usd",
+      "turns",
+      "exit_code",
+      "schema_ok"
+     ],
+     "when": "When a run ends"
+    }
+   ],
+   "papers": [],
+   "repos": [],
+   "industry": "Claude Code documents headless mode for CI and agent use [C:094]."
+  }
+ },
+ "b_cx": {
+  "inn": "Task, policy and user-level provider config for a Codex run.",
+  "out": "A codex exec run result.",
+  "store": "Reads policy and flags. Writes run records.",
+  "fail": "Fail closed on budget via the gateway key, because Codex has no budget flag in the corpus.",
+  "req": "RQ-A-014, RQ-A-052, RQ-A-053",
+  "src": [
+   "C:035",
+   "C:104",
+   "C:097"
+  ],
+  "prop": "",
+  "hard": "Codex budget flag, hook schema and output JSON shape are not in the corpus. Command, local-config and plugin hooks are unsupported under cloud orchestration.",
+  "line": "codex exec \"fix tests\"  (provider=token-economics)\ncodex exec resume --last",
+  "dumb": "This part runs Codex as a background worker through Token Economics. Since Codex has no spend flag, the money limit sits on Token Economics's key.",
+  "deep": {
+   "purpose": "Backend runner for codex exec and codex exec resume --last [C:035], with model_provider in user-level config [C:104].",
+   "expected": [
+    "Run codex exec with the Token Economics provider selected in user-level config.",
+    "Use a virtual key with a budget as the only hard cap.",
+    "Set model_reasoning_effort and service_tier explicitly [C:104].",
+    "Limit subagents with agents.max_threads [C:104].",
+    "Record success from exit status."
+   ],
+   "not_expected": [
+    "It never assumes a budget flag.",
+    "It never writes provider config to the project file [C:104].",
+    "It never assumes a usage JSON shape without a test."
+   ],
+   "algorithm": {
+    "name": "Gateway-capped exec",
+    "formula": "hard cap = virtual key budget (no native flag)",
+    "steps": [
+     "Check cap flags: budgetFlag false.",
+     "Require a budgeted key.",
+     "Spawn codex exec.",
+     "Read gateway rows for usage.",
+     "Mark success from exit status."
+    ],
+    "params": {
+     "agents_max_threads": "set per policy [C:104]",
+     "tool_output_token_limit": "set per policy [C:104]"
+    }
+   },
+   "security": [
+    "Virtual key via auth.command.",
+    "Sandbox mode set to the strictest that fits the task [C:104].",
+    "No project-level provider override."
+   ],
+   "performance": {
+    "slo": "Startup under 2 s (DevX proposal).",
+    "complexity": "O(1) setup.",
+    "scaling": "Worker pool."
+   },
+   "edge_cases": [
+    "Managed Work Cloud ignores model_provider [C:104].",
+    "ChatGPT sign-in cannot be assumed to work with a custom provider.",
+    "Resume last session: totals may repeat; use gateway rows.",
+    "Subagent fan-out multiplies spend; cap threads."
+   ],
+   "tests": [
+    {
+     "name": "budget key",
+     "given": "Run with key budget 2.00 USD",
+     "expect": "Gateway returns 402 after 2.00 USD of spend"
+    },
+    {
+     "name": "no flag",
+     "given": "Policy requests a Codex budget flag",
+     "expect": "Flag false; key budget used"
+    },
+    {
+     "name": "provider pinned",
+     "given": "Run in repo with project config override",
+     "expect": "User-level provider still used"
+    },
+    {
+     "name": "thread cap",
+     "given": "agents.max_threads 2",
+     "expect": "No more than 2 subagent threads"
+    }
+   ],
+   "cost_levers": [
+    "Cap threads and tool output limits [C:104]."
+   ],
+   "feedback_events": [
+    "Gateway 402 mid-run."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.b_cx.run",
+     "fields": [
+      "run_id",
+      "budget_usd",
+      "exit_code"
+     ],
+     "when": "When a run ends"
+    }
+   ],
+   "papers": [],
+   "repos": [],
+   "industry": "Codex exec is the documented headless path [C:035]."
+  }
+ },
+ "b_oauth": {
+  "inn": "Subscription OAuth token and the anthropic-beta header from the client.",
+  "out": "The same Authorization header and anthropic-beta values forwarded upstream.",
+  "store": "Reads headers in memory. Writes nothing: no token is stored or logged.",
+  "fail": "Fail closed for the subscription route. If forwarding is unsafe, return 502 and skip the upstream call. A mangled token could fail or leak.",
+  "req": "RQ-A-015, RQ-A-016",
+  "src": [
+   "A:193",
+   "C:076",
+   "C:010"
+  ],
+  "prop": "The no-storage rule is a DevX proposal; the corpus states only that the capability must be forwarded.",
+  "hard": "Whether a custom Codex provider can carry ChatGPT sign-in is not in the corpus. Subscription traffic has no dollar figure; only percentage windows exist.",
+  "line": "Authorization: Bearer sk-ant-oat...  (not logged)\nanthropic-beta: oauth-... forwarded as is",
+  "dumb": "Some people use a subscription login instead of a key. This part passes that login through untouched and never keeps a copy.",
+  "deep": {
+   "purpose": "Allow Claude Code on a subscription (claude.ai OAuth) to work through the gateway. The gateway must forward the OAuth capability in anthropic-beta [A:193]. Token Economics can route and observe; billing and limits stay with the subscription.",
+   "expected": [
+    "Forward Authorization and anthropic-beta untouched.",
+    "Mark the row auth_mode subscription and cost_source client.",
+    "Read rate_limits.five_hour and seven_day from the status-line channel [C:076].",
+    "Show subscription spend as percentage windows, not dollars.",
+    "Pass the token only to b_cc paths."
+   ],
+   "not_expected": [
+    "It never stores, hashes for reuse or logs the token.",
+    "It never converts subscription limits to tokens [C:010].",
+    "It never applies a dollar budget to subscription traffic."
+   ],
+   "algorithm": {
+    "name": "Header passthrough",
+    "formula": "upstream.headers = client.headers (auth, anthropic-beta) unchanged",
+    "steps": [
+     "Detect OAuth by header shape.",
+     "Copy auth and anthropic-beta.",
+     "Strip nothing else.",
+     "Mark auth_mode.",
+     "Redact in every log line."
+    ],
+    "params": {
+     "status_line_fields": "rate_limits.five_hour.used_percentage, rate_limits.seven_day.used_percentage [C:076]"
+    }
+   },
+   "security": [
+    "Token never written to disk, log or metric.",
+    "Memory-only handling with immediate release.",
+    "Tokens never leave the Token Economics to Anthropic path.",
+    "Alert if a token shape appears in any stored field."
+   ],
+   "performance": {
+    "slo": "Zero added latency beyond header copy (DevX proposal).",
+    "complexity": "O(1).",
+    "scaling": "Stateless."
+   },
+   "edge_cases": [
+    "Gateway drops the oauth beta value: calls fail with auth errors.",
+    "Token refresh happens client-side; guard sees a new header.",
+    "Subscription has no dollar meter; budget alerts use percentage windows.",
+    "Anthropic does not support non-Claude routing for Claude Code [A:193]."
+   ],
+   "tests": [
+    {
+     "name": "passthrough",
+     "given": "Request with oauth beta and bearer",
+     "expect": "Upstream headers identical"
+    },
+    {
+     "name": "no storage",
+     "given": "Scan logs after 100 calls",
+     "expect": "Zero token strings found"
+    },
+    {
+     "name": "mode label",
+     "given": "OAuth call",
+     "expect": "auth_mode subscription, cost_source client"
+    },
+    {
+     "name": "beta dropped",
+     "given": "Test gateway build that strips anthropic-beta",
+     "expect": "Test fails before release"
+    }
+   ],
+   "cost_levers": [
+    "Window-aware routing on subscription avoids limit stalls."
+   ],
+   "feedback_events": [
+    "Auth failure spike after Claude Code upgrade."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.b_oauth.pass",
+     "fields": [
+      "session_id",
+      "auth_mode",
+      "beta_forwarded"
+     ],
+     "when": "On each subscription call"
+    }
+   ],
+   "papers": [],
+   "repos": [
+    {
+     "ref": "C:088",
+     "name": "Claude apps gateway",
+     "take": "Forwards anthropic-beta values."
+    }
+   ],
+   "industry": "Anthropic's own gateway forwards anthropic-beta by construction [C:088]."
+  }
+ },
+ "cat": {
+  "inn": "Model id from a request or policy.",
+  "out": "Exact model record: id, provider, tier, context limits, minimum prefix, rpm and tpm.",
+  "store": "Reads catalogue rows. Writes new rows after review.",
+  "fail": "Fail closed on an unknown id: reject with unknown_model. A partial-name match gives a silent wrong price [A:232].",
+  "req": "RQ-A-036, RQ-A-037, RQ-A-038, RQ-A-039",
+  "src": [
+   "A:232",
+   "A:199",
+   "C:051",
+   "A:195",
+   "A:150",
+   "A:219",
+   "C:010"
+  ],
+  "prop": "",
+  "hard": "Anthropic minimum prefix conflicts: Sonnet 4.6 1,024 vs 2,048; Opus 4.7 2,048 vs 4,096 [A:199, C:051]; store the larger until tested. Model names (Fable 5.1, Opus 5.5, GPT-5.6, Grok 4.7) are quoted as in the corpus and unverifiable.",
+  "line": "claude-sonnet-5-5 tier=standard min_prefix=1024\nlimits rpm,tpm from provider",
+  "dumb": "This is the list of exact model names Token Economics knows. If a name is not on it, Token Economics refuses rather than guessing.",
+  "deep": {
+   "purpose": "Exact model ids, tiers and limits for the router and connectors. Price rows live in pb; the catalogue holds facts such as minimum prefix, context window, tier support.",
+   "expected": [
+    "Match exact ids only.",
+    "Hold per model: provider, tiers (standard, batch, flex, priority), min_prefix, max breakpoints, context band thresholds.",
+    "Hold limits: rpm, tpm, rpd, batch_max_requests, batch_window [A:219].",
+    "Hold flags: 429_billed, auto_fallback [A:195, A:150].",
+    "Carry source id and verified date per row."
+   ],
+   "not_expected": [
+    "It never prices a call; pb does.",
+    "It never accepts aliases without an explicit alias row.",
+    "It never edits rows without review."
+   ],
+   "algorithm": {
+    "name": "Exact-id lookup",
+    "formula": "record = catalogue[provider][exact_id]; else error",
+    "steps": [
+     "Normalise case only; keep dots and dashes.",
+     "Look up by (provider, id).",
+     "Return record and tier flags.",
+     "Log lookup misses."
+    ],
+    "params": {
+     "min_prefix_rule": "store the larger of conflicting values [C:051, A:199]",
+     "haiku_5_5_band": "100K split [C:010]"
+    }
+   },
+   "security": [
+    "Catalogue edits are audited policy changes.",
+    "No credentials stored."
+   ],
+   "performance": {
+    "slo": "In-memory lookup (DevX proposal).",
+    "complexity": "O(1).",
+    "scaling": "Loaded per instance."
+   },
+   "edge_cases": [
+    "Model retired: row expires; calls rejected with model_retired.",
+    "Two providers expose one model: separate rows.",
+    "Anthropic Haiku 5.5 tiered at 100K [C:010].",
+    "Alias such as a latest tag: refuse unless mapped."
+   ],
+   "tests": [
+    {
+     "name": "exact",
+     "given": "claude-sonnet-5-5",
+     "expect": "Record returned"
+    },
+    {
+     "name": "partial",
+     "given": "sonnet",
+     "expect": "unknown_model error"
+    },
+    {
+     "name": "min prefix conflict",
+     "given": "Sonnet 4.6",
+     "expect": "min_prefix 2,048"
+    },
+    {
+     "name": "retired",
+     "given": "Expired row",
+     "expect": "model_retired"
+    }
+   ],
+   "cost_levers": [
+    "Right min_prefix avoids useless cache writes [A:201]."
+   ],
+   "feedback_events": [
+    "Lookup miss rate above 0.5% (DevX proposal)."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.cat.miss",
+     "fields": [
+      "requested_id",
+      "provider"
+     ],
+     "when": "On an unknown model id"
+    }
+   ],
+   "papers": [],
+   "repos": [
+    {
+     "ref": "A:232",
+     "name": "Langfuse",
+     "take": "Exact model match; partial-name matching gives wrong prices."
+    }
+   ],
+   "industry": "Langfuse warns that partial-name matches silently price wrongly [A:232]."
+  }
+ },
+ "rl": {
+  "inn": "Provider headers and status codes: rate-limit remaining, 429, retry-after.",
+  "out": "Limit events to fb, and limits to the tier selector.",
+  "store": "Reads response headers and catalogue limits. Writes counters per model, tier and key.",
+  "fail": "Fail open on counter loss: calls proceed and the provider 429 is the backstop. Budget protection is in bres.",
+  "req": "RQ-A-024, RQ-A-038, RQ-A-039",
+  "src": [
+   "A:195",
+   "A:150",
+   "A:219",
+   "A:148",
+   "A:202"
+  ],
+  "prop": "Counter window length is a DevX proposal.",
+  "hard": "Header names per provider are not all in the corpus. Whether a 429 is billed varies; flex and Azure flex 429 are not charged [A:195, A:150].",
+  "line": "429 on model=gpt-5.6 tier=flex retry_after=7s\n-> event limit billed=false -> fb",
+  "dumb": "This part watches for signs that a provider is saying slow down. When it hears that, it tells the fallback step.",
+  "deep": {
+   "purpose": "Track rpm (requests per minute), tpm (tokens per minute) and 429 responses, and record whether a 429 is billed [A:195, A:150].",
+   "expected": [
+    "Count requests and tokens per (provider, model, tier, key) per minute.",
+    "Read provider rate-limit headers when present.",
+    "Emit a limit event on 429 with the billing flag.",
+    "Warn when a prefix and key nears 15 requests per minute on OpenAI [A:148].",
+    "Feed limits to the tier selector."
+   ],
+   "not_expected": [
+    "It never retries by itself.",
+    "It never hides a billed 429.",
+    "It never changes a model."
+   ],
+   "algorithm": {
+    "name": "Sliding-window counter",
+    "formula": "near_limit = rpm_used / rpm_limit >= 0.8 (DevX proposal)",
+    "steps": [
+     "Increment counters on each call.",
+     "Read remaining headers on each response.",
+     "On 429 emit event with retry-after and billed flag.",
+     "Expire old counts."
+    ],
+    "params": {
+     "openai_prefix_cap": "about 15 requests per minute [A:148, A:202]",
+     "flex_429": "not charged [A:195, A:150]"
+    }
+   },
+   "security": [
+    "Counters hold counts only.",
+    "Per-tenant isolation of counters."
+   ],
+   "performance": {
+    "slo": "Update under 1 ms (DevX proposal).",
+    "complexity": "O(1) per call.",
+    "scaling": "In-memory with periodic sync."
+   },
+   "edge_cases": [
+    "Batch jobs hit enqueued-token quota rather than rpm.",
+    "429 on a billed tier: cost recorded.",
+    "Header missing: rely on counters.",
+    "Azure flex has no auto-fallback [A:150]."
+   ],
+   "tests": [
+    {
+     "name": "flex 429",
+     "given": "Flex call returns 429",
+     "expect": "Event billed false, sent to fb"
+    },
+    {
+     "name": "near limit",
+     "given": "rpm 85 of 100",
+     "expect": "near_limit true"
+    },
+    {
+     "name": "missing headers",
+     "given": "No rate-limit headers",
+     "expect": "Counters used"
+    },
+    {
+     "name": "prefix cap",
+     "given": "16th request in a minute on one key",
+     "expect": "Warning prefix_cap"
+    }
+   ],
+   "cost_levers": [
+    "Avoid billed 429 and cache overflow [A:148]."
+   ],
+   "feedback_events": [
+    "429 rate rises for one key."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.rl.limit",
+     "fields": [
+      "provider",
+      "model",
+      "tier",
+      "billed",
+      "retry_after_s"
+     ],
+     "when": "On a 429"
+    }
+   ],
+   "papers": [],
+   "repos": [],
+   "industry": "Gateways such as LiteLLM and OpenRouter expose limits and fallbacks [C:060, A:227]."
+  }
+ },
+ "fb": {
+  "inn": "Limit or error events from rl and provider failures, plus the fallback chain from policy.",
+  "out": "A priced fallback hop to casc or the next backend, with a logged reason.",
+  "store": "Reads chain config and price rows. Writes hop records.",
+  "fail": "Fail closed: when no priced fallback exists, return the error. A silent switch could lose the cache and raise cost.",
+  "req": "RQ-A-010, RQ-A-024, RQ-A-039, RQ-A-040",
+  "src": [
+   "A:195",
+   "A:281",
+   "A:219",
+   "A:192",
+   "A:204",
+   "C:030",
+   "A:008",
+   "C:055"
+  ],
+  "prop": "",
+  "hard": "Cache loss at a model switch is unmeasured in the corpus (R1 largest unknown). OpenRouter fallbacks can break cache [A:231]. Azure flex has no auto-fallback [A:150].",
+  "line": "flex 429 -> retry standard  hop_cost +0.0031 USD\nreason=limit  cache_loss=priced",
+  "dumb": "When a provider says no, this part picks the next option. It always works out the cost of switching first and writes down why.",
+  "deep": {
+   "purpose": "Ordered fallback with pricing: flex to standard, batch to standard after a 429, primary to secondary model. Never silent [A:195, A:281, A:219].",
+   "expected": [
+    "Price each hop including cache loss on the incoming provider [C:030, A:204].",
+    "Log reason: limit, error, timeout.",
+    "Retry batch or flex work on standard after a 429 [A:195, A:281, A:219].",
+    "Default to the same model after an error unless the saving beats cache-rewrite cost [A:008].",
+    "Stop after the chain ends and return the error."
+   ],
+   "not_expected": [
+    "It never switches model without a priced reason.",
+    "It never retries a billed failure in a loop.",
+    "It never changes the session's provider mid-session without bres approval."
+   ],
+   "algorithm": {
+    "name": "Priced hop",
+    "formula": "hop iff budget_ok AND expected_saving > cache_rewrite_cost(incoming) [C:030]",
+    "steps": [
+     "Receive the failure event.",
+     "Pick the next entry in the chain.",
+     "Ask swp for cache-loss price.",
+     "Ask bres for a hold.",
+     "Dispatch or return the error.",
+     "Log hop, reason and price."
+    ],
+    "params": {
+     "max_hops": "2 (DevX proposal)",
+     "same_model_retention_after_error": "90.2% and 80.9% in A:008"
+    }
+   },
+   "security": [
+    "Fallback never crosses a data-residency boundary set by the tenant.",
+    "Hop log has ids only."
+   ],
+   "performance": {
+    "slo": "Decision under 10 ms (DevX proposal).",
+    "complexity": "O(chain length).",
+    "scaling": "Stateless."
+   },
+   "edge_cases": [
+    "Both providers rate limited: return the first error.",
+    "Fallback target is more expensive: needs explicit policy.",
+    "Streaming already started: cannot hop; return partial and error.",
+    "Batch error not billed [A:219]."
+   ],
+   "tests": [
+    {
+     "name": "flex to standard",
+     "given": "Flex 429",
+     "expect": "Standard dispatch, hop logged reason limit"
+    },
+    {
+     "name": "no priced fallback",
+     "given": "Chain empty",
+     "expect": "Original error returned"
+    },
+    {
+     "name": "max hops",
+     "given": "Three consecutive failures, max 2",
+     "expect": "Error after 2 hops"
+    },
+    {
+     "name": "mid-stream",
+     "given": "Stream failed after 10 chunks",
+     "expect": "No hop, partial returned"
+    }
+   ],
+   "cost_levers": [
+    "Avoid cache loss by staying on the same model after an error [A:008]."
+   ],
+   "feedback_events": [
+    "Hop rate above 5% for a route (DevX proposal)."
+   ],
+   "analytics_events": [
+    {
+     "name": "token_economics.fb.hop",
+     "fields": [
+      "from",
+      "to",
+      "reason",
+      "cache_loss_usd"
+     ],
+     "when": "On each hop"
+    }
+   ],
+   "papers": [
+    {
+     "ref": "A:008",
+     "key_idea": "MTRouter retains the model after an error 90.2% and 80.9% of the time.",
+     "how": "Default stay-put after an error."
+    }
+   ],
+   "repos": [],
+   "industry": "LiteLLM budget fallbacks and OpenRouter provider fallbacks are the common patterns [C:060, A:227]."
+  }
+ }
+}

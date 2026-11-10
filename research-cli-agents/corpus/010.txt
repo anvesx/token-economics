@@ -1,0 +1,287 @@
+TITLE: Claude Code Billing & Usage Limits Explained (Oct 2026)
+URL: https://codersera.com/blog/anthropic-june-2026-billing-change-claude-code
+ORG: Codersera  TYPE: blog  DATE: 2026-10
+
+Claude Code Billing & Usage Limits Explained (Oct 2026)
+
+ Search articles, topics, and guides
+ Search
+
+Quick answer. As of October 2026, Claude Code is included in every paid Claude plan (Pro $20/month, or $17/month billed annually; Max from $100/month), metered by a rolling five-hour window plus weekly limits that Claude chat and Cowork share. Pro and Team Standard now default to Opus 5.5 instead of Sonnet. On the API, cache reads on Opus 5.5 and Sonnet 5.5 bill at 5% of the input price, not the old 10%. Max and Team plans now also get monthly API credits ($100 on Max 5x, $200 on Max 20x, up to $500 pooled on Team), but those credits do not pay for interactive Claude Code or usage credits.
+
+Updated 2026-10-26: Updated for Opus 5.5 becoming the default model on Pro and Team Standard, the 5% and 2.5% cache-read pricing on Opus 5.5, Sonnet 5.5 and Fable 5.1, Haiku 5.5 as a cheap subagent model, the October 7 API credits for Max and Team, and the new warning before resuming a long conversation. Removed figures that no longer apply.
+Claude Code billing is confusing for a specific reason. You pay in one unit (a monthly subscription) and use up another (tokens), and Anthropic doesn't publish how one converts to the other. On top of that, three things changed in the last few weeks. The default model on the $20 plan moved up a tier. Cache pricing on the newest models was cut in half or more. And Max and Team subscribers got a separate monthly API balance that covers some Claude Code-adjacent usage and leaves the rest out.
+This page covers what each plan buys, current per-token prices, where the limits sit, what the new API credits do and don't cover, and the settings that most affect your burn rate. Every price and version number comes from Anthropic's pricing pages, Claude Code docs or the Claude Code changelog, checked on 26 October 2026.
+What does Claude Code cost as of October 2026?
+You can pay for Claude Code in two separate ways, and a single session uses one or the other, never both.
+Route one: a Claude subscription. You sign in with your claude.ai account and Claude Code draws on your plan's usage allowance. There is no per-token bill until you turn on usage credits. Per claude.com/pricing:
+
+PlanPriceClaude CodeOpusFableMonthly API credits
+
+Free$0NoNoNoNo
+
+Pro$17/mo billed annually ($200 up front), or $20/mo monthlyYesYesUsage credits onlyNo
+
+Max 5x / Max 20xFrom $100/mo (monthly billing only)YesYesUp to 50% of weekly limits$100 (5x) / $200 (20x)
+
+Team, Standard seat$20/seat/mo annual, $25 monthlyYesYesNot listed for Standard seats$20/seat, pooled, $500 cap
+
+Team, Premium seat$100/seat/mo annual, $125 monthly (5x Standard usage)YesYesUp to 50% of weekly limits$100/seat, pooled, $500 cap
+
+Enterprise$20/seat/mo annual (20-seat minimum) plus usage at API ratesYesYesYesNo
+
+Two corrections to earlier versions of this page: Opus is no longer usage-credits-only on Pro (it is listed as included, and is now the default), and a Team Premium seat costs $100–125 a month, not the $20–25 of a Standard seat.
+Route two: an API key. You set ANTHROPIC_API_KEY and pay per token at list price, with no subscription involved. Current rates from Anthropic's pricing docs, per million tokens:
+
+ModelInputOutputCache readCache read as % of inputCache write (5m / 1h)
+
+Claude Fable 5.1$10$50$0.252.5%$12.50 / $20
+
+Claude Opus 5.5$4$20$0.205%$5 / $8
+
+Claude Sonnet 5.5$2$10$0.105%$2.50 / $4
+
+Claude Haiku 5.5 (prompt ≤100K tokens)$0.10$0.50$0.0110%$0.125 / $0.20
+
+Claude Haiku 5.5 (prompt >100K tokens)$0.50$2.50$0.0510%$0.625 / $1
+
+Claude Opus 5 (previous)$5$25$0.5010%$6.25 / $10
+
+Claude Sonnet 5 (previous)$2$10$0.2010%$2.50 / $4
+
+The cache column is the main correction in this update. Anthropic's pricing page states that cache hits on Opus 5.5 and Sonnet 5.5 are priced at 0.05x the base input price. Fable 5.1 and Mythos 5.1 are priced at 0.025x; every other model, Haiku 5.5 included, keeps the standard 0.1x. Claude Code's own cost reporting caught up in v2.1.296, which changed /cost, the status line, --max-budget-usd and the SDK to price Sonnet 5.5 cache reads at $0.10 per million (it had used $0.20). Because Claude Code re-sends your whole conversation every turn, cheaper cache reads matter more for a coding agent than for almost any other workload.
+A few other pricing facts that apply to coding workloads, all from Anthropic's pricing and prompt-caching docs:
+Haiku 5.5 has a 100K-token price step. A request whose prompt is over 100,000 tokens, counting cache reads and writes, pays $0.50/$2.50 instead of $0.10/$0.50. Long-running subagents can cross that line. Even above it, Haiku 5.5 still costs a quarter of Sonnet 5.5's rate.
+The 1M-token context window costs the standard rate on Claude 4.6 and later models, except Haiku 5.5. A 900K-token request bills at the same per-token rate as a 9K one.
+Fast mode on Opus 5.5 costs $8/$40, twice the standard rate. Per the prompt caching docs, fast mode and standard speed keep separate caches.
+Claude 4.7 and later use a newer tokenizer that produces roughly 30% more tokens for the same text, so token counts from Sonnet 4.6 are not comparable to counts from Opus 5.5.
+For a model-level breakdown, see our Claude Opus 5.5 guide and Claude Sonnet 5.5 guide. For the previous generation, see our Claude Opus 5 launch guide.
+Which model does my plan default to now?
+This is the change most likely to affect what a Pro user sees on their usage meter. The Claude Code changelog records it in two releases:
+v2.1.280 added Claude Opus 5.5 (claude-opus-5-5) as the default Opus model, and changed the default model on Pro and Team Standard plans from Sonnet to Opus, matching Max, Team Premium and Enterprise.
+v2.1.293 added Claude Haiku 5.5 (claude-haiku-5-5) as the default Haiku model on the Anthropic API.
+Anthropic's model configuration docs now list a single default across Pro, Max, Team, Enterprise and the Anthropic API: Opus 5.5. Claude Platform on AWS, Amazon Bedrock and Google Cloud also default to Opus 5.5. Microsoft Foundry defaults to Sonnet 4.5. If an admin sets an organization default model, that takes precedence. The aliases resolve as follows:
+
+Provideropussonnethaiku
+
+Anthropic API (and claude.ai plans)Opus 5.5Sonnet 5.5Haiku 5.5
+
+Claude Platform on AWSOpus 5.5Sonnet 4.6Haiku 4.5
+
+Amazon Bedrock, Google CloudOpus 5.5Sonnet 4.5Haiku 4.5
+
+Microsoft FoundryOpus 4.6Sonnet 4.5Haiku 4.5
+
+Why it matters for your limits. Anthropic doesn't publish how plan limits weight each model. But at list price, Opus 5.5 costs twice what Sonnet 5.5 does on input, output and cache reads, and plans still have separate model-family limits (Claude Code shows distinct "You've hit your Opus limit" and "You've hit your Sonnet limit" messages). A Pro user who never touched /model was running on Sonnet last month and is running on Opus now. If your allowance runs out sooner than it used to, check this first. One thing works in the other direction: Opus 5.5, Sonnet 5.5 and Haiku 5.5 default to medium effort, one level below the high that most other models use (Opus 4.7 defaults to xhigh), so they spend fewer thinking tokens unless you raise the effort.
+To return the main session to Sonnet, run /model sonnet at the start of a session, or set it as your default in /config. Do it before the conversation builds up, because a model switch starts a fresh cache.
+How do I move subagents to Sonnet or Haiku 5.5?
+Subagents are where the cheapest savings are. Each subagent sends its own requests on top of the main conversation's, and by default a subagent with no model of its own inherits the session model. Now that the default is Opus 5.5 on every claude.ai plan and the Anthropic API, that usually means Opus. The subagents docs describe three ways to change this.
+1. Set the model and effort in the subagent definition. Frontmatter accepts model (sonnet, opus, haiku, fable, a full model ID, or inherit) and effort (low through max, depending on the model). Save it in .claude/agents/ for one project or ~/.claude/agents/ for all of them:
+---
+name: test-runner
+description: Runs the test suite and reports only failing tests with file and line.
+tools: Bash, Read, Grep
+model: haiku
+effort: low
+---
+
+Run the project's test command. Return each failing test's name, file, line,
+and the first relevant assertion message. Do not attempt fixes.
+2. Force one model for every subagent. CLAUDE_CODE_SUBAGENT_MODEL is only a default, so a definition's model field or a model Claude passes still takes precedence. To override all of them, including teammates and workflow agents, also set CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 (Claude Code v2.1.257 or later). Forks still run on the main conversation's model.
+{
+ "env": {
+ "CLAUDE_CODE_SUBAGENT_MODEL": "haiku",
+ "CLAUDE_CODE_SUBAGENT_MODEL_FORCE": "1"
+ }
+}
+3. Set effort for each invocation. Since v2.1.292, the Agent tool takes an effort parameter, so you can ask Claude to run a particular subagent at low effort without editing its file. The parameter overrides the definition's effort field and still applies when the subagent is resumed. The CLAUDE_CODE_EFFORT_LEVEL environment variable takes precedence over both. Run /tasks while a subagent is working to confirm which model and effort it actually got.
+Which model to pick: Haiku 5.5 suits mechanical work such as running tests, grepping logs and summarizing documentation. Sonnet 5.5 suits subagents that write code. Keep Opus 5.5 for planning and review. For long-running Haiku subagents, watch the 100K-token price step described above.
+What are the new Max and Team API credits, and do they cover Claude Code?
+On 7 October 2026, Anthropic added monthly Claude API credits to Max and Team plans. Per the platform docs and the Help Center article:
+
+PlanMonthly API credit
+
+Max 5x$100
+
+Max 20x$200
+
+Team, Standard seat$20 per seat, pooled
+
+Team, Premium seat$100 per seat, pooled
+
+Team pool cap$500 per month
+
+Free, Pro, EnterpriseNot eligible
+
+Anthropic's own example of the Team pool: three Standard seats and two Premium seats receive (3 × $20) + (2 × $100) = $260 a month. A team with 10 Standard and 5 Premium seats would work out to (10 × $20) + (5 × $100) = $700, which the cap reduces to $500.
+What the credits cover: the Claude API (Messages and Message Batches), Claude Managed Agents, the Console Playground, and the Claude Agent SDK. The platform docs list Claude Code as not covered. Per the Help Center FAQ, though, claude -p is covered when run with a linked-org API key, because that usage bills as Agent SDK usage.
+What they don't cover:
+Interactive Claude Code in the terminal, IDE, desktop app or web.
+Runs started by the Claude Code GitHub Action, an IDE extension or the desktop app, even with -p.
+Usage credits (extra usage) in Claude, Claude Code or Cowork.
+Claude Platform on AWS, Amazon Bedrock, Google Cloud or Microsoft Foundry.
+They also don't roll over. Unused credits expire at the end of each billing cycle, or monthly on annual plans. They don't raise your plan's usage limits either. Included credits are spent before any credits you bought. When an organization runs out and has no purchased credits, API requests stop. Anthropic says usage "is never charged to your Claude plan." Each plan links to exactly one Console organization, which you can't change yourself.
+Where this helps Claude Code users. The useful overlap is scripted work. A headless run such as claude --bare -p "…" with ANTHROPIC_API_KEY set to a key from your linked organization draws on those credits instead of your subscription window. As a rough illustration, take a scripted Sonnet 5.5 job that reads 240K cached tokens, writes 60K tokens to the 5-minute cache and produces 20K output tokens per run:
+Cache reads: 240,000 × $0.10 / 1M = $0.024
+Cache writes: 60,000 × $2.50 / 1M = $0.150
+Output: 20,000 × $10 / 1M = $0.200
+Total: $0.374 per run, so a Max 5x plan's $100 covers about 267 runs a month ($100 ÷ $0.374 ≈ 267).
+Those token counts are assumptions for illustration, not Anthropic figures. Measure your own: --output-format json returns total_cost_usd and a per-model breakdown for every run. Don't route a GitHub Action through this expecting it to be covered, because Action-started runs are explicitly excluded.
+What are Claude Code's usage limits right now?
+Anthropic publishes the shape of the limits, not the token counts. Any article giving you a firm "X million tokens per week" figure for a plan made it up. What is documented, per claude.com/pricing and the Claude Code costs docs:
+
+WindowHow it worksShared with
+
+SessionRolling five-hour window (all plans, including Free)Claude on web, desktop, mobile (including Cowork) and Claude Code
+
+WeeklyWeekly limit on paid plans, on top of the session windowSame pool
+
+Model-familySeparate Opus and Sonnet limits; Fable capped at 50% of weekly limits on Max and Team PremiumSame pool, model-scoped
+
+Relative sizes: Pro gets at least 5x Free's usage per five-hour session, and Max gets 5x or 20x Pro. Team Standard seats get more than Pro, and Premium seats get 5x Standard. Anthropic also reserves the right to apply other caps "at our discretion."
+To see where you stand, run /usage in Claude Code or open Settings → Usage on claude.ai. On a subscription, /usage attributes recent usage to individual skills, subagents, plugins and MCP servers. It also lists recommendations for any behavior behind 10% or more of your usage, and shows the heaviest /loop tasks by total tokens. From v2.1.305, pressing f applies the fixes it can, such as /effort changes. From v2.1.251, the Session block also includes a Prompt cache (main) line with your hit rate and miss count.
+Why does resuming an old conversation eat your limit?
+When you resume a session, Claude Code sends the whole conversation again. If you have been away longer than the cache lifetime (one hour for the main conversation on a subscription within plan limits), that entire history is processed again as uncached input. A long conversation resumed the next morning can take a real share of a five-hour window before you have typed anything useful.
+Claude Code v2.1.304 added a guard for this. On Pro and Max plans, it now warns you when resuming an inactive conversation would use a noticeable share of your 5-hour limit. You can resume anyway, or start a new conversation, where Claude can look up the previous one if you refer to it. Starting fresh is usually cheaper. For the same reason, /compact on a cold, resumed session is expensive: the summarization request reads the full history uncached.
+What happens when you hit a limit?
+The message tells you which recovery works:
+"You've hit your session limit" / "You've hit your weekly limit": the seat-level window, shared across all models. Switching with /model doesn't help. The message shows when the window resets.
+"You've hit your Opus limit" / "You've hit your Sonnet limit": a model-family limit. Switching to a model outside that family does keep you working. Now that Opus is the default on Pro too, an Opus-limit message means /model sonnet is a valid next step.
+Your options:
+Wait for the reset. On v2.1.234 or later, Claude Code can wait and continue the interrupted task automatically after the reset, either on its own or through /rate-limit-options.
+Turn on usage credits. Run /usage-credits. On Pro and Max it opens Settings → Usage, where you can turn credits on, check your balance and set a monthly spend limit. Usage past your plan limit then bills at API rates. Team and Enterprise members either open the org usage settings or send their admin a request, depending on their role. For how usage credits work in Claude chat and Cowork, see our Claude usage credits guide.
+Move up a tier, if you hit the wall every week.
+One catch to plan for: once you start drawing on usage credits, the main conversation's cache TTL drops from one hour to five minutes, because you are now paying for that usage. After that, every pause longer than five minutes re-reads your context uncached. You can override this; see the next section. For errors that aren't billing limits, such as 429s and auth failures, see our Claude Code common errors and troubleshooting guide.
+How do you reduce your Claude Code burn?
+Three levers are specific to how Claude Code is billed: cache economics, cache TTL and model choice. The other three get one line each here; our guide on how to stretch Claude Code usage limits is the full playbook.
+1. Protect the prompt cache. This matters more than anything else on the list. Claude Code re-sends your full conversation every turn, and caching is what keeps that from costing full price each time. Anthropic's /usage example output shows a session with 91% of input tokens served from cache. Here is what that hit rate means at current list prices:
+
+ModelBlended input cost at 91% cache hitsvs. list input
+
+Opus 5.5(0.91 × $0.20) + (0.09 × $4.00) = $0.542/M−86% vs $4
+
+Opus 5 (previous, 10% cache)(0.91 × $0.50) + (0.09 × $5.00) = $0.905/M−82% vs $5
+
+Sonnet 5.5(0.91 × $0.10) + (0.09 × $2.00) = $0.271/M−86% vs $2
+
+Fable 5.1(0.91 × $0.25) + (0.09 × $10.00) = $1.128/M−89% vs $10
+
+Haiku 5.5 (≤100K prompt)(0.91 × $0.01) + (0.09 × $0.10) = $0.018/M−82% vs $0.10
+
+Uncached input was treated at the base input rate for simplicity. Cache writes cost 1.25x (5-minute) or 2x (1-hour) the base rate, so real figures run slightly higher. The comparison still holds: at the same hit rate, Opus 5.5's effective input cost is about 40% below Opus 5's ($0.542 vs $0.905). The flip side is that misses now cost relatively more. On Opus 5.5, an uncached token costs 20 times a cached one.
+The cache matches on prefix, so a change near the front of the request means everything after it gets recomputed. According to Anthropic's prompt caching docs, these invalidate it mid-session: switching models (including each plan-mode toggle under opusplan), turning on fast mode, connecting or removing an MCP server whose tools load upfront, enabling a plugin that adds MCP servers, denying an entire tool when tool search is off, /compact, accumulating many images, and upgrading Claude Code. Changing effort used to be on that list for every model. On Opus 5.5, Sonnet 5.5, Haiku 5.5 and Fable 5.1, with an API key or a Claude subscription, changing effort now keeps the cache. That doesn't apply on Bedrock, Google Cloud or a Claude apps gateway. Editing files, editing CLAUDE.md, changing permission mode, invoking skills, /recap, /rewind and spawning subagents all keep the cache. Our prompt caching cost guide explains the underlying mechanism.
+2. Set the cache TTL explicitly on an API key or usage credits. On a subscription within plan limits, the main conversation gets a one-hour TTL. On an API key, a cloud provider or usage credits, it defaults to five minutes. Set promptCacheTtl to 1h (or CLAUDE_CODE_PROMPT_CACHE_TTL=1h) to get the hour back. Subagents fall in a separate bucket that defaults to five minutes even on a subscription; subagentPromptCacheTtl controls it. The prompt caching docs list both as requiring v2.1.242 or later, while the changelog records them under v2.1.243, so treat v2.1.243 as the safe minimum.
+3. Match the model to the job, now that the default has moved. Opus 5.5 is 2x Sonnet 5.5 per token, and Sonnet 5.5 is 20x Haiku 5.5 below the 100K step. Anthropic's costs page says plainly that Sonnet handles most coding tasks and that Opus should be kept for complex architecture and multi-step reasoning. opusplan uses Opus for planning and Sonnet for execution, but remember that each plan-mode toggle is a model switch. Move subagents off Opus as described above.
+4. Leave effort at the 5.5 default. Thinking tokens bill as output, and Opus 5.5, Sonnet 5.5 and Haiku 5.5 already default to medium.
+5. Clear between unrelated tasks with /clear, and start fresh instead of resuming a stale conversation.
+6. Watch the multipliers. Anthropic's costs docs say agent teams use roughly 7x the tokens of a standard session when teammates run in plan mode.
+Plan or API: which is cheaper for a real coding workload?
+Anthropic publishes a yardstick in its costs docs: across enterprise deployments, Claude Code averages about $13 per developer per active day and $150–250 per developer per month, and stays under $30 per active day for 90% of users. Anthropic doesn't say which model mix produced that average, and Opus 5.5's lower token and cache prices may pull it down over time, so treat it as a rough benchmark.
+
+You payBreak-even at $13/active dayVerdict
+
+Pro, $20/mo$20 ÷ $13 ≈ 1.5 active days/monthPays for itself almost immediately for regular users
+
+Max 5x, $100/mo$100 ÷ $13 ≈ 7.7 active days/monthWorth it for anyone coding more than about two days a week; also carries $100 in API credits
+
+API key, pay-as-you-go—Cheaper only for occasional use, or when you need per-project cost attribution
+
+The API still wins for occasional use, for per-project cost attribution (usage inside a subscription isn't metered in dollars), and for CI. On CI, the headless docs say --bare "is the recommended mode for scripted and SDK calls, and will become the default for -p in a future release." Bare mode never reads OAuth credentials or the keychain and needs an API key. If that default changes, headless runs that rely on a claude.ai login would need an API key, which moves them to API billing. On Max and Team, that API billing can now come out of the monthly credits.
+What happened to Anthropic's June 15 billing change?
+This history explains the current setup, and it is still widely misreported:
+
+DateWhat happened
+
+13 May 2026Anthropic, via its ClaudeDevs account, announces (as reported by GIGAZINE) that Agent SDK, claude -p, Claude Code GitHub Actions and third-party apps using the Agent SDK will move off subscription limits onto a separate monthly dollar credit, metered at API prices.
+
+15 June 2026Anthropic pauses the previously announced change (Help Center update dated June 15, 2026). Agent SDK, claude -p and third-party usage keep drawing from subscription limits.
+
+7 October 2026Max and Team plans gain monthly API credits that cover the Agent SDK, claude -p (with a linked-org API key), the Claude API and Managed Agents.
+
+26 October 2026The June change is still paused. The Help Center says the API credits are separate from the June credit, which "isn't available."
+
+Anthropic's Help Center article on using the Agent SDK with your Claude plan still says the change is paused and that SDK, claude -p and third-party usage draw from subscription limits. The October credits don't take anything off your subscription; they add a separate API balance beside it. Programmatic usage signed in with claude.ai still counts against your plan windows, while usage authenticated with a linked-org API key draws on the credits.
+How does Claude Code pricing compare with Codex and Cursor?
+Most coding agents now sell a roughly $20 entry tier, but each measures usage differently (time windows, message counts, credits, or included usage plus overage), so headline prices compare poorly. Claude Code's structural edges are automatic prompt caching, now at 5% or less of input on the newest Opus, Sonnet and Fable models, and a 1M context window at no premium on Opus, Sonnet and Fable (Haiku 5.5 charges more above 100K tokens). Its drawback is that you can't see in advance how much work a plan buys. For current side-by-side numbers, see our Claude Code vs OpenAI Codex comparison and our Cursor Composer vs Claude Code vs Codex vs Gemini CLI comparison.
+Which billing setup should you pick?
+One person coding most days: Max. It breaks even below eight active days a month at Anthropic's average. Use the included API credits for scripts and side projects, because they expire monthly.
+Coding a couple of days a week: Pro. Decide deliberately whether you want the new Opus 5.5 default. If you keep hitting the weekly limit, run /model sonnet and move subagents to Haiku 5.5 before you upgrade.
+A team that needs cost attribution: an API key or a cloud provider with OpenTelemetry export, which streams per-user token and cost metrics into your own observability stack. On Team plans, the spend report CSV covers usage-credit spend per user.
+CI and automation: a dedicated API key with --bare. On Max or Team, use a key from the linked Console organization so included credits pay first, and give CI its own workspace with a spend limit. GitHub Action runs aren't covered by those credits.
+Whatever you choose, run /usage once a week for a month before changing plans. The attribution breakdown usually shows that one MCP server, one loop, one Opus-inheriting subagent or one stale resumed session accounts for a large share, and fixing that costs less than upgrading.
+FAQ
+How much does Claude Code cost?
+As of October 2026, it is included in every paid Claude plan. Pro costs $17/month billed annually or $20/month billed monthly. Max starts at $100/month for 5x Pro's usage, with a 20x tier above it. Team seats cost $20–25 (Standard) or $100–125 (Premium). You can also skip the subscription and pay per token with an API key: Opus 5.5 is $4/$20 per million input/output tokens and Sonnet 5.5 is $2/$10.
+Why does Claude Code use Opus on my Pro plan now?
+Claude Code v2.1.280 changed the default model on Pro and Team Standard from Sonnet to Opus, matching Max, Team Premium and Enterprise, and made Opus 5.5 the default Opus. To go back, run /model sonnet or set Sonnet as the default in /config, ideally at the start of a session so you don't invalidate a warm cache.
+How much do cache reads cost on Opus 5.5?
+$0.20 per million tokens, which is 0.05x (5%) of Opus 5.5's $4 input price. Sonnet 5.5 cache reads are $0.10 (also 5%), and Fable 5.1's are $0.25 (2.5% of $10). Older models and Haiku 5.5 keep the standard 10% rate.
+Do the Max and Team API credits pay for Claude Code?
+Not for interactive use. The credits ($100/month on Max 5x, $200 on Max 20x, $20 per Standard seat and $100 per Premium seat on Team, pooled and capped at $500) cover the Claude API, Managed Agents, the Agent SDK and claude -p run with an API key from the linked Console organization. They don't cover interactive Claude Code, GitHub Action runs, usage credits or cloud providers, and they expire each billing cycle without rolling over.
+Why did resuming a conversation use so much of my limit?
+Resuming re-sends the whole conversation. If the cache has expired, all of it is processed as uncached input. Since v2.1.304, Claude Code warns Pro and Max users when a resume would use a noticeable share of the 5-hour limit and offers to start a new conversation, where Claude can look up the old one if you refer to it.
+Is the API cheaper than a Claude plan for coding?
+Usually not for regular use. Using the average in Anthropic's costs docs of about $13 per developer per active day, Pro breaks even at about 1.5 active days a month ($20 ÷ $13) and Max 5x at about 7.7 ($100 ÷ $13). The API wins for occasional use, per-project cost attribution and CI.
+Does Claude Code work with an API key instead of a subscription?
+Yes. Set ANTHROPIC_API_KEY and Claude Code bills per token at API rates, with no plan limits involved. For scripts, the headless docs recommend --bare, which never reads OAuth credentials and requires an API key. On Max and Team, the monthly API credits apply only when the key comes from the plan's linked Console organization, and per the Help Center they cover claude -p and the Agent SDK, not interactive sessions.
+How do I stop subagents from running on Opus?
+Set model: haiku or model: sonnet (and optionally effort: low) in the subagent's frontmatter. Or set CLAUDE_CODE_SUBAGENT_MODEL=haiku together with CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1 to apply one model to every subagent. Since v2.1.292 you can also ask Claude to run a specific subagent at a given effort level for that invocation.
+Sources
+Anthropic: Pricing (model, cache, fast mode, long-context rates)
+Claude plans and pricing
+Anthropic: API credits for Max and Team plans (platform docs)
+Claude Help Center: API credits for Max and Team plans
+Claude Code changelog (v2.1.243, v2.1.280, v2.1.292, v2.1.293, v2.1.296, v2.1.304, v2.1.305)
+Claude Code docs: Model configuration
+Claude Code docs: Subagents
+Claude Code docs: How Claude Code uses prompt caching
+Claude Code docs: Manage costs effectively
+Claude Code docs: Run Claude Code programmatically
+Claude Help Center: Use the Claude Agent SDK with your Claude plan
+GIGAZINE: report on the 13 May 2026 ClaudeDevs announcement of the Agent SDK credit
+If your team is rolling out Claude Code across several developers and wants someone who already knows how to keep agent spend in check, Codersera can help you hire vetted remote AI developers.
+
+Hire top talent
+
+Try Codersera Free for 7 Days
+
+Connect with vetted remote developers instantly. No commitment, no risk.
+
+ ✓ 7-day free trial
+ ✓ No credit card required
+ ✓ Cancel anytime
+
+ Start Free Trial
+
+Work with us
+
+Partner with Codersera
+
+Co-marketing, guest posts, featured listings and more. We reply within 24 hours.
+ Explore partnerships →
+
+Sign up for more like this.
+
+Enter your email
+ Subscribe
+
+Best AI Agents for Work in 2027
+
+Seven AI agents for work compared on context, control, reach and cost: ChatGPT, Claude, Vibe Dot, Microsoft Copilot, the Gemini agent, Zapier and Lindy.
+
+ 04 Nov 2026
+ · 11 min read
+
+Muse Wonder and Wonder Full: Pricing, Benchmarks, API Access and Data Modes
+
+Meta's Muse Wonder (muse-wonder-1.0, Preview) launched Oct 12, 2026 at $4/$0.20/$20 per 1M tokens, flat across 1M context, 3,000 RPM / 4M TPM. Wonder Full has no API: Muse Code Power ($50) or Maximum ($200) only. AA Index: Wonder 52, Full 56, Opus 5.5 58.
+
+ 26 Oct 2026
+ · 13 min read
+
+MiniMax M3.1 Flash: Specs, $0.15/$0.60 Pricing, Open Weights and API Guide
+
+MiniMax M3.1 Flash went GA on 19 Oct 2026 at a flat $0.15/$0.60 per 1M tokens, half of M3's price. A 428B/23B MoE with 1M context and always-on reasoning, it scores 43 on Artificial Analysis vs M3's 29. Covers license terms, vLLM/SGLang serving and M Plan tiers.
+
+ 26 Oct 2026
+ · 15 min read

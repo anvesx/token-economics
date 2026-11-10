@@ -1,0 +1,1140 @@
+TITLE: Beyond Benchmarks: The Economics of AI Inference
+URL: https://arxiv.org/abs/2510.26136
+ORG: arXiv  TYPE: paper  DATE: 2025-10
+
+B EYOND B ENCHMARKS : T HE E CONOMICS OF AI I NFERENCE
+
+WiNGPT Team∗
+
+arXiv:2510.26136v1 [cs.AI] 30 Oct 2025
+
+Winning Health AI Research
+Correspondence to wair@winning.com.cn
+
+A BSTRACT
+The inference cost of Large Language Models (LLMs) has become a critical factor in determining their
+commercial viability and widespread adoption. This paper introduces a quantitative “economics of
+inference” framework, treating the LLM inference process as a compute-driven intelligent production
+activity. We analyze its marginal cost, economies of scale, and quality of output under various
+performance configurations. Based on empirical data from WiNEval-3.0, we construct the first “LLM
+Inference Production Frontier,” revealing three principles: diminishing marginal cost, diminishing
+returns to scale, and an optimal cost-effectiveness zone. This paper not only provides an economic
+basis for model deployment decisions but also lays an empirical foundation for the future market-based
+pricing and optimization of AI inference resources.
+
+1
+
+The Cost Challenge in the Real World
+
+As Large Language Models (LLMs) [1, 2] rapidly expand into healthcare, scientific research, and industrial applications,
+the economic cost of the inference stage has become the primary bottleneck limiting their scalability.
+Most existing research focuses on single dimensions like model accuracy or inference speed [3], overlooking the
+equally critical cost constraints in real-world business environments. Models that excel on academic leaderboards often
+become unfeasible for large-scale commercial deployment due to excessive per-unit compute costs [4]. This presents an
+“impossible trinity”: Model Quality (Q) – Inference Performance (P) – Economic Cost (C). Any model’s engineering
+deployment must strike a balance among these three.
+This paper proposes a systematic framework for quantifying inference costs. Based on experimental data from realworld business workloads, we map out the “cost-quality Pareto frontier” for models to guide the selection of models
+and resources for different task scenarios. Using this framework, we can:
+1. More accurately estimate and plan the scale of GPU procurement.
+2. Select suitable models for specific tasks, balancing cost, performance, and quality.
+3. Optimize inference concurrency and scheduling strategies, and guide corporate technology roadmaps.
+
+2
+
+The Production Function of Intelligence
+
+From an economic perspective, the LLM inference process can be formalized as an “intelligent production activity.” We
+simplify this process into a production function:
+Intelligence = f (Cost, Model)
+
+(1)
+
+This function reveals an economic trade-off: achieving a higher level of intelligence typically requires a higher economic
+cost [5, 6]. This cost may stem from using more complex, larger-parameter, or more advanced models, larger-scale
+∗
+
+Authors are listed in section 9
+
+computing power, or longer processing times. An ideal model can produce higher-quality content at a lower cost,
+defining the market’s efficiency benchmark—the highest level of intelligence achievable at a specific cost.
+Let’s proceed step-by-step, starting with defining the cost.
+
+3
+
+Estimating Hourly GPU Cost
+
+In a typical bare-metal server deployment, the hourly cost of a single GPU consists of three components: depreciation,
+power consumption, and maintenance [7].
+Hourly GPU Cost ≈ Depreciation + Power Consumption + Maintenance
+
+(2)
+
+We estimate this cost by considering the GPU purchase price (P ), depreciation period (Y ), utilization rate (u), average
+power consumption (kW), data center Power Usage Effectiveness (PUE), electricity price (E), and annual maintenance
+fee rate (m). For detailed calculation formulas and parameter values, please refer to Appendix A.
+Taking the A800 80G as an example, under common assumptions, its baseline hourly cost per card is approximately
+$0.79/hour, generally falling within the $0.51–$0.99/hour range.
+On the other hand, major cloud platforms offer comparable computing power at $2.82–$5.64/hour. For example, AWS
+P4de instances are priced at $5.08/hour, and Alibaba Cloud’s gn7e-c16g1.4xlarge is $4.80/hour (including electricity
+and maintenance).
+Companies often weigh the trade-offs between “building a self-hosted GPU cluster” and “renting from the cloud.”
+Cloud solutions offer more flexibility for small to medium-scale or fluctuating workloads, while self-hosted clusters
+provide better marginal cost advantages for sustained high-load scenarios. This paper uses $0.79/hour as a neutral
+baseline to ensure comparability across models.
+
+4
+
+Estimating Inference Cost
+
+Calculating inference cost essentially involves translating task execution time into hardware cost. In this framework, we
+calculate the total cost to complete the entire WiNEval-3.0 test set (containing 2,993 requests).
+Core formula:
+Total Test Set Cost = Total Hourly GPU Cost × Total Execution Time
+
+(3)
+
+In this test, our environment and cost baseline are:
+• Environment: A800 80G × 2 cards
+• Dual-card hourly cost: $1.58
+Therefore, for a test task with a total duration of T seconds, the total cost is calculated as:
+T
+Total Test Set Cost ($) = 1.58 ×
+3600
+
+(4)
+
+This formula will be used directly for all subsequent cost conversions for different models and concurrency configurations.
+As a professional evaluation set for the medical field, WiNEval’s tasks are derived from real clinical
+applications, covering 10 core scenarios such as medical licensing exams, clinical diagnosis, quality
+control, and medical text correction. We choose WiNEval-3.0 as our benchmark not only because
+it covers multidimensional medical tasks but also because its task structure exhibits “representative
+economic load characteristics”:
+1. The length distribution among tasks approximates the “long-tail distribution” of real-world
+applications, reflecting resource utilization fluctuations during inference.
+2. The input and output sizes are stable, allowing for the quantification of per-task cost.
+3. Tasks can be executed concurrently and independently, making it suitable for constructing an
+“inference production function” (i.e., the curve of task throughput versus concurrency growth).
+4. The costs here are estimates based on performance data, reflecting the relative cost differences
+under various concurrency levels.
+2
+
+5
+
+Evaluation Dimensions and Optimization Goals
+
+To make scientific model selection decisions, we must evaluate models comprehensively across three dimensions:
+performance, quality, and cost.
+5.1
+
+Performance
+
+Performance metrics focus on the system’s operational efficiency. We select three core metrics for a comprehensive
+assessment:
+Metric
+
+Meaning
+
+Business Significance
+
+Target
+
+Total Completion Time (s)
+
+Total time to complete all requests
+
+As short as possible
+
+Avg. TTFT (s)
+
+Average time from request to receiving the first token
+Number of tokens generated per
+second
+
+Measures system throughput & efficiency
+Directly impacts user interaction
+experience
+Directly impacts user interaction
+experience
+
+Avg. Throughput (tokens/s)
+
+< 1s
+> 20 tok/s
+
+Table 1: Performance Metrics and Optimization Targets
+
+The performance baselines above are examples set for scenarios like interactive clinical decision support, where TTFT
+< 1s and average throughput > 20 tokens/s are crucial for ensuring smooth product interaction. In other medical
+scenarios, such as batch medical record summarization or offline medical literature analysis, the business focus may
+shift to total completion time and throughput, with less stringent latency requirements. Performance thresholds can be
+dynamically adjusted based on specific business needs.
+5.2
+
+Quality
+
+No matter how fast a model runs or how low its cost is, it is meaningless if its generated content fails to meet the
+stringent requirements (or accuracy) of clinical applications. This framework introduces the WiNEval-3.0 average score
+as the core quality metric to measure a model’s comprehensive abilities in medical knowledge understanding, clinical
+reasoning, and instruction following.
+5.3
+
+Cost
+
+Cost is the ultimate benchmark that determines whether a technical solution can be scaled. We use the total test set
+cost derived in Sections 3 and 4 as the core unit cost metric, which unifies hardware, energy, and time into quantifiable
+financial data. The “cost” here is not a variable independent of performance but a relative computational expense
+calculated based on performance thresholds, representing the economic efficiency of resource utilization. To find the
+optimal performance configuration for each model, we recorded their core metrics under different concurrency pressures
+in a unified test environment. For detailed data, please refer to Appendix B.
+
+6
+
+The Relationship Between Performance, Cost, and Quality
+
+6.1
+
+The Balance Point of Performance and Cost
+
+Based on the data from Appendix B, we have plotted a 3D AI inference production frontier graph showing model
+quality versus inference cost at optimal performance configurations. The size of the bubbles represents the model’s
+parameter count.
+As shown in the figure, we can quickly identify the “high-value” models located in the upper-left corner (low cost, high
+quality) and spot the “outliers” with extreme cost or quality performance. Taking the test data for WiNGPT-3.5 as an
+example, we found that:
+1. Increasing concurrency reduces total time: As concurrency increases from 8 to 48, the total completion
+time drops from 2034 seconds to 774 seconds. This indicates that before GPU compute power is saturated,
+increasing concurrency is the most effective way to amortize fixed overhead and reduce per-unit time costs.
+3
+
+Figure 1: Model Quality vs. Inference Cost - 3D Pareto Frontier
+
+2. A performance inflection point exists: When concurrency is further increased from 48, throughput drops
+sharply, and TTFT may also increase dramatically. Nearly all models have an optimal concurrency range.
+Beyond this range, system overhead soars, service quality declines, and the marginal cost-benefit diminishes
+or even becomes negative.
+3. Determining the optimal performance configuration: Our goal is to find the concurrency setting with the
+lowest cost (i.e., shortest total completion time) while meeting the performance baselines (e.g., throughput >
+20 tokens/s and latency < 1s). For WiNGPT-3.5, a concurrency of 48 is its optimal inference configuration
+under this test.
+6.2
+
+Balancing Model Performance, Quality, and Cost
+
+Finally, we selected the optimal performance configuration for each model and conducted a horizontal comparison. We
+have specifically included the input/output and total token counts to help explain the cost differences for some models.
+
+Table 2: Model Performance, Cost, and Quality Comparison at Optimal Configurations
+Model
+WiNGPT-3.5
+Seed-OSS-36B
+WiNGPT-3.0
+GLM-4-32B
+Qwen3-30B
+WiNGPT-2.7
+Mistral-Small
+medgemma-27b
+gpt-oss-20b
+
+Params
+(B)
+
+Conc.
+
+Total Time
+(s)
+
+Avg. TTFT
+(s)
+
+Input
+Tokens
+
+Output
+Tokens
+
+Total
+Tokens
+
+Throughput
+(tok/s)
+
+Cost
+($)
+
+Score
+
+30
+36
+32
+32
+30
+32
+24
+27
+20
+
+48
+16
+16
+8
+64
+16
+64
+32
+64
+
+774.11
+1255.4
+7916.62
+1583.45
+616.77
+830.37
+559.2
+2200.62
+249.17
+
+0.147
+0.222
+0.142
+0.119
+0.168
+0.156
+0.276
+0.190
+0.073
+
+1,347,535
+1,238,191
+1,347,535
+1,226,578
+1,347,535
+1,347,535
+2,113,182
+1,399,753
+1,495,464
+
+796,836
+513,012
+3,440,393
+415,190
+790,773
+345,306
+813,781
+1,411,583
+398,699
+
+2,144,371
+1,751,203
+4,787,928
+1,641,768
+2,138,308
+1,692,841
+2,926,963
+2,811,336
+1,894,163
+
+21.45
+25.54
+27.16
+32.78
+20.03
+25.99
+22.74
+20.05
+25.00
+
+0.34
+0.55
+3.47
+0.69
+0.27
+0.36
+0.25
+0.97
+0.11
+
+76.2
+72.2
+69.6
+68.5
+66.9
+65.5
+59.8
+55.9
+56.4
+
+4
+
+Looking at the table, most models fall within the “sweet spot” of under $1.40 in cost. WiNGPT-3.5 (76.2 score, $0.34)
+is the overall leader, providing the highest quality at a highly competitive cost, making it the best choice for balancing
+effectiveness and budget. It is followed by Seed-OSS-36B (72.2 score, $0.55), which is also in the high-quality range
+but at a higher cost and slightly lower efficiency.
+At the extremes of the cost distribution, there are also “extreme options” worth noting. gpt-oss-20b-low, with a cost of
+only $0.11, is a “potential contender” for cost-effectiveness. Mistral-Small controls its final cost well ($0.25), but its
+input token count (2.11 million) is much higher than most models (around 1.3 million), indicating its tokenizer is less
+efficient for Chinese, requiring more tokens to process the same text.
+The other extreme is WiNGPT-3.0, whose high cost of $3.47 makes it an “outlier.” The root of its cost lies in its
+massive generation volume—its total output tokens are 4 to 8 times that of most models. This reveals its true identity:
+a “thinking” model built for complex reasoning. Its output includes detailed chains of thought, making it unsuitable
+for routine medical conversations but a specialized tool for professional domains requiring process transparency and
+logical traceability, such as complex case analysis or drafting treatment plans. Its high cost is not a flaw but a direct
+reflection of its deep reasoning capabilities.
+
+7
+
+Limitations
+
+Although this framework provides a systematic evaluation method, its limitations must be acknowledged:
+1. Training costs are not included: This framework focuses on the inference deployment stage and does not
+cover the costs associated with model fine-tuning or continuous training, which are important components in
+customized applications.
+2. Dependency on a specific software/hardware stack: The evaluation results are based on specific hardware and
+inference services [8]. Changing the GPU, inference engine, or quantization strategy could significantly alter
+the performance and cost data.
+3. Proxy nature of benchmark scores: While WiNEval-3.0 serves as a high-quality proxy metric, it is not entirely
+equivalent to a model’s final performance in specific, specialized clinical business scenarios.
+4. Lack of statistical confidence analysis: Future work should introduce confidence intervals and sensitivity
+analysis to verify the robustness of the results.
+5. Upfront capital expenditure is not considered: The massive investment required to purchase tens or even
+hundreds of GPUs at once. This decision-making barrier directly influences the choice of technology roadmap
+(e.g., self-hosting vs. cloud rental) and may render some theoretically optimal solutions (which rely on
+expensive hardware) infeasible in reality. The final decision must still be made based on a comprehensive
+assessment of factors like real-world business volume.
+
+8
+
+Conclusion
+
+This paper, based on empirical data from WiNEval-3.0, has constructed and validated a data-driven LLM selection
+framework that integrates performance, cost, and quality. It moves away from abstractly ranking models in experimental
+settings and instead examines these three core business variables under real-world business loads. The core value of this
+framework lies in:
+1. Being rooted in real-world tasks: All conclusions are derived from stress tests in clinical medical scenarios,
+ensuring that the evaluation results have direct guiding significance for production environments.
+2. High portability: By adjusting core parameters like hourly GPU cost, the framework can be easily adapted to
+different hardware infrastructures or cloud service platforms.
+3. Providing a quantifiable basis for decision-making: It enables a shift from “gut feeling” to “data” for critical
+corporate decisions regarding GPU investment, model selection, and concurrency optimization.
+Ultimately, our analysis reveals that there is no one-size-fits-all “best model.” Instead, there is a diverse ecosystem of
+models, each achieving its optimal cost-effectiveness at a specific concurrency configuration. This framework provides
+the first quantifiable decision-making tool for selecting the best AI technology within a limited budget, marking a key
+shift in the industry’s focus: from the pursuit of endless model parameters to the efficiency of engineered, measurable
+application deployment.
+5
+
+9
+
+Authors
+
+Boqin Zhuang, Jiacheng Qiao, Mingqian Liu, Mingxing Yu, Ping Hong, Rui Li, Xiaoxia Song, Xiangjun Xu, Xu Chen,
+Yaoyao Ma, Yujie Gao
+
+References
+[1] Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, et al. Language models are few-shot learners. Advances in
+neural information processing systems, 33:1877–1901, 2020.
+[2] Hugo Touvron, Louis Martin, Kevin Stone, Peter Albert, Amjad Almahairi, Yasmine Babaei, Nikolay Bashlykov,
+Soumya Batra, Prajjwal Bhargava, Shruti Bhosale, et al. Llama 2: Open foundation and fine-tuned chat models.
+arXiv preprint arXiv:2307.09288, 2023.
+[3] Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu, Yonghao Zhuang, Zi Lin, Zhuohan
+Li, Dacheng Li, Eric Xing, et al. Judging llm-as-a-judge with mt-bench and chatbot arena. Advances in Neural
+Information Processing Systems, 36, 2023.
+[4] David Patterson, Joseph Gonzalez, Quoc Le, Chen Liang, Lluis-Miquel Munguia, Daniel Rothchild, David So,
+Maud Texier, and Jeff Dean. Carbon emissions and large neural network training. arXiv preprint arXiv:2104.10350,
+2021.
+[5] Jared Kaplan, Sam McCandlish, Tom Henighan, Tom B Brown, Benjamin Chess, Rewon Child, Scott Gray, Alec
+Radford, Jeffrey Wu, and Dario Amodei. Scaling laws for neural language models. arXiv preprint arXiv:2001.08361,
+2020.
+[6] Jordan Hoffmann, Sebastian Borgeaud, Arthur Mensch, Elena Buchatskaya, Trevor Cai, Eliza Rutherford, Diego
+de Las Casas, Lisa Anne Hendricks, Johannes Welbl, Aidan Clark, et al. Training compute-optimal large language
+models. arXiv preprint arXiv:2203.15556, 2022.
+[7] Advith Singla, Rajarshi Roy Choudhury, Hanchen Zhao, and Alexey Tumanov. Understanding gpu memory growth:
+A visualization approach. In Proceedings of the 14th ACM Workshop on Hot Topics in Storage and File Systems,
+pages 86–93, 2022.
+[8] Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph Gonzalez, Hao
+Zhang, and Ion Stoica. Efficient memory management for large language model serving with pagedattention. In
+Proceedings of the 29th Symposium on Operating Systems Principles, pages 611–626, 2023.
+
+6
+
+Appendix
+A
+
+GPU Hourly Cost Estimation Method
+
+We use the following formulas for estimation:
+P
+Y × 8760 × u
+Power Consumption = kW × P U E × E
+P ×m
+Maintenance =
+8760
+Depreciation =
+
+(5)
+(6)
+(7)
+
+The parameters in the formulas are defined with reference values as shown in the table below:
+Table 3: GPU Cost Calculation Parameters
+Parameter
+
+Meaning
+
+Reference Value
+
+P
+Y
+u
+kW
+PUE
+E
+m
+
+GPU Purchase Price ($)
+Depreciation Period (years)
+GPU Utilization Rate (1 for 100%)
+Average Power Consumption (kilowatts)
+Data Center Power Usage Effectiveness
+Electricity Price (CNY/kWh)
+Annual Maintenance Fee Rate
+
+Specific value
+3
+1 (baseline)
+Specific value
+1.3 ∼ 1.5
+Specific value
+3%
+
+Note on GPU Utilization Rate (u):
+Here, u is set to 1 (100%) as an idealized theoretical baseline to calculate the opportunity cost of the
+hardware. It represents the base hourly cost of the hardware operating at full capacity around the
+clock. In practice, the average GPU utilization is often below 100%, for example, 70% (u = 0.7). In
+that case, the cost per effective compute hour would increase (Effective Hourly Cost = Base Hourly
+Cost / u). This framework uses u = 1 as a standardized baseline for fair comparison across different
+hardware and workloads.
+In a real-world environment, purchase price, power consumption, electricity rates, PUE, and utilization rates all
+significantly impact cost. We estimate based on common assumptions:
+• Depreciation: 120,000 / (3 × 8760) / 7.09 ≈ $0.64/hour
+• Power Consumption: 0.4 × 1.5 × 1.0 / 7.09 ≈ $0.08/hour
+• Maintenance: 120,000 × 0.03 / 8760 / 7.09 ≈ $0.06/hour
+• Total cost ≈ 0.64 + 0.08 + 0.06 ≈ $0.78/hour
+Conclusion:
+• The hourly cost of an A800 80G is approximately $0.79/hour under common assumptions.
+• Depending on the purchase price range, the cost fluctuates between $0.51–$0.99/hour.
+• Costs will further increase with higher power consumption, electricity rates, or lower utilization.
+• This calculation does not include additional costs such as the host server, rack, networking, or labor, reflecting
+only the GPU’s bare hardware cost range.
+
+B
+
+Performance, Cost, and Quality Data for Each Model Under Different Concurrency
+Pressures
+7
+
+Table 4: Detailed Performance Data Across Different Concurrency Levels
+Model / Conc.
+WiNGPT-2.7
+8
+16
+32
+48
+64
+128
+GLM-4-32B-0414
+8
+16
+32
+48
+64
+128
+gpt-oss-20b-low
+8
+16
+32
+48
+64
+128
+WiNGPT-3.0
+8
+16
+32
+48
+64
+128
+Seed-OSS-36B
+8
+16
+32
+48
+64
+128
+medgemma-27b
+8
+16
+32
+48
+64
+128
+Mistral-Small
+8
+16
+32
+48
+64
+128
+Qwen3-30B
+8
+16
+32
+48
+64
+128
+WiNGPT-3.5
+8
+16
+32
+48
+64
+128
+
+Req.
+
+Time
+(s)
+
+TTFT
+(s)
+
+Input
+Tok.
+
+Output
+Tok.
+
+Total
+Tok.
+
+Tput
+(tok/s)
+
+Cost
+($)
+
+2993
+2993
+2993
+2993
+2993
+2993
+
+1386.53
+830.37
+561.57
+461.3
+422.36
+378.29
+
+0.119
+0.156
+0.224
+0.295
+0.353
+0.614
+
+1,347,535
+1,347,535
+1,347,535
+1,347,535
+1,347,535
+1,347,535
+
+344,068
+345,306
+356,912
+344,281
+345,064
+346,518
+
+1,691,603
+1,692,841
+1,704,447
+1,691,816
+1,692,599
+1,694,053
+
+31.02
+25.99
+19.86
+15.55
+12.77
+7.16
+
+0.61
+0.36
+0.25
+0.20
+0.19
+0.17
+
+2993
+2993
+2993
+2993
+2993
+2993
+
+1583.45
+1694.2
+1268.64
+475.83
+422.93
+420.43
+
+0.119
+0.165
+0.231
+0.303
+0.373
+0.877
+
+1,226,578
+1,226,578
+1,226,578
+1,226,578
+1,226,578
+1,226,578
+
+415,190
+448,842
+446,399
+419,237
+410,913
+424,935
+
+1,641,768
+1,675,420
+1,672,977
+1,645,815
+1,637,491
+1,651,513
+
+32.78
+16.56
+16.56
+16.56
+16.56
+16.56
+
+0.69
+0.74
+0.56
+0.21
+0.19
+0.18
+
+2993
+2993
+2993
+2993
+2993
+2993
+
+781.44
+585.78
+331.56
+259.28
+249.17
+164.17
+
+0.054
+0.042
+0.048
+0.059
+0.073
+0.230
+
+1,495,464
+1,495,464
+1,495,464
+1,495,464
+1,495,464
+1,495,464
+
+398,621
+429,743
+396,885
+395,878
+398,699
+388,587
+
+1,894,085
+1,925,207
+1,892,349
+1,891,342
+1,894,163
+1,884,051
+
+63.76
+45.85
+37.41
+31.81
+25.00
+18.49
+
+0.34
+0.26
+0.15
+0.11
+0.11
+0.07
+
+2993
+2993
+2993
+2993
+2993
+2993
+
+13593.47
+7916.62
+6252.95
+5925.54
+5305.93
+4736.77
+
+0.123
+0.142
+0.191
+0.230
+5.219
+57.404
+
+1,347,535
+1,347,535
+1,347,535
+1,347,535
+1,347,535
+1,347,535
+
+3,518,378
+3,440,393
+3,517,540
+3,636,012
+3,736,644
+3,841,930
+
+4,865,913
+4,787,928
+4,865,075
+4,983,547
+5,084,179
+5,189,465
+
+32.35
+27.16
+17.58
+12.78
+11.00
+6.34
+
+5.96
+3.47
+2.74
+2.60
+2.33
+2.08
+
+2993
+2993
+2993
+2993
+2993
+2993
+
+2134.78
+1255.4
+1792.73
+671.64
+629.68
+578.66
+
+0.168
+0.222
+0.337
+0.410
+0.555
+1.195
+
+1,238,191
+1,238,191
+1,238,191
+1,238,191
+1,238,191
+1,238,191
+
+509,206
+513,012
+708,137
+506,833
+507,281
+507,014
+
+1,747,397
+1,751,203
+1,946,328
+1,745,024
+1,745,472
+1,745,205
+
+29.82
+25.54
+12.34
+15.72
+12.59
+6.85
+
+0.94
+0.55
+0.79
+0.29
+0.28
+0.25
+
+2993
+2993
+2993
+2993
+2993
+2993
+
+5371.46
+3706.2
+2200.62
+2056.75
+2006.41
+1733.44
+
+0.109
+0.133
+0.190
+0.219
+0.263
+1.201
+
+1,399,753
+1,399,753
+1,399,753
+1,399,753
+1,399,753
+1,399,753
+
+1,421,097
+1,618,060
+1,411,583
+1,520,875
+1,498,920
+1,418,759
+
+2,820,850
+3,017,813
+2,811,336
+2,920,628
+2,898,673
+2,818,512
+
+33.07
+27.29
+20.05
+15.41
+11.67
+6.39
+
+2.36
+1.63
+0.97
+0.90
+0.88
+0.76
+
+2993
+2993
+2993
+2993
+2993
+2993
+
+1938.63
+1117
+738.22
+630.79
+559.2
+456.82
+
+0.108
+0.132
+0.173
+0.224
+0.276
+0.539
+
+2,113,182
+2,113,182
+2,113,182
+2,113,182
+2,113,182
+2,113,182
+
+811,852
+810,838
+824,301
+811,290
+813,781
+813,335
+
+2,925,034
+2,924,020
+2,937,483
+2,924,472
+2,926,963
+2,926,517
+
+52.35
+45.37
+34.89
+26.79
+22.74
+13.91
+
+0.85
+0.49
+0.32
+0.28
+0.25
+0.20
+
+2993
+2993
+2993
+2993
+2993
+2993
+
+1381.05
+1059.78
+1114.56
+739.24
+616.77
+336.6
+
+0.067
+0.093
+0.123
+0.141
+0.168
+0.450
+
+1,347,535
+1,347,535
+1,347,535
+1,347,535
+1,347,535
+1,347,535
+
+783,226
+835,127
+965,555
+848,943
+790,773
+782,911
+
+2,130,761
+2,182,662
+2,313,090
+2,196,478
+2,138,308
+2,130,446
+
+70.89
+49.25
+27.07
+23.93
+20.03
+18.17
+
+0.61
+0.47
+0.49
+0.32
+0.27
+0.15
+
+2993
+2993
+2993
+2993
+2993
+2993
+
+2034.05
+1098.77
+863.7
+774.11
+599.03
+668.04
+
+0.103
+0.117
+0.134
+0.147
+0.163
+0.319
+
+1,347,535
+1,347,535
+1,347,535
+1,347,535
+1,347,535
+1,347,535
+
+932,262
+762,906
+773,120
+796,836
+714,003
+813,350
+
+2,279,797
+2,110,441
+2,120,655
+2,144,371
+2,061,538
+2,160,885
+
+57.29
+43.40
+27.97
+21.45
+18.62
+9.51
+
+0.89
+0.48
+0.38
+0.34
+0.26
+0.29
+
+Our concurrency parameter design follows this logic:
+8
+
+• With actual GPU utilization as the primary observation metric, the concurrency range from 8 to
+64 covers three typical workloads: low load, medium load, and saturated load.
+• The data in the table may have slight fluctuations. This is mainly due to two factors: first,
+model generation has some inherent randomness; second, the dynamic batching and scheduling
+mechanisms of inference frameworks like vLLM introduce execution variations. For example,
+although WiNGPT-3.5 and Qwen3-30B-A3B-Instruct-2507 have the same architecture, their
+different post-training strategies lead to variations in the total number of tokens generated for
+the same task set, which can also cause deviations in their average throughput.
+
+9

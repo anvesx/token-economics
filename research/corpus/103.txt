@@ -1,0 +1,3865 @@
+TITLE: Concise Thoughts: Impact of Output Length on LLM Reasoning and Cost
+URL: https://arxiv.org/abs/2407.19825
+ORG: arXiv  TYPE: paper  DATE: 2024-07
+
+Concise Thoughts: Impact of Output Length on LLM Reasoning and Cost
+Sania Nayab⋄ Giulio Rossolini⋄ Marco Simoni⋆‡ Andrea Saracino⋄⋆
+Giorgio Buttazzo⋄ Nicolamaria Manes† Fabrizio Giacomelli†
+⋄
+
+Department of Excellence in Robotics and AI, Scuola Superiore Sant’Anna, Pisa, Italy
+⋆
+Institute of Informatics and Telematics, National Research Council of Italy
+‡
+Sapienza Università di Roma, † Mediavoice Srl - Roma e Napoli, Italy
+Abstract
+
+Today’s large language models (LLMs) can
+solve challenging question-answering tasks,
+and prompt engineering techniques, such as
+chain-of-thought (CoT), have gained attention for enhancing the explanation and correctness of outputs. However, many models
+and techniques tend to produce excessively
+verbose and lengthy answers, leading to issues with both conciseness and generation
+time. To address this, this paper analyzes the
+impact of output lengths on LLM inference
+pipelines by introducing and proposing novel
+metrics to evaluate the correct conciseness
+of a model and related prompting techniques.
+Then, we examine the impact of controlling
+output length through a refined prompt engineering strategy, Constrained-CoT (CCoT),
+which encourages the model to produce more
+concise outputs. To better understand the effects of such a prompt, we also introduce two
+additional scores for analyzing the conciseness, measured in terms of redundancy and
+information flow in generated answers. Experiments on pretrained LLMs and multiple
+datasets demonstrate the benefits of the proposed metrics and the effectiveness of CCoT
+across different models.
+
+1
+
+Introduction
+
+In recent years, large language models (LLMs)
+have demonstrated remarkable capabilities in tackling complex question-answering tasks, making significant strides in natural language understanding
+and generative AI (Taori et al., 2023; Chiang et al.,
+2023; Dolly, 2023; Geng et al., 2023). The continuous advancements made in architectures and
+training methods played a crucial role in enhancing
+the performance of these models. Alongside these
+developments, prompt techniques have also seen
+substantial evolution. One such technique that has
+attracted considerable attention is chain-of-thought
+(CoT) prompting (Wei et al., 2022; Fu et al., 2023),
+
+which enhances the explanation and correctness of
+the output by encouraging the LLM to articulate its
+answer through intermediate reasoning steps.
+Despite its advantages, the CoT prompting can
+lead to long outputs, increasing the time required
+for the model to generate a response. This is due
+to the nature of autoregressive transformers, which
+decode text word by word (Vaswani et al., 2017;
+Shekhar et al., 2024), which implies that the time
+required to generate a response is unbounded and
+heavily influenced by the length of the reasoning
+provided, as demonstrated in Section 3. Such
+lengthy and variable delays in responses can be
+undesirable when an LLM interacts with a user
+in an interactive conversation. Furthermore, especially for complex models, long answers imply a
+loss of conciseness and even of precision in the answer, with a performance degradation which is not
+only bound to computation time. This issue highlights the need to consider (i) metrics for evaluating
+the conciseness of the outputs and (ii) solutions to
+avoid excessively long chains of reasoning.
+To address this, the first part of this work emphasizes the importance of accounting for the length
+of an answer in its correctness evaluation, as an
+indicator of computational cost. This is achieved
+by introducing three novel metrics (HCA, SCA,
+and CCA) that assess both the brevity and correctness of a generated answer. The proposed metrics
+aim to reweight the accuracy of a model by considering aspects related to output length that impact
+inference time and time predictability.
+Then, to address the significant increase in output length caused by CoT techniques, the second
+part of this work explores how to leverage the benefits of CoT advances while getting control over the
+length of CoT reasoning through specific prompt
+designs. To this end, we introduce a refined prompt
+strategy called Constrained-CoT (CCoT), which
+encourages LLMs to generate concise outputs by
+explicitly limiting the reasoning length. The ap-
+
+proach allows users to set a flexible length constraint that serves as a tunable parameter, balancing
+the strictness of brevity in the answers. The objective is to enable controlled reasoning, ensuring that
+outputs are concise and computationally efficient
+without sacrificing accuracy.
+To better assess the ability of LLMs to follow
+such instructions and gain deeper insights into conciseness, we also introduce additional scores that
+analyze the level of redundancy and the information flow in the generated answers. These scores
+help demonstrate, through experimental analysis,
+that large models (such as Llama2-70b and Falcon40b) can effectively leverage the proposed prompt
+to produce more concise yet accurate responses,
+while still retaining useful information. This allows
+achieving an enhanced trade-off between accuracy
+and brevity, measured comprehensively using the
+proposed metrics. For instance, using LLaMA2
+on three datasets (GSM8K, SVAMP, ASDIV), constraining the reasoning length to 30 words (CCoT30) increases the average accuracy by 4.41% and
+reduces computational costs by 5.12s. These accuracy and cost improvements are better remarked
+and unified in the proposed metrics, showing an
+improvement of 10%, 9% and 9% for HCA, SCA,
+and CCA, respectively.
+To summarize, this work provides the following
+main contributions:
+• Introduction of the concept of Constrained-CoT
+(CCoT), a prompt engineering strategy designed
+to limit the length of answers generated by LLMs,
+thereby enhancing the trade-off between generation
+time and correct conciseness.
+• Three novel metrics to evaluate the correctness of
+LLM outputs while accounting for the conciseness
+(HCA, SCA and CCA).
+• Introduction of an analysis of the conciseness in
+terms of redundancy and information flow for a
+given answer, thus offering an understanding of the
+effects of constraining output length.
+• We conducted multiple experiments to analyze
+the impact of CCoT across different datasets and
+LLMs, demonstrating its benefits in terms of inference time, accuracy and conciseness with respect
+to the original CoT. Furthermore, we show the benefits of adopting the proposed metrics and scores
+in terms of conciseness.
+
+The rest of the paper is organized as follows:
+Section 2 discusses the literature related to this
+work; Section 3 motivates the addressed study;
+Section 4 presents a set of metrics that account
+for conciseness; Section 5 introduces the proposed
+CCoT approach; Section 6 introduces analysis for
+evaluating the conciseness of a given answer; Section 7 reports the results of a set of experiments
+carried out on pre-trained models with three arithmetic reasoning datasets; and Section 8 states the
+conclusions and discusses some future directions.
+
+2
+
+Related work
+
+To the best of our knowledge, most recent works on
+LLMs focused on increasing their accuracy (Jiang
+et al., 2020; Kaplan et al., 2020; Zhu et al., 2023).
+However, as models scale up, they tend to generate
+more extensive and articulated responses (Bhargava et al., 2023), which can introduce other problems, such as hallucinations (where the model produces information that appears plausible but not
+grounded (Kadavath et al., 2022), or unnecessarily long explanations (Qiu et al., 2024; Azaria and
+Mitchell, 2023)), which can obscure key information, making it difficult for users to extract relevant
+content efficiently (Khashabi et al., 2021; Wang
+et al., 2024b). To filter out useless reasoning, Li
+et al. (2021) proposed a multi-hop processing technique, where an extraction task on the encoder to
+obtain the rationale for an answer, which is the
+most relevant piece of text in an input prompt to a
+given question.
+To further improve the accuracy of LLMs, several prompt engineering approaches have been
+presented in recent years (Qin and Eisner, 2021).
+Prompt engineering involves the strategic design of
+input patterns to guide the model toward generating
+more accurate and relevant responses (Reynolds
+and McDonell, 2021; Marvin et al., 2023). However, most of these approaches have been conceived
+to enhance model accuracy, increasing the output
+length. For instance, Lo (2023) and Strobelt
+et al. (2022) introduced prompt-based approaches
+by adding task-specific patterns to frame the input
+data. While these methods allow boosting accuracy, they can also produce longer outputs due to
+the additional context and detail introduced by the
+prompt, making it challenging to provide factual
+and concise answers (Shi et al., 2023).
+Another form of prompt engineering was proposed to improve reasoning within the conclusive
+
+answer. In this context, Chain-of-Thought (CoT)
+prompting (Wei et al., 2022) is one of the most
+notable methods, showing significant benefits in
+QA tasks by requiring the model to provide a
+step-by-step explanation along with the final response. However, as also highlighted in Section 3,
+answers generated with CoT tend to be lengthy,
+hence increasing the generation time (Liu et al.,
+2018; Takase and Okazaki, 2019).
+Given the substantial amount of work focused
+on improving the accuracy of LLMs, it is not
+surprising that most of the adopted metrics (Lin,
+2004; Stallings and Gillmore, 1971) and benchmarks (Clark et al., 2018; Lin et al., 2021) only
+address the correctness of the responses, without
+paying attention to conciseness and response times
+(Bhargava et al., 2023; Chiang and Lee, 2024). In
+other tasks too, such as reasoning in control engineering, the focus has been primarily on correctness rather than consistency or conciseness (Kevian
+et al., 2024). Additionally, several studies have addressed computational cost challenges but not the
+conciseness. For example, Wang et al. (2024a)
+evaluated the budget-aware reasoning capabilities
+of LLMs, while Zheng et al. (2024b) proposed
+an inference pipeline to improve processing speed.
+Other works have explored similar optimization
+approaches, including (Hao et al., 2024) and (Bi
+et al., 2020). In addition, Chiang and Lee (2024)
+proposed a benchmark to study LLMs accuracy
+while incorporating a manual redundancy assessment.
+Despite recent advancements, several key aspects remain not sufficiently explored: (i) the impact of concise answers on inference cost and time
+predictability; (ii) the integration of such aspects
+into unified metrics that evaluate LLMs not only
+in terms of correctness but also conciseness; and
+(iii) an understanding of the analysis of conciseness
+through the conciseness based on the embeddings
+content extracted by the generated answers.
+This work. To address these challenges, this work
+introduces novel metrics that jointly account for the
+conciseness and correctness of generated responses.
+Additionally, two new scores are proposed to assess conciseness from the embeddings produced by
+the model. These scores focus on the importance
+of reasoning steps by analyzing redundancy and
+information flow. Then, to evaluate the ability of
+LLMs to control the length of reasoning in their
+outputs, this work introduces a refined version of
+
+the CoT prompting (Wei et al., 2022), termed Constrained Chain-of-Thought (CCoT). This approach
+explicitly guides the model to limit the length of
+its reasoning while preserving the quality of its
+answers and improving the inference time. This
+is achieved by improving the conciseness of the
+responses, which is analyzed and assessed using
+the proposed scores.
+
+3
+
+Motivations
+
+The output generation time of an LLM depends
+on various factors, including the model architecture, the pre-and post-processing steps, the answer
+decoding process, and the question posed, also considering the use of prompt engineering approaches.
+While the computational cost due to the architecture is well understood, the influence of the other
+aspects on the overall generation time is less clear
+and requires further investigation. More formally,
+an LLM can be represented as a function f that
+takes as input a prompt x with N (x) tokens1 and
+generates an output ŷ = f (x), having N (ŷ) tokens, where N is a length operator that simply
+counts the number of tokens. The input x can be
+considered as composed of the original user input
+xus and a prompt engineering text xp , depending
+on the technique used. For instance, in a zeroshot CoT setting, the prompt can be computed as
+x = concat(xus , xp ), where xp is an explicit request for providing reasoning steps in the answer
+and concat(a, b) is the concatenation operator that
+merges two vectors a and b into a single one.
+In an encoder-decoder architecture, as the one
+used by Transformers (Vaswani et al., 2017),
+let fe (x) and fd (x) denote the functions associated with the encoder and the decoder, respectively. Then, the output ŷ is a list of tokens
+[a(1) , . . . , a(N (ŷ)) ], where each a(i) is computed
+based on the previously generated tokens and the
+encoder’s embedding representation fe (x). That
+is,
+a(i) = fd (fe (x), [a(0) , . . . , a(i−1) ]),
+
+i > 0. (1)
+
+From Equation (1), it is clear that the larger the
+set of output tokens in the answer, the higher the
+time the model takes to generate the answer due
+to the increased number of times the decoder is
+invoked. The same consideration could also be
+1
+
+Even though ’tokens’ and ’words’ refer to different items
+in the sentence, for simplicity, in this work we will refer to
+both indistinguishably.
+
+Generation Time (s)
+Output length (words)
+
+35
+30
+25
+20
+15
+10
+5
+0
+
+0
+
+160
+140
+120
+100
+80
+60
+40
+20
+0 0
+
+20
+
+Falcon-40b
+40 60 80
+
+Falcon-40b-CoT
+100 120 140 160
+
+Falcon-40b
+
+Falcon-40b-CoT
+
+Output Length (words)
+
+N
+
+A=
+
+1 X
+1(Γ(ŷ), y),
+N
+
+(2)
+
+i=1
+
+10
+
+20
+
+30
+
+Sample Index
+
+40
+
+50
+
+Figure 1: Analysis of the impact of CoT on Falcon-40b
+efficiency: (top) Relation between response time and
+output length, without CoT (blue dots) and with CoT
+(red dots), across 100 questions from the GSM8K test
+set. (bottom) Output words variation between output
+length with CoT and without CoT using 50 random
+samples from the GSM8K test set.
+
+applied to decoder only, where the model runs a
+new inference for each produced word.
+To highlight such a dependency, we conducted
+preliminary tests on Falcon-40B to evaluate the
+impact of the CoT method in answering arithmetic
+questions, using a subset of 100 random questions
+from the GSM8K dataset (Cobbe et al., 2021). The
+results of this test are illustrated in Figure 1a, where
+red and blue dots refer to answers given with and
+without CoT, respectively. The scatter plot shows
+that CoT significantly increases the output length
+and generation time. This suggests that while CoT
+improves the correctness of responses (see Section
+7), more attention should be given to the time cost it
+introduces. To better appreciate the impact of CoT
+on the output length, Figure 1b reports the output
+length (in terms of number of generated words)
+produced by Falcon-40b on a set of 50 questions
+from GSM8K without CoT (blue bars) and with
+CoT (pink bars). Note that purple areas denote the
+areas where the two bars overlap.
+
+4
+
+capability of an LLM to provide correct as well as
+concise responses. The idea is to redefine the classic accuracy metric to integrate conciseness aspects,
+which as highlighted in Section 7.3 impacts significantly the generation time and the computational
+cost, into the LLM output’s correctness. Formally,
+an answer ŷ is considered correct if the conclusion extracted through a post-processing function
+Γ matches the given ground truth y. Thus, the
+accuracy of an LLM can be computed as
+
+Metrics for Correct Conciseness
+
+Motivated by the previous considerations, this section presents three novel metrics to evaluate the
+
+where N is the number of tested samples and
+1(u, v) is the indicator function that returns 1 if
+u = v, 0 otherwise. Please note that Γ represents
+a user-defined function that can be implemented
+based on a regular expression (e.g., by extracting
+specific patterns from the sentence (Fu et al., 2023))
+or using pseudo-judge approaches (e.g., by using
+a secondary large model as a judge (Zheng et al.,
+2024a)).
+Starting from Equation (2), the conciseness of
+an output ŷi can be integrated with its correctness
+by multiplying the indicator function by a penalty
+term p(ŷi ) ∈ [0, 1] that decreases its value for long
+outputs:
+N
+
+1 X
+[1(Γ(ŷi ), yi ) · p(ŷi )] .
+N
+
+(3)
+
+i=1
+
+The following defines three specific metrics by
+setting a proper penalty function.
+Hard-k Concise Accuracy: HCA(k). It measures the fraction of correct outputs that do not
+exceed a user-specified length k:
+N
+
+HCA(k) =
+
+1 X
+[1(Γ(ŷi ), yi ) · phard (ŷi , k)] ,
+N
+i=1
+
+where
+(
+1
+phard (ŷi , k) =
+0
+
+if N (ŷi ) ≤ k
+otherwise.
+
+(4)
+
+This metric does not account for responses that
+exceed the specified maximum length, thereby promoting conciseness. We believe it could be particularly useful in scenarios where strict adherence
+to length constraints is essential, such as in realtime systems or environments with limited computational resources.
+
+Soft-k Concise Accuracy: SCA(k, α). It generalizes the previous metric by penalizing the correct
+answers that exceed the maximum length k with
+a term that decreases exponentially with a decay
+factor α:
+
+CoT, aiming to preserve the benefits of this technique while paying more attention to the length of
+the answers. This help achieve a better trade-off
+between efficiency and accuracy.
+For this purpose, we introduce a constrained
+chain
+of thought (CCoT) prompt, which includes
+N
+1 X
+SCA(k, α) =
+[1(Γ(ŷi ), yi ) · psof t (ŷi , k, α)] , an explicit sentence to constrain the generated outN
+put to a maximum number of words, encouraging
+i=1
+the model to compress its reasoning and produce
+where
+a more concise answer in a reduced amount of
+
+
+k−N (ŷi )
+time. As explained in Section 3, CoT-prompt can
+psof t (ŷi , k, α) = min 1, e α
+. (5) be computed as x = concat(x , x ), where x is
+us p
+p
+an explicit request for providing reasoning steps
+In the formula, the user-defined decay α ≥ 0
+in the generated answer (e.g., “let’s think step by
+can be considered a sort of tolerance that controls
+step"). Technically, to push LLMs to return more
+how much the length impacts the overall accuracy;
+concise reasoning, the CCoT-prompt is formalized
+the higher the value of α, the higher the tolerance
+as x = concat(xus , xp , xl ), where xl represents the
+for answers exceeding the specified length k. Note
+sentence that specifies the constraint on the output
+that for α = 0, SCA(k, 0) reduces to HCA(k).
+length (e.g., “and limit the length of the answer to
+30 words"). Figure 2 shows an example that illusConsistent Concise Accuracy: CCA(k, α, β). It
+trates the difference between a CoT and a CCoT
+further generalizes the previous metrics by also
+prompt. Note that the answer generated for that
+accounting for the variation in the lengths among
+specific question using a CoT prompt consists of
+all the outputs obtained:
+67 words in 17.64s, while the answer generated on
+CCA(k, α, β) = SCA(k, α) · pvar (σ, β)
+the same question provided with a CCoT prompt
+(specifying a constraint of 45 words) consists of 34
+where
+words in 11.65s, and it is still correct.
+
+β−σ 
+The analysis presented in the following section
+pvar (σ, β) = min 1, e β .
+(6)
+and experimental part in Section 7 provide a detailed evaluation of the CCoT prompting technique
+In Equation (6), σ denotes the standard deviation
+using various metrics and demonstrate its benefits
+of the output length distribution, whereas β is a paon the conciseness along with redundancy and inrameter that controls the tolerance for having large
+formation flow scores of the generated answers.
+length variations: the higher the value of β, the
+higher the tolerance. Note that, given a tolerance
+β, pvar (σ, β) = 1 for σ ≤ β, while it decreases
+6 Analysis of the conciseness
+exponentially for σ > β.
+The CCA metric aims to promote consistency in
+To provide a deeper understanding and more comthe lengths of responses, representing an important
+prehensive comparisons of answers in terms of conmeasure when the predictability of inference time
+ciseness, we define some conciseness properties
+is a crucial property for a specific application. A
+for a given answer in the following. Intuitively, we
+low standard deviation σ indicates that the model
+assume that the conciseness of an answer in the
+produces responses of uniform length. In contrast, CoT paradigm could be derived from the followa high value of σ denotes a model with a large
+ing two concepts: how many steps are required to
+response variability, making predicting its timing
+produce a response and how much information is
+response time difficult.
+repeated in successive steps. While the first prop-
+
+5
+
+CCoT Prompting
+
+From the results presented in Section 3, it is clear
+that the relationship between output length and inference time necessitates deeper awareness. To this
+end, this section focuses on improving the use of
+
+erty is easy to derive by immediately looking at
+the number of steps, assuming to have a similar
+number of steps from two answers, extracting a numerical interpretation of the conciseness could be
+more complicated. For this purpose, we define two
+additional scores: Redundancy, which measures
+
+CoT → output length 67 words; inference time 17.64s
+Q: Tracy used a piece of wire 4 feet long to support tomato plants in the garden. The wire was cut into pieces 6 inches
+long. How many pieces did she obtain? Let’s think a bit step by step
+A: First, we need to convert 4 feet to inches. There are 12 inches in a foot, so 4 feet equals 4 × 12 = 48 inches. Next, we
+can divide the total number of inches by the length of each piece (6 inches) to find the total number of pieces: 48 inches
+÷ 6 inches = 8 pieces. Therefore, Tracy obtained 8 pieces of wire.
+
+CCoT-45 → output length 34 words; inference time 11.65s
+Q: Tracy used a piece of wire 4 feet long to support tomato plants in the garden. The wire was cut into pieces 6 inches
+long. How many pieces did she obtain? Let’s think a bit step by step and limit the answer length to 45 words.
+A: 1. Convert 4 feet to inches: 4 × 12 = 48 inches 2. Divide 48 inches by 6 inches per piece: 48 ÷ 6 = 8 pieces. So,
+Tracy obtained 8 pieces of wire.
+
+Figure 2: Example of CCoT in a zero-shot setting for a question extracted from the GSM8K dataset. In each box,
+we show the prompt and answer provided by the LLM. The box above shows the classic CoT zero-shot approach,
+where long reasoning is returned as output. The box below shows the use of CCoT, which reduces the number of
+output words while maintaining a correct answer. In the box title, we also show the word count along with inference
+time to clarify the improvements of the approach.
+
+the extent to which individual steps in a generated
+answer repeat or overlap in synthetical content, and
+Information Flow, which measures how much the
+semantic information of the previous step is repeated in the current step. To compute these two
+scores, both CCoT and CoT answers are divided
+into discrete steps, based on sentence tokenization2 .
+6.1
+
+Redundancy Score
+
+The redundancy score for each step represents
+how much its content overlaps with other steps.
+Let a generated answer ŷ be divided into n steps
+S = {s1 , s2 , . . . , sn }, where each si represents a
+single step (sentence). The redundancy mean score
+RM S(ŷ) is computed as:
+n
+
+n
+
+i
+
+j̸=i
+
+XX
+1
+RM S(ŷ) =
+SyS(si , sj ),
+n · (n − 1)
+(7)
+where SyS(si , sj ) measures the syntactical similarity between steps si and sj as the ratio of matching
+subsequences. This is computed as SyS(si , sj ) =
+LMS(si ,sj )
+TLCS(si ,sj ) , where LMS states for Length of Matching Subsequences and TLCS states for Total Length
+of Compared Sequences (Ratcliff et al., 1988).
+These scores help to evaluate whether the reasoning process is concise or contains redundant
+2
+https://www.nltk.org/api/nltk.
+tokenize.sent_tokenize.html
+
+synthetical repetition. We assume that for not concise answers we have a high redundancy, which
+indicates that steps are overly reliant on repeating
+information rather than advancing the reasoning.
+6.2
+
+Information Flow
+
+The Information Flow I(si , si+1 ) between two
+consecutive steps si and si+1 measures the extent
+to which the content of si , in a semantic sense,
+persists in si+1 . This can be expressed as:
+I(si , si+1 ) = SeS(si+1 , si ),
+
+(8)
+
+where SeS(si+1 , si ) represents the semantic similarity between si and si+1 . In our implementation,
+we used BERTScore (Zhang et al., 2019; Devlin
+et al., 2018) to compute the semantic similarity
+between steps, which leverages contextual embeddings generated by BERT. For the last step, since
+there is no subsequent step, we assume I(sn ) = 0.
+The rationale behind this score is that, when the
+number of steps is similar, the information flow
+across the steps tends to be higher in less concise
+answers because each step relies on a more similar
+set of details and context from the previous one,
+increasing the risk of repetitiveness.
+
+7
+
+Experiments
+
+This section presents a set of experiments carried
+out to evaluate the effectiveness of the proposed
+CCoT approach under classic metrics, as well as
+
+illustrate the benefits of the proposed metrics and
+scores in highlighting the trade-off between accuracy and computational cost. Specifically, the following research questions are investigated in the
+next experiments: RQ1 Is the CCoT approach
+beneficial in terms of efficiency and accuracy compared to classic CoT?; RQ2 Are the proposed metrics representative of showing this trade-off?; and
+RQ3 Are the CCoT answers actually more concise, and to what extent are LLMs capable of
+controlling the output length based on an explicit
+prompt request?
+7.1
+
+Experimental setup
+
+All the experiments have been carried out with
+the Text Generation Inference (TGI) platform3 on
+8 NVIDIA A100 GPUs. Specifically, we evaluated large and open source pre-trained LLMs from
+Hugging Face4 , such as instruction-tuned models
+Falcon-40b-instruct and model trained, reinforced
+by utilizing private data, namely Llama2-70b-chathf (Touvron et al., 2023). Additionally, further
+experiments on smaller models were conducted to
+evaluate their capability in handling CCoT, with
+detailed results provided in Appendix Section B.
+The experiments utilized three arithmetic reasoning datasets: GSM8k (Cobbe et al., 2021), SVAMP
+(Patel et al., 2021), and ASDIV (Miao et al., 2021),
+commonly used to assess models’ mathematical inference and computational reasoning abilities. The
+GSM8k test set includes over 1.3k problems out of
+8,000. The SVAMP test set contains 300 examples,
+and the ASDIV test set comprises 1.22k examples.
+For all experiments, the effectiveness of CCoT
+was compared by assessing the selected LLMs both
+with and without CoT (base mode).
+7.2
+
+Impact of CCoT on Accuracy and
+Efficiency
+
+This experiment was carried out to evaluate the
+impact of CCoT on computation time and accuracy ( RQ1 ). In particular, the selected LLMs
+were evaluated on three datasets using plain prompt
+(base), CoT, and CCoT with different length constraints:15, 30, 45, 60, 100. The results are presented in Figure 3 for Llama2-70b (top) and for
+Falcon-40b (bottom), showing accuracy and generation time in the first and second rows, respectively.
+3
+https://huggingface.co/docs/
+text-generation-inference
+4
+https://huggingface.co/blog/os-llms
+
+Considering the results with Llama2-70b, CCoT
+prompting demonstrates the ability to reduce generation time compared to CoT and, in most cases,
+achieves a time reduction similar to or better than
+plain prompting (base). Additionally, it generally
+improves or minimally impacts accuracy, thereby
+enhancing the trade-off in both directions. For instance, the average generation time decreases from
+30.09 seconds with CoT to a maximum of 23.86
+seconds with CCoT on GSM8K with Llama2-70b,
+achieved with a length constraint of 100, and further reduces with stricter constraints. At the same
+time, also the accuracy consistently improves, for
+example, with the GSM8k dataset, the accuracy of
+Llama2-70b increases from 36% with CoT to 37%
+(with CCoT-30) and 41.77% (with CCoT-100).
+Similar observations can be made for the results
+with Falcon-40b (bottom part), where the CCoT
+approach improves the trade-off between efficiency
+and accuracy across all three datasets. In particular,
+CCoT achieves better accuracy overall for SVAMP
+and ASDIV, while significantly reducing generation time. This improvement in terms of accuracy,
+however, does not occur for the GSM8K dataset,
+where the sentences are more complex than those in
+the other two datasets. We believe that such a complexity makes it more challenging for a mediumsized model like Falcon-40b to effectively handle
+the CCoT constraint. Nonetheless, the accuracy
+remains higher than the base mode, indicating that
+the CoT-based approach still provides benefits.
+We also acknowledge that different behaviors
+may arise when dealing with datasets of varying
+complexity, as the nature of the questions can differ.
+For instance, CCoT-15 outperforms other CCoT
+variations because its 15-word responses potentially align better with the simpler nature of this
+dataset. We argue that this effect is closely related
+to the complexity of the questions, which makes
+the constraint impactful even on accuracy.
+7.3
+
+Analysis of the correct conciseness
+
+Based on the previous results, CCoT demonstrates
+clear benefits in balancing accuracy and computational efficiency. To unify these aspects, we introduced new metrics in Section 4 that integrate
+answer length with correctness. The analysis presented in Tables 1 and 2 for Llama2-70b and
+Falcon-40b, respectively, highlights how these metrics effectively combine cost and accuracy ( RQ2 ),
+while also remarking the advantages of CCoT.
+
+31.8
+
+25
+30
+
+26.5
+
+30.1
+
+20
+
+21.4 21.6 23.9
+17.7 19.8
+
+10
+0
+
+Base
+
+35
+
+31.5
+
+30
+25
+
+CoT
+
+23.8
+
+T-15 T-30 T-45 T-60 -100
+CCo CCo CCo CCo CCoT
+
+27.1 27.6 28.2 27.4 27.8
+
+20
+15
+
+19.1
+
+20
+15
+10
+
+11.7
+
+14.5 14.9 15.4
+12.1 13.2
+
+5
+0
+
+50
+
+CoT CoT-15 CoT-30 CoT-45 CoT-60 oT-100
+C
+C
+C
+C
+CC
+
+(a) GSM8k
+
+46.3
+
+40
+30
+20
+
+26.2
+15.7
+
+11.8
+
+10
+0
+
+Base
+
+50
+45
+
+20.6
+16.0 17.0 17.7
+
+T-15 T-30 T-45 T-60 -100
+CCo CCo CCo CCo CCoT
+
+CoT
+
+55
+
+46.7 45.3
+
+51.3 49.7
+
+50.7
+43.7
+
+55.0
+
+60.1
+
+61.9
+
+50
+20
+15
+
+14.5
+
+17.1
+9.6
+
+10
+
+11.9 12.7 13.5
+
+15.9
+
+5
+0
+
+Base
+
+CoT CoT-15 CoT-30 CoT-45 CoT-60 oT-100
+C
+C
+C
+C
+CC
+
+68.3
+
+70
+65
+60
+
+35
+
+7.2
+
+7.5
+
+0.0
+
+60
+
+70.0 67.2
+65.5 66.0
+
+71.3 69.5 69.0 70.1 70.9
+
+60.6
+
+55
+
+10.0
+5.0
+
+70
+
+75
+
+46.7
+
+40
+
+2.5
+
+Base
+
+62.0 63.7 62.3 62.3 65.0
+
+58.7
+
+60
+
+Generation Time (s) Accuracy (%)
+
+30
+
+70
+
+Generation Time (s) Accuracy (%)
+
+35
+
+35.0 36.0
+
+39.8 41.8
+37.1 38.6
+
+Generation Time (s) Accuracy (%)
+
+40
+
+Generation Time (s) Accuracy (%)
+
+Generation Time (s) Accuracy (%)
+Generation Time (s) Accuracy (%)
+
+45
+
+3.4
+Base
+
+2.2
+
+2.5
+
+2.9
+
+5.6
+
+5.9
+
+CoT CoT-15 CoT-30 CoT-45 CoT-60 oT-100
+C
+C
+C
+C
+CC
+
+(b) SVAMP
+
+4
+
+2.6
+
+3
+2
+1
+0
+
+1.1
+Base
+
+1.5
+
+1.8
+
+1.2
+
+1.9
+
+2.0
+
+CoT CoT-15 CoT-30 CoT-45 CoT-60 oT-100
+C
+C
+C
+C
+CC
+
+(c) ASDIV
+
+Figure 3: Accuracy (white plots, the higher the better) and mean generation time (background colored plots, the
+lower the better) for Llama2-70b (top row) and Falcon-40b (bottom row) on the GSM8K, SVAMP, and ASDIV
+datasets. The models are evaluated using plain prompts (base), CoT, and CCoT under different len-constraints.
+
+HCA evaluation. The Hard-k concise accuracy
+evaluates the accuracy considering only the correct
+answers whose length is less than a specified value
+k. The top parts of Tables 1 and 2 report the value
+of this performance index across the three datasets,
+when using the different prompt approaches and
+for different values of k.
+Specifically, for both Llama2-70b and Falcon40b, the use of CCoT gets better results compared
+to base and CoT prompts across all values of k.
+Notably, for lower values of k, CoT prompts exhibit
+a significant reduction in performance, while this
+accuracy drop can be mitigated by using CCoT
+with strict length constraints, such as 15 or 30.
+SCA evaluation. We also evaluated both models
+using the Soft Conciseness Accuracy (SCA), across
+different k values and α, where α represents a tolerance for accepting answers longer than the desired
+limit k. This metric is a generalization of the HCA,
+giving more flexibility in considering correct answers that are larger but still close to the desired
+length k.
+The SCA values computed for Llama2-70b and
+Falcon-40b on the datasets are reported in center
+parts of the tables for different values of k and a
+fixed tolerance value α = 10. For both models, the
+SCA values in CCoT settings are often comparable
+to HCA values for high values of k, such as 80 or
+
+100. This is because, as discussed in Sec.7.5, for
+such lengths, the CCoT prompts are effective at returning outputs below the desired limit, making the
+tolerance less necessary. Conversely, for smaller
+k values, such as k = 40, SCA starts exceeding
+HCA, indicating that some correct answers have a
+length larger than k. However, for such k values of,
+using a tolerance α results in more pronounced improvements for CCoT prompts compared to Base
+and CoT. This means that, although many correct
+outputs are longer than k, under CCoT the model is
+still encouraged to constrain them close to k, thus
+achieving a higher score. This effect is particularly
+noticeable on Llama2-70b, which is more capable of controlling the length and produce correct
+outputs than Falcon-40b.
+CCA evaluation. The Consistent Concise Accuracy measures the capability of a model to generate correct answers whose lengths do not vary
+significantly, and therefore are consistent with the
+specified constraint. The CCA requires a third parameter β (in addition to k and α), denoting a tolerance on the output length variability. The bottom parts of the tables report the CCA scores obtained on Llama2-70b and Falcon-40b for α = 10,
+β = 40, and different values of k, for the various prompting methods. According to these settings, the CCoTs results in a clear improvement
+
+Base
+
+CoT
+
+CCoT15
+
+CCoT30
+
+CCoT45
+
+CCoT60
+
+CCoT100
+
+Base
+
+CoT
+
+GSM8K - HCA
+H-∞
+H-100
+H-80
+H-40
+
+35.0
+29.9
+22.0
+4.8
+
+36.0
+22.9
+15.4
+0.8
+
+31.8
+31.2
+29.2
+12.7
+
+H-∞
+H-100
+H-80
+H-40
+
+46.3
+46.3
+46.3
+23.3
+
+58.7
+50.0
+41.0
+12.0
+
+62.0
+59.7
+56.7
+44.7
+
+H-∞
+H-100
+H-80
+H-40
+
+52.8
+52.8
+52.8
+31.7
+
+60.3
+60.3
+60.3
+23.6
+
+67.2
+67.2
+67.2
+55.5
+
+SCA-100
+SCA-80
+SCA-40
+
+31.4
+25.6
+8.5
+
+26.9
+19.0
+3.3
+
+SCA-100
+SCA-80
+SCA-40
+
+46.3
+46.3
+31.4
+
+52.3
+45.6
+19.5
+
+SCA-100
+SCA-80
+SCA-40
+
+52.8
+52.8
+39.5
+
+60.3
+60.3
+35.2
+
+CCA-100
+CCA-80
+CCA-40
+
+31.4
+25.6
+8.5
+
+26.9
+19.0
+3.3
+
+CCA-100
+CCA-80
+CCA-40
+
+46.3
+46.3
+31.4
+
+52.3
+45.6
+19.5
+
+CCA-100
+CCA-80
+CCA-40
+
+52.8
+52.8
+39.5
+
+60.3
+60.3
+35.2
+
+37.1
+35.3
+31.8
+10.8
+
+38.6
+37.5
+33.1
+8.0
+
+39.8
+38.7
+35.0
+8.5
+
+41.8
+38.9
+31.6
+4.5
+
+H-∞
+H-100
+H-80
+H-40
+
+23.8
+23.7
+22.8
+13.0
+
+31.5
+29.3
+26.8
+10.4
+
+27.1
+26.7
+25.8
+13.4
+
+62.3
+61.0
+57.0
+30.0
+
+62.3
+59.7
+54.3
+30.0
+
+65.0
+61.7
+54.7
+20.0
+
+H-∞
+H-100
+H-80
+H-40
+
+46.7
+46.7
+46.3
+38.7
+
+45.3
+42.3
+39.7
+20.3
+
+51.3
+51.3
+49.7
+36.7
+
+64.3
+64.3
+64.3
+44.4
+
+65.0
+65.0
+65.0
+43.8
+
+61.4
+61.4
+61.4
+29.5
+
+H-∞
+H-100
+H-80
+H-40
+
+60.6
+60.6
+60.1
+57.2
+
+68.3
+67.1
+65.2
+43.3
+
+71.3
+71.2
+70.9
+64.9
+
+36.3
+33.8
+16.9
+
+38.1
+35.3
+15.4
+
+39.2
+36.6
+16.3
+
+40.1
+35.0
+11.0
+
+SCA-100
+SCA-80
+SCA-40
+
+23.7
+23.3
+16.6
+
+30.1
+28.1
+15.3
+
+61.6
+59.2
+41.1
+
+61.3
+59.1
+39.6
+
+60.6
+57.6
+38.7
+
+62.7
+58.1
+31.6
+
+SCA-100
+SCA-80
+SCA-40
+
+46.7
+46.6
+40.6
+
+43.3
+41.2
+27.8
+
+65.6
+65.6
+54.0
+
+64.3
+64.3
+52.1
+
+65.0
+65.0
+51.7
+
+61.4
+61.4
+40.9
+
+SCA-100
+SCA-80)
+SCA-40
+
+84.4
+81.1
+66.0
+
+67.3
+66.1
+50.4
+
+36.3
+33.8
+16.9
+
+39.2
+36.6
+16.3
+
+40.1
+35.0
+11.0
+
+CCA-100
+CCA-80
+CCA-40
+
+23.7
+23.3
+16.6
+
+30.1
+28.1
+15.3
+
+60.6
+57.6
+38.7
+
+62.7
+58.1
+31.6
+
+CCA-100
+CCA-80
+CCA-40
+
+46.7
+46.6
+40.6
+
+43.3
+41.2
+27.8
+
+65.0
+65.0
+51.7
+
+61.4
+61.4
+40.9
+
+CCA-100
+CCA-80
+CCA-40
+
+84.4
+81.1
+66.0
+
+67.3
+66.1
+50.4
+
+38.1
+35.3
+15.4
+
+61.6
+59.2
+41.1
+
+61.3
+59.1
+39.6
+
+65.6
+65.6
+54.0
+
+64.3
+64.3
+52.1
+
+50.7
+48.3
+46.7
+33.0
+
+46.7
+45.3
+44.3
+32.7
+
+69.0
+68.8
+68.1
+57.3
+
+70.1
+69.7
+68.6
+58.3
+
+70.9
+70.1
+69.0
+56.7
+
+27.5
+26.6
+16.8
+
+27.0
+26.0
+16.5
+
+27.5
+26.6
+16.7
+
+43.1
+41.6
+34.8
+
+48.9
+47.7
+38.0
+
+45.4
+44.9
+35.8
+
+68.9
+68.5
+61.5
+
+69.9
+69.2
+61.9
+
+70.4
+69.5
+61.2
+
+27.0
+26.0
+16.5
+
+27.5
+26.6
+16.7
+
+48.9
+47.7
+38.0
+
+45.4
+44.9
+35.8
+
+69.9
+69.2
+61.9
+
+70.4
+69.5
+61.2
+
+69.5
+69.1
+68.5
+59.6
+
+26.8
+26.2
+18.0
+
+27.4
+26.7
+17.9
+
+51.3
+50.7
+42.7
+
+49.4
+48.1
+40.8
+
+71.2
+71.0
+67.3
+
+69.3
+68.8
+63.3
+
+26.8
+26.2
+18.0
+
+27.4
+26.7
+17.9
+
+27.5
+26.6
+16.8
+
+51.3
+50.7
+42.7
+
+49.4
+48.1
+40.8
+
+43.1
+41.6
+34.8
+
+ASDIV - CCA (α = 10, β = 40)
+
+Table 1: Llama2-70b
+
+compared to CoT prompting and base, for both
+Llama2-70b and Falcon-40b. However, for high
+CCoT length constraints (e.g., 100), the CCA score
+tends to decrease, which does not happen with the
+other two metrics. This can be explained by considering that an increased length constraint gives
+the model more freedom to generate outputs with
+higher variations, as discussed in Section 7.5.
+7.4
+
+43.7
+43.0
+40.7
+31.7
+
+49.7
+49.3
+47.3
+36.0
+
+SVAMP - CCA (α = 10, β = 40)
+
+ASDIV - CCA (α = 10, β = 40)
+67.2
+67.2
+60.4
+
+27.8
+27.4
+26.0
+12.5
+
+GSM8K - CCA (α = 10, β = 40)
+
+SVAMP - CCA (α = 10, β = 40)
+60.3
+58.4
+48.2
+
+27.4
+26.8
+25.2
+11.8
+
+ASDIV - SCA (α = 10)
+
+GSM8K - CCA (α = 10, β = 40)
+31.5
+30.1
+18.0
+
+28.2
+27.2
+25.9
+12.2
+
+27.6
+27.3
+26.1
+13.4
+
+SVAMP - SCA (α = 10)
+
+ASDIV - SCA (α = 10)
+67.2
+67.2
+60.4
+
+CCoT100
+
+GSM8K - SCA (α = 10)
+
+SVAMP - SCA (α = 10)
+60.3
+58.4
+48.2
+
+CCoT60
+
+ASDIV - HCA
+
+GSM8K - SCA (α = 10)
+31.5
+30.1
+18.0
+
+CCoT45
+
+SVAMP - HCA
+
+ASDIV - HCA
+65.6
+65.6
+65.6
+46.4
+
+CCoT30
+
+GSM8K - HCA
+
+SVAMP - HCA
+63.7
+61.0
+57.7
+34.0
+
+CCoT15
+
+Understanding the effect of CCoT
+
+While the previous experiments demonstrate that
+CCoT achieves a clear reduction in the number of
+words produced, thus improving the trade-off between accuracy and generation time. The scores
+introduced in Section 6 are used in the following
+analysis to quantify the benefits in terms of conciseness ( RQ3 ). As detailed in Section 6, the
+conciseness of an answer is assumed to depend
+on two key properties: (i) the number of steps required to produce a response, and (ii) assuming a
+similar number of steps, the amount of information
+repeated across those steps.
+
+71.2
+71.0
+67.3
+
+69.3
+68.8
+63.3
+
+68.9
+68.5
+61.5
+
+Table 2: Falcon-40b
+
+Number of Steps. To evaluate the first property,
+we plotted in Figure 4 the distribution of the percentage of generated answers based on the number
+of reasoning steps (Fu et al., 2022) for Llama2-70b
+(top row) and Falcon-40b (bottom row) across the
+three datasets. The results reveal a significantly
+different distribution in the number of steps across
+all datasets with Falcon-40b and for the ASDIV
+dataset with Llama2-70b. In fact, in these cases,
+the CCoT curves are clearly concentrated toward a
+reduced number of steps compared to CoT, indicating that the CCoT prompt consistently generates
+responses with fewer steps.
+While the analysis of the number of steps explains the improved conciseness achieved with
+CCoT, more detailed analysis of the redudancy and
+information flow are required to understand the enhanced conciseness observed with Llama2-70b on
+GSM8K and SVAMP, where the number of steps
+follows a trend similar to that of CoT.
+Redundancy Evaluation. As discussed in the
+previous paragraph, the distribution of reasoning
+steps for Llama2-70b on the GSM8K and SVAMP
+
+0
+
+0
+
+10
+
+20
+
+30
+
+Steps
+
+(a) GSM8K - Llama2-70b
+
+10
+0
+
+10
+
+15
+
+Steps
+
+20
+
+25
+
+20
+
+5
+
+10
+
+15
+
+Steps
+
+20
+
+(d) GSM8K - Falcon-40b
+
+25
+
+5
+
+10
+
+15
+
+Steps
+
+CoT - % of Steps
+CCoT_15 - % of Steps
+CCoT_30 - % of Steps
+CCoT_45 - % of Steps
+CCoT_60 - % of Steps
+CCoT_100 - % of Steps
+
+40
+30
+20
+
+10
+
+0
+
+0
+
+(c) ASDIV - Llama2-70b
+
+CoT - % of Steps
+CCoT_15 - % of Steps
+CCoT_30 - % of Steps
+CCoT_45 - % of Steps
+CCoT_60 - % of Steps
+CCoT_100 - % of Steps
+
+30
+
+Percentage of Answers (%)
+
+Percentage of Answers (%)
+
+20
+
+5
+
+(b) SVAMP - Llama2-70b
+
+CoT - % of Steps
+CCoT_15 - % of Steps
+CCoT_30 - % of Steps
+CCoT_45 - % of Steps
+CCoT_60 - % of Steps
+CCoT_100 - % of Steps
+
+30
+
+0
+
+CoT - % of Steps
+CCoT_15 - % of Steps
+CCoT_30 - % of Steps
+CCoT_45 - % of Steps
+CCoT_60 - % of Steps
+CCoT_100 - % of Steps
+
+Percentage of Answers (%)
+
+5
+
+50
+40
+30
+20
+10
+0
+
+CoT - % of Steps
+CCoT_15 - % of Steps
+CCoT_30 - % of Steps
+CCoT_45 - % of Steps
+CCoT_60 - % of Steps
+CCoT_100 - % of Steps
+
+Percentage of Answers (%)
+
+10
+
+50
+40
+30
+20
+10
+0
+
+Percentage of Answers (%)
+
+Percentage of Answers (%)
+
+CoT - % of Steps
+CCoT_15 - % of Steps
+CCoT_30 - % of Steps
+CCoT_45 - % of Steps
+CCoT_60 - % of Steps
+CCoT_100 - % of Steps
+
+15
+
+10
+
+0
+
+5
+
+Steps
+
+10
+
+15
+
+0
+
+0
+
+(e) Svamp - Falcon-40b
+
+5
+
+10
+
+15
+
+Steps
+
+20
+
+25
+
+(f) ASDIV - Falcon-40b
+
+Figure 4: Percentage of number of generated answers as per ’no. of reasoning steps’ of Llama2-70b (top row) and
+with Falcon-40b (bottom row) on the GSM8K (a), SVAMP (b), and ASDIV (c) test datasets.
+
+i=1
+
+ORR =
+
+CoT RMS − CCoT RMS
+× 100
+CoT RMS
+
+Table 3 presents the average ORR and MRR calculated for the SVAMP and GSM8K datasets, focusing on steps within the interquartile range (Q1
+to Q3). The results indicate that CCoT consistently reduces redundancy. For SVAMP, the redundancy reduction ranges from 19.77% to 22.72%
+(ORR), while for GSM8K, it ranges from 12.64%
+to 24.74% (ORR).
+
+RMS Mean
+
+40
+30
+20
+10
+0
+
+RMS Mean
+
+datasets (Figures 4a and 4b) reveals that the quartile ranges of the answer distributions for CCoT
+and CoT answers are very similar. Specifically, in
+both datasets, the interquartile range spans approximately 4 to 12 steps (Q1 to Q3) for SVAMP and
+around 5 to 14 steps for GSM8K. This suggests
+comparable step counts across CCoT and CoT answers, within such ranges of reasoning steps.
+To evaluate the conciseness of these reasoning steps more effectively, we present redundancy
+scores in Figure 5. This figure highlights the differences in redundancy between CCoT and CoT
+answers, categorized by their number of steps.
+Notably, when focusing on step intervals within
+the interquartile range (Q1 to Q3, where most answers fall), which are highlighted in grey in the
+plots, redundancy scores are consistently higher for
+CoT than for CCoT. This demonstrates that CCoT
+achieves improved syntactic conciseness compared
+to CoT, even when the number of steps is similar.
+To better quantify the reduction in redundancy
+achieved by CCoT, we define the Mean Redundancy Reduction (MRR) across single-step redundancies RMSi for all reasoning steps i, and the
+Overall Redundancy Reduction (ORR) as:
+
+n 
+1 X CoT RMSi − CCoT RMSi
+MRR =
+× 100
+n
+CoT RMSi
+
+40
+30
+20
+10
+0
+
+CoT
+CCoT_15
+
+2
+
+4
+
+6
+
+CoT
+CCoT_15
+
+2
+
+4
+
+6
+
+CCoT_30
+CCoT_45
+
+8
+
+10
+
+12
+
+CCoT_60
+CCoT_100
+
+14
+
+CCoT_30
+CCoT_45
+
+8 10
+Steps
+
+12
+
+16
+
+CCoT_60
+CCoT_100
+
+14
+
+16
+
+Figure 5: RMS score (lower values indicate better
+conciseness) of Llama2-70b on the GSM8K (top) and
+SVAMP (bottom) datasets. The grey area highlights the
+portion of the answer distribution between the Q1 and
+Q3 quartiles.
+
+Method
+
+Dataset
+
+CCoT15
+
+CCoT30
+
+CCoT45
+
+CCoT60
+
+CCoT100
+
+MRR
+
+SVAMP
+GSM8K
+
+20.02
+13.58
+
+22.50
+11.65
+
+21.48
+22.81
+
+22.92
+23.23
+
+20.14
+16.33
+
+ORR
+
+SVAMP
+GSM8K
+
+20.22
+15.34
+
+22.57
+12.64
+
+21.29
+24.62
+
+22.72
+24.74
+
+19.77
+16.81
+
+Table 3: Mean and Overall Redundancy Reduction for
+SVAMP and GSM8K Datasets
+
+Information Flow Evaluation. To demonstrate
+an improved level of conciseness also from a semantic perspective, we analyze the information
+flow. Specifically, the median number of steps in
+the answer distributions for CoT and CCoT (Figures 4a and 4b) is approximately 8 for both the
+SVAMP and GSM8K datasets. Thus, focusing on
+answers with a total of 8 steps, we present in Tables 4 the Information Flow between consecutive
+steps i → j for Llama2-70b on the GSM8K (top)
+and SVAMP (bottom) datasets.
+In Table 4, CCoT-15 exhibits the largest reductions across all steps, for instance, ranging from
+26% to 41% compared to CoT scores for GSM8K,
+while CCoT-100 shows the smallest reductions (4%
+to 20%), preserving more redundant semantic information. Generally, the middle steps show the
+largest differences, especially for aggressive variations like CCoT-15 and CCoT-45, whereas early
+and late steps retain more information flow. In
+summary, a lower information flow indicates that
+the model effectively retains, step by step, only the
+logically necessary information required to arrive
+at a correct answer.
+Steps
+1⇒2
+2⇒3
+3⇒4
+4⇒5
+5⇒6
+6⇒7
+7⇒8
+
+CoT
+0.5287
+0.59
+0.56
+0.55
+0.56
+0.56
+0.52
+
+CCoT-15
+0.3417
+0.39
+0.37
+0.38
+0.39
+0.42
+0.42
+
+GSM8K - Llama2-70b
+CCoT-30
+CCoT-45
+0.39
+0.49
+0.45
+0.31
+0.43
+0.36
+0.41
+0.36
+0.42
+0.36
+0.45
+0.37
+0.47
+0.57
+
+CCoT-60
+0.49
+0.32
+0.37
+0.36
+0.37
+0.37
+0.56
+
+CCoT-100
+0.43
+0.53
+0.47
+0.46
+0.51
+0.54
+0.50
+
+Steps
+1⇒2
+2⇒3
+3⇒4
+4⇒5
+5⇒6
+6⇒7
+7⇒8
+
+CoT
+0.54
+0.52
+0.51
+0.51
+0.51
+0.50
+0.47
+
+CCoT-15
+0.32
+0.35
+0.34
+0.37
+0.38
+0.41
+0.35
+
+SVAMP - Llama2-70b
+CCoT-30
+CCoT-45
+0.41
+0.41
+0.47
+0.43
+0.46
+0.40
+0.43
+0.39
+0.41
+0.44
+0.48
+0.40
+0.43
+0.37
+
+CCoT-60
+0.30
+0.35
+0.30
+0.30
+0.36
+0.36
+0.34
+
+CCoT-100
+0.32
+0.35
+0.37
+0.30
+0.37
+0.40
+0.50
+
+Table 4: Information Flow Mean Values comparison
+for GSM8K (top) and SVAMP (bottom) across answers
+with 8 steps. Better information flow indicates lower
+semantic conciseness between steps (highlighted with
+blue-like colors in the tables).
+
+7.5
+
+Ability to control the output length
+
+The previous experiments looked at how CCoT
+strategies can affect the accuracy and generation
+
+time in the average. However, despite the discussed
+benefits, it is also crucial to understand how CCoT
+prompting can effectively limit the output length
+for each addressed sample ( RQ3 ). This can be
+useful for better tuning the length parameter in
+the CCoT prompt or identifying the conditions
+in which the proposed prompting strategy fails to
+compress the output. To evaluate the ability of an
+LLM to produce concise answers in response to a
+given prompting, we analyzed in Figure 6 the output length under different CCoT length constraints.
+Figure 6 shows the statistics on the length of the
+answers provided by addressed models with the
+GSM8K test set. Each box plot represents the output lengths between the 5th and the 95th percentiles
+of all tested samples, the blue line represents the
+provided CCoT length constraint, the red line denotes the median, while the greed dot the mean.
+Ideally, a model respecting the given length constraint for each tested sample should have the entire
+distribution below the blue line.
+As depicted in Figure 6, CoT based LLMs tend
+to produce long answers if not explicitly constrained, significantly impacting the generation
+time. The imposed length constraint in the CCoT
+prompt significantly affects the output length, although in practice LLMs are not always able to respect the given limit, especially for smaller values,
+such as 15, 30, or 40, which are more challenging.
+To summarize, given the nature of the CCoT
+prompting, it is reasonable to consider a tolerance
+margin in respecting the requested length. To this
+end, in the following paragraphs we evaluate the
+considered models by the metrics proposed in Section 4, which extend the accuracy by also accounting for conciseness.
+
+8
+
+Final Remark and Conclusion
+
+Limitations and Future Directions. From the
+findings revealed by the conducted experiments, a
+key insight is that for sufficient-scale models, such
+as Falcon-40b and Llama2-70b, CCoT effectively
+achieves a better trade-off between accuracy and
+efficiency. However, we acknowledge that smaller
+models may struggle to improve this trade-off, often producing incorrect answers when attempting
+to limit reasoning length. A detailed analysis of
+these findings is provided in the appendix B. We
+believe this aligns with the inherent capability of
+LLMs to exhibit a sense of understanding of output length in their generated responses(Bhargava
+
+Output Length (Words)
+
+Median
+
+120
+100
+80
+60
+40
+20
+
+Output Length (Words)
+
+Base
+140
+120
+100
+80
+60
+40
+20
+
+Mean
+
+CoT CCoT-15 CCoT-30 CCoT-45 CCoT-60 CCoT-100
+
+Median
+
+Base
+
+LEN
+
+LEN
+
+Mean
+
+CoT CCoT-15 CCoT-30 CCoT-45 CCoT-60 CCoT-100
+
+Figure 6: Distribution of output lengths (y-axis) between the 5th and 95th percentiles for different models
+and prompting strategies using the GSM8K test set. The
+top plot shows the results for Falcon-40b, while the bottom plot presents those for Llama2-70b.
+
+et al., 2023). Future investigations should explore
+addressing this constraint and proposed metrics not
+only through inference prompts but also as part of
+a fine-tuning strategy, which could prove beneficial
+even for smaller-sized models.
+Another point involves a deeper analysis of other
+potential benefits of conciseness in LLMs, beyond
+a study of the efficiency, which is the main scope of
+this work. For instance, while most analyses justify
+conciseness through a reduction in the number of
+steps (see Section 7.4), a detailed examination of
+redundancy and information reveals that this behavior also emerges in scenarios where CCoT and CoT
+have a similar number of steps. We believe that
+these metrics can be further leveraged to explore
+additional benefits of concise generation, such as
+mitigating hallucinations or reducing error propagation. For instance, a lower Information Flow score
+suggests that the model retains only the logically
+necessary information required to reach a correct
+answer, step by step, while excluding superfluous
+details. This approach could help reduce the risk
+of error propagation by filtering out unnecessary or
+irrelevant information at each step (Li et al., 2024).
+Conclusion. This work explored the importance
+of conciseness in answers generated by LLMs for
+text-to-text tasks, introducing three new metrics to
+evaluate both conciseness and correctness based on
+user-defined parameters. Additionally, it proposed
+a prompt engineering approach, Constrained Chain-
+
+of-Thought, to get a better control of output length
+of generated answer ,thus impacting the inference
+time. Furthermore, it deepened the analysis of
+conciseness by evaluating its significance within
+the generated reasoning steps, particularly in terms
+of redundancy and information flow.
+Experimental results demonstrated how the proposed Constrained CoT (CCoT) effectively highlights the trade-off ( RQ1 ) and presents a unified
+perspective through new metrics ( RQ2 ), particularly when applied to large LLMs such as Falcon40b and Llama2-70b. Furthermore, we provide an
+in-depth analysis of the concept of conciseness, the
+capability to control output length, and the importance of information within the generated reasoning
+steps ( RQ3 ).
+In conclusion, this work emphasizes the need to
+focus on the conciseness of LLMs by proposing
+novel performance metrics that evaluate both the
+correctness of the output and its length. Additionally, the proposed CCoT prompting offers a simple
+yet effective strategy to enhance conciseness, potentially paving the way for new research directions
+to make LLMs more predictable and efficient.
+
+References
+Ebtesam Almazrouei, Hamza Alobeidli, Abdulaziz Alshamsi, Alessandro Cappelli, Ruxandra Cojocaru, Mérouane Debbah, Étienne
+Goffinet, Daniel Hesslow, Julien Launay,
+Quentin Malartic, et al. 2023. The falcon series of open language models. arXiv preprint
+arXiv:2311.16867.
+Amos Azaria and Tom Mitchell. 2023. The internal
+state of an llm knows when its lying. arXiv
+preprint arXiv:2304.13734.
+Aman Bhargava, Cameron Witkowski, Manav
+Shah, and Matt Thomson. 2023. What’s the
+magic word? a control theory of llm prompting.
+arXiv preprint arXiv:2310.04444.
+Bin Bi, Chenliang Li, Chen Wu, Ming Yan,
+Wei Wang, Songfang Huang, Fei Huang, and
+Luo Si. 2020. Palm: Pre-training an autoencoding&autoregressive language model for
+context-conditioned generation. arXiv preprint
+arXiv:2004.07159.
+Cheng-Han Chiang and Hung-yi Lee. 2024.
+Over-reasoning and redundant calculation of
+large language models.
+arXiv preprint
+arXiv:2401.11467.
+Wei-Lin Chiang, Zhuohan Li, Zi Lin, Ying Sheng,
+Zhanghao Wu, Hao Zhang, Lianmin Zheng,
+Siyuan Zhuang, Yonghao Zhuang, Joseph E Gonzalez, et al. 2023. Vicuna: An open-source chatbot impressing gpt-4 with 90%* chatgpt quality.
+See https://vicuna. lmsys. org (accessed 14 April
+2023).
+Peter Clark, Isaac Cowhey, Oren Etzioni, Tushar
+Khot, Ashish Sabharwal, Carissa Schoenick, and
+Oyvind Tafjord. 2018. Think you have solved
+question answering? try arc, the ai2 reasoning
+challenge. arXiv preprint arXiv:1803.05457.
+Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser,
+Matthias Plappert, Jerry Tworek, Jacob Hilton,
+Reiichiro Nakano, et al. 2021. Training verifiers
+to solve math word problems. arXiv preprint
+arXiv:2110.14168.
+Jacob Devlin, Ming-Wei Chang, Kenton Lee, and
+Kristina Toutanova. 2018. Bert: Pre-training of
+deep bidirectional transformers for language understanding. arXiv preprint arXiv:1810.04805.
+
+Free Dolly. 2023. Introducing the world’s first truly
+open instruction-tuned llm. databricks. com.
+Yao Fu, Litu Ou, Mingyu Chen, Yuhao Wan, Hao
+Peng, and Tushar Khot. 2023. Chain-of-thought
+hub: A continuous effort to measure large language models’ reasoning performance. arXiv
+preprint arXiv:2305.17306.
+Yao Fu, Hao Peng, Ashish Sabharwal, Peter Clark,
+and Tushar Khot. 2022. Complexity-based
+prompting for multi-step reasoning. In The
+Eleventh International Conference on Learning
+Representations.
+Xinyang Geng, Arnav Gudibande, Hao Liu, Eric
+Wallace, Pieter Abbeel, Sergey Levine, and
+Dawn Song. 2023. Koala: A dialogue model
+for academic research. Blog post, April, 1.
+Shibo Hao, Sainbayar Sukhbaatar, DiJia Su, Xian
+Li, Zhiting Hu, Jason Weston, and Yuandong
+Tian. 2024. Training large language models
+to reason in a continuous latent space. arXiv
+preprint arXiv:2412.06769.
+Zhengbao Jiang, Frank F Xu, Jun Araki, and Graham Neubig. 2020. How can we know what
+language models know? Transactions of the Association for Computational Linguistics, 8:423–
+438.
+Saurav Kadavath, Tom Conerly, Amanda Askell,
+Tom Henighan, Dawn Drain, Ethan Perez,
+Nicholas Schiefer, Zac Hatfield-Dodds, Nova
+DasSarma, Eli Tran-Johnson, et al. 2022. Language models (mostly) know what they know.
+arXiv preprint arXiv:2207.05221.
+Jared Kaplan, Sam McCandlish, Tom Henighan,
+Tom B Brown, Benjamin Chess, Rewon Child,
+Scott Gray, Alec Radford, Jeffrey Wu, and Dario
+Amodei. 2020. Scaling laws for neural language
+models. arXiv preprint arXiv:2001.08361.
+Darioush Kevian, Usman Syed, Xingang Guo,
+Aaron Havens, Geir Dullerud, Peter Seiler,
+Lianhui Qin, and Bin Hu. 2024. Capabilities
+of large language models in control engineering: A benchmark study on gpt-4, claude 3
+opus, and gemini 1.0 ultra. arXiv preprint
+arXiv:2404.03647.
+Daniel Khashabi, Amos Ng, Tushar Khot, Ashish
+Sabharwal, Hannaneh Hajishirzi, and Chris
+
+Callison-Burch. 2021. Gooaq: Open question
+answering with diverse answer types. arXiv
+preprint arXiv:2104.08727.
+Chenliang Li, Bin Bi, Ming Yan, Wei Wang, and
+Songfang Huang. 2021. Addressing semantic
+drift in generative question answering with auxiliary extraction. In Proceedings of the 59th
+Annual Meeting of the Association for Computational Linguistics and the 11th International
+Joint Conference on Natural Language Processing (Volume 2: Short Papers), pages 942–947.
+Ruosen Li, Ziming Luo, and Xinya Du. 2024. Finegrained hallucination detection and mitigation in
+language model mathematical reasoning. arXiv
+preprint arXiv:2410.06304.
+Chin-Yew Lin. 2004. Rouge: A package for automatic evaluation of summaries. In Text summarization branches out, pages 74–81.
+Stephanie Lin, Jacob Hilton, and Owain Evans.
+2021. Truthfulqa: Measuring how models
+mimic human falsehoods.
+arXiv preprint
+arXiv:2109.07958.
+Yizhu Liu, Zhiyi Luo, and Kenny Zhu. 2018. Controlling length in abstractive summarization using a convolutional neural network. In Proceedings of the 2018 Conference on Empirical
+Methods in Natural Language Processing, pages
+4110–4119.
+Leo S Lo. 2023. The clear path: A framework for
+enhancing information literacy through prompt
+engineering. The Journal of Academic Librarianship, 49(4):102720.
+Ggaliwango Marvin, Nakayiza Hellen, Daudi
+Jjingo, and Joyce Nakatumba-Nabende. 2023.
+Prompt engineering in large language models.
+In International Conference on Data Intelligence and Cognitive Informatics, pages 387–402.
+Springer.
+Shen-Yun Miao, Chao-Chun Liang, and Keh-Yih
+Su. 2021. A diverse corpus for evaluating and
+developing english math word problem solvers.
+arXiv preprint arXiv:2106.15772.
+Arkil Patel, Satwik Bhattamishra, and Navin Goyal.
+2021. Are nlp models really able to solve
+simple math word problems? arXiv preprint
+arXiv:2103.07191.
+
+Guilherme Penedo, Quentin Malartic, Daniel Hesslow, Ruxandra Cojocaru, Alessandro Cappelli,
+Hamza Alobeidli, Baptiste Pannier, Ebtesam Almazrouei, and Julien Launay. 2023. The refinedweb dataset for falcon llm: outperforming curated corpora with web data, and web data only.
+arXiv preprint arXiv:2306.01116.
+Guanghui Qin and Jason Eisner. 2021. Learning
+how to ask: Querying lms with mixtures of soft
+prompts. arXiv preprint arXiv:2104.06599.
+Haoran Qiu, Weichao Mao, Archit Patke,
+Shengkun Cui, Saurabh Jha, Chen Wang, Hubertus Franke, Zbigniew T Kalbarczyk, Tamer
+Başar, and Ravishankar K Iyer. 2024. Efficient interactive llm serving with proxy modelbased sequence length prediction. arXiv preprint
+arXiv:2404.08509.
+John W Ratcliff, David E Metzener, et al. 1988.
+Pattern matching: The gestalt approach. Dr.
+Dobb’s Journal, 13(7):46.
+Laria Reynolds and Kyle McDonell. 2021. Prompt
+programming for large language models: Beyond the few-shot paradigm. In Extended Abstracts of the 2021 CHI Conference on Human
+Factors in Computing Systems, pages 1–7.
+Shivanshu Shekhar, Tanishq Dubey, Koyel Mukherjee, Apoorv Saxena, Atharv Tyagi, and Nishanth
+Kotla. 2024. Towards optimizing the costs of
+llm usage. arXiv preprint arXiv:2402.01742.
+Freda Shi, Xinyun Chen, Kanishka Misra, Nathan
+Scales, David Dohan, Ed H Chi, Nathanael
+Schärli, and Denny Zhou. 2023. Large language
+models can be easily distracted by irrelevant context. In International Conference on Machine
+Learning, pages 31210–31227. PMLR.
+William M Stallings and Gerald M Gillmore. 1971.
+A note on “accuracy” and “precision”. Journal
+of Educational Measurement, 8(2):127–129.
+Hendrik Strobelt, Albert Webson, Victor Sanh, Benjamin Hoover, Johanna Beyer, Hanspeter Pfister,
+and Alexander M Rush. 2022. Interactive and
+visual prompt engineering for ad-hoc task adaptation with large language models. IEEE transactions on visualization and computer graphics,
+29(1):1146–1156.
+
+Sho Takase and Naoaki Okazaki. 2019. Positional
+encoding to control output sequence length.
+arXiv preprint arXiv:1904.07418.
+Rohan Taori, Ishaan Gulrajani, Tianyi Zhang, Yann
+Dubois, Xuechen Li, Carlos Guestrin, Percy
+Liang, and Tatsunori B Hashimoto. 2023. Stanford alpaca: An instruction-following llama
+model.
+Hugo Touvron, Thibaut Lavril, Gautier Izacard,
+Xavier Martinet, Marie-Anne Lachaux, Timothée Lacroix, Baptiste Rozière, Naman Goyal,
+Eric Hambro, Faisal Azhar, et al. 2023. Llama:
+Open and efficient foundation language models.
+arXiv preprint arXiv:2302.13971.
+Ashish Vaswani, Noam Shazeer, Niki Parmar,
+Jakob Uszkoreit, Llion Jones, Aidan N Gomez,
+Łukasz Kaiser, and Illia Polosukhin. 2017. Attention is all you need. Advances in neural information processing systems, 30.
+Junlin Wang, Siddhartha Jain, Dejiao Zhang,
+Baishakhi Ray, Varun Kumar, and Ben
+Athiwaratkun. 2024a.
+Reasoning in token economies: Budget-aware evaluation of
+llm reasoning strategies.
+arXiv preprint
+arXiv:2406.06461.
+Xindi Wang, Mahsa Salmani, Parsa Omidi, Xiangyu Ren, Mehdi Rezagholizadeh, and Armaghan Eshaghi. 2024b. Beyond the limits:
+A survey of techniques to extend the context
+length in large language models. arXiv preprint
+arXiv:2402.02244.
+Jason Wei, Xuezhi Wang, Dale Schuurmans,
+Maarten Bosma, Fei Xia, Ed Chi, Quoc V Le,
+Denny Zhou, et al. 2022. Chain-of-thought
+prompting elicits reasoning in large language
+models. Advances in Neural Information Processing Systems, 35:24824–24837.
+Tianyi Zhang, Varsha Kishore, Felix Wu, Kilian Q.
+Weinberger, and Yoav Artzi. 2019. Bertscore:
+Evaluating text generation with BERT. CoRR,
+abs/1904.09675.
+Lianmin Zheng, Wei-Lin Chiang, Ying Sheng,
+Siyuan Zhuang, Zhanghao Wu, Yonghao
+Zhuang, Zi Lin, Zhuohan Li, Dacheng Li, Eric
+Xing, et al. 2024a. Judging llm-as-a-judge with
+mt-bench and chatbot arena. Advances in Neural
+Information Processing Systems, 36.
+
+Zangwei Zheng, Xiaozhe Ren, Fuzhao Xue, Yang
+Luo, Xin Jiang, and Yang You. 2024b. Response length perception and sequence scheduling: An llm-empowered llm inference pipeline.
+Advances in Neural Information Processing Systems, 36.
+Kaijie Zhu, Jindong Wang, Jiaheng Zhou, Zichen
+Wang, Hao Chen, Yidong Wang, Linyi Yang,
+Wei Ye, Neil Zhenqiang Gong, Yue Zhang, et al.
+2023. Promptbench: Towards evaluating the robustness of large language models on adversarial
+prompts. arXiv preprint arXiv:2306.04528.
+
+A.2
+
+Information Flow
+
+Since the main paper examined the information
+flow in answers with 8 steps based on the CCoT
+answer distribution, we further demonstrate the
+effectiveness of CCoT by analyzing step-by-step
+information flow for another median step count,
+specifically 9 steps. Tables 5 and 6 present the
+scores for Llama2-70b on GSM8K and SVAMP,
+respectively.
+In Table 5, for GSM8K, all steps show a reduced
+repetition of semantic information for CCoT, ex-
+
+RMS (45) CCoT True vs CoT False
+0.8
+0.6
+0.4
+0.2
+CCoT
+CoT
+CCoT Quartiles
+CoT Quartiles
+0.0
+0.0 2.5 5.0 7.5 10.0 12.5 15.0 17.5
+RMS (60) CCoT True vs CoT False
+0.8
+0.6
+0.4
+0.2
+CCoT
+CoT
+CCoT Quartiles
+CoT Quartiles
+0.0
+0.0 2.5 5.0 7.5 10.0 12.5 15.0 17.5
+RMS (100) CCoT True vs CoT False
+0.8
+0.6
+0.4
+0.2
+CCoT
+CoT
+CCoT Quartiles
+CoT Quartiles
+0.0
+0.0 2.5 5.0 7.5 10.0 12.5 15.0 17.5
+Number of Reasoning Steps
+
+RMS Mean
+RMS Mean
+RMS Mean
+
+RMS (30) CCoT True vs CoT False
+0.8
+0.6
+0.4
+0.2
+CCoT
+CoT
+CCoT Quartiles
+CoT Quartiles
+0.0
+0.0 2.5 5.0 7.5 10.0 12.5 15.0 17.5
+
+RMS Mean
+
+Figures 7,8, and 9 present the RMS values for
+Llama2-70b and Falcon-40b across the three
+datasets analyzed in the paper. These results specifically highlight scenarios where the model successfully answers questions with the CCoT prompt but
+not with the CoT prompt. The purpose of these
+plots is to check whether the behavior of CCoT
+in terms of redundancy is coherent with that observed in Section 7.4. In addition, these plots help
+to investigate the potential correlation between the
+accuracy of the model’s responses and the reduction in redundancy. The plots in the left column
+correspond to Llama2-70b, while those in the right
+column correspond to Falcon-40b. In each plot, we
+also highlight the interval between Q1 and Q3 for
+CoT and CCoT answers, along with the overlap
+range of these intervals.
+As we can see from these plots, the redundancy
+behavior for CCoT and CoT closely resembles the
+trend observed in Section 7.4 calculated across all
+questions. This suggests that the reduction in redundancy (for Llama2-70b) and number of steps
+(for Falcon-40b) achieved by CCoT is consistent
+and provides more accurate and concise answers
+compared to CoT. In fact, the reduction in terms of
+redundancy or number of steps in the cases where
+CoT fails indicates that the CCoT prompt provides
+better guidance to the model, even in complex or
+ambiguous scenarios where CoT tends to struggle.
+
+RMS (15) CCoT True vs CoT False
+0.8
+0.6
+0.4
+0.2
+CCoT
+CoT
+CCoT Quartiles
+CoT Quartiles
+0.0
+0.0 2.5 5.0 7.5 10.0 12.5 15.0 17.5
+
+RMS Mean
+
+Analysis of the RMS
+
+RMS Mean
+
+A.1
+
+RMS Mean
+
+Additional analysis of the conciseness
+
+RMS Mean
+
+A
+
+RMS Mean
+
+Appendices
+
+RMS Mean
+
+Appendix of the paper ”Concise Thoughts: Impact of Output Length on
+LLM Reasoning and Cost”
+
+0.8
+0.6
+0.4
+0.2
+0.0
+0.0
+0.8
+0.6
+0.4
+0.2
+0.0
+0.0
+0.8
+0.6
+0.4
+0.2
+0.0
+0.0
+0.8
+0.6
+0.4
+0.2
+0.0
+0.0
+0.8
+0.6
+0.4
+0.2
+0.0
+0.0
+
+RMS (15) CCoT True vs CoT False
+
+CCoT
+
+CoT
+
+CCoT Quartiles
+
+2.5
+
+5.0
+
+7.5 10.0 12.5 15.0
+
+CoT Quartiles
+
+RMS (30) CCoT True vs CoT False
+
+CCoT
+
+CoT
+
+CCoT Quartiles
+
+2.5
+
+5.0
+
+7.5 10.0 12.5 15.0
+
+CoT Quartiles
+
+RMS (45) CCoT True vs CoT False
+
+CCoT
+
+CoT
+
+CCoT Quartiles
+
+2.5
+
+5.0
+
+7.5 10.0 12.5 15.0
+
+CoT Quartiles
+
+RMS (60) CCoT True vs CoT False
+
+CCoT
+
+CoT
+
+CCoT Quartiles
+
+2.5
+
+5.0
+
+7.5 10.0 12.5 15.0
+
+CoT Quartiles
+
+RMS (100) CCoT True vs CoT False
+
+CCoT
+
+2.5
+
+CoT
+
+CCoT Quartiles
+
+5.0
+
+7.5 10.0 12.5 15.0
+
+CoT Quartiles
+
+Number of Reasoning Steps
+
+Figure 7: RMS mean score comparison between CCoTtrue and CoT-false on the GSM8K dataset, with Llama270b (left side) and Falcon-40b (right side). The overlapped highlighted area illustrates the answer distribution between Q1 and Q3.
+
+cept for CCoT-45 at the initial step and CCoT-100
+at the final step. A different behavior is observed
+at the final step for all CCoTs in the other dataset
+(SVAMP), as shown in Table 6, although semantic
+information is retained throughout the steps.
+We also calculated the semantic information flow
+for answers with 8 and 9 steps, based on the median
+step distribution of CCoT answers generated by
+Falcon-40b. The results are presented in Tables 7
+and 8 for the GSM8K and SVAMP datasets, respectively. Interestingly, Falcon-40b exhibits contrasting behavior in terms of information scores, often
+displaying higher values, which suggest greater repetition of semantic information across steps. This
+behavior is likely influenced by its medium-scale
+architecture and the nature of its training dataset,
+which may not be well-suited for handling constrained reasoning tasks.
+However, as also highlighted in the main text of
+the paper, it is important to note that Falcon-40b
+
+CCoT
+
+CoT
+
+CCoT Quartiles
+
+2.5
+
+5.0
+
+7.5 10.0 12.5 15.0
+
+2.5
+
+RMS Mean
+CCoT
+
+CCoT Quartiles
+
+5.0
+
+7.5 10.0 12.5 15.0
+
+0.0
+0.0
+
+CoT
+
+CCoT Quartiles
+
+2.5
+
+5.0
+
+7.5 10.0 12.5 15.0
+
+CCoT
+
+CoT
+
+CCoT Quartiles
+
+2.5
+
+5.0
+
+7.5 10.0 12.5 15.0
+
+RMS Mean
+
+7.5
+
+10.0
+
+CCoT Quartiles
+
+5.0
+
+7.5
+
+2.5
+
+CCoT Quartiles
+
+5.0
+
+7.5
+
+CoT Quartiles
+
+Number of Reasoning Steps
+
+CoT
+0.48
+0.54
+0.49
+0.49
+0.51
+0.49
+0.50
+0.55
+
+CCoT-15
+0.29
+0.38
+0.36
+0.35
+0.38
+0.37
+0.36
+0.50
+
+2.5
+
+CoT
+
+CCoT Quartiles
+
+5.0
+
+7.5
+
+CoT Quartiles
+
+10.0
+
+Number of Reasoning Steps
+
+12.5
+
+CCoT-30
+0.32
+0.40
+0.37
+0.36
+0.40
+0.37
+0.37
+0.54
+
+CCoT-45
+0.48
+0.35
+0.40
+0.38
+0.39
+0.39
+0.43
+0.45
+
+CCoT-60
+0.45
+0.33
+0.38
+0.37
+0.38
+0.36
+0.40
+0.51
+
+CCoT-100
+0.33
+0.36
+0.35
+0.34
+0.36
+0.36
+0.35
+0.61
+
+Table 5: GSM8K Llama2-70b Information Flow Mean
+Values comparison across answers with 9 setps
+
+achieves improved conciseness due to the significantly lower average number of steps it produces.
+This allows for quicker reasoning decisions in many
+samples. This observation clarifies that the analysis
+reported in Tables 7 and 8 is inherently unbalanced,
+as the number of Falcon-40b answers with 8 and 9
+steps under CCoT is smaller than those under CoT.
+Please note that in Table 8, there are no information scores for CCoT-15 because Falcon-40b does
+not generate answers with 8 or 9 steps when constrained to a reasoning length of up to 15 tokens.
+
+B
+
+CoT
+
+CCoT Quartiles
+
+2.5
+
+5.0
+
+7.5
+
+CoT
+
+CCoT Quartiles
+
+2.5
+
+5.0
+
+7.5 10.0 12.5 15.0
+
+Testing CCoT with smaller LLMs.
+
+In this experiments, we investigate the capability
+of larger set of LLMs to handle the CCoT prompting. Specifically, in Figure 10, we present an evaluation conducted on five LLMs, including small
+
+CoT Quartiles
+
+0.2
+0.0
+0.0
+
+CoT Quartiles
+
+10.0 12.5
+
+CCoT
+
+CoT
+
+CCoT Quartiles
+
+2.5
+
+5.0
+
+7.5 10.0 12.5 15.0
+
+RMS (45) CCoT True vs CoT False
+
+RMS (45) CCoT True vs CoT False
+
+CCoT
+
+CoT
+
+CCoT Quartiles
+
+2.5
+
+5.0
+
+7.5 10.0 12.5
+
+0.2
+0.0
+0.0
+
+CoT Quartiles
+
+CCoT
+
+CoT
+
+CCoT Quartiles
+
+2.5
+
+5.0
+
+7.5 10.0 12.5 15.0
+
+CCoT
+
+CoT
+
+2.5
+
+5.0
+
+CCoT Quartiles
+
+7.5
+
+CCoT
+
+2.5
+
+CoT
+
+10.0
+
+12.5
+
+5.0
+
+7.5
+
+0.2
+CCoT
+
+CoT
+
+CCoT Quartiles
+
+2.5
+
+5.0
+
+7.5 10.0 12.5 15.0
+
+10.0
+
+12.5
+
+CoT Quartiles
+
+RMS (100) CCoT True vs CoT False
+
+0.4
+
+CoT Quartiles
+
+Number of Reasoning Steps
+
+0.4
+
+0.0
+0.0
+
+CoT Quartiles
+
+CCoT Quartiles
+
+CoT Quartiles
+
+RMS (60) CCoT True vs CoT False
+
+0.2
+0.0
+
+CoT Quartiles
+
+0.4
+
+RMS (100) CCoT True vs CoT False
+
+0.2
+CCoT
+
+CCoT
+
+RMS (30) CCoT True vs CoT False
+
+0.2
+0.0
+
+12.5
+
+Figure 8: RMS mean score comparison between CCoTtrue and CoT-false on the SVAMP dataset, with Llama270b (left side) and Falcon-40b (right side). The overlapped highlighted area illustrates the answer distribution between Q1 and Q3.
+Steps
+1⇒2
+2⇒3
+3⇒4
+4⇒5
+5⇒6
+6⇒7
+7⇒8
+8⇒9
+
+0.0
+0.0
+
+0.4
+0.0
+0.0
+
+0.2
+
+RMS (60) CCoT True vs CoT False
+
+CoT Quartiles
+
+10.0
+
+15
+
+0.2
+0.0
+
+12.5
+
+0.2
+CoT
+
+10
+
+CCoT
+
+0.4
+
+0.4
+
+CCoT
+
+CoT Quartiles
+
+0.2
+0.0
+
+12.5
+
+CoT Quartiles
+
+10.0
+
+CCoT Quartiles
+
+0.4
+
+RMS (100) CCoT True vs CoT False
+
+RMS Mean
+CCoT
+
+CoT
+
+2.5
+
+RMS (100) CCoT True vs CoT False
+
+0.4
+
+0.0
+0.0
+
+5.0
+
+CoT Quartiles
+
+0.2
+
+0.0
+0.0
+
+CoT Quartiles
+
+0.2
+
+5
+
+RMS (60) CCoT True vs CoT False
+
+RMS Mean
+CCoT
+
+CCoT Quartiles
+
+0.4
+
+0.0
+0.0
+
+CoT Quartiles
+
+0.2
+
+CoT
+
+2.5
+
+RMS (60) CCoT True vs CoT False
+
+0.4
+RMS Mean
+
+CoT
+
+CoT
+
+0.4
+
+RMS (30) CCoT True vs CoT False
+
+RMS (45) CCoT True vs CoT False
+
+RMS Mean
+
+RMS Mean
+
+0.0
+0.0
+
+CCoT
+
+12.5
+
+0.2
+
+RMS (45) CCoT True vs CoT False
+
+0.2
+
+10.0
+
+0.4
+0.0
+0.0
+
+CoT Quartiles
+
+0.4
+
+7.5
+
+CCoT
+
+RMS (30) CCoT True vs CoT False
+
+RMS Mean
+
+RMS Mean
+
+0.2
+
+5.0
+
+0.2
+0.0
+
+CoT Quartiles
+
+RMS Mean
+
+RMS (30) CCoT True vs CoT False
+
+0.4
+
+0.0
+0.0
+
+2.5
+
+CCoT Quartiles
+
+RMS Mean
+
+7.5 10.0 12.5 15.0
+
+CoT
+
+RMS Mean
+
+5.0
+
+CCoT
+
+RMS (15) CCoT True vs CoT False
+
+RMS Mean
+
+2.5
+
+0.2
+0.0
+0.0
+
+CoT Quartiles
+
+RMS Mean
+
+CCoT Quartiles
+
+RMS Mean
+
+CoT
+
+RMS Mean
+
+CCoT
+
+RMS (15) CCoT True vs CoT False
+
+RMS Mean
+
+RMS Mean
+
+RMS Mean
+
+0.2
+0.0
+0.0
+
+RMS (15) CCoT True vs CoT False
+
+0.4
+
+RMS Mean
+
+RMS (15) CCoT True vs CoT False
+
+0.4
+
+0.2
+0.0
+0.0
+
+CCoT
+
+2.5
+
+CoT
+
+CCoT Quartiles
+
+5.0
+
+7.5 10.0 12.5 15.0
+
+CoT Quartiles
+
+Number of Reasoning Steps
+
+Figure 9: RMS mean score comparison between
+CCoT-true and CoT-false on the ASDIV dataset,
+with Llama2-70b shown (left side) and Falcon-40b
+(right side). The overlapped highlighted area illustrates the answer distribution between Q1 and Q3.
+Steps
+1⇒2
+2⇒3
+3⇒4
+4⇒5
+5⇒6
+6⇒7
+7⇒8
+8⇒9
+
+CoT
+0.46
+0.49
+0.46
+0.45
+0.49
+0.51
+0.47
+0.49
+
+CCoT-15
+0.29
+0.31
+0.33
+0.32
+0.32
+0.31
+0.32
+0.54
+
+CCoT-30
+0.32
+0.36
+0.34
+0.34
+0.39
+0.37
+0.38
+0.63
+
+CCoT-45
+0.30
+0.33
+0.31
+0.32
+0.37
+0.41
+0.38
+0.68
+
+CCoT-60
+0.29
+0.34
+0.30
+0.29
+0.36
+0.34
+0.37
+0.62
+
+CCoT-100
+0.32
+0.34
+0.32
+0.31
+0.34
+0.33
+0.39
+0.58
+
+Table 6: SVAMP Llama70b Information Flow Mean
+Values comparison across answers with 9 setps
+
+and medium-sized models such as Falcon-7b (Almazrouei et al., 2023) and LLama2-7b (Touvron
+et al., 2023). The results acknowledge some difficulties in addressing the CCoT prompt when considering smaller models.
+We believe that such different outcomes of CCoT
+prompting can be attributed to various factors, such
+as the training data, the approach used to train the
+model, the model size, and the technique adopted
+during training. For instance, Llama2-70b is an autoregressive large-scale language model fine-tuned
+with human feedback, trained on a diverse combination of generic and open-source datasets. Such technical measures contribute to making CCoT effective in controlling the output length while improving the model accuracy. The Falcon-40b model, in
+contrast, is smaller than Llama2-70b and trained
+
+Table 7: GSM8K Falcon-40b Information Flow
+
+Mean Values Comparison
+CCoT-15
+0.65
+0.69
+0.74
+0.66
+0.62
+0.61
+0.50
+
+CCoT-30
+0.64
+0.68
+0.76
+0.63
+0.72
+0.66
+0.55
+
+30
+CCoT-45
+0.65
+0.70
+0.74
+0.64
+0.67
+0.68
+0.54
+
+CCoT-60
+0.61
+0.68
+0.68
+0.64
+0.66
+0.68
+0.56
+
+CCoT-100
+0.59
+0.64
+0.63
+0.66
+0.64
+0.62
+0.59
+
+(a) Answers with 8 steps
+Steps
+1⇒2
+2⇒3
+3⇒4
+4⇒5
+5⇒6
+6⇒7
+7⇒8
+8⇒9
+
+CoT
+0.55
+0.58
+0.54
+0.54
+0.54
+0.55
+0.55
+0.59
+
+CCoT-15
+0.62
+0.62
+0.62
+0.62
+0.69
+0.70
+0.65
+0.52
+
+CCoT-30
+0.69
+0.65
+0.67
+0.64
+0.74
+0.59
+0.77
+0.60
+
+CCoT-45
+0.61
+0.65
+0.63
+0.46
+0.67
+0.48
+0.68
+0.46
+
+CCoT-60
+0.58
+0.57
+0.61
+0.55
+0.64
+0.56
+0.65
+0.48
+
+CCoT-100
+0.67
+0.73
+0.73
+0.63
+0.76
+0.66
+0.75
+0.68
+
+(b) Answers with 9 steps
+Table 8: SVAMP Falcon-40b Information Flow
+
+Mean Values Comparison
+Steps
+1⇒2
+2⇒3
+3⇒4
+4⇒5
+5⇒6
+6⇒7
+7⇒8
+
+CoT
+0.26
+0.68
+0.60
+0.61
+0.63
+0.63
+0.55
+
+CCoT-15
+0.60
+0.58
+0.68
+0.56
+0.51
+0.95
+0.73
+
+CCoT-30
+0.58
+0.53
+0.52
+0.51
+0.65
+0.76
+0.57
+
+CCoT-45
+0.55
+0.53
+0.60
+0.56
+0.55
+0.52
+0.60
+
+CCoT-60
+0.58
+0.60
+0.49
+0.63
+0.68
+0.64
+0.56
+
+CCoT-100
+0.61
+0.52
+0.54
+0.60
+0.64
+0.62
+0.65
+
+(a) Answers with 8 Steps
+Steps
+1⇒2
+2⇒3
+3⇒4
+4⇒5
+5⇒6
+6⇒7
+7⇒8
+8⇒9
+
+CoT
+0.26
+0.65
+0.57
+0.58
+0.60
+0.57
+0.63
+0.54
+
+CCoT-15
+-
+
+CCoT-30
+0.64
+0.59
+0.66
+0.74
+0.67
+0.86
+0.77
+0.61
+
+CCoT-45
+0.62
+0.55
+0.52
+0.67
+0.47
+0.47
+0.69
+0.56
+
+CCoT-60
+0.56
+0.53
+0.62
+0.55
+0.67
+0.75
+0.63
+0.57
+
+CCoT-100
+0.61
+0.66
+0.63
+0.54
+0.61
+0.64
+0.62
+0.43
+
+(b) Answers with 9 Steps
+
+on a different dataset (the dedicated RefinedWeb
+data (Penedo et al., 2023)). While CCoT does not
+improve the accuracy of the model with respect
+to CoT, it still performs better than the base plain
+prompting, offering a trade-off by reducing generation times compared to CoT. Vicuna-13b also provides competitive results across different prompts,
+as it is a fine-tuned version of Llama2 and smaller
+than the previous Llama2-70b.
+Conversely, small-scale LLMs, such as Falcon7b and Llama2-7b, are not capable of properly
+handling the constrained prompting conditions in
+CCoT, resulting in higher generation times (as
+shown for Falcon-7b with large length values in
+CCoT) or incorrect answers with short CCoT values in Llama2-7b. This suggests that model size
+and training strategies severely impact the effectiveness of CCoT.
+Considering the observations presented here, we
+believe that future directions could face potential
+training and fine-tuning strategy to integrate a better awareness and capability fo thandlign lengths
+
+Falcon-7b
+
+LLama2-7b
+
+Vicuna-13b
+
+Falcon-40b
+
+LLama2-70b
+
+25
+
+Geeneration Time (s)
+
+CoT
+0.58
+0.62
+0.60
+0.59
+0.61
+0.60
+0.59
+
+20
+15
+10
+5
+0
+
+Base
+
+CoT
+
+CCoT-15 CCoT-30 CCoT-45 CCoT-60 CCoT-100
+
+(a) Generation time
+40
+35
+30
+25
+20
+15
+10
+5
+0
+
+Falcon-7b
+
+LLama2-7b
+
+Vicuna-13b
+
+Falcon-40b
+
+LLama2-70b
+
+Accuracy (%)
+
+Steps
+1⇒2
+2⇒3
+3⇒4
+4⇒5
+5⇒6
+6⇒7
+7⇒8
+
+also for smaller-sized models.
+
+Base
+
+CoT
+
+CCoT-15 CCoT-30 CCoT-45 CCoT-60 CCoT-100
+
+(b) Accuracy
+Figure 10: Generation time (a) and accuracy (b) of
+five LLMs (Llama2-7b, Llama2-70b, Falcon-7b, Falcon40b, and Vicuna-13b) on the GSM8K test dataset. Each
+model is evaluated using plain promt (base), CoT, and
+CCoT with different length constraints.

@@ -1,0 +1,1020 @@
+TITLE: DeltaSelect: Affordable A/B Testing for Coding Agents
+URL: https://arxiv.org/abs/2609.19607
+ORG: arXiv  TYPE: paper  DATE: 2026-09
+
+                                                  DeltaSelect: Affordable A/B Testing for Coding Agents
+                                                                                Nicholas J. Conn, PhD
+
+                                                                                  Conn Castle Studios
+                                                                                  nick@conncastle.com
+
+
+
+
+arXiv:2609.19607v1 [cs.SE] 17 Sep 2026
+                                                                                         Abstract
+                                                  Coding-agent benchmarks are built for broad and comprehensive comparisons, not frequent
+                                              development decisions. Individual runs vary, full suites are expensive, and the benchmark har-
+                                              ness may differ from the harness used in practice. In a resampling analysis of DeepSWE’s
+                                              published trials, only 19.5% of tasks (22 of 113) had a fifth-percentile Pearson correlation of at
+                                              least 0.50 with full-benchmark performance. The paper presents DeltaSelect, an open-source
+                                              method that identifies tasks whose one-run results consistently track full-benchmark perfor-
+                                              mance using Pearson correlation, maps fractional verifier results to a common score using linear
+                                              regression, and selects a fixed task set within a dollar budget. DeltaSelect is intended for re-
+                                              peated baseline-versus-candidate comparisons during development, not model rankings. In a
+                                              gpt-5.6-luna low-reasoning case study, DeltaSelect was used to revise custom skills and instruc-
+                                              tions. Across 13 evaluations, the recorded cost was $27.86 at rates published August 16, 2026.
+                                              The adopted version cost 58.1% less than the initial version ($1.75 versus $4.18; p=0.008), while
+                                              the calibrated score was higher (42.36% versus 36.46%; published-analog variance p=0.326).
+
+
+                                         1   Introduction
+                                         Developers routinely change skills and instructions, tune reasoning levels, switch models, and make
+                                         other changes intended to improve their coding agents. Improvement may mean a higher score, a
+                                         lower cost, fewer failures, or a useful tradeoff between these goals. Regardless of the goal, iteration
+                                         is central to research and development. Comparisons must be low cost enough to repeat throughout
+                                         the development process while providing enough statistical power to distinguish meaningful changes
+                                         from run-to-run variation.
+                                         Full benchmarks remain the right tool for broad comparisons, but their cost prevents routine use
+                                         during development. This paper presents DeltaSelect, a method that uses repeated published trials
+                                         to select a small, fixed task set within a specified budget and compare a baseline with a candidate.
+                                         DeltaSelect is not a leaderboard, a universal model ranking, or a replacement for a full benchmark.
+                                         The research question is specific: Can a single run per selected task provide useful evidence for
+                                         frequent baseline-versus-candidate comparisons without full-benchmark cost?
+                                         One barrier to low-cost comparison is how benchmark results are typically scored. Binary scoring
+                                         discards useful information from each run. DeepSWE executes each task four times and scores
+                                         each run as pass or fail [Huang et al., 2026]. Repeating each task four times reduces the effect of
+                                         run-to-run variation, but does not recover discarded partial progress and increases the benchmark’s
+                                         scored-run cost four-fold.
+                                         DeepSWE’s released verifier records contain more information. In addition to binary resolution,
+                                         the records report the fraction of new fail-to-pass tests passed (F2P) and the fraction of existing
+
+                                                                                              1
+pass-to-pass tests preserved (P2P). F2P distinguishes partial progress mapped to zero by binary
+scoring. F2P varies across runs and is not equally informative for every task. F2P also measures
+verifier tests, not the percentage of a task’s requirements completed: tests can overlap, differ in
+diﬀiculty, or encode several assertions. Even with those limits, F2P preserves partial progress that
+binary scoring discards. An all-or-nothing result is too coarse for practical one-run comparisons.
+Reducing cost to one run per task then creates a task-selection problem. DeltaSelect ranks tasks
+by how consistently one published run correlates with full-benchmark performance across the ob-
+served configurations. The ranking does not judge a task’s broader benchmark value; it measures
+whether one run provides useful evidence for the development decision studied here. A low one-run
+correlation does not invalidate a task or diminish its value in a comprehensive benchmark. It means
+only that a single execution provides weak evidence for this development decision. Across 10,000
+deterministic one-trial resamples, the median task’s fifth-percentile Pearson correlation with the
+full DeepSWE configuration score was 0.321. Only 22 of 113 tasks reached 0.50, and only two
+exceeded 0.70. Reliable one-run signal was limited to a small part of the benchmark (Figure 1).
+
+
+                                                    5th–95th percentile           Median resample              5th percentile (ranking statistic)
+
+
+
+
+   Pearson correlation with full score
+                                                                     22 / 113 tasks: 5th-percentile r > 0.50
+                                          0.8
+
+                                          0.6
+                                                                                                                                                    Pearson r = 0.50
+
+                                          0.4
+
+                                          0.2
+
+                                          0.0
+                                                                                                      median task: 5th percentile = 0.321
+                                         −0.2
+
+                                                1               22                  40                    60                     80                 100            113
+                                                                                  Task rank by conservative correlation
+
+
+
+Figure 1: Which tasks remain useful when run only once? For each task, one published run per
+model–effort configuration is resampled 10,000 times and correlated with the full-benchmark score.
+Blue points and the solid line show the fifth percentile, the dashed line shows the median, and
+the shaded band spans the fifth–95th percentiles. Only 22 of 113 tasks (19.5%) exceed 0.50 on
+the conservative ranking statistic; most tasks are weak one-run proxies for the observed full-score
+variation.
+
+A second challenge with many leading benchmarks is the harness gap. A coding-agent score reflects
+the entire system used to produce it: the model, reasoning setting, client, tools, instructions, and
+execution harness. A published benchmark may deliberately fix a neutral harness to isolate other
+differences. A developer instead cares about the harness that will be used in practice, which may
+have different context management, tools, prompts, and control flow. On Terminal-Bench 2.1,
+holding model and reasoning effort fixed while changing the harness moved GPT-5.5 xhigh by 5.1
+percentage points and Opus 4.7 max by 2.8 points [Terminal-Bench, 2026a]. Changing the harness
+can therefore move a score even when the model and reasoning level do not change. Selected tasks
+must be validated in the intended harness before use.
+
+
+                                                                                                 2
+Using frontier models creates another constraint: a comparison needs headroom. Frontier agents
+are beginning to saturate established coding benchmarks, making further improvements harder
+to distinguish [OpenAI, 2026c]. A baseline near 100% on every selected task leaves little room
+for a better candidate to raise the score. A baseline near 0% leaves no room to detect a further
+regression. Selecting tasks with usable headroom can mitigate the problem, but the mitigation is
+not free: those tasks may be less repeatable or more expensive. The choice is a tradeoff between
+headroom, repeatability, and price. Published results are used to build the task set and scoring
+model. The baseline must then be run in the exact harness and version intended for the comparison.
+That step cannot be skipped: changing or updating the harness can change task behavior, score, and
+cost. Only that target-harness baseline can establish the selected tasks’ headroom, repeatability,
+and starting score.
+DeltaSelect addresses this decision with a deliberately simple pipeline. The pipeline ranks tasks
+by fifth-percentile correlation across repeated public trials, maps each task’s F2P result onto the
+published full-score scale, weights tasks with smaller calibration errors more heavily, and selects
+the highest-ranked tasks that fit the model-specific dollar budget. Figure 2 shows these steps. The
+resulting tasks, repetitions, calibration coeﬀicients, weights, price assumptions, snapshot check-
+sum, and seeds are frozen before the first baseline-versus-candidate comparison and remain fixed
+throughout iteration.
+The method is intended to compare two versions of the same coding-agent system under a fixed
+specification. DeltaSelect is not a leaderboard, a universal model ranking, proof of unseen-task
+generalization, or a replacement for comprehensive benchmarks. A small correlated task set does
+not inherit the full benchmark’s breadth merely by tracking the historical full score.
+The paper makes three contributions:
+    1. A deterministic task ranking based on repeated trials to account for run-to-run variation
+       instead of ranking tasks from mean results alone.
+    2. A calibrated score retaining fractional verifier evidence discarded by binary scoring while
+       keeping raw F2P, P2P, and binary outcomes visible.
+    3. A model- and effort-specific budget scan based on observed task prices without allowing price
+       to change the reliability ranking.
+The central claim is intentionally narrow: repeated public trials can identify a small, fixed set of
+reliable tasks for affordable baseline-versus-candidate comparisons. In the published example, the
+selected tasks are projected to distinguish two materially different model–effort configurations at
+far lower scored-trial cost than the full benchmark. Target-harness runs show why the selected
+tasks must then be validated and baselined in the intended harness. The case study shows how a
+frozen task set can guide development toward higher score, lower cost, or both.
+
+
+2     Related Work
+2.1    Data-eﬀicient model evaluation
+Prior work provides several techniques for estimating model performance with fewer evaluations.
+The Active Testing technique uses adaptive sampling and importance weighting to estimate perfor-
+mance with fewer labels [Kossen et al., 2021]. Active Surrogate Estimators adds learned surrogate
+predictions to the selection process [Kossen et al., 2022]. Eﬀicient Benchmarking allocates evalu-
+ation resources according to decision reliability and reports large reductions in HELM evaluation
+
+
+                                                  3
+Figure 2: Selecting a fixed task set under a dollar budget. (A) One completed run is sampled
+per model–effort configuration for each task; eight configurations are shown for the DeepSWE task
+koota-pair-relation-tracking, which ranks third. Sol denotes gpt-5.6-sol, and Opus denotes
+Claude Opus 4.8. (B) Repeating the sampling 10,000 times produces each task’s correlation dis-
+tribution. (C) Tasks are ranked by the fifth percentile of task-level distributions. (D) The fixed
+ranking is scanned under the execution budget using snapshot prices: ranks 1–7 fit, ranks 8–24 ex-
+ceed the remaining $0.056, and rank 25 is the next affordable task. Task rank is shown horizontally
+so the skipped interval is explicit.
+
+
+
+
+                                                4
+cost with limited reliability loss [Perlitz et al., 2024]. These methods reduce evaluation cost by
+evaluating a selected subset, allocating runs where they are most informative, or using surrogate
+predictions. If examples are sampled at different rates, importance weighting gives each observed
+result a compensating influence so that the estimate represents the original evaluation set rather
+than the biased sample.
+Short-form benchmark construction provides an even closer precedent. tinyBenchmarks combines
+item-response models with anchor examples to estimate full-benchmark scores from small subsets
+[Maia Polo et al., 2024b]. Eﬀicient Multi-Prompt Evaluation treats prompt choice as another
+measurement dimension [Maia Polo et al., 2024a]. BenTo reduces benchmarks at the task level
+using transferability and facility-location selection, explicitly considering redundancy [Zhao et al.,
+2025].
+SubLIME is the closest correlation-based analogue. SubLIME learns to select 1–20% of benchmark
+items preserving global rankings, using item features and partial evaluations from anchor models
+[Saranathan et al., 2025]. SubLIME aims to preserve rankings across many models. DeltaSelect
+instead asks whether a change improved or worsened the same coding-agent system during de-
+velopment. DeltaSelect directly models uncertainty from repeated task executions, incorporates
+different dollar costs by task, maps fractional verifier results to a common reference scale, requires
+a target-harness baseline, and freezes a user-visible task set for longitudinal comparison. A task
+can help preserve the ranking of many models yet still be too noisy to compare two system versions
+from one run.
+What is new is the combination for a specific use case: frequent A/B testing of a coding-agent system
+during development. DeltaSelect uses repeated trials to rank task reliability, converts partial-credit
+results onto one score scale, selects tasks within a dollar budget, validates them in the target
+harness, and reports workflow cost. The task set and scoring rules then stay fixed while the system
+changes.
+
+2.2   Variance and score validity
+DeltaSelect measures only run-to-run randomness by repeatedly sampling one of each task’s four
+published outcomes; it does not measure variation caused by data, training, or implementation
+differences [Bouthillier et al., 2021].
+The method is not specific to DeepSWE. Any benchmark can serve as input if it reports a full score
+across configurations and repeated task-level trials for estimating uncertainty. Terminal-Bench 2.1
+is one example: its leaderboard requires at least five public trials per task and reports an aggregate
+task-resolution score [Terminal-Bench, 2026b].
+The calibrated score has one intended use: compare a baseline and candidate on the fixed selected
+tasks. It should not be read as a general measure of software-engineering ability. Even when the
+subset tracks DeepSWE, it does not cover every capability tested by the full benchmark [Messick,
+1995].
+
+2.3   Coding-agent benchmarks, harnesses, and verifier evidence
+SWE-bench evaluates whether an agent can fix real issues in software repositories [Jimenez et al.,
+2024]. SWE-agent showed that the agent-computer interface materially affects performance [Yang
+et al., 2024]. Agentless showed that a simpler workflow could be competitive and inexpensive,
+reinforcing the need to evaluate cost and outcome together [Xia et al., 2025]. Harness-Bench adds
+
+                                                  5
+recent controlled evidence that harness choices affect completion, cost, safety, and process outcomes
+[Yao et al., 2026]. The current Terminal-Bench leaderboard provides contemporary same-model
+comparisons under native and neutral harnesses, although it offers first-party benchmark evidence
+rather than peer-reviewed causal evidence.
+DeepSWE provides the repeated long-horizon task matrix used here. DeepSWE uses original tasks,
+a fixed mini-swe-agent harness, binary rewards, and four trials per task–configuration cell; the
+DeepSWE paper also acknowledges the lack of partial credit and the tradeoff between harness
+standardization and native-product realism [Huang et al., 2026]. SkillsBench evaluates skills across
+model–harness configurations with repeated task-macro pass rates and observes harness-mediated
+effects [Li et al., 2026].
+F2P is useful, but its numeric detail can imply more certainty than the verifier tests support.
+A fraction of F2P tests passed can distinguish a near-complete implementation from an attempt
+without meaningful progress. F2P does not establish that each test represents an equal, independent
+unit of the requirement. Mutation-testing research shows why suite adequacy matters: passing a
+weak suite can leave faults undetected [Jia and Harman, 2011]. DeltaSelect therefore preserves raw
+F2P, P2P, binary resolution, and build or environment failures beside the aggregate score.
+
+2.4   Cost-aware agent evaluation
+Prior work also treats score and cost together. AI Agents That Matter argues for cost-controlled
+comparisons and accuracy–cost Pareto frontiers, and shows that repeated sampling can confound
+comparisons among agent architectures [Kapoor et al., 2025]. DeltaSelect does not introduce the
+idea that agent score and cost should be evaluated jointly. DeltaSelect addresses measurement
+expense and attributes realized spend to the workflow being changed.
+DeltaSelect reports score and recorded model cost for every completed evaluation. A lower cost
+can be the desired improvement; showing both values lets the caller decide whether a score change,
+a cost change, or both justify adopting a candidate.
+
+
+3     DeltaSelect
+DeltaSelect converts repeated trials from an existing benchmark into a fixed, budget-constrained
+task set for measuring changes between agent configurations. The method separates four easily
+conflated operations: task ranking, score construction, budget allocation, and target-harness val-
+idation. Ranking asks which tasks remain informative when run once. Score construction maps
+heterogeneous task fractions onto a common reference scale. Allocation asks which ranked tasks fit
+the execution budget. Target-harness validation runs the selected tasks in the intended harness to
+establish their actual baseline behavior, cost, and headroom before comparing a candidate.
+
+3.1   Inputs and notation
+The input is a pinned benchmark snapshot containing repeated fractional F2P outcomes, full-
+benchmark scores for observed model–effort configurations, and trial prices. The analysis uses the
+DeepSWE v1.1 trial snapshot [Huang et al., 2026]. The snapshot contains 22,586 source trials,
+including 22,417 usable trials, spanning 18 models, 50 model–effort configurations, and 113 tasks.
+The 169 excluded trials are not silently filled or imputed.
+
+
+
+
+                                                 6
+Luna low, Luna medium, and Luna high refer to gpt-5.6-luna at low, medium, and high reasoning,
+respectively.
+Selection and published-data feasibility examples use the snapshot trial prices as recorded. Only the
+target-harness and case-study costs from Section 4.2 through Section 5.3, including the published
+estimates compared there, are priced using the August 16, 2026 schedule. Under that schedule, the
+$0.65 published Luna low budget corresponds to $0.13.
+Let 𝑡 index tasks, 𝑐 index model–effort configurations, and 𝑗 ∈ {1, … , 4} index repeated published
+runs. Let 𝑥𝑡𝑐𝑗 be the F2P result for run 𝑗, and let 𝑌𝑐 be the fixed full DeepSWE score for con-
+figuration 𝑐, calculated as the mean published score across included trials. 𝐶𝑡 denotes the set of
+configurations with a complete four-run cell for task 𝑡. The number of complete configurations
+can differ by task. Incomplete configuration–task cells are excluded from the corresponding task’s
+ranking and calibration rather than reconstructed.
+F2P was chosen on evidence. Under the same 10,000-resample procedure, F2P produced 22 tasks
+with a fifth-percentile correlation of at least 0.50. All verifier tests combined produced 15, binary
+pass/fail produced 11, and P2P alone produced zero. F2P is used to measure implementation
+progress; P2P remains a separate regression check. The choice does not make F2P a literal measure
+of how much of the task was completed. The 0.50 threshold is a descriptive reporting cut, not a
+selection rule; allocation uses the complete task ranking.
+
+3.2   Conservative correlation ranking
+For every task and resample, DeltaSelect independently draws a single trial from the four complete
+trials for each available configuration and correlates the resulting one-run task vector with the fixed
+full-score vector:
+
+                  (𝑏)                                                  (𝑏)
+                 𝑟𝑡 = corr([𝑥𝑡𝑐𝐽 (𝑏) ]          , [𝑌𝑐 ]𝑐∈𝐶𝑡 ) ,      𝐽𝑡𝑐 ∼ Uniform{1, … , 4}.
+                                   𝑡𝑐    𝑐∈𝐶𝑡
+
+
+The Pearson correlation is recomputed for 10,000 deterministic resamples. The choice of 10,000 is
+not statistically special or tuned to the result. It is a practical large sample that makes Monte Carlo
+noise small while adding negligible computation to the task-selection stage. Each pseudorandom
+task stream is seeded from SHA-256 of the pinned snapshot checksum, a null byte, and the task
+identifier, using the first little-endian 32-bit integer. Constant sampled vectors receive correlation
+zero. The ranking statistic is the fifth percentile of the task-level resampled correlation distribution:
+
+                                                        (1)       (10,000)
+                                        𝑞𝑡 = 𝑄0.05 (𝑟𝑡 , … , 𝑟𝑡              ).
+
+Tasks are ordered from highest to lowest 𝑞𝑡 , with ties broken by median correlation and then task
+identifier. The fifth percentile is conservative in a specific sense: a task ranks highly only if most
+one-run combinations preserve a strong relationship with full-score variation across the observed
+configurations. The statistic is not a 90% confidence bound on future models, tasks, or harnesses.
+The statistic is conditional on the four retained trials and the finite configuration matrix.
+The selector does not choose tasks that best separate one favorable historical pair. It asks whether
+tasks continue to track configuration differences after each four-run cell is reduced to one sampled
+outcome.
+
+
+                                                          7
+3.3   Per-task calibration and weighting
+Task fractions are not directly comparable. A 0.50 F2P result on one repository can represent a
+different level of observed system performance than 0.50 on a second repository. DeltaSelect fits a
+separate ordinary least-squares mapping from each task’s four-run mean to the common published
+full-score scale:
+
+
+                                         𝑌𝑐 = 𝛼𝑡 + 𝛽𝑡 𝑥𝑡𝑐
+                                                       ̄ + 𝜀𝑡𝑐 .
+
+Here 𝑥̄𝑡𝑐 is the mean of the four published F2P trials. The fitted line is later applied to the noisier
+one-run observation in a low-cost evaluation. Ordinary least squares was chosen for transparency
+and auditability, not because the relationship is known to be linear. This mapping is also the
+normalization step. Raw F2P fractions come from different verifiers and do not carry the same
+meaning across tasks. After calibration, every task estimates the same full-score quantity. The
+normalized weights sum to one, so the aggregate remains on that common scale rather than growing
+with the number of selected tasks. A task’s number of verifier checks affects the granularity of its
+F2P fraction, not the scale of the aggregate. Calibration does not remove dependence between
+related tasks. The example calibration curve (Figure 3) shows possible structure near high F2P
+values; nonlinear alternatives remain unmeasured future work.
+Residual error determines task influence in the final selected set 𝑆:
+
+                                     1                 2
+                                                    ̂ ) ,                𝜎̂𝑡−2
+                        𝜎̂𝑡2 =             ∑ (𝑌𝑐 − 𝑌𝑡𝑐         𝑤𝑡 =               .
+                                 |𝐶𝑡 | − 2 𝑐∈𝐶                         ∑𝑗∈𝑆 𝜎̂𝑗−2
+                                            𝑡
+
+
+
+Tasks with undefined or nonpositive residual variance are excluded to avoid undefined infinite
+weights. The remaining positive inverse-error weights are normalized over the final selected set.
+A task with smaller linear-calibration residuals receives more influence. The weights resemble
+precision weighting, but the interpretation must stay limited. Task estimates are correlated, and
+each residual variance is estimated from the same finite matrix. The weights also omit the one-run
+sampling variance of 𝑥𝑡 , a source not captured by the calibration residual. The weights do not form
+an optimal inverse-variance meta-analysis.
+For an evaluated arm, the calibrated score is
+
+                                       ̂
+                                       Θ(𝑆) = ∑ 𝑤𝑡 (𝛼𝑡̂ + 𝛽𝑡̂ 𝑥𝑡 ) ,
+                                                𝑡∈𝑆
+
+
+where 𝑥𝑡 is the arm’s observed F2P fraction, averaged over 𝑚 repetitions when 𝑚 > 1.
+The calibrated score expresses a task’s F2P result on the published DeepSWE full-score scale.
+This puts otherwise incomparable task outcomes on one common scale so they can be combined
+into a single score. It is not an oﬀicial DeepSWE score or a literal percentage of requirements
+completed. DeltaSelect does not cap the estimate at 0 or 100%. A linear fit can produce values
+outside that range, especially when a new result falls beyond the published observations. Capping
+those values would hide the magnitude of changes near the boundary and alter differences between
+the baseline and candidate. Values outside 0–100% should therefore be reported as model estimates
+and interpreted with raw F2P, P2P, binary outcomes, and task failures.
+
+
+                                                      8
+                              A. Calibrate each task to the full-score scale                     B. Weight tasks by calibration error
+
+                               full score = 0.123 + 0.505 × task F2P                       #1                                              17.2%
+                        0.7
+                               n = 50 configurations
+                               R² = 0.679                                                                                          14.2%
+                        0.6                                                                #3
+
+
+
+
+   Full DeepSWE score
+                                                                                           #2                                   12.9%
+                        0.5
+                                                                                           #5                               12.4%
+                        0.4
+                                                                                           #7                              11.8%
+                        0.3
+                                                                                           #4                          11.2%
+                        0.2
+                                                                                           #6                         10.7%
+                        0.1
+                                                                                           #25                      9.6%
+                        0.0
+                              0.0      0.2       0.4       0.6         0.8   1.0                 0           5             10              15
+                                        Task F2P (four-run mean)                                             Normalized weight (%)
+
+
+
+Figure 3: Score construction is separate from task selection. (A) For each selected task, ordi-
+nary least squares maps F2P outcomes onto the common full-score scale; the DeepSWE task
+koota-pair-relation-tracking is shown. (B) Normalized inverse residual-variance weights com-
+bine the calibrated task estimates; rank labels correspond to Figure 2. The operations affect the
+aggregate score but do not alter task ranking or budget allocation.
+
+3.4                     Budget allocation
+Let 𝑒 denote the execution configuration used for pricing, including model and reasoning effort; let
+𝑐𝑡,𝑒
+ ̄ be the observed mean price of task 𝑡 under that configuration; let 𝐵 be the per-arm dollar
+budget; and let 𝑚 be the uniform repetition count. DeltaSelect scans the fixed reliability order
+once:
+
+
+                                             𝑆(𝐵, 𝑚, 𝑒) = GreedyScan𝑞 ↓ {𝑡 ∶ 𝑚𝑐𝑡,𝑒
+                                                                               ̄ ≤ 𝐵 − ∑ 𝑚𝑐𝑗,𝑒
+                                                                                           ̄ }.
+                                                                                   𝑡
+                                                                                                       𝑗∈𝑆
+
+
+DeltaSelect includes every task fitting the remaining budget. After an unaffordable task, the scan
+continues and allows a cheaper lower-ranked task to use the remaining amount. Figure 2 shows
+the resulting noncontiguous selection for the $0.65 published Luna low budget: ranks 1–7 fit, ranks
+8–24 do not fit the remaining $0.056, and rank 25 is the next affordable task.
+Neither price nor budget changes the task ranking. Reliability is calculated before either is consid-
+ered. Price, budget, model, reasoning effort, and repetition count affect only which tasks from that
+fixed ranking are selected; they do not change the order or task-specific score mapping. Weights
+are renormalized over the selected set. The rule is deterministic and easy to inspect, but it does not
+guarantee the best possible combination of tasks for the budget. The scan can skip a combination
+with better joint information, choose redundant tasks, or spend less than the budget. The limita-
+tions are accepted in exchange for a simple reproducible specification; matched-cost comparisons
+with random, cheapest-first, and median-correlation selectors have not been run.
+The published price schedule is a planning input, not a target-harness-cost forecast. A mini-swe-
+agent task price cannot predict the number of delegated sessions or continuations created by a
+
+                                                                                       9
+target-harness multi-agent workflow. The target-harness baseline must be run before an operating
+budget is trusted. The case study in Section 5.1 shows how to plan around this gap: run the
+intended baseline, check headroom, and compare the intended reasoning level with the next level
+up before investing in workflow optimization.
+
+3.5   Repeatability ranges
+For displayed published baseline or comparison points, DeltaSelect resamples task outcomes
+and prices 1,000 times, recomputes the selected-set score and total, and reports the 5th-to-95th-
+percentile range:
+
+
+                            𝐼0.90 (𝑍) = [𝑄0.05 (𝑍 (1∶1000) ) , 𝑄0.95 (𝑍 (1∶1000) )] .
+
+This range answers a limited question: if the same published configuration were run again on the
+same selected tasks, how much might its reported score or price move? It does not predict results
+for new model families, harnesses, environments, or provider behavior absent from the snapshot.
+For a one-run A/B result, DeltaSelect also estimates how far two repeats of the same unchanged con-
+figuration could differ. For each selected task, two published outcomes from the same configuration
+are independently sampled with replacement and transformed into a calibrated difference:
+
+               (𝑏)
+              𝐷0 = ∑ 𝑤𝑡 𝛽𝑡̂ (𝑥𝑡,𝐽 (𝑏) − 𝑥𝑡,𝐽 (𝑏) ) ,        𝑅0.90 = [𝑄0.05 (𝐷0 ), 𝑄0.95 (𝐷0 )] .
+                                       1         2
+                      𝑡∈𝑆
+
+
+The observed baseline-minus-candidate difference is reported together with this range. If the dif-
+ference falls inside the range, it is consistent with the repeat-run variation in the published data.
+If it falls outside, it exceeds the central 90% of that variation. This is not a significance test for
+a new harness because the candidate was run only once and may have different variance. When
+both versions have repeated published runs, the test in the next subsection provides the formal
+comparison.
+
+3.6   Retrospective comparison of two published arms
+When both arms have repeated published trials, the calibrated weighted difference and propagated
+standard error are
+
+                                                                                    2    2
+               Δ̂ = ∑ 𝑤𝑡 𝛽𝑡̂ (𝑥̄𝑡𝐴 − 𝑥̄𝑡𝐵 ),             ̂ = √∑(𝑤 𝛽 ̂ )2 ( 𝑠𝑡𝐴 + 𝑠𝑡𝐵 ).
+                                                     SE(Δ)        𝑡 𝑡
+                    𝑡∈𝑆                                       𝑡∈𝑆
+                                                                           𝑛𝑡𝐴 𝑛𝑡𝐵
+
+The two-sided comparison uses the Welch–Satterthwaite approximation for the effective degrees
+of freedom [Welch, 1947, Satterthwaite, 1946]. The calculation assumes separately executed task
+cells are independent and treats the selected calibration coeﬀicients and weights as fixed. Related
+tasks may share errors, which would violate that independence assumption. The resulting p-value
+measures how strongly the two published arms differ in this fixed dataset under those assumptions.
+The comparison is retrospective because it was chosen after the data were available rather than
+preregistered.
+
+
+
+
+                                                       10
+3.7   Freeze, execute, and account for cost
+The planner exports the ranked tasks, selected repetitions, calibration coeﬀicients, weights, price
+assumptions, source checksum, and random seeds as a single experiment specification. The same
+specification is used for baseline and candidate. The harness records task checksums, client and
+model versions, reasoning effort, environment identity, raw F2P and P2P results, binary resolution,
+build or verifier failures, calibrated score, and cost telemetry.
+In the Agent Layer case study (Section 4.2), every revision used the same tasks, calibration, weights,
+and repetition count. This kept the benchmark itself from changing while the workflow changed.
+A change to the tasks or score calculation would define a different benchmark, so its results would
+not be combined with the original series.
+The frozen specification also defines how cost is counted. It records request-level token and billing
+data for model calls caused by the experiment, including failed, retried, delegated, continued, and
+abandoned work.
+
+3.8   Published example: cost to reach statistical significance
+A concrete published-data example tests whether DeltaSelect can recover a difference that the full
+DeepSWE matrix already shows clearly. Claude Opus 5 medium scores 20.3 points higher than
+Gemini 3.6 Flash high on the full binary score. The pair was chosen because the full benchmark
+shows a clear difference; if a small task set cannot distinguish these configurations, it is not ready
+for smaller development decisions. The released DeepSWE v1.1 trial artifact [Huang et al., 2026]
+contains 447 scored Claude trials and 451 scored Gemini trials, or 898 total. It also records five
+additional Claude trials that were excluded from the published score because the agent or verifier
+errored. One Gemini task contains only three trials, and DeepSWE does not explain why the fourth
+trial is missing. A complete 113-task, four-run protocol for both configurations would contain 904
+trials. The 898 scored trials cost $3,063.63.
+The analysis begins with the highest-ranked task and extends the set by one task at each step,
+following the fixed ranking. The test from the preceding subsection uses the published four-run
+mean difference as the effect and the published one-run task variances as the expected noise. The
+result is a projection of a one-run experiment, not a new experiment that was run. The first
+prefix with projected 𝑝 < 0.05 contains nine tasks and costs $113.08 across both configurations
+(𝑝 = 0.0473). The nine-task design costs 27.1 times less than the recorded cost of the full protocol.
+All 109 tasks with complete cells for both configurations cost $740.58 and produce projected 𝑝 =
+0.00378. Figure 4 compares the cost and projected evidence.
+The cost difference comes from three changes at once: fewer tasks, F2P instead of pass/fail, and
+one run instead of four. This example shows that the complete DeltaSelect design can detect a
+large known difference for less projected cost; it does not show which component creates the saving
+or what a small instruction change would cost to detect.
+
+
+4     Experiments
+The paper reports two experiments in the Codex harness used by Agent Layer. First, gpt-5.6-luna
+runs the eight selected tasks at low, medium, and high reasoning to test whether published scores,
+prices, and headroom carry over from mini-swe-agent to Codex. Second, those same eight tasks are
+used across 13 evaluations while the custom skills and instructions bundled with Agent Layer, the
+
+
+                                                 11
+                                            Claude Opus 5 medium versus Gemini 3.6 Flash high
+
+                                                    27.1× lower recorded cost at first projected p<0.05
+
+
+
+     DeltaSelect · 9 tasks (first p<0.05)            $113 p = 0.0473
+
+
+
+
+             DeltaSelect · all 109 tasks                                           $741 p = 0.00378
+
+
+                                                                                $3,064 p = 5.99e-10
+             Full DeepSWE · 898 trials
+
+
+                                              102                                   103
+                                                             Total cost (USD, log scale)
+
+
+Figure 4: Cost to detect a known difference in published data. For Claude Opus 5 medium versus
+Gemini 3.6 Flash high, the first ranked prefix with projected 𝑝 < 0.05 contains nine tasks and costs
+$113.08 across both configurations (𝑝 = 0.0473). The complete one-run design uses 109 paired tasks
+and costs $740.58 (𝑝 = 0.00378); the full published protocol contains 898 trials and costs $3,063.63.
+The projections combine the published four-run mean effect with one-run task variances and costs.
+They show expected detectability, not a realized one-run test.
+
+
+
+
+                                                       12
+author’s open-source orchestration layer, are revised [Conn, 2026]. Unless stated otherwise, every
+Codex result contains one run per task.
+
+4.1   Harness validation
+Before interpreting a candidate change, the baseline must be run on the selected tasks in the Codex
+harness used for the comparison. The validation records client version, model, reasoning effort, task
+checksum, environment checksum, raw and calibrated scores, cost bounds, and task-level ceilings
+or floors. Published headroom says which tasks are worth trying; the Codex baseline determines
+whether they actually have room to improve.
+The eight-task harness comparison uses the set selected by a $0.65 one-run budget under published
+gpt-5.6-luna at low reasoning:
+• koota-composite-trait-aspects                       • wasmi-trap-coredumps
+• koota-pair-relation-tracking                        • go-git-worktree-merge-conflicts
+• testem-bail-on-test-failure                         • scriggo-method-declarations
+• expr-try-catch-errors                               • bandit-interprocedural-taint-checks
+The tasks are listed in rank order: the first seven occupy ranks 1–7, and bandit-interprocedural-
+taint-checks occupies rank 25.
+gpt-5.6-luna and the same tasks are compared under published mini-swe-agent and Codex at low,
+medium, and high reasoning. At low and medium reasoning, a task-environment checksum records
+exactly which task revisions Codex ran and guards against unnoticed task drift. The high-reasoning
+Codex run predates that control and is shown only as descriptive context. Each Codex score
+contains one execution per task, so no score interval can be estimated from these data.
+
+4.2   Agent Layer case study
+Agent Layer is an open-source orchestration layer for coding agents. It can optionally include a
+bundle of editable skills and instructions for planning, implementation, delegation, and review. The
+case study evaluates successive versions of that bundled skill and instruction set on fixed tasks to
+determine whether the changes improve score, reduce cost, or both.
+The case study holds gpt-5.6-luna at low reasoning, the Codex harness used by Agent Layer, eight
+tasks, calibration, and weights fixed. An initial bundle of custom skills and instructions is followed
+by successive revisions. There are ten configurations and 13 completed evaluations; three configu-
+rations were run twice. The endpoint comparison uses one run per task for the initial and adopted
+versions.
+Recorded token usage is priced at the gpt-5.6-luna rates published August 16, 2026: $0.20 per
+million uncached input tokens, $0.25 per million cache-write tokens, $0.02 per million cached-input
+tokens, and $1.20 per million output tokens. Requests above 272,000 input tokens use twice the
+input rate and 1.5 times the output rate [OpenAI, 2026a].
+Across the 13 completed evaluations, the model costs stored with their scored results total $27.86
+after normalization to the August 16, 2026 rates. Every case-study cost in this paper is calculated
+from those evaluation records.
+The initial and adopted calibrated scores are compared using the weighted difference from Sec-
+tion 3.6. Because each Codex-harness endpoint contains only one run per task, the analysis esti-
+mates its uncertainty from repeated published Luna medium runs in mini-swe-agent. Published
+
+
+                                                 13
+Luna medium had the closest aggregate score to Codex Luna low on these tasks. This practical
+calibration choice does not make the two harnesses equivalent: the score p-value assumes similar
+task-level repeat-run variability in both. For cost, all eight task differences favor the adopted ver-
+sion. A two-sided exact paired sign-flip test measures how unusual that unanimous result would
+be if neither version had a consistent cost advantage.
+
+4.3   Reproducibility artifacts
+DeltaSelect is available in Agent Layer at https://agent-layer.dev/deltaselect; its source is available
+at https://github.com/conn-castle/agent-layer. The interactive tool includes the pinned published
+DeepSWE data used to rank and calibrate tasks in the published-data analysis. Agent Layer’s
+exported selections and study reports preserve the task set, weights, model settings, results, costs,
+and execution provenance for new studies. For new studies, request-level billing records count each
+coordinator and delegated model call once. Operational incident logs are retained as provenance
+but are not part of the results; verifier build failures and any score-changing correction remain
+visible in the evaluated result.
+
+
+5     Results and Discussion
+Results establish two findings. Published measurements did not transfer directly to Codex, and
+repeated use of a fixed eight-task set guided Agent Layer to a lower-cost skills configuration with
+a higher observed score.
+
+5.1   The Codex harness changed the measurement
+Figure 5 compares the estimates used by DeepSWE with Codex runs of the same eight tasks.
+At low reasoning, the published calibrated estimate was -0.54%; the Codex-harness run scored
+20.43%, a 21.0-point difference. At medium reasoning, the published estimate was 19.38% and the
+Codex-harness run scored 45.50%, a 26.1-point difference. At high reasoning, the less-controlled
+Codex-harness run was 3.0 points above the published estimate (56.33% versus 53.34%).
+There is no fixed correction from a published mini-swe-agent result to a Codex-harness result. The
+gap was positive at all three measured levels, but its size changed: the published low-to-medium
+step was 19.9 points and the Codex-harness step was 25.1 points. The primary Codex Luna low run
+scored 20.43%, and an unchanged repeat scored 14.84%. Published Luna medium at 19.38% was
+closer to both than published Luna low at -0.54%, which informed the variance calculation. More
+generally, the case suggests planning variance one reasoning level or model tier above the intended
+execution setting—for example, Luna medium for Luna low or Opus for Sonnet. The mapping is
+inexact, but worked as a practical starting point here. Score, cost, and headroom still have to be
+measured in the target harness.
+The cost mismatch was operational, not just a price-table discrepancy. At low, medium, and high
+reasoning, the DeepSWE estimates were $0.13, $0.38, and $2.04 for the eight tasks; Codex recorded
+$0.32, $1.34, and $3.00. The records do not isolate which harness behavior produced the gap. They
+do show that the same model, reasoning level, and tasks cost 1.5–3.5 times the published estimate.
+The useful planning number is therefore the first baseline in the target harness, not a published
+per-task budget.
+The low and medium comparisons hold the model, reasoning level, and tasks fixed, but each Codex-
+harness result contains one run per task. They show that the published score and cost did not
+
+                                                  14
+                                                          gpt-5.6-luna
+
+                      A. Calibrated score                                                   B. Cost per run
+
+                60                          +3.0 pp                                 $3.0
+                                                                                                                +$0.97 (1.5×)
+
+
+
+
+                                                                       Cost (USD)
+                40
+
+    Score (%)
+                                        +26.1 pp
+                                                                                    $2.0
+
+                20
+                                        +21.0 pp                                                                +$0.95 (3.5×)
+                                                                                    $1.0
+                0                                                                                               +$0.19 (2.4×)
+
+                                                                                    $0.0
+                       Published                       Native                                Published                                        Native
+                     mini-swe-agent                   Codex CLI                            mini-swe-agent                                    Codex CLI
+
+                      C. Score versus cost
+                60                                                                                                       high
+
+                                                                                                                      case study (low)
+                40                                                     medium
+
+
+    Score (%)   20
+                                        low
+                                                             Harness                                published mini-swe-agent     native Codex CLI
+                                                             Reasoning effort                       low            medium             high
+                0
+                                                             Case study                             initial                 adopted
+
+
+                      $0.10            $0.20               $0.50                              $1                   $2                               $5
+                                                           Cost (USD, log scale)
+
+
+
+Figure 5: Published mini-swe-agent and Codex-harness measurements differ for the same model
+and eight tasks. Panels A and B show score and cost at three reasoning levels; panel C places the
+case-study path between the initial and adopted configurations. Each Codex-harness value contains
+one run per task, so the figure establishes a planning mismatch rather than the causal effect of the
+harness. The high-reasoning Codex-harness run came from an earlier, non-certified environment.
+
+
+
+
+                                                                  15
+carry over; they do not measure how much of the gap the harness caused. That is enough for the
+decision at hand: run a baseline in the target harness before using published numbers to plan a
+change.
+Headroom determined the case-study reasoning level. An earlier six-task Luna high pilot left
+five of six tasks at 96.7–100% F2P and one at 0%, leaving almost no room to measure plausible
+improvement. Luna low left more failures to fix and cost less, so the development series used
+low reasoning. Headroom must be read from raw F2P rather than the calibrated score, which is
+unbounded and has no literal distance from 100%.
+
+5.2                           Iterating on a frozen task set
+Reducing cost was the development goal from the outset. The initial skills configuration already
+outscored the bare Codex Luna low baseline on these tasks, 36.46% versus 20.43%. It did so at
+13 times the cost: $4.18 instead of $0.32, an increase that did not justify the score gain. Across
+ten configurations and 13 evaluations, the adopted thirteenth evaluation reached 42.36% at $1.75.
+Raw F2P increased from 251 to 265 of 411 checks, while recorded model calls fell from 55 to 37.
+Figure 6 shows the full sequence.
+
+                                           A. Calibrated score                                                                   B. Recorded cost
+                                                                                                                           5.0
+                                      45                                            42.36%                                               Initial        Adopted
+
+
+
+
+      Calibrated task-set score (%)
+                                                                                                                           4.5
+                                      40                                                                                                  $4.18
+
+
+
+
+                                                                                                     Recorded cost (USD)
+                                                                                                                           4.0
+
+                                      35                                                                                   3.5
+                                             36.46%
+                                                                                                                           3.0
+                                      30
+                                                                                                                           2.5
+                                      25
+                                                                                                                           2.0                                             $1.75
+
+                                      20
+                                                                                                                           1.5
+                                                   Initial        Adopted
+                                      15                                                                                   1.0
+                                               1             3     5        7   9   11     13                                        1             3     5        7   9   11   13
+                                                                 Evaluation order                                                                      Evaluation order
+
+
+
+Figure 6: Using DeltaSelect during development. Each point is one complete eight-task evaluation
+under the fixed design. Panel A shows calibrated score and panel B shows total recorded model
+cost. The first and thirteenth points are the initial and adopted configurations.
+
+
+Table 1: Case-study endpoints. The development goal was lower cost without sacrificing score. The
+adopted configuration reduced cost on all eight matched tasks while the calibrated score moved
+upward, although transferred variance leaves the score gain uncertain. Dollar figures are total
+recorded model cost for the full eight-task evaluation, not cost per task.
+Case-study evaluation                                                                    Calibrated score                         Recorded price (eight tasks)             Raw F2P
+Initial skills and instructions                                                                  36.46%                                                          $4.18      251/411
+Adopted skills and instructions                                                                  42.36%                                                          $1.75      265/411
+Observed change                                                                                 +5.90 pp                                               -$2.43 (-58.1%)    +14 checks
+
+
+
+
+                                                                                                16
+The score increase was not statistically significant under the transferred variance model. Propa-
+gating published Luna medium task variances through the fixed coeﬀicients gives standard error
+0.05902, 29.23 Welch–Satterthwaite degrees of freedom, and two-sided p=0.326. The standard error
+is 5.90 points on the percentage scale. The direction is favorable, but the result does not establish
+a population score gain, equivalence, or non-inferiority. The inference also relies on transferred
+variance from mini-swe-agent, while each Codex-harness endpoint contains one run per task.
+The strongest endpoint result was cost: all eight matched task costs were lower under the adopted
+configuration. The two-sided exact paired sign-flip test gives p=0.0078125, reported as p=0.008.
+Recorded cost fell by $2.43, or 58.1%.
+The three repeated configurations moved by 0.7–4.3 calibrated points. Random variation remains.
+An unchanged configuration can be repeated when a result is surprising, but repeats are meant
+to be a diagnostic exception rather than the norm; routine replication would defeat the low-cost
+purpose of the A/B method.
+The results in Figure 5 raise an obvious question: why not just use Luna medium? On the same
+tasks, the adopted Luna low skills configuration scored 42.36% at $1.75, while bare Luna medium
+scored 45.50% at $1.34. Medium reasoning is therefore a credible choice for this particular deploy-
+ment. The value of skills is broader. They can shape a workflow at any reasoning level, including
+levels where headroom and evaluation cost make improvement diﬀicult to measure, and they let
+developers specify how an agent should work rather than accept only the behavior learned during
+model training. The practical goal is custom behavior without an unacceptable loss in score or cost,
+supporting longer unattended loops and wider adoption.
+
+5.3   What the iterations revealed
+Successive evaluations on fixed tasks, together with their saved transcripts and artifacts, made the
+workflow diagnosable. Simplifying the files helped, but did not eliminate the expensive control
+flow. The second evaluation reduced the run to 43 calls and $2.64 while increasing score to 43.72%,
+but every task still invoked planning, plan review, and code review. The first lesson was that
+orchestration control flow, not prompt-file length, was the cost driver.
+Evaluation 5 tested a bundle of fixes to previously identified defects in Agent Dispatch, a feature
+of Agent Layer. Dispatch lets an agent start a fresh subagent of any supported type in a new
+session using that provider’s default harness, then wait for or resume that session. The broader
+DeltaSelect run history had shown cases where dispatch was silently unavailable or ignored despite
+explicit instructions, as well as defects in the wait and resume functions that spent model calls
+checking healthy work or failed to continue unfinished work.
+Restricting plan review cut cost to $2.01 and then $1.86 in evaluations 3 and 4, but scores fell
+to 30.38% and 29.71%. Fixes to dispatch waits, review instructions, missing tooling, and recovery
+lifted evaluation 5 to 35.91% at $1.76, yet its transcripts showed that writing “once” did not enforce
+a global continuation limit. Evaluations 6 and 7 were cheaper but worse: the allowed continuation
+was often consumed before review, leaving no equivalent repair once review exposed a deeper defect.
+The unchanged repeat confirmed the same conclusion despite moving from 23.15% to 27.49%: the
+cheaper workflow remained much worse than the 35.91% configuration it replaced.
+Evaluation 8 changed the skill so the coordinator resumed the implementer until it reported com-
+pletion. That change caused the Scriggo task to go from zero to 46 of 48 checks, but raised total
+cost to $2.40 and did not improve the aggregate. The run also showed that passing a repository’s
+
+
+                                                 17
+visible tests did not guarantee passing the benchmark verifier. Evaluation 9 recovered to 41.13%,
+but bundled several changes, so the improvement cannot be attributed to any one of them. Eval-
+uations 10–12 tested tighter review and completion policies; scores varied widely, and evaluation
+12 recovered to 39.75% at $1.82 while revealing that reviewer suggestions could expand the work
+beyond the user’s request.
+Evaluation 13 addressed that specific failure. It added two scope checks: plan-review and code-
+review findings could be accepted only when they remained within the user’s request. The run
+scored 42.36% at $1.75, compared with 39.75% at $1.82 in evaluation 12. One run cannot establish
+that the two scope checks caused the increase; the transferred-variance comparison of the initial
+and adopted endpoints gives p=0.326. But the change directly corrected observed scope expansion,
+all eight matched task costs remained below the initial configuration, and the fixed measurement
+showed no material regression. The change was therefore adopted.
+Requiring statistical significance for every edit would make development impractical. When a
+change corrects a known workflow problem and measurement shows no material harm, human
+judgment can justify keeping it. Several directional improvements can accumulate into an effect
+large enough to detect at an endpoint even when no individual step is significant. That judgment
+is part of the method’s value: the human decides which behavior matters instead of leaving the
+development loop fully unattended.
+DeltaSelect supplied a stable measurement and a way to inspect why cost and score moved across
+the revision process.
+
+
+6     Limitations and Future Work
+DeltaSelect makes one type of repeated development comparison affordable enough to use. This pa-
+per does not show that its task selector is the best possible selector, that results transfer unchanged
+across harnesses, or that a small task set measures broad capability.
+
+6.1   A small fixed set is intentionally narrow
+A task subset selected to meet a development budget cannot cover every capability measured by
+the full benchmark. Correlation-based selection can omit a rare capability, and calibration cannot
+restore omitted content. Repeated development on the same tasks can also specialize a system to
+their repositories, graders, or workflow patterns. Operators should avoid changes that merely teach
+the agent to pass a selected task or exploit its verifier. The fixed set supports comparison within a
+development cycle, not a claim of broad capability.
+
+6.2   Small task sets are more sensitive to task quality
+Small sets also magnify bad tasks. OpenAI stopped using SWE-bench Verified after finding contam-
+ination and test problems and withdrew its recommendation of SWE-Bench Pro after estimating
+a roughly 30% broken-task rate [OpenAI, 2026b,c]. DeltaSelect cannot repair a broken benchmark
+by selecting fewer tasks. Task and environment checksums, readiness checks, explicit build failures,
+a predetermined correction registry, and raw artifacts remain necessary.
+
+
+
+
+                                                  18
+6.3   The selector and scoring choices need direct comparisons
+The experiments do not show that the reliability ranking beats random, cheapest-first, or median-
+correlation selection at equal cost. They also do not isolate the value of fractional scoring, linear
+calibration, or inverse-error weighting. Ordinary least squares may fit poorly near the ends of
+the F2P range, while related tasks violate the independence assumed by the current weights and
+uncertainty calculation. Matched-cost selector comparisons, nonlinear calibration, equal-weight
+sensitivity, and covariance-aware methods remain future work. The task ranking, calibration, and
+published-data example use the same DeepSWE snapshot, so the published-data evidence is in-
+sample and may be somewhat optimistic.
+
+6.4   Published results do not transfer directly to deployed systems
+Published benchmark results, such as the DeepSWE trials used here, describe the model, reasoning
+level, harness, tools, and environment that produced them. Practical deployments often change
+several of those components. Published trials can still identify candidate tasks and provide initial
+score, cost, and headroom estimates, but those estimates will not match another system exactly.
+DeltaSelect addresses this gap by requiring a target-harness baseline, but other harnesses must
+validate again and may require a different task set.
+Each Codex result contains only one run per task, so the case-study endpoint test uses variance
+transferred from the closest published configuration rather than variance estimated in Codex. That
+transfer keeps the comparison affordable, but it may misstate uncertainty. Repeated Codex runs
+would provide a better variance estimate at greater cost. Several case-study evaluations also
+changed more than one instruction, so the 58.1% cost reduction cannot be attributed to a sin-
+gle edit.
+The evidence comes from one DeepSWE snapshot, one model family, and one custom harness. The
+case study shows how DeltaSelect was used; it does not show that the same score or cost changes
+will recur elsewhere. DeltaSelect is not a universal ranking, release benchmark, or safety evaluation.
+
+
+7     Conclusion
+Frequent A/B decisions are valuable during agent development, but full coding-agent benchmarks
+are too broad, expensive, and harness-dependent to rerun after every change. DeepSWE’s repeated
+public trials show why most individual tasks are too noisy to trust from one run. DeepSWE runs
+each task four times but reduces every result to pass or fail, even when the verifier records partial
+progress.
+DeltaSelect turns the repeated trials into a fixed, budget-constrained task set. DeltaSelect conser-
+vatively ranks tasks, retains fractional verifier evidence, maps heterogeneous task results onto a
+common reference scale, and allocates the fixed order under an execution budget. The method is
+not tied to DeepSWE: the same repeated-trial ranking, budget selection, and calibration can be
+applied to new benchmarks for stronger frontier models. The benchmark and selected tasks can
+change without changing the method. The result is an instrument for comparing a baseline with a
+candidate, not a leaderboard.
+In the published DeepSWE example, DeltaSelect estimated that nine selected tasks and $113.08 in
+scored-trial cost would be enough to distinguish Claude Opus 5 medium from Gemini 3.6 Flash high,
+whose full-benchmark scores differ by 20.3 points. That is 27.1 times less than the full published
+
+
+                                                 19
+protocol’s $3,063.63 recorded cost. Target-harness runs show that published baseline, price, and
+headroom cannot be assumed to transfer across harnesses.
+DeltaSelect makes iterative measurement affordable, helps diagnose why score and cost move, and
+makes uncertainty explicit. In the Agent Layer case study, recorded evaluation cost fell by 58.1%
+while the final optimized configuration’s observed score was higher. If savings of that scale persist
+in broader use, DeltaSelect could make benchmark-guided iteration a routine engineering practice
+rather than an occasional expensive audit.
+
+
+References
+Xavier Bouthillier, César Laurent, and Pascal Vincent. Accounting for variance in machine learning
+  benchmarks. In Proceedings of Machine Learning and Systems, 2021. URL https://proceedings.
+  mlsys.org/paper_files/paper/2021/hash/0184b0cd3cfb185989f858a1d9f5c1eb-Abstract.html.
+Nicholas J. Conn. Agent layer. Open-source software, 2026. URL https://github.com/conn-
+  castle/agent-layer.
+W. Huang, C. Lee, L. Tng, and S. Ge. DeepSWE: Measuring frontier coding agents on original,
+ long-horizon engineering tasks. arXiv preprint arXiv:2607.07946, 2026. URL https://arxiv.org/
+ abs/2607.07946.
+Yue Jia and Mark Harman. An analysis and survey of the development of mutation testing. IEEE
+ Transactions on Software Engineering, 37(5):649–678, 2011. doi: 10.1109/TSE.2010.62.
+Carlos E. Jimenez et al. SWE-bench: Can language models resolve real-world GitHub issues? In
+ International Conference on Learning Representations, 2024. URL https://arxiv.org/abs/2310.0
+  6770.
+Sayash Kapoor, Benedikt Stroebl, Zachary S. Siegel, Nitya Nadgir, and Arvind Narayanan. AI
+  agents that matter. Transactions on Machine Learning Research, 2025. URL https://openrevi
+  ew.net/forum?id=Zy4uFzMviZ.
+Jannik Kossen, Sebastian Farquhar, Yarin Gal, and Tom Rainforth. Active testing: Sample-eﬀicient
+  model evaluation. In International Conference on Machine Learning, 2021. URL https://arxiv.
+  org/abs/2103.05331.
+Jannik Kossen, Sebastian Farquhar, Yarin Gal, and Tom Rainforth. Active surrogate estimators: An
+  active learning approach to label-eﬀicient model evaluation. In Advances in Neural Information
+  Processing Systems, 2022. URL https://proceedings.neurips.cc/paper_files/paper/2022/hash/9
+  b9cfd5428153ccfbd4ba34b7e007305-Abstract-Conference.html.
+X. Li et al. SkillsBench: Benchmarking how well agent skills work across diverse tasks. arXiv
+  preprint arXiv:2602.12670, 2026. URL https://arxiv.org/abs/2602.12670.
+Felipe Maia Polo et al. Eﬀicient multi-prompt evaluation of LLMs. In Advances in Neural Infor-
+  mation Processing Systems, 2024a. URL https://proceedings.neurips.cc/paper_files/paper/202
+  4/hash/28236482f64a72eec43706b6f3a6c511-Abstract-Conference.html.
+Felipe Maia Polo et al. tinyBenchmarks: Evaluating LLMs with fewer examples. In International
+  Conference on Machine Learning, 2024b. URL https://proceedings.mlr.press/v235/maia-
+  polo24a.html.
+
+
+
+                                                 20
+Samuel Messick. Validity of psychological assessment: Validation of inferences from persons’ re-
+  sponses and performances as scientific inquiry into score meaning. American Psychologist, 50(9):
+  741–749, 1995. URL https://eric.ed.gov/?id=EJ517194.
+OpenAI. GPT-5.6 Luna model and pricing. Product documentation, accessed August 16, 2026,
+ 2026a. URL https://developers.openai.com/api/docs/models/gpt-5.6-luna.
+OpenAI. Separating signal from noise in coding evaluations. First-party technical audit, 2026b.
+ URL https://openai.com/index/separating-signal-from-noise-coding-evaluations.
+OpenAI. Why SWE-bench Verified no longer measures frontier coding capabilities. First-party
+ technical audit, 2026c. URL https://openai.com/index/why-we-no-longer-evaluate-swe-bench-
+ verified.
+Yotam Perlitz et al. Eﬀicient benchmarking (of language models). In Conference of the North
+ American Chapter of the Association for Computational Linguistics, 2024. URL https://aclant
+  hology.org/2024.naacl-long.139/.
+G. Saranathan et al. SubLIME: Subset selection via rank correlation prediction for data-eﬀicient
+  LLM evaluation. In Annual Meeting of the Association for Computational Linguistics, 2025. URL
+  https://aclanthology.org/2025.acl-long.1477/.
+Franklin E. Satterthwaite. An approximate distribution of estimates of variance components. Bio-
+  metrics Bulletin, 2(6):110–114, 1946. doi: 10.2307/3002019.
+Terminal-Bench. Terminal-Bench 2.1 leaderboard. Oﬀicial benchmark leaderboard, accessed August
+  16, 2026, 2026a. URL https://www.tbench.ai/leaderboard/terminal-bench/2.1.
+Terminal-Bench. Terminal-Bench 2.1 leaderboard submission requirements. Oﬀicial benchmark
+  repository, accessed August 23, 2026, 2026b. URL https://github.com/harbor-framework/term
+  inal-bench-2-1/blob/main/leaderboard/SUBMIT.md.
+Bernard L. Welch. The generalization of Student’s problem when several different population
+  variances are involved. Biometrika, 34(1/2):28–35, 1947. doi: 10.2307/2332510.
+Chunqiu Steven Xia, Yinlin Deng, S. Dunn, and Lingming Zhang. Demystifying LLM-based soft-
+ ware engineering agents. In ACM International Conference on the Foundations of Software
+ Engineering, 2025. URL https://conf.researchr.org/details/fse- 2025/fse- 2025- research-
+  papers/85/Demystifying-LLM-based-Software-Engineering-Agents.
+John Yang et al. SWE-agent: Agent-computer interfaces enable automated software engineering. In
+  Advances in Neural Information Processing Systems, 2024. URL https://proceedings.neurips.cc
+  /paper_files/paper/2024/hash/5a7c947568c1b1328ccc5230172e1e7c-Abstract-Conference.html.
+Y. Yao et al. Harness-Bench: Measuring harness effects across models in realistic agent workflows.
+  arXiv preprint arXiv:2605.27922, 2026. URL https://arxiv.org/abs/2605.27922.
+Han Zhao, Ming Li, Lichao Sun, and Tianyi Zhou. BenTo: Benchmark reduction with in-context
+ transferability. In International Conference on Learning Representations, 2025. URL https:
+ //proceedings.iclr.cc/paper_files/paper/2025/hash/4798eef078de031518beaf54f4b5fb5f-
+ Abstract-Conference.html.
+
+
+
+
+                                               21
+

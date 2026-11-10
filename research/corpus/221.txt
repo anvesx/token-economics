@@ -1,0 +1,338 @@
+TITLE: Usage & Pricing (xAI prompt caching)
+URL: https://docs.x.ai/developers/advanced-api-usage/prompt-caching/usage-and-pricing
+ORG: xAI  TYPE: doc  DATE: 
+
+Usage & Pricing | SpaceXSI Docs
+
+Get Started
+
+Overview
+Quickstart
+Grok 4.7
+Latest
+Models
+Pricing
+Release Notes
+
+Text
+
+Text Generation
+Streaming
+Reasoning
+Structured Outputs
+Image Understanding
+Multi Agent
+Best Practices Guide
+
+Imagine
+
+Overview
+Image Generation
+Image Editing
+Multi-Image Editing
+Image Prompting Guide
+Video Generation
+Video Overview
+New
+Image-to-Video
+Reference-to-Video
+Video Editing
+Video Extension
+
+Voice
+
+Overview
+
+Speech to Speech
+
+Text to Speech
+Speech to Text
+New
+Custom Voices
+Ephemeral Tokens
+
+Files & Collections
+
+Files Overview
+Managing Files
+Public URLs
+New
+Chat with Files
+Collections
+Collections via API
+Collection Metadata
+
+Generated Media
+
+Tools
+
+Overview
+Function Calling
+Web Search
+X Search
+Code Execution
+Image Generation
+Collections Search (RAG)
+Remote MCP Tools
+
+In Depth
+
+Advanced API Usage
+
+Rate Limits
+
+Prompt Caching
+
+Overview
+How It Works
+Maximizing Cache Hits
+What Breaks Caching
+Usage & Pricing
+Best Practices & FAQ
+Context Compaction
+Priority Processing
+Custom Moderation Controls
+New
+Batch API
+Deferred Completions
+Async Requests
+WebSocket Mode
+mTLS Authentication
+Regional Endpoints
+New
+Output Watermarking
+New
+Cost Tracking
+Debugging Errors
+Cookbook
+
+Platforms
+
+Community Integrations
+Google Cloud Vertex AI
+Microsoft Foundry
+Docs MCP
+
+Migration Guides
+
+Imagine Image Quality Retirement (Nov 2, 2026)
+New
+Model Retirement (May 15, 2026)
+Migrating to Responses API
+Chat Completions (Legacy)
+
+FAQ
+
+Data & Privacy
+General
+
+API
+Docs
+REST Reference
+Grok Build
+Grok Bot
+Grok
+X Subscription
+
+Get Started
+
+Overview
+Quickstart
+Grok 4.7
+Latest
+Models
+Pricing
+Release Notes
+
+Text
+
+Text Generation
+Streaming
+Reasoning
+Structured Outputs
+Image Understanding
+Multi Agent
+Best Practices Guide
+
+Imagine
+
+Overview
+Image Generation
+Image Editing
+Multi-Image Editing
+Image Prompting Guide
+Video Generation
+Video Overview
+New
+Image-to-Video
+Reference-to-Video
+Video Editing
+Video Extension
+
+Voice
+
+Overview
+
+Speech to Speech
+
+Text to Speech
+Speech to Text
+New
+Custom Voices
+Ephemeral Tokens
+
+Files & Collections
+
+Files Overview
+Managing Files
+Public URLs
+New
+Chat with Files
+Collections
+Collections via API
+Collection Metadata
+
+Generated Media
+
+Tools
+
+Overview
+Function Calling
+Web Search
+X Search
+Code Execution
+Image Generation
+Collections Search (RAG)
+Remote MCP Tools
+
+In Depth
+
+Advanced API Usage
+
+Rate Limits
+
+Prompt Caching
+
+Overview
+How It Works
+Maximizing Cache Hits
+What Breaks Caching
+Usage & Pricing
+Best Practices & FAQ
+Context Compaction
+Priority Processing
+Custom Moderation Controls
+New
+Batch API
+Deferred Completions
+Async Requests
+WebSocket Mode
+mTLS Authentication
+Regional Endpoints
+New
+Output Watermarking
+New
+Cost Tracking
+Debugging Errors
+Cookbook
+
+Platforms
+
+Community Integrations
+Google Cloud Vertex AI
+Microsoft Foundry
+Docs MCP
+
+Migration Guides
+
+Imagine Image Quality Retirement (Nov 2, 2026)
+New
+Model Retirement (May 15, 2026)
+Migrating to Responses API
+Chat Completions (Legacy)
+
+FAQ
+
+Data & Privacy
+General
+
+Prompt Caching
+Usage & Pricing
+
+Copy for LLMView as Markdown
+Create API keyMeet grok-4.7
+Chat Completions API
+Cached tokens appear in usage.prompt_tokens_details.cached_tokens:
+
+JSON
+
+{
+ "usage": {
+ "prompt_tokens": 125,
+ "completion_tokens": 48,
+ "total_tokens": 173,
+ "prompt_tokens_details": {
+ "text_tokens": 125,
+ "audio_tokens": 0,
+ "image_tokens": 0,
+ "cached_tokens": 98
+ },
+ "completion_tokens_details": {
+ "reasoning_tokens": 0,
+ "audio_tokens": 0,
+ "accepted_prediction_tokens": 0,
+ "rejected_prediction_tokens": 0
+ }
+ }
+}
+
+Responses API
+Cached tokens appear in usage.input_tokens_details.cached_tokens:
+
+JSON
+
+{
+ "usage": {
+ "input_tokens": 125,
+ "output_tokens": 48,
+ "total_tokens": 173,
+ "input_tokens_details": {
+ "cached_tokens": 98
+ },
+ "output_tokens_details": {
+ "reasoning_tokens": 0
+ }
+ }
+}
+
+Verifying cache hits
+To determine whether your request benefitted from prompt caching, check the cached_tokens value in the response:
+
+cached_tokens valueWhat it means
+0Cache miss — the entire prompt was computed from scratch. This is expected on the first request or after cache eviction.
+> 0Cache hit — some or all of your prompt prefix was served from cache. The number indicates how many tokens were reused.
+Equal to prompt_tokensFull cache hit — your entire prompt was served from cache (rare, typically happens when resending the exact same request).
+A typical multi-turn conversation shows increasing cached_tokens over time:
+
+Text
+
+Turn 1: prompt_tokens=50, cached_tokens=0 # First request, cache established
+Turn 2: prompt_tokens=120, cached_tokens=50 # Previous 50 tokens cached
+Turn 3: prompt_tokens=200, cached_tokens=120 # Previous 120 tokens cached
+
+If cached_tokens is consistently 0 across multiple requests in the same conversation, verify that you're setting x-grok-conv-id (or prompt_cache_key) and that you're not modifying earlier messages between requests.
+Pricing
+Cached tokens are billed at the cached prompt token price, which is substantially lower than the regular prompt token price. The exact rates vary by model — check the Pricing page for current prices.
+
+Token typeBilling rate
+Prompt tokens (non-cached)Full prompt token price
+Cached prompt tokensReduced cached prompt token price
+Completion tokensFull completion token price
+Reasoning tokensFull completion token price
+
+Long context pricing applies when total prompt tokens (including cached tokens) exceed the model's long context threshold. Both cached and non-cached tokens use their respective long-context rates in this case.
+Next
+
+Best Practices & FAQ
+
+Last updated: May 10, 2026

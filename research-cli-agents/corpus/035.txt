@@ -1,0 +1,331 @@
+TITLE: Context Management Across Codex Surfaces
+URL: https://developertoolkit.ai/en/codex/build/context-patterns
+ORG: Developer Toolkit  TYPE: doc  DATE: 2026-11
+
+Context Management Across Codex Surfaces | AI Developer Toolkit Skip to content 
+
+ Level up in Codex 
+400+ guides, Level 1 to 5 
+The Setup Pack for your stack 
+$59.99 once, 12 months Buy the Toolkit Already have an account? Sign in 
+ Improve this page 
+
+Context Management Across Codex Surfaces PL 
+ Level 2 How-to Updated 2026-10-03 
+
+Context management in Codex means keeping a thread’s fixed prefix (instructions, AGENTS.md, MCP tools, and skills) small and its conversation short enough that early constraints survive. Codex CLI 0.157.1 compacts history automatically and on /compact. The dependable pattern for long work is a chain of short threads joined by a handoff file, with tests as the check.
+
+This page is for developers who run Codex on multi-hour tasks, and for tech leads who want those sessions to end the same way for everyone on the team. The situation is familiar: you are 40 turns into a billing migration, and Codex edits a v1 route you ruled out in turn 3, re-reads files it already summarised, and asks a question you answered an hour ago. The model did not get worse. The context it is working from did.
+
+If you have not set up config.toml or MCP servers yet, start with Codex configuration and MCP setup.
+
+What a disciplined context setup in Codex gives youSection titled “What a disciplined context setup in Codex gives you”
+
+A way to measure what a thread carries before you blame the model: /status, /mcp, and codex debug prompt-input.
+
+A decision rule for when to compact, fork, side-chat, or start a new thread.
+
+A handoff file and two prompts that move a task between threads without re-planning it.
+
+A way to prove a long session still honours its constraints, without reading the transcript.
+
+Clear expectations for what crosses from the CLI to the desktop app, the IDE, and Codex cloud, and what does not.
+
+What fills a Codex thread’s context?Section titled “What fills a Codex thread’s context?”
+
+Every turn sends the model one input. It has two parts, and they fail in different ways.
+
+PartWhat is in itHow you see itHow you shrink it
+Fixed prefix, paid on every turnCodex’s own instructions, your global ~/.codex/AGENTS.md, the project AGENTS.md chain, skill names and descriptions, MCP tool definitionscodex debug prompt-input "ping" renders the instruction part as JSON; /mcp lists connected tools; /skills lists skillsTrim the AGENTS.md chain and move procedures into skills; disable MCP servers a repository does not need
+Conversation, grows every turnYour prompts, the agent’s replies, tool calls, command output, and file contents it read/status shows token usage and the context window for the current model/compact, /side, subagents, and new threads
+
+For the current OpenAI models, Codex uses a 272K-token window by default. You can raise it with model_context_window in config.toml, up to a catalog ceiling of 872K (models hub for the per-model details). A bigger window postpones compaction. It does not make the model attend equally to turn 3 and turn 300, and every turn re-sends everything that is still in the window. That is why this page treats the window as a budget to manage rather than a number to maximise.
+
+ Measure your own prefix; do not trust a generic table 
+
+The prefix depends on your AGENTS.md chain, the MCP servers you enabled, and your skills, so a fixed “tokens per component” table is wrong for your repository. Run codex debug prompt-input "ping" > /tmp/prompt.json from the directory you start Codex in, then check the file size. Run it again after you cut an AGENTS.md file or remove a skill, and compare. MCP tool definitions are not in this output (checked in Codex CLI 0.157.1); list them with /mcp verbose instead, and compare /status token usage with and without a server enabled. The command renders the prompt without sending it. 
+
+Audit a thread before a long taskSection titled “Audit a thread before a long task”
+
+Do this once per repository, and again whenever someone adds an MCP server or a large AGENTS.md.
+
+Start a new thread in the directory where you usually work, and run /status. Note the Agents.md line (which instruction files loaded, in order), Token usage, and Context window. Before the first turn there may be no usage to show, so send one short prompt (for example ping), then run /status again: the token usage after that first turn is roughly your prefix.
+
+List the tools. Run /mcp verbose. Every connected server contributes tool definitions. A browser-automation server is dead weight in a database migration.
+
+Disable what this task does not need. In .codex/config.toml for the project, or ~/.codex/config.toml for you:
+
+[mcp_servers.playwright]
+
+enabled = false
+
+[mcp_servers.github]
+
+enabled_tools = ["get_pull_request", "list_pull_request_files"]
+
+Check the instruction chain. If Agents.md is missing a file you expected, stop here and follow how Codex decides which AGENTS.md files to load. The project chain shares a 32 KiB budget (project_doc_max_bytes, default 32,768 bytes), and Codex truncates the deepest file silently when the budget runs out.
+
+Re-run /status in a new thread after the same short prompt, and confirm the token count dropped.
+
+ Copy-paste prompt: audit the context this task needs 
+
+Before we start, audit your own context for this task: migrating the invoice API from the v1
+
+router to v2 under services/api.
+
+1. List the AGENTS.md files you loaded, in order, and quote the single rule from each that
+
+ matters most for this task.
+
+2. List the MCP servers and skills available to you and say which ones this task will
+
+ actually use. Name the ones I can disable.
+
+3. List the files you expect to read, grouped by directory, and estimate which are large
+
+ (over 500 lines). For large files, name the functions you need instead of reading the
+
+ whole file.
+
+Do not edit anything. Keep the answer under 40 lines.
+
+When should you compact, fork, side-chat, or start a new thread?Section titled “When should you compact, fork, side-chat, or start a new thread?”
+
+Codex gives you several ways to stop a thread’s history from growing. They are not interchangeable.
+
+You want to…UseWhat happens to context
+Keep going on the same task, but the thread is long/compactThe conversation is replaced by a summary. Details you did not restate can be lost.
+Ask a quick question without polluting the main thread/side (alias /btw)Starts a side conversation in an ephemeral fork. The main thread does not grow.
+Try an alternative approach from the current point/fork in the TUI, or codex fork --lastCopies the thread. Both copies carry the full history.
+Start the next phase with a clean window/new, then paste or reference the handoff fileOnly what you pass across survives.
+Let exploration happen elsewhereAsk Codex to spawn a subagent (multi-agent is on by default in 0.157.1; /subagents switches between them)The subagent reads files in its own thread and returns a report.
+Continue yesterday’s workcodex resume --last, or codex resume <SESSION_ID or name>Reloads the saved thread, including everything that was in its context.
+
+The rule that follows: compact within a phase, start a new thread between phases. A phase is a unit you can verify on its own, for example “v2 router scaffolded and its contract tests pass”. Compaction is a summary written by the model under pressure. A handoff file is a summary you wrote deliberately and can read.
+
+Tune when automatic compaction firesSection titled “Tune when automatic compaction fires”
+
+Codex compacts on its own when a thread nears its limit. Two config.toml keys, both present in Codex CLI 0.157.1, change when:
+
+~/.codex/config.toml
+
+# Compact once the conversation reaches this many tokens, rather than near the full window.
+
+model_auto_compact_token_limit = 180000
+
+# Also compact after a final response once usage passes this percentage (0 to 100, checked in 0.157.1).
+
+model_post_turn_compact_threshold_percent = 70
+
+Leave both unset to keep Codex’s built-in behaviour. Set them lower when you notice constraints slipping late in long threads. Earlier compaction produces smaller, more frequent summaries, and turns stay cheaper. Codex 0.157.1 also fires PreCompact and PostCompact hook events, which you can use to log when compaction happened in a session you are auditing.
+
+Compaction is a fallback, not a plan. Codex 0.157.1 ships its own warning: “Long threads and multiple compactions can cause the model to be less accurate. Start a new thread when possible to keep threads small and targeted.” The next section turns that advice into a routine.
+
+Chain short threads with a handoff fileSection titled “Chain short threads with a handoff file”
+
+The pattern that holds up over a multi-day task is a chain: one thread plans, and each later thread implements one phase from a file in the repository. The file is the only thing that crosses the boundary, so you can review it and version it.
+
+Plan in the first thread. Ask for the phases, the files each phase touches, and the tests that prove each phase is done.
+
+Write the handoff to disk. Have Codex write docs/plans/invoice-v2.md using the prompt below. Read it yourself; it is short by design. This is the one artifact in the chain you check line by line.
+
+Start each phase in a new thread with /new, point it at the file, and name the thread with /rename invoice-v2-phase-1 so codex resume invoice-v2-phase-1 finds it later.
+
+End each phase by updating the file. The thread records what changed, which decisions it made, and the test command that passed. The next thread starts from that state instead of rediscovering it.
+
+ Copy-paste prompt: write the handoff file 
+
+We are ending this thread. Write docs/plans/invoice-v2.md as the handoff for the next thread.
+
+Use exactly these sections:
+
+1. Hard constraints (3-6 bullets that must never be violated, e.g. "do not modify v1 routes").
+
+2. Decisions already made, with one line of reasoning each. The next thread must not reopen them.
+
+3. Phases, each with: files it touches, the test command that proves it is done, and status
+
+ (done / next / later).
+
+4. Open questions that need a human answer.
+
+Keep it under 60 lines. Do not include anything you have not verified in this thread.
+
+ Copy-paste prompt: start the next phase from the handoff 
+
+Read docs/plans/invoice-v2.md. Treat its constraints and decisions as ground truth; do not
+
+re-plan. Implement the phase marked "next" and nothing else. Before you edit, list the files you
+
+will change. When you finish, run the phase's test command, paste the result, update the
+
+phase status and the "Decisions" section in the file, and stop.
+
+For scripted phases, codex exec supports the same chain. Choose deliberately between continuing a session and starting clean:
+
+Terminal window
+
+# terminal: continue the last exec session, carrying its whole transcript and its context cost
+
+codex exec resume --last "Implement phase 2 from docs/plans/invoice-v2.md, then run its tests."
+
+# terminal: start clean; only the handoff file crosses over
+
+codex exec "Implement the phase marked next in docs/plans/invoice-v2.md, run its tests, update the file."
+
+The clean start is the default for a new phase. Resume when the previous run was interrupted mid-phase and its tool output is still needed. For the interactive TUI, the equivalents are codex resume --last and /new. See non-interactive Codex for --json, --output-schema, and --ephemeral in pipelines.
+
+Keep exploration out of the main threadSection titled “Keep exploration out of the main thread”
+
+The fastest way to fill a window is to let the implementing thread read the codebase. Two habits keep it lean.
+
+Delegate the reading. Ask a subagent to map the code and return a short report. The file contents stay in the subagent’s thread. See multi-agent workflows in Codex for the patterns.
+
+Ask for symbols, not files. “Read createInvoice and its callers” costs a fraction of “read services/api/src/”.
+
+ Copy-paste prompt: explore with a subagent, keep the report small 
+
+Spawn a subagent to map how invoices are created in services/api. It should read whatever it
+
+needs, then return only: the entry points (file:function), the call chain to the database
+
+write, every place v1-only helpers are imported, and the existing tests that cover this path.
+
+Max 30 lines, no code excerpts longer than 5 lines. Do not edit anything. When the report
+
+arrives, summarise it in 5 bullets and wait for me.
+
+How do you prove a long session kept its constraints?Section titled “How do you prove a long session kept its constraints?”
+
+A long thread is where drift hides, and reading 300 turns to find it defeats the purpose of delegating. Put the proof in artifacts you can check in a minute.
+
+Constraints as checks, not prose. “Do not modify v1 routes” becomes a CI check that fails when a diff touches src/routes/v1/. A rule the agent can forget after compaction should be a rule the build enforces. As a CI step:
+
+Terminal window
+
+git fetch origin main
+
+base=$(git merge-base origin/main HEAD) || exit 1
+
+changed=$(git diff --name-only "$base" HEAD) || exit 1
+
+if printf '%s\n' "$changed" | grep -q '^src/routes/v1/'; then
+
+ echo 'v1 routes are frozen'; exit 1
+
+fi
+
+The step needs history back to the merge base, for example fetch-depth: 0 on actions/checkout. On a shallow clone git merge-base fails, and the step fails with it instead of passing silently. On the pull_request trigger the workflow file comes from the pull request itself, so the same diff can delete the check: it holds only with /.github/ in CODEOWNERS and code owner review required by branch protection or a ruleset.
+
+A test command per phase in the handoff file, run by the thread that finishes the phase and pasted into the file with its output.
+
+Review in a fresh context. Run /review in a new thread, or codex exec review from the terminal, after each phase. The reviewer has not seen the implementer’s reasoning, so it judges the diff rather than the story. See code review with Codex.
+
+A diff scope check. /diff at the end of a phase, compared with the file list in the handoff. A file outside the list is the first sign that the thread lost the plan.
+
+A record. /export saves the conversation as Markdown. Keep it next to the pull request when a reviewer needs to trace a decision, instead of pasting transcripts into chat.
+
+The tech lead signs off on the handoff file and the CI result; nobody signs off on the transcript.
+
+What crosses between Codex surfaces?Section titled “What crosses between Codex surfaces?”
+
+The CLI, IDE extension, desktop app, and Codex cloud share configuration and instructions in some directions only. Plan for what does not travel.
+
+From → toWhat travelsWhat does not
+CLI → desktop app/app continues the current session in the desktop app (macOS and Windows only; the Linux CLI has no /app)Not available from Linux. On macOS and Windows nothing is lost, but confirm the app opened the same thread
+IDE → CLI/ide pulls the current selection, open files, and other context from your IDE into the TUIAnything you did not select or open
+Local → Codex cloudWhat is committed to the repository, including the AGENTS.md filesYour ~/.codex/ config and global AGENTS.md, uncommitted files, and your local handoff notes
+One thread → anotherThe handoff file, if committed or on diskThread history; memories is off by default in 0.157.1, so do not expect Codex to remember across threads
+
+The cloud row causes the most surprises. A cloud task sees the repository, not your laptop. Commit the handoff file and any AGENTS.md rule the task depends on before you delegate. See Codex cloud environments for setup scripts and environment variables.
+
+What breaks when a Codex thread runs out of room?Section titled “What breaks when a Codex thread runs out of room?”
+
+A constraint from early in the thread is ignored. Compaction summarised it away. Restate it in the current prompt now, then move it into the handoff file and, if you can, into a CI check. Lower model_auto_compact_token_limit if this recurs.
+
+Turns get slow and the thread keeps re-reading files. The window is near full and each turn re-sends it. Write the handoff file and continue in a new thread; do not /compact a third time.
+
+A module’s AGENTS.md rules stopped applying. The project chain passed its 32 KiB budget and the deepest file was truncated, or an AGENTS.override.md is hiding it. Check the Agents.md line in /status, then follow the budget fixes.
+
+No project instructions load at all. Since 0.150.0, an untrusted project supplies no project-level AGENTS.md. Trust the project when Codex asks, or check its [projects."<path>"] entry in ~/.codex/config.toml.
+
+A resumed thread is already near its limit. codex resume reloads everything the thread held. Resume only to finish an interrupted phase; start the next phase with /new and the handoff file.
+
+A cloud task ignores a convention you rely on locally. The rule lives in ~/.codex/AGENTS.md or an uncommitted file. Commit it to the repository’s AGENTS.md.
+
+Raising model_context_window did not help. A larger window delays compaction but every turn costs more. Cut the prefix and shorten the threads first; see cost management for how usage adds up.
+
+Where to go next with Codex contextSection titled “Where to go next with Codex context”
+
+Optimize AGENTS.md and skills for Codex: the budget, load order, and truncation rules behind the fixed prefix.
+
+Prompt engineering for Codex: prompts that state constraints once and precisely.
+
+Multi-agent workflows: split work so that no single thread carries it all.
+
+Build: plan.md, then implement: the tool-neutral version of the handoff-file chain.
+
+Efficiency hacks: shortcuts for resuming, forking, and moving between surfaces.
+
+Did this guide help you? 
+One tap, no sign-in. 
+
+ 0 1 2 3 4 5 
+ not at all a lot 
+ Change 
+
+ What will you do with it? 
+ Apply it now Maybe later Nothing, not for me 
+
+ How did it read? 
+ Too basic Just right Too hard 
+
+ What got in the way? Pick any that apply 
+ Out of date No example Too long A wrong command or code Not what I was looking for Nothing 
+
+ Your role? 
+ Developer Lead or architect CTO or manager 
+ What should change? 
+
+ Thanks. I read every answer. Michał Jaskólski 
+
+ Did this guide help? 
+ 0 1 2 3 4 5 
+One tap each. Close whenever you like. 
+
+ no sign-in 
+Related pages 
+ Optimize AGENTS.md and skills for Codex Keep Codex's AGENTS.md chain inside its 32 KiB budget, move procedures into skills, and prove what loaded with codex debug prompt-input. 
+ Codex desktop app: parallel threads, worktrees and review Run parallel Codex desktop app threads in local, worktree or cloud mode, prove each result with gates and codex review, and bring the work home through Git. 
+ Codex batch operations: one change across many packages Apply one change across dozens of packages or repos with Codex: codemod first, pilot one partition, fan out codex exec in worktrees, gate every partition. 
+
+ Books · in the Toolkit Books · in your Toolkit 08 titles · EN + PL Included 
+
+ Read Codex as a book. Take Codex offline. 
+This section, bound into one book you can read start to finish, with a contents list you can click. 
+This section, bound into one book you can read start to finish, with a contents list you can click. It is in your Toolkit, and the file you download stays yours. 
+ 58 Chapters 
+ 600 Pages 
+ EPUB·PDF Formats 
+ See all eight books One of eight books in the Toolkit · $59.99 once 
+ Download the book Browse all eight 
+ Also on amazon.com: Kindle on amazon.com, opens in a new tab 
+
+ This section 
+
+ HANDBOOK 
+ CURSOR 
+ CLAUDE CODE 
+ DEVELOPERS 
+ TECH LEADS 
+ CTOS 
+ EXECUTIVES 
+
+ Spines follow page count · 1,523 → 184 
+ All eight are yours · EN + PL 
+ All 577 guides Free resources:
+ Compare tools · Glossary · By role 
+ Written by Michał Jaskólski 
+ See what's new on the platform.
+
+ Privacy Policy · Terms of Service · Cookie settings · llms.txt · pricing.md · RSS

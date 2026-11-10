@@ -1,0 +1,1970 @@
+[
+ {
+  "id": "C:043",
+  "read": "full body from a PDF the user supplied (49 pages, SSRN 7538000): main text, Appendices A to G, data and code statement, references. Figures read as extracted text only.",
+  "algorithm": "Restart Economics: expected cost per incoming task, with agent spend, verification and a priced outside option (annotated engineer time). Policy ladder: no retry, retry with best attempt budget (K at most 4), retry with a per-attempt iteration cap, schedules by coordinate ascent, a receding-horizon restart rule on three state variables, and cascades across configurations. Exact replay of truncated logged trajectories scores each policy. Break-even is stated in multiples of the median attempt cost.",
+  "methodology": "Four logged OpenHands runs on each of 500 SWE-bench Verified tasks, 7 configurations, 13,681 attempts. Exact replay by truncating logs, enumeration of the 24 ordered draw selections, 5-fold task-grouped cross-fitting, full-pipeline task bootstrap (1,000 replicates for the primary result, 100 for comparators). Comparators: dollar cutoff, Kitagawa-Tetenov empirical welfare maximization threshold, Luby-Sinclair-Zuckerman universal schedule, first-look rule, sample oracle. Preregistered on OSF before results. A synthetic population checks interval coverage (93 to 99 percent over 120 samples) and the state rule against backward induction.",
+  "key_numbers": "Automated verifier, $100 an hour: retry cuts expected cost 13.2 to 19.6% for six configurations and 4.3% for GPT-5.2; at $300 an hour 16.4 to 21.0% (GPT-5.2 8.0%). Dollar savings per task at $100 an hour: GPT-5 5.67 [3.42, 8.80], GPT-5.2 1.01 [0.45, 2.16]. The iteration cap adds nothing given retry: break-even 2.14 to 3.83 median attempt costs ($1.74 to $7.08 an hour); margin never distinct from zero on the cost side in any of 532 cells; best hindsight cap saves at most $0.03 per task. Attempts still running at 100 calls resolve 33 to 55% of the time. Only 11 to 25% of tasks have mixed outcomes. Cross-configuration outcome correlation 0.62 to 0.90. Cascades save 9.2% in point estimate at $100 an hour, interval includes zero. Review at 0.5 of the outside option: no configuration retries, the cap saves $0.75 to $3.56 per task at $100 an hour. The fitted state rule stops 42 to 78% too early and costs 7 to 32% more than the exact optimum on synthetic attempts.",
+  "limits": "Clean restarts only. One benchmark, one harness (OpenHands CodeActAgent), at most 4 attempts. A configuration is not a model. SWE-bench Verified contamination. The outside option is annotated time, understated for short tasks. The state rule has 8 coefficients; learned monitors are untested. Working paper v0.1, single author, not peer reviewed.",
+  "use_for_project": "Retry priced by cost per resolved task with the fallback priced; the 2-to-4-full-attempts break-even rule for whether to cap; iteration limits as guards, not levers; replay of logged trajectories for exact policy evaluation (the replay adapter function); cross-fitting with a full-pipeline bootstrap in the eval harness; price review before deciding to run the agent at all.",
+  "corrections": "none",
+  "new_techniques": [
+   "Restart Economics (cost per incoming task with a priced outside option)",
+   "Exact replay of truncated logged trajectories",
+   "Cross-fitting with full-pipeline task bootstrap",
+   "Break-even in multiples of median attempt cost",
+   "Receding-horizon restart rule",
+   "Luby-Sinclair-Zuckerman universal restart schedule",
+   "Kitagawa-Tetenov empirical welfare maximization threshold rule",
+   "Sample oracle upper bound"
+  ]
+ },
+ {
+  "id": "A:156",
+  "read": "Read directly, whole of dl/A156/p.txt, lines 1-2140 in three chunks: body, Tables 1-15, safety, references, Appendix A (judge prompt listings 1-6), Appendix B (authors). Figures as extracted text only. Nothing skipped.",
+  "algorithm": "Phi-4-Mini: 3.8B decoder, 32 layers, hidden 3072, tied embeddings, 200,064 vocab, GQA 24 query/8 KV heads, 25% of head dimension position-agnostic (fractional RoPE), LongRoPE 128K. Phi-4-Multimodal freezes this base and adds per-modality LoRAs (vision 370M, audio 460M, rank 320).",
+  "methodology": "5T-token pretraining with filtered web plus synthetic data. Separate reasoning preview in three stages: about 60B distilled CoT tokens with rejection sampling, 200K curated CoT SFT samples, then Roll-Out DPO on 300K pairs (wrong outputs dispreferred, corrected ones preferred). Compared against open models in Tables 7-9.",
+  "key_numbers": "Table 9 (AIME/MATH-500/GPQA-D): final reasoning Phi-4-Mini 50.0/90.4/49.0 vs DeepSeek-R1-Distill-Qwen-7B 53.3/91.4/49.5; base Phi-4-Mini 10.0/71.8/36.9. Table 7 average 64.9, Qwen2.5-7B 67.9. Table 8 coding average 49.0.",
+  "limits": "Reasoning model is a separate preview, not the released checkpoint, and its data was not used in the release. No cost, latency or token-usage numbers anywhere. Vendor-run benchmarks. Multilingual weaker because coding data crowded it out.",
+  "use_for_project": "Use only as a small-model quality data point. Do not cite for cost or token savings, since none are reported. Reasoning scores are slightly below Distill-Qwen-7B on all three benchmarks, so say comparable, not better.",
+  "corrections": "Earlier record saw the abstract only. Abstract says on par with or surpassing DeepSeek-R1-Distill-Qwen-7B and Llama-8B. Table 9 shows it beats Llama-8B and Bespoke/OpenThinker but trails Distill-Qwen-7B by 3.3, 1.0 and 0.5 points.",
+  "new_techniques": [
+   "Mixture-of-LoRAs: frozen text base plus per-modality LoRAs, so adding vision or speech leaves text quality unchanged.",
+   "Roll-Out DPO: incorrect sampled outputs become dispreferred, their corrected versions preferred, giving 300K preference pairs.",
+   "Reasoning recipe: large-scale CoT pretraining first, then small curated SFT, then DPO, contrasting with LIMO and s1 small-data approaches.",
+   "GQA 24/8 cuts KV cache to one third; 25% position-agnostic head dimension aids long context."
+  ]
+ },
+ {
+  "id": "A:104",
+  "read": "full body",
+  "algorithm": "Concise CoT: prompt 'think step by step' + 'Be concise' + one concise example.",
+  "methodology": "1,000 MCQA (10 sets x 100), 10 repeats, GPT-3.5 and GPT-4 on Azure, Mann-Whitney U.",
+  "key_numbers": "Output length -48.70% (p<0.001). Accuracy GPT-3.5 -2.95% (n.s.), GPT-4 +0.25%. GPT-3.5 math -27.69%. Cost saving 21.85% (GPT-3.5), 23.49% (GPT-4), avg 22.67%, below the length cut as input tokens are unchanged.",
+  "limits": "Two OpenAI models, one prompt variant, MCQA only, GPT-4 ceiling effect.",
+  "use_for_project": "Row 36 (output verbosity).",
+  "corrections": "Cost saving is about 22.7%, not the ~49% length cut.",
+  "new_techniques": [
+   "concise one-shot CoT exemplar"
+  ]
+ },
+ {
+  "id": "A:132",
+  "read": "full body",
+  "algorithm": "Draft Mq proposes gamma tokens, target Mp verifies in parallel; accept if r<=p/q else resample from norm(max(0,p-q)). E[tokens]=(1-a^(g+1))/(1-a); speedup=(1-a^(g+1))/((1-a)(gc+1)); needs a>c.",
+  "methodology": "T5-XXL 11B with T5-small/base/large drafts, batch 1, TPU-v4; also LaMDA 137B and GPT-like alpha tests.",
+  "key_numbers": "EnDe 3.4X (temp 0, a=0.75, g=7), 2.6X (temp 1). CNN/DM 3.1X, 2.3X. Bigram draft a~0.2 gives 1.25X. Ops 1.63X for 3.69X speed (a=0.8, g=5).",
+  "limits": "Extra arithmetic, needs spare compute; saves latency not billed tokens.",
+  "use_for_project": "none (provider-side latency).",
+  "corrections": "none",
+  "new_techniques": [
+   "speculative sampling",
+   "n-gram/context-copy drafts",
+   "adaptive gamma (oracle up to ~60% more)"
+  ]
+ },
+ {
+  "id": "A:039",
+  "read": "full body",
+  "algorithm": "Comp-LLM: decomposer (SFT Llama 2 7B on 1000 GPT-4o examples) -> expert router (mean-pooled embedding, cosine, sq_sim 0.7 else base model) -> DAG scheduler running ready sub-queries in parallel -> aggregator; LoRA experts.",
+  "methodology": "MultiExpertQA-P and -All (chem, bio, math; 2 or 3 experts); F1 vs Llama-2 70B, Mixtral, OLMoE.",
+  "key_numbers": "Comp-LLM (35B) F1 0.78 vs Llama-2 70B 0.79, Mixtral 0.74, OLMoE 0.52. Decomposer F1 0.87/0.86 vs few-shot 0.48/0.42. 108.78s vs 892.07s for offloaded Llama-2-70B on one A40; latency 1.1x-1.7x vs sequential.",
+  "limits": "Needs experts per domain, static reasoning only, measures size not dollars.",
+  "use_for_project": "Rows 5, 12 (decompose then route sub-tasks to small experts).",
+  "corrections": "none",
+  "new_techniques": [
+   "mean-pool routing embedding",
+   "DAG runtime scheduler"
+  ]
+ },
+ {
+  "id": "A:114",
+  "read": "full body",
+  "algorithm": "Loss = sum p(q)*min{c(q), d(q,M)}; NP-hard, non-increasing supermodular. Reverse_Greedy (curvature bound); offline CUCB-SC (pessimistic cost UCB); online CLCB-SC-LS (LCB, stage-based low switching).",
+  "methodology": "Synthetic, m=20, cost=token count, 384-d embeddings, 10 runs; vs Epsilon-Greedy.",
+  "key_numbers": "Regret O(sqrt(mT log(mT)) loglogT), switches O(m loglogT). >=11.75% regret gain (up to 54.04%), switches -90.91%, runtime -85.40%.",
+  "limits": "Synthetic only.",
+  "use_for_project": "Row 26 (semantic cache selection with bandit).",
+  "corrections": "Online algorithm is CLCB-SC-LS; exact-match caching is a special case.",
+  "new_techniques": [
+   "low-switching stage-based bandit",
+   "pessimistic cost UCB"
+  ]
+ },
+ {
+  "id": "A:008",
+  "read": "full body",
+  "algorithm": "MTRouter: MLP outcome estimator on [history embedding (frozen Qwen3-Embedding-0.6B, 8192 tokens); model embedding (8-d metadata + 16-d residual -> 64-d)]. Target = terminal score minus progress-weighted error penalties (1.0/0.8/0.2). Argmax per turn, $2/episode cap.",
+  "methodology": "1,291 instances, 29,693 trajectories, 515,221 turns, ~$1,620 collection, 6-model pool, 3 runs; ScienceWorld, HLE.",
+  "key_numbers": "ScienceWorld 53.8 vs GPT-5 48.4 at -58.7% cost. HLE 26.0 vs 23.8 at -43.4%. OOD ScienceWorld +5.0 at -65.8%; HLE OOD cost -52.3%. ~5 switches vs ~20 (Router-R1). Stays on same model after error 90.2%/80.9% vs 38.3%/66.4%.",
+  "limits": "Offline only; switching can lose prompt cache (authors note).",
+  "use_for_project": "Rows 12, 5 (per-turn model choice in agent loops).",
+  "corrections": "HLE is an accuracy gain; add the cache-loss caveat.",
+  "new_techniques": [
+   "progress-weighted error penalty",
+   "learned model embedding with metadata+residual"
+  ]
+ },
+ {
+  "id": "A:046",
+  "read": "full body",
+  "algorithm": "RouterArena: Arena score=(1+b)AC/(bA+C), log2-normalised cost, b=0.1, cmin 0.0044, cmax 200 per 1k queries.",
+  "methodology": "8,400 queries, 23 sources, 9 DDC domains, 44 categories; difficulty from 42 LLMs; 12 routers; accuracy, cost, optimal ratios, robustness, latency.",
+  "key_numbers": "MIRT-BERT 66.9, Azure-Router 66.7, NIRT-BERT 66.1, GPT-5 64.3, vLLM-SR 64.3, CARROT 63.9, RouterDC 33.8; oracle 90.89%. NIRT-BERT ~378% of best model cost; vLLM-SR/CARROT ~35% cheaper under 2% loss; MIRT-BERT ~5x optimal.",
+  "limits": "One-shot queries, not agents.",
+  "use_for_project": "Row 12 (router selection and its hidden costs).",
+  "corrections": "Router latency and robustness are hidden costs; commercial routers not better overall (GPT-5 7th, NotDiamond 12th).",
+  "new_techniques": [
+   "Arena score",
+   "difficulty from 42-LLM solve counts"
+  ]
+ },
+ {
+  "id": "A:119",
+  "read": "full body except appendices",
+  "algorithm": "LaRA benchmark comparing RAG (600-token chunks, 5 chunks, 100 overlap, GTE-large + BM25) vs long context.",
+  "methodology": "2,326 cases; 4 tasks; 3 context types; 32k/128k; 7 open + 4 proprietary models; GPT-4o judge validated by Cohen's Kappa.",
+  "key_numbers": "32k: long-context +2.4% over RAG; 128k: RAG +3.68%. 128k RAG gains 6.48% (Llama-3.2-3B), 38.12% (Mistral-Nemo-12B). Comparison favours long-context (+15.22% at 32k). GPT-4o hallucination accuracy 56.34%.",
+  "limits": "GPT-4o-judged, mostly GPT-4o-generated QA, fixed RAG config, no cost measure.",
+  "use_for_project": "Context-stuffing rows: route RAG vs long-context by model strength, length, task type.",
+  "corrections": "No single winner; depends on model, length and task.",
+  "new_techniques": [
+   "segment-and-vote for over-length context",
+   "entity replacement for leakage control"
+  ]
+ },
+ {
+  "id": "A:082",
+  "read": "full body",
+  "algorithm": "Gist tokens: insert k gist tokens between prompt and input; mask so later tokens cannot see the prompt; trained by instruction finetuning at no extra cost. Meta-distillation L_G = KL(pLM(y|t,x)||pG(y|G(t),x)).",
+  "methodology": "Alpaca+ (130,321 examples); LLaMA-7B and FLAN-T5-XXL; k in {1,2,5,10}; ROUGE-L, ChatGPT win rate, human eval (100 samples, 3 raters).",
+  "key_numbers": "Up to 26x prompt compression, up to 40% FLOPs saving (vs no cache). k=1 sufficient. Win rate vs control LLaMA 48.6/49.7/45.8, FLAN-T5 50.8/46.2/42.5. vs instruction caching only 0.11% FLOPs, 1% wall time, but 26x more prompts cached per storage.",
+  "limits": "Loses nuance; needs finetuning; small models; short (~20-token) prompts.",
+  "use_for_project": "Prompt/system-prompt compression rows; self-hosted-only option.",
+  "corrections": "40% FLOPs is vs no caching; vs KV caching the gain is ~0.11%, real benefit is storage.",
+  "new_techniques": [
+   "gist masking",
+   "meta-distillation"
+  ]
+ },
+ {
+  "id": "C:033",
+  "read": "full body except appendix",
+  "algorithm": "LLMRouter: routing as sequential decision, pi*=argmax E[perf - lambda*c]; router = context encoder, model encoder, scoring, decision rule, learning signal; >16 routers behind MetaRouter; three-stage data engine.",
+  "methodology": "xRouteBench: 4,767 instances, 5 tracks, 18 models (7B-671B); reward alpha*perf - beta*cost with beta swept over five values.",
+  "key_numbers": "Abstract: 14.6% relative gain over best fixed model. GraphRouter 45.46 vs Largest-LLM 38.72. RouterDC first to tenth under tighter cost. Router-R1 avg 22.30. MFRouter 76.48 vs Largest-LLM 71.48. Real-user (15 users): PersonalizedRouter 83.05, GMTRouter sixth.",
+  "limits": "Open-weight pool only; multi-turn routers run once; small real-user study.",
+  "use_for_project": "Row 12 and router-evaluation harness (cost-weighted frontier sweeps on query-model matrix).",
+  "corrections": "Multi-turn/agentic routing not consistently better; ranking depends on cost weight.",
+  "new_techniques": [
+   "xRouteBench",
+   "MetaRouter interface",
+   "per-node multi-agent routing"
+  ]
+ },
+ {
+  "id": "C:045",
+  "read": "full body except appendix",
+  "algorithm": "Agent Retrieval Bench measuring repo retrieval; RRF (k=60) fusion of Qwen3-8B + RepoMap; metrics Recall@k, MRR, BCY@B (greedy packing into token budget), PES.",
+  "methodology": "427 samples, 25 repos (345 positive, 50 no-gold, 32 counterfactual); 308 snapshots, 7.9M chunks; BM25, RepoMap, Qwen3-4B/8B, jina, nomic.",
+  "key_numbers": "Qwen3-4B best MRR 0.2379; Qwen3-8B best R@20 0.7029; RepoMap best BCY@8k 0.3788. RRF lifts MRR 0.2296->0.2713. Agents never touch a gold file on 27-35% of samples. Seed pilot (45, single run) File F1 0.3222 none, 0.3437 random, 0.3981 lexical, 0.6337 oracle.",
+  "limits": "Diagnostic scale; file-level; no patch-success link; seed pilot single-run, no CIs.",
+  "use_for_project": "Context-acquisition/file-reading rows: seed agent context with hybrid RepoMap+embedding retrieval.",
+  "corrections": "Embeddings alone insufficient; random seed also helps (+0.0215 F1); abstention fails on natural no-gold.",
+  "new_techniques": [
+   "BCY",
+   "PES",
+   "counterfactual wrong-repo controls",
+   "RRF-3 hybrid"
+  ]
+ },
+ {
+  "id": "A:007",
+  "read": "full body",
+  "algorithm": "PORT: kNN (5 neighbours) estimate perf and cost; random-route first eps=0.025 queries; solve dual gamma* once; route to argmax(alpha*d - gamma*_i*g); queue when budget exhausted. Competitive ratio 1-O(eps+delta).",
+  "methodology": "RouterBench, SPROUT, Open LLM Leaderboard v2 (10,000 test queries); 8 baselines; budget = cheapest single model cost.",
+  "key_numbers": "Avg 3.55x performance, 1.85x cost efficiency, ~4.25x throughput. Vs BatchSplit +33% perf, +38% cost efficiency. Reaches 75.99-84.66% of approximate optimum.",
+  "limits": "Only perf and cost modelled; needs labelled history; assumes similar queries behave alike and random order.",
+  "use_for_project": "Row 12 and token-budget-constrained routing.",
+  "corrections": "Gain is under cheapest-model budget and relative to approximate optimum, not exact MILP optimum.",
+  "new_techniques": [
+   "dual-variable routing weights",
+   "random warm-up",
+   "BatchSplit baseline"
+  ]
+ },
+ {
+  "id": "C:029",
+  "read": "Read C.txt (1641 lines) in full except bibliography lines ~681-869, which were skipped (only start and end seen). That includes the main text, Related Work, Appendices A-H, Tables 1-11 and the proofs. Figures 2-4 seen as extracted text only.",
+  "algorithm": "Routing is a linear program. Theorem 1: the optimum is gamma*s_MIN + (1-gamma)*s_MAX at the lambda that meets the budget, found by binary search over lambda. Cascading is sequential routing over supermodels M_1:i (Theorem 2). Cascade routing picks among all supermodels containing the models already run (Theorem 3), with supermodel quality E[max member quality] and cost summed. Lemma 1 prunes negative-marginal-gain models.",
+  "methodology": "RouterBench 0-shot and 5-shot with 3, 5 and 11 models and Gaussian noise levels Low/Med/High. 5% of the data tunes hyperparameters, 95% evaluates; metric is AUC of the quality-cost curve with bootstrap 2-sigma intervals. Realistic benchmarks: SWE-Bench (10 and 5 agents), Qwen Math+Code, Llama/Gemma/Mistral classification and open-form with logistic-regression quality estimators.",
+  "key_numbers": "Table 1 0-shot AUC at 11 models Low/Med/High: routing 83.25/74.63/72.67, cascade baseline 84.48/73.64/69.79, cascade ours 84.47/75.10/70.26, cascade routing 87.24/77.57/74.40. Gains up to 8% over cascading and 12% over routing. SWE-Bench: 54.12 vs routing 40.47 (10 models). Realistic noisy estimators: 1.2% mean gain. Runtime 15 ms; Greedy 1.4 ms with 0.5-1.3 point loss.",
+  "limits": "Gains depend on estimate quality; with poor estimators cascade routing only matches routing. Quality estimators are trained per model and per computed-model history. Up to 2^k supermodels; Normal handles 40 models in 1 s, Max-Depth 3 handles 80. Hyperparameter search is harder for cascades; in 5-shot low-noise cascade ours trails the baseline in two of three cases.",
+  "use_for_project": "Counts as a model-routing/cascade saving: choose per query among models under a cost budget. Use the realistic 1-14% AUC gains over routing or cascading, not the noise-free RouterBench peak. It gives no savings if only one model tier is available or quality estimates are weak.",
+  "corrections": "Earlier '11-model zero-shot low-noise 87.24 vs routing 84.47' mislabels: 84.47 is Cascade (Ours); routing is 83.25 (Table 4: routing gap 4.00). 'Appendix absent' is wrong: Appendices A-H exist (arXiv v5) and were read, covering proofs, noise std devs in Table 3, ablations, confidence intervals, and 5-shot results.",
+  "new_techniques": [
+   "Lemma 1 pruning: skip supermodels with negative marginal gain over the models already run",
+   "Supermodel quality as expected maximum of member qualities, proven submodular (Lemma 6)",
+   "Max-Depth variant capping cascades at 3 models for 80-model scale",
+   "Greedy variant considering only supermodels of length j+1 (about 10x faster)",
+   "Separate logistic-regression quality estimator per history of computed models",
+   "Binary search over lambda to hit the budget, then convex mix with gamma",
+   "Corollary 2: thresholding equals optimal cascading only when cost and quality estimates are query-independent"
+  ]
+ },
+ {
+  "id": "C:042",
+  "read": "full body (PDF via pdftotext)",
+  "algorithm": "Observation masking replaces tool observations older than a rolling window of M turns with a placeholder, keeping reasoning and actions (M=10 best in SWE-agent). LLM-Summary summarizes N=21 turns at once, keeping M=10 trailing turns. Hybrid (N=43, M=10) masks first and summarizes only as a deferred last resort.",
+  "methodology": "SWE-agent on SWE-bench Verified (500), 250-turn limit; five configs (Qwen3-32B with/without thinking, Qwen3-Coder-480B, Gemini 2.5 Flash with/without thinking); 95% bootstrap CIs; OpenHands probe (50 instances); hybrid on Verified-50.",
+  "key_numbers": [
+   "Both strategies cut cost by more than 50% in most configs",
+   "Qwen3-Coder: cost $1.29 raw vs $0.61 masked (-52.7%); solve rate 53.4% raw, 54.8% masked, 53.8% summary",
+   "Gemini Flash with thinking: solve rate 40.4% raw, 36.4% masked, 31.4% summary (significant drops)",
+   "Hybrid 7% cheaper than masking and 11% cheaper than summary, +2.6 pp over raw (Qwen3-Coder, Verified-50)"
+  ],
+  "limits": "SWE domain only; fixed non-adaptive triggers; M must be re-tuned per scaffold (M=10 hurt OpenHands, which needed M=58); naive hybrid with N=21 got worse from KV-cache misses and summary overhead.",
+  "use_for_project": "Rows 11 and 24. Use masking as default, summary as deferred last resort. Account for KV-cache invalidation and summarizer cost (up to 7.2% of instance cost). Tune M per scaffold.",
+  "corrections": "Earlier record was empty (extraction returned nothing); the full text supplies all numbers above, plus trajectory elongation (summary runs were longer: Gemini Flash 52 turns vs 44 masked, 50 raw) and observations being about 84% of an average turn.",
+  "new_techniques": [
+   "trajectory elongation effect of summarization",
+   "hybrid mask-then-summarize with deferred trigger",
+   "window size M as a per-scaffold hyperparameter",
+   "summarization cache-miss cost",
+   "observation-token share (about 84% of a turn)"
+  ]
+ },
+ {
+  "id": "A:118",
+  "read": "full body (427 lines, complete)",
+  "algorithm": "Split the document into 128-token chunks, score each by cosine similarity (BGE-large-en-v1.5), take the top-k, then order the selected chunks by their original document position rather than by score (OP-RAG). Answer quality follows an inverted U against the amount of retrieved context.",
+  "methodology": "InfiniteBench En.QA (351 pairs, F1) and En.MC (224 pairs, accuracy); Llama3.1-8B and 70B generators; baselines: full long context without RAG, SELF-ROUTE, vanilla score-ordered RAG.",
+  "key_numbers": [
+   "En.QA Llama3.1-70B: OP-RAG-16K 44.43 F1; OP-RAG-48K 47.25 F1 vs 34.26 F1 for full 117K context",
+   "Vanilla RAG at 128 chunks 38.40 vs OP-RAG 44.43",
+   "En.MC: OP-RAG-24K 88.65 vs 71.62 without RAG; vanilla at 192 chunks 81.22",
+   "8B peaks near 16K tokens; 70B peaks at 48K (En.QA) and 32K (En.MC)"
+  ],
+  "limits": "Long-document QA only; sweet-spot context length varies by model and task; advantage over vanilla RAG is small at around 8 chunks; no limitations section.",
+  "use_for_project": "Row 37. Retrieve a bounded set instead of stuffing full context, keep retrieved chunks in document order, and tune k per model.",
+  "corrections": "Earlier '44.43 vs 34.32' mixed numbers: the paper gives 34.32 in the intro and 34.26 in Table 1. It missed 47.25 at 48K, the En.MC results, the model-dependent sweet spot, and the order-preserve vs vanilla gap.",
+  "new_techniques": [
+   "order-preserving retrieval",
+   "model-dependent sweet-spot context length"
+  ]
+ },
+ {
+  "id": "C:050",
+  "read": "full body (838 lines)",
+  "algorithm": "Benchmarks sub-4B models on BFCL and surveys SFT, PEFT (LoRA/QLoRA), PPO, DPO and hybrid optimisation. Its DPO pipeline converts AgentBank SFT data into chosen/rejected pairs: SFT response as chosen, TinyLlama-1.1B-Chat output as rejected, with manual validation.",
+  "methodology": "BFCL categories (simple, multiple, parallel, relevance, live, non-live, multi-turn); xLAM-2-3b/1b, Qwen3-4B/1.7B/0.6B, TinyLlama-1.1B, TinyAgent-1.1B; Gorilla OpenFunctions 2,000 points; DPO on ALFRED only.",
+  "key_numbers": [
+   "xLAM-2-3b-fc-r 65.74% overall, 55.62% multi-turn (Table IV)",
+   "Qwen3-4B 62.04% overall",
+   "Qwen3-0.6B 45.76% overall, 1.38% multi-turn",
+   "TinyLlama and TinyAgent about 19.7% overall, 0% multi-turn"
+  ],
+  "limits": "No post-DPO or post-hybrid results reported; tables are internally inconsistent (Table I multi-turn vs Table IV); single benchmark; no latency or cost measurements.",
+  "use_for_project": "none direct. Weak background evidence that models under 1B fail multi-turn tool calling, so a small-model routing tier needs at least about 3B and function-calling tuning.",
+  "corrections": "The abstract's 65.74% / 55.62% 'with hybrid optimization' is actually an off-the-shelf xLAM-2-3b-fc-r result, so the hybrid claim is unsupported.",
+  "new_techniques": [
+   "SFT-to-DPO pair conversion using a weak model's outputs as rejected"
+  ]
+ },
+ {
+  "id": "A:017",
+  "read": "full body",
+  "algorithm": "Capability instruction = model capability representation + user instruction + Yes/No prompt. The representation is a natural-language aptitude profile from 50 MMLU tasks x 20-shot per candidate. E5-Large encoder, MLP connector, Phi-3-Mini 3.8B; score is P('Yes'). In-batch negatives, two-stage tuning, data refinement. Router never runs candidates.",
+  "methodology": "66 open LLMs for training, five zoos plus a multimodal zoo; in-domain MMLU, WinoGrande, ARC-C; out-of-domain BoolQ, TruthfulQA, MRPC, MNLI; 60-model incremental-release simulation.",
+  "key_numbers": [
+   "Table 2 (MMLU/ARC-C/TruthfulQA/mean): Model-SAT 79.86 / 72.53 / 65.12 / 72.50 vs encoder-less Phi-3 74.71 / 70.58 / 61.70 / 68.83",
+   "High-performance zoo reaches 85.64 MMLU",
+   "Union of 5 small models covers 90% of GPT-4o's correct instructions",
+   "A new model needs only 50x20 inferences to onboard"
+  ],
+  "limits": "Benchmark-style multiple-choice instructions, not agent traces; requires training; needs an aptitude test per new model; no limitations section.",
+  "use_for_project": "Row 12. Cheap onboarding of new models via a profile; routing overhead independent of the number of candidates.",
+  "corrections": "'State of the art routing' is overstated: the paper only claims better than the best single model and comparable to the 70B in its own zoos. Missed the encoder/connector design, the 60-model incremental setup, the multimodal extension, and that encoder-less variants were weaker.",
+  "new_techniques": [
+   "capability instruction tuning",
+   "aptitude-test model representation",
+   "homogeneous in-batch negatives",
+   "circle test"
+  ]
+ },
+ {
+  "id": "A:101",
+  "read": "full body (appendix skipped)",
+  "algorithm": "K=4 early-exit MLP heads at evenly spaced layers, trained with KL loss to the main model output; random init beats lm_head copies; entropy is the best confidence metric. Calibrated threshold per head is the smallest confidence whose accuracy against the main model is at least epsilon. DSSD drafts up to 32 tokens with the first head and verifies them in one full pass.",
+  "methodology": "Pythia 70M to 2.8B, 500K MiniPile examples, epsilon swept 0.5 to 1.0, eight benchmarks; DSSD vs LayerSkip on a 24-config grid, 200-token greedy decoding, V100.",
+  "key_numbers": [
+   "Pythia-2.8B epsilon=0.5: 58.6% speedup, PIQA 0.742 to 0.615; moderate epsilon gives 10-20% speedup",
+   "DSSD at epsilon=0.9: 88.8% acceptance vs LayerSkip best 53.6% (1.66x)",
+   "DSSD discards 8 tokens vs 128; mean exit layer 13.6 vs 24",
+   "Speedup grows with model size"
+  ],
+  "limits": "Modest speedup if accuracy must be preserved; only Pythia up to 2.8B; needs model internals; no end-to-end wall-clock for DSSD.",
+  "use_for_project": "none directly (operator-side inference optimisation, not under a Token Economics user's control).",
+  "corrections": "Earlier record had speedup unread; the 7.6-58.6% range is now captured with the DSSD contribution, head-initialisation finding and entropy result.",
+  "new_techniques": [
+   "DSSD (draft with early-exit head, verify in one pass)",
+   "calibrated exit threshold from held-out accuracy",
+   "KL self-supervised head training",
+   "entropy-based exit confidence"
+  ]
+ },
+ {
+  "id": "A:105",
+  "read": "full body (supplementary skipped)",
+  "algorithm": "Prompt the LLM to omit a set W of 25 easily inferable function words; a small encoder-decoder or decoder model reconstructs the full text. W is chosen by RoBERTa masked-prediction ranking (cut-off level 5, about 18% tokens saved). Break-even: C_D^o*G >= C_D^i*I + C_R^i*I_R + C_R^o*O_R.",
+  "methodology": "NaLDA, 44,800 entries over 5 tasks; generators GPT-4o, GPT-4.1/mini, Sonnet 4, Opus 4.1; reconstructors BART, T5, Qwen2.5-0.5B/1.5B fine-tuned on 100K Wikipedia paragraphs; metrics include the new Theta F1.",
+  "key_numbers": [
+   "GPT-4o with T5: 19.41% tokens saved, Theta F1 85.51, cosine 99.99%",
+   "Tokens saved: GPT-4.1-mini 22.79%, Sonnet 4 17.83%, Opus 4.1 17.38%",
+   "Added instruction costs 169 tokens; break-even answer length about 216 tokens (GPT-4o), about 190 (Sonnet 4)"
+  ],
+  "limits": "English only; rewrite/summarize/translate tasks about 5.77% lower; not tested on code, conversation or reasoning models; effect of omission on generation quality untested; needs a trained reconstructor.",
+  "use_for_project": "Row 36. Only worthwhile for long outputs, with an explicit break-even check. Unsuited to code or agent tool calls.",
+  "corrections": "Earlier record omitted the break-even condition, the 169-token overhead, the 17-23% variation across models, the code/conversation limitation and the quantified metric decrease.",
+  "new_techniques": [
+   "ease-of-inference word ranking (Algorithm 1)",
+   "Theta alignment metric",
+   "break-even formula for output compression",
+   "NaLDA dataset"
+  ]
+ },
+ {
+  "id": "A:123",
+  "read": "full body (references skipped)",
+  "algorithm": "Reward r = -(C + lambda_L*L + lambda_E*1_error + lambda_A*1_abstain): prices of error, latency and abstention. Pick the model or system maximising expected reward, for a standalone LLM, a cascade, or a router with abstention. Cascade error reduction CER = Cov(deferral, small-model error), related to AUARC.",
+  "methodology": "MATH, 500 questions at levels 1, 3, 5; Llama3.3-70B, Llama3.1-405B, GPT-4.1, o3, DeepSeek-R1, Qwen3-235B, zero-shot CoT; P(True) self-verification deferral tuned on 250 and tested on 250 (level 5); Llama3.1-405B as judge.",
+  "key_numbers": [
+   "Reasoning models cost 10-100x more per query, up to 10x slower, but win once error price exceeds about $0.01 (abstract)",
+   "Single Qwen3-235B beats a cascade once error price exceeds $0.10",
+   "Llama3.1-405B to Qwen3-235B cascade beats the big model up to error price $10,000 and latency $10/minute",
+   "Cost and latency are linear in deferral rate"
+  ],
+  "limits": "MATH only; possible contamination; judge model may inflate 405B's self-verification; no separate limitations section.",
+  "use_for_project": "Row 12. Decide routing and cascades by price of error, not cost alone; cascade savings can turn negative when errors are costly; deferral-signal quality (CER) is what makes a cascade work.",
+  "corrections": "The $0.01 and $0.1 thresholds are MATH-specific and latency-dependent, not general. Missed that a 405B small model reverses the cascade conclusion, the advice to use the strongest model when errors cost real money, and the critique of cost-of-pass (A:122): repeated samples are not i.i.d.",
+  "new_techniques": [
+   "price of error / latency / abstention",
+   "CER covariance metric",
+   "estimating error price as E[Cost|M]*P(M|E)",
+   "sensitivity sweeps over lambda"
+  ]
+ },
+ {
+  "id": "A:069",
+  "read": "full body (references and appendix tables skipped)",
+  "algorithm": "Cost c = p_in*n_in + p_out*n_out (+ cache terms for agents). Shapley-value attribution of the cost gap between two models over eight multilinear factors (turns, input, output, cache, thinking tokens, and three prices), with a closed form. Cost treated as a distribution with quantile-level reversal analysis.",
+  "methodology": "8 models (GPT-5.4, GPT-5.4 Mini, Gemini 3.1 Pro, Gemini 3 Flash, Opus 4.7, Haiku 4.5, Kimi K2.6, MiniMax M2.7) on 12 tasks incl. Terminal-Bench 2.0, Cybench, GAIA; 336 pairwise comparisons; 7.39B tokens over 6,877 tasks.",
+  "key_numbers": [
+   "106 of 336 pairs (32%) show price reversal; 11% on ArenaHard to 57% on MMLU-Pro",
+   "Gemini 3 Flash: 80% lower listed price than GPT-5.4 but 38% higher total cost ($705 vs $509)",
+   "Single-turn: thinking tokens over 95% of the gap; agentic: turns over 80% (Kimi vs GPT-5.4)",
+   "Repeat-run cost on the same query varies up to 9.7x"
+  ],
+  "limits": "Costs only, no quality; one price snapshot (May 2026); cost prediction left open; no limitations section.",
+  "use_for_project": "Rows 12 and 45. Compare models by measured cost per task, not list price. Track thinking tokens and turns; budget with cost distributions or quantiles.",
+  "corrections": "Earlier record needed the 32% figure with its definition (pairwise, across 12 tasks). Missed the Shapley attribution, the quantile finding (reversal 39-40% in the body vs 31.5% for the mean), the 9.7x noise floor, and task dependence.",
+  "new_techniques": [
+   "Shapley cost attribution with closed form",
+   "quantile-level reversal analysis",
+   "cost-distribution prediction as open problem",
+   "thinking-token tax"
+  ]
+ },
+ {
+  "id": "C:030",
+  "read": "full body, conclusion, limitations, appendix A1-A3",
+  "algorithm": "Step-level router mapping a trajectory prefix to a tier (low, mid, mid_high, high). Labels come from a greedy sequential-locking downgrade search: from a successful strong trajectory, try tiers cheapest-up at each step and accept if the full trajectory still passes with no more LLM-call steps. Three-model tier cascade verification; failure-aware COST SAVE; bill = API cost + (1-resolved)*$0.60.",
+  "methodology": "Static track: 970 step rows from 520 instances (SWE-bench, BFCL, mtRAG, QMSum, PinchBench), 11-model pool. Dynamic track: 100 SWE-bench Verified instances with mini-swe-agent. Manual audit of 64 steps. Router: frozen BGE-small plus metadata into logistic regression.",
+  "key_numbers": [
+   "Dynamic: trained router resolved 75/100 at $25.66 vs unrouted Opus 4.6 74/100 at $54.73 (-53.1% API cost)",
+   "Rule-based variant cost $172.56 (6.7x more than trained router)",
+   "Opus 4.6 as a router predicted high for only 7 of 147 verified-high SWE steps",
+   "Cascade recovered 28 of 33 downgradeable labels vs 15 of 33 for single-model probing"
+  ],
+  "limits": "Small static corpus; greedy search may miss cross-step interactions; labels tied to a fixed pool and price snapshot; dynamic track SWE-bench Verified only (Astropy and Django); English only.",
+  "use_for_project": "Rows 12 and 5. Per-step routing in agents needs execution-verified labels; prompting a frontier LLM as router fails. Price cache writes on tier switches and penalise failed trajectories.",
+  "corrections": "Earlier record should add failure-aware cost accounting, the Opus-as-router failure, the 100-instance caveat, and cache-switch pricing (high-tier cache write 12.5x its cache read).",
+  "new_techniques": [
+   "sequential-locking downgrade search",
+   "tier-pool cascade verification",
+   "failure-aware COST SAVE",
+   "unresolved-instance penalty in bill",
+   "cache-write accounting on tier switch"
+  ]
+ },
+ {
+  "id": "A:106",
+  "read": "full body (appendix not read, references skipped)",
+  "algorithm": "Disaggregate prefill and decode onto separate GPU instances to remove interference, optimising per-GPU goodput (max rate meeting a 90% SLO attainment on TTFT and TPOT). Algorithm 1 searches parallelism per phase with a simulator and binary search; Algorithm 2 colocates same-stage segments so KV moves over NVLink. FCFS, shortest-queue dispatch, pull-based KV transfer.",
+  "methodology": "OPT-13B/66B/175B on 32 A100-80GB with 25 Gbps cross-node bandwidth; ShareGPT chatbot, HumanEval, LongBench summarization; baselines vLLM and DeepSpeed-MII; ablation with vLLM++ and a simulator.",
+  "key_numbers": [
+   "Up to 7.4x higher request rate or 12.6x tighter SLO at over 90% attainment",
+   "Chatbot 2.0-4.6x vs vLLM and 1.6-7.4x vs DeepSpeed-MII; code completion 5.7x; summarization 4.3x vs vLLM",
+   "KV transmission under 0.1% of latency for OPT-175B",
+   "Simulator error under 2%"
+  ],
+  "limits": "No preemption or fault tolerance; hurts throughput-oriented offline serving and GPU-poor setups; OPT/MHA models only; FCFS convoy effect.",
+  "use_for_project": "none. Provider-side serving; background on why TTFT and TPOT behave differently.",
+  "corrections": "none. Earlier record assigned no row, which is correct.",
+  "new_techniques": [
+   "goodput as optimisation target",
+   "simulator-driven placement search",
+   "bandwidth-aware stage colocation",
+   "pull-based KV transfer"
+  ]
+ },
+ {
+  "id": "C:135",
+  "read": "Entire body, sections 1-7, via pdftotext default and -layout; the layout pass gave readable Tables 4-8 (default pass garbled them). Also read Tables 1-3, Figures 2-14 captions and in-text findings, troubleshooting, contributions. Figure image contents (box plots, scatter plots, Fig. 4 flow) not readable from text. References skimmed only.",
+  "algorithm": "Five-phase pipeline: pick repos (500+ stars, CI, buildable); crawl merged PRs linked to an issue with test edits; build a per-PR Docker image; run the full suite on base, base+test.patch, base+test+fix and keep fail-to-pass PRs with no pass-to-fail; two annotators label each instance, 14 engineers check 80% accuracy.",
+  "methodology": "1,632 instances, 39 repos, 7 languages, from 2,456 candidates and 68 annotators; difficulty is annotator time (easy up to 15 min, medium to 1h, hard over 1h). Three scaffolds (MagentLess, MSWE-agent, MopenHands, 50-turn limit) times 9 LLMs, scored by resolved rate, file-level location and cost. Multi-SWE-RL adds 4,723 unverified instances from 76 repos.",
+  "key_numbers": [
+   "77.1% of instances medium or hard vs 61.2% for SWE-bench Verified (Table 2 sums verified).",
+   "Best non-Python cells: MSWE-agent Claude-3.7 Java 23.44%, MagentLess DeepSeek-R1 Java 22.66%; Claude-3.7 MopenHands Python 52.2%, JS and TS mostly under 6%, C and C++ under 15%.",
+   "Table 8 cost per attempted issue spans $0.0025 (Doubao MopenHands TS) to $3.75 (o1 MSWE-agent Python); MagentLess alone spans $0.0041 to $3.68.",
+   "Costs match tokens times list price: Claude-3.7 MopenHands Java 28.4k in, 7.9k out gives $0.203 at $3 and $15 per million, so output tokens are 58% of the bill.",
+   "My ratio, cost over resolved rate: DeepSeek-R1 MagentLess Java about $0.06 per resolved vs Claude-3.7 MSWE-agent Java $0.81, at 22.7% vs 23.4% resolved.",
+   "Bug fix 17.97% vs new feature 3.91% vs optimization 1.56% (Claude-3.7 MSWE-agent Java); patches over 600 tokens or several files roughly halve success."
+  ],
+  "limits": "Scaffolds were Python-tuned then patched; MagentLess lost patch selection; costs are per attempted issue though text says per resolved; no prompt caching or discounts in costs; Python column is SWE-bench Verified with different handling; Python MSWE-agent lacks truncation, inflating tokens; one run per cell, no variance; text says issue description >600 tokens where it means fix patch.",
+  "use_for_project": "Background only, no Token Economics row. Gives a measured token and dollar profile per scaffold and language: fixed-workflow MagentLess is cheaper but 50-turn agents win on resolved rate, and turn exhaustion plus mislocalised faults are the main waste.",
+  "corrections": "Earlier cost range ($0.004 to $3.68) holds only for the MagentLess table; all three tables give $0.0025 to $3.75. Earlier said cell values unusable; Tables 4-8 are readable and now used. Table 8 is per attempted issue; the paper's phrase cost per resolved issue is loose. Earlier 'lowest cost' models should include Doubao in the agent tables. Skim of sections 3-5 is now complete.",
+  "new_techniques": [
+   "Status-transition filter over run/test/fix logs using PASSED, FAILED, NONE, SKIPPED",
+   "Annotator time buckets as difficulty label instead of patch size",
+   "Language entropy as a repo complexity metric",
+   "Tree-sitter function and class extraction to replace file skeletons",
+   "Truncating long observations and .gitignore of build artefacts for stable agent runs",
+   "Reproduce-only-when-needed: Claude sometimes edits without reproducing and still resolves",
+   "Suggestion to add spectrum-based fault localization to agents"
+  ]
+ },
+ {
+  "id": "A:122",
+  "read": "full body and appendices A, C.2, D",
+  "algorithm": "cost-of-pass v(m,p) = C_m(p)/R_m(p), the expected cost of one correct answer (assumes independent trials). Frontier cost-of-pass V_p(M) is the minimum over models plus a human-expert baseline. Gain is the reduction when a model is added; family essentialness is the relative frontier increase when a family is removed. Exponential decay fit gives a halving time.",
+  "methodology": "3 lightweight, 3 large and 4 reasoning models released May 2024 to Feb 2025; six datasets (two-digit addition, GSM8K, BBQ, GPQA-Diamond, MATH-500, AIME24); human cost from hourly rate x time; self-refine, majority vote (k=3,4), TALE-EP; Tau-bench check on 16 tasks.",
+  "key_numbers": [
+   "Frontier cost-of-pass halves every 2.6 months (MATH-500) and 7.1 months (AIME24)",
+   "Essentialness: lightweight 93.5% (two-digit addition); reasoning 74.4% (MATH500) and 81.0% (AIME24); large models matter on knowledge tasks (GPQA 33.3%, BBQ 44.7%)",
+   "Majority voting yields 0% relative gain everywhere; self-refine 24.9% on GPQA; TALE-EP 66.6% on GSM8K"
+  ],
+  "limits": "Binary pass/fail and expectation only (no variance); ignores verification, retry and tool costs; contamination possible; single prompt setting; i.i.d. retry assumption is contested (A:123); only 16 Tau-bench tasks.",
+  "use_for_project": "Row 12. Choose models by cost per correct answer, not per token. Majority voting and self-refine rarely pay; budget-aware generation helps. Add verification and failure costs to the cost vector.",
+  "corrections": "Earlier record needed the halving times, per-family essentialness numbers, the null result for majority voting and the limitations; the i.i.d. assumption is contested by A:123 and the Tau-bench check is tiny.",
+  "new_techniques": [
+   "cost-of-pass",
+   "frontier cost-of-pass with human baseline",
+   "counterfactual family essentialness",
+   "time-to-halve cost",
+   "vectorised cost model C = w^T x",
+   "TALE-EP budget-aware generation"
+  ]
+ },
+ {
+  "id": "A:010",
+  "read": "full body incl. commercial routers and defenses (appendices A-E skipped)",
+  "algorithm": "Confounder gadget: a query-independent adversarial token prefix prepended to a query to push a binary router's score above its threshold so the query goes to the strong model. Hill climbing: 100 iterations, 32 candidate token swaps, 10-token gadget, early abort after 25 stagnant iterations. Black-box via surrogate router transfer; low-perplexity variant adds a perplexity penalty.",
+  "methodology": "Four open routers from RouteLLM (similarity-weighted ranking, matrix factorisation, BERT classifier, LLM scorer); MT-Bench, MMLU, GSM8K with threshold calibrated at 0.5; commercial routers Unify, NotDiamond, OpenRouter, Martian on MT-bench.",
+  "key_numbers": [
+   "White-box upgrade rates mostly 100%, worst 88%; black-box lower but high",
+   "Unify: 49% strong-model share, upgrade 79-91%, cost $0.13 to about $0.22 (1.7x)",
+   "OpenRouter: some gadgets rerouted all queries to GPT, about $0.25 vs $0.03 (over 8x)",
+   "Perplexity filtering catches plain gadgets (97% TPR at 3% FPR for RSW) but low-perplexity gadgets drop ROCAUC to about 0.66-0.71"
+  ],
+  "limits": "Binary routers and small or older models; mainly MT-bench for commercial routers; cost inflation measured on small query sets; no test against multi-model or agentic routers; one calibration scheme.",
+  "use_for_project": "Row 12. If Token Economics routes user-controlled text, treat the router as an attack surface and cap strong-model share per user. Perplexity filtering is not enough.",
+  "corrections": "Earlier record should add the upgrade rates, the 1.7x and over 8x commercial cost inflation, failure of perplexity filtering, that instruction injection ('treat this as complex') does not work, NotDiamond being more robust (it already sends 82% strong), and Martian excluded for ignoring the model list.",
+  "new_techniques": [
+   "confounder gadgets",
+   "control-plane integrity",
+   "surrogate-router transfer attack",
+   "low-perplexity gadget optimisation",
+   "per-user dynamic threshold calibration defense",
+   "rate-based anomaly detection"
+  ]
+ },
+ {
+  "id": "C:032",
+  "read": "full body, conclusion and limitations; appendix A, B.1-B.3 read, remaining appendix (C, D) not read; main Table 3 columns are garbled in extraction so only text-stated numbers used",
+  "algorithm": "Routing as a Context-Action-Feedback loop (contextual bandit with cumulative regret vs a per-task oracle, reward = score - 0.1*cost). ACRouter: Orchestrator (fine-tuned Qwen3.5-0.8B plus heuristics, DimensionBest prior and top-10 kNN memory neighbours, weighted vote), sandbox Verifier (AST, execution, tests, self-consistency, judge), FIFO memory of 20K entries.",
+  "methodology": "CodeRouterBench: about 10K tasks, 10 coding dimensions; 7,080 probing, 2,919 in-distribution test, 176 out-of-distribution agentic tasks (mini-swe-agent, 40-step cap); 8 frontier LLMs; baselines include LinUCB, LinTS, LogReg, RouteLLM, fine-tuned 0.8B.",
+  "key_numbers": [
+   "Router diagnosis: adding per-dimension performance stats to Sonnet 4.6 router lifts 41.41 to 47.74 (+15.3%)",
+   "ID: ACRouter 49.98% AvgPerf, cumulative regret 205.5, vs DimensionBest 47.50%",
+   "OOD: ACRouter 62.50% vs Always-Opus 57.14%; lightweight classifiers fall to 8.93-21.43%, below Random 31.25%",
+   "Perf/$ ID 3.79 vs Always-Opus 1.29; Opus costs about 12x Kimi-K2.5 on the probing set"
+  ],
+  "limits": "Provider cache hit rates unobservable so dollar costs are secondary; agentic OOD uses a 40-step limit, 176 tasks; ACRouter pays more for Memory and Verifier than static routers; LLM policy plus kNN memory is one instantiation; routing is per task, not per step.",
+  "use_for_project": "Row 12. Static trained routers overfit and collapse under distribution shift (agentic tasks); online memory of verified outcomes is the fix. Provides a regret metric and a pricing method for self-hosted router tokens ($0.054/M).",
+  "corrections": "Earlier record needs the information-deficit finding, the OOD collapse of static routers, that the 'agentic' part is the router loop (per-task routing with an execution Verifier, not per-step routing, which is C:030), and that ACRouter spends extra on verification.",
+  "new_techniques": [
+   "Context-Action-Feedback loop with cumulative regret",
+   "execution-grounded Verifier feeding router memory",
+   "kNN memory of verified routing outcomes",
+   "amortised GPU pricing of router tokens ($0.054/M)",
+   "information-deficit ablation for routers"
+  ]
+ },
+ {
+  "id": "A:024",
+  "read": "full body (from PDF 2211.17192; corpus text was abstract-only)",
+  "algorithm": "Draft model Mq proposes gamma tokens; target Mp scores them in one parallel pass. Token x is accepted if q(x)<=p(x), else rejected with probability 1-p(x)/q(x) and resampled from norm(max(0,p-q)). Each run yields 1 to gamma+1 tokens with output distribution identical to Mp. Expected tokens (1-a^(g+1))/(1-a), a=E[min(p,q)]; gain needs a>c (c = draft cost ratio).",
+  "methodology": "T5-XXL 11B target with T5-small/base/large drafts on WMT EnDe and CNN/DM, batch 1, one TPU-v4, temperature 0 and 1. Alpha also measured on a 97M GPT-like model (lm1b) and LaMDA 137B.",
+  "key_numbers": [
+   "EnDe T5-small draft: 3.4X at temp 0 (gamma 7, alpha 0.75), 2.6X at temp 1",
+   "CNN/DM: 3.1X at temp 0, 2.3X at temp 1",
+   "Table 1 example: alpha 0.8, gamma 5 gives 3.69X speed at 1.63X ops",
+   "Bigram draft on EnDe: alpha ~0.2, 1.25X at gamma=3"
+  ],
+  "limits": "Needs spare compute; arithmetic ops increase; gains fall at low alpha; walltime only implemented for T5; batch size 1 only.",
+  "use_for_project": "none. Server-side latency technique with no user lever; speedup is walltime, not token or cost savings.",
+  "corrections": "Earlier record said only the abstract page was extractable; full body now read. Unchanged output distribution confirmed. Speedup is walltime, ops go up.",
+  "new_techniques": [
+   "copy-from-context n-gram or parameter-less draft",
+   "adaptive gamma (oracle up to ~60% more)",
+   "non-autoregressive drafts"
+  ]
+ },
+ {
+  "id": "A:042",
+  "read": "full body",
+  "algorithm": "Four stages: benchmark models on cost and performance; a critic LLM extracts demonstrated skills, missing skills and criticality per task; skills are embedded, hierarchically clustered and labelled into a binary skill vector; select. Matrices C (model proficiency), R (task requirements), cost vector c. Pick M_capable = models with C_ms >= tau for all required skills, then max predicted performance subject to c_m <= B.",
+  "methodology": "Framework design only; no experiments. Proposed evaluation is leave-one-out over financial benchmarks versus RouteLLM, FrugalGPT and an oracle. Motivation uses GPT-5 $10/M vs Llama-3.3-70B $0.88/M (TogetherAI) and FLaME data.",
+  "key_numbers": [
+   "No empirical results",
+   "Motivating price gap: GPT-5 $10/M tokens vs Llama-3.3-70B $0.88/M (11x cheaper)"
+  ],
+  "limits": "Not empirically evaluated (paper says it requires validation); critic-call overhead, clustering stability and critic variance untested.",
+  "use_for_project": "row 12 (model routing): capability-threshold filter plus budget constraint with interpretable rationale; idea only, no evidence.",
+  "corrections": "Earlier 'conceptual' record is right. Add: it is skill-matrix filtering plus budget, not a trained router, and its evaluation is only proposed.",
+  "new_techniques": [
+   "critic-LLM skill profiling",
+   "threshold filtering on skill vector",
+   "budget-constrained selection"
+  ]
+ },
+ {
+  "id": "A:090",
+  "read": "full body",
+  "algorithm": "Training-free prompt with two parts. RPI (Reasoning Process Internalization): solve in hidden thinking, output a bare-minimum single-line reasoning. TES (Token-Efficient Strategies): 'TOKEN CONSERVATION MODE ACTIVE', symbols and abbreviations, omit articles, strip greetings, and a point rule: each saved token +1, each accuracy error -100.",
+  "methodology": "GSM8K 1319, SVAMP 1000, MathQA 2985, AQuA 254; GPT-4o, Claude 3.5 Sonnet, o3-mini, QwQ-32B; zero-shot; baselines CoT, CoD, CCoT, TALE-EP.",
+  "key_numbers": [
+   "Ablation averages: 354.46 tokens vs CoT 676.85 (-47.6%), accuracy 91.19 vs 88.40 (-2.79 points)",
+   "RPI alone -31.1% tokens; TES alone -33.9%",
+   "Figure 1 claim: -20.51% tokens vs best baseline, 0.1% accuracy drop",
+   "Arithmetic sets: 190.19 tokens, 94.28% vs CoT 93.5%"
+  ],
+  "limits": "QwQ-32B stays high in tokens whatever the prompt; math benchmarks only; accuracy loss vs CoT in the ablation.",
+  "use_for_project": "rows 36 and 45 (verbose output, reasoning tokens): a terse-output instruction in prompts; test on coding tasks before trusting.",
+  "corrections": "Earlier 'comparable accuracy' is wrong: ablation shows -2.79 points vs CoT. The 47.6% is vs CoT; the 20.51% is vs the best baseline.",
+  "new_techniques": [
+   "token-conservation framing with point-penalty prompt",
+   "hidden-thinking plus one-line output"
+  ]
+ },
+ {
+  "id": "A:031",
+  "read": "full body",
+  "algorithm": "Layered proposers and aggregators: y_i = concat_j A_ij(x_i) + x_1, each layer's models see all previous outputs through an Aggregate-and-Synthesize prompt. Default 6 open models, 3 layers, Qwen1.5-110B-Chat final aggregator. MoA-Lite is 2 layers with Qwen1.5-72B aggregator.",
+  "methodology": "AlpacaEval 2.0 (805 instructions, GPT-4 judge, length-controlled), MT-Bench, FLASK; three runs averaged.",
+  "key_numbers": [
+   "MoA 65.1+-0.6% LC win; MoA w/ GPT-4o 65.7%; MoA-Lite 59.3%; GPT-4o 57.5%",
+   "MoA-Lite matches GPT-4o cost with +1.8 points",
+   "MoA-Lite beats GPT-4 Turbo (55.0%) by ~4% at over 2x cost-effectiveness",
+   "6 proposers 61.3% vs 1 proposer 47.8%"
+  ],
+  "limits": "High time-to-first-token (last layer must finish). First aggregation layer gives most gain. LLM ranker much worse than aggregation.",
+  "use_for_project": "rows 5 and 12 as a counter-example (multi-call ensembling multiplies tokens) and a cost-quality Pareto point (MoA-Lite). Not a Token Economics saving.",
+  "corrections": "Earlier 'not a cost reducer' is too strong: paper claims Pareto positions via MoA-Lite. Intro quotes 65.8 vs 65.1 in results (internal discrepancy).",
+  "new_techniques": [
+   "proposer/aggregator roles",
+   "multiple distinct proposers beat one repeated",
+   "LLM-ranker baseline"
+  ]
+ },
+ {
+  "id": "A:014",
+  "read": "full body except appendix",
+  "algorithm": "Offline: SmolLM2-135M encoder over (prompt, response pair) with MLP on [e+e'; |e-e'|]; Bradley-Terry head on reward-model disagreement pairs plus auxiliary per-RM classification head, L = L_bt + lambda L_cls. Online: Bayesian linear Thompson sampling per query, Sigma^-1 += hh^T/sigma^2, offline BT embedding as prior mean; reward is negative DPO loss, quantile-normalised.",
+  "methodology": "4 small reward models, policy LLaMA3-SFT-v2, 50,402 offline pairs (HelpSteer3 + RM-Bench). Evaluated on AlpacaEval-2, MT-Bench, Chat-Arena-Hard, GSM8K, MMLU vs single RM, majority vote, random, UWO, LASER (LinUCB).",
+  "key_numbers": [
+   "AlpacaEval-2 63.23 vs best single RM 61.86 and LASER 60.50",
+   "GSM8K 75.66; MMLU 57.39",
+   "Offline router OOD accuracy 87.92 vs ~87.65 best single (RewardBench 2, 2,939 pairs)",
+   "LinUCB collapses to a single arm"
+  ],
+  "limits": "DPO only (PPO untested); gap to oracle remains; slightly slower than the fastest single RM; gains modest.",
+  "use_for_project": "row 12 only indirectly: offline prior plus online bandit exploration avoids cold start. About reward-model selection, not agent coding turns.",
+  "corrections": "Earlier record fine. Add that gains are modest (~1.4 on AlpacaEval) and LinUCB collapses to one arm.",
+  "new_techniques": [
+   "Thompson sampling with offline-embedding prior",
+   "Bradley-Terry training on RM disagreements"
+  ]
+ },
+ {
+  "id": "A:004",
+  "read": "full body",
+  "algorithm": "Heterogeneous graph with task, query and LLM nodes; initial embeddings from a GPT-4o description encoded by BERT. Edges task-query and LLM-query (performance, cost). 2-layer GAT, 32-dim hidden. Trained by edge prediction; inference picks argmax dot product. Reward = alpha*Perf - beta*Cost with (alpha,beta) = (1,0), (0.5,0.5), (0.2,0.8).",
+  "methodology": "4 tasks x 600 queries (Alpaca, GSM8K, SQUAD, Multi-News), 10 Together-API LLMs ($0.2-0.9/M tokens), 70/10/20 split. New-LLM setting: 6 seen, 4 new, 80 few-shot queries. Baselines: largest/smallest, Prompt-LLM, Hybrid LLM, FrugalGPT, C2MAB-V, oracle.",
+  "key_numbers": [
+   "Performance-First reward 0.539 vs FrugalGPT 0.517, oracle 0.588; Balance 0.209 vs 0.196 (oracle 0.231); Cost-First 0.064 vs 0.057 (oracle 0.072)",
+   "Claims >=12.28% reward gain and >=88.89% of oracle; Performance-First table gain is ~4%",
+   "New LLMs few-shot 0.207 vs C2MAB-V 0.189 (+9.52%), time cost -99.45%"
+  ],
+  "limits": "Exploratory; no path or taxonomy signals; LLMs handle numeric price and context info poorly; small 4-task benchmark.",
+  "use_for_project": "row 12: accuracy-minus-cost router reward Token Economics can mimic as a score; needs training data from the user's own tasks.",
+  "corrections": "Earlier record fine. Add per-scenario numbers, the 10-model pool, and that the 12.3% headline is not uniform.",
+  "new_techniques": [
+   "inductive LLM node embeddings from text descriptions",
+   "few-shot onboarding of new LLMs",
+   "edge-prediction routing"
+  ]
+ },
+ {
+  "id": "C:064",
+  "read": "full body except appendix",
+  "algorithm": "Reward r_final = alpha*r_tool*r_correct (multiplicative; additive was unstable because the model gained reward by calling fewer tools without a correct answer). OTC-PPO: r_tool = cos(m*pi/(2m+c)). OTC-GRPO: f(m,n)=2nm/(m+n), r_tool = sin(f*pi/(2n)), peaking at m=n. GRPO uses the global approximation of optimal tool calls.",
+  "methodology": "Search-R1 and ToRL settings; NQ and HotpotQA training; Qwen2.5-3B/7B-Base (search) and Qwen2.5-Math-1.5B/7B-Base (code); 8 A100-80G; max tool calls 3-4; alpha=1. New metric tool productivity TP = correct answers / total tool calls.",
+  "key_numbers": [
+   "Up to -68.3% tool calls and +215.4% TP (OTC-PPO 7B NQ: TC 3.282 to 1.040, TP 0.136 to 0.429)",
+   "7B NQ EM 0.446 vs 0.449; 3B OTC-PPO NQ EM 0.355 vs 0.403 (drop)",
+   "Code 7B AIME24: TP 16.4 to 52.4 (+199.4%), TC 2.1 to 0.7, EM 26.7 to 33.3"
+  ],
+  "limits": "Gains larger at 7B; 3B loses accuracy in some cells; only search and code tools on QA and math; GRPO less stable than PPO.",
+  "use_for_project": "row 27 (excess tool calls): Token Economics can borrow the metric (correct per tool call) and a 'call tools only when needed' prompt nudge. Training-side, not applicable directly.",
+  "corrections": "Earlier 'min tool calls among correct trajectories' is the local approximation; experiments use the global one. Add that 3B accuracy dropped in some cells.",
+  "new_techniques": [
+   "multiplicative correctness-gated tool reward",
+   "sine-shaped reward peaking at optimal tool count",
+   "tool productivity metric",
+   "'call tools only when necessary' template"
+  ]
+ },
+ {
+  "id": "C:023",
+  "read": "full body",
+  "algorithm": "No new algorithm; empirical study. OpenHands on SWE-bench Verified (500 tasks x 4 runs) across 8 models, phase analysis (Setup, Explore, Fix, Validate, Closeout), round-level cost decomposition with Sonnet 4.5, and agent self-prediction of its own token use.",
+  "methodology": "8 models (Sonnet 3.7/4/4.5, GPT-5, GPT-5.2, Qwen3-Coder-480B, Kimi-K2, Gemini-3-Pro), one framework; 3 self-predictions per model scored by Pearson r; Kendall tau-b against expert difficulty.",
+  "key_numbers": [
+   "Agentic coding ~1000x more tokens than code reasoning and chat; input/output ratio 153.85 vs 1.33 and 0.16; cost $1.857 vs $0.016 and $0.023",
+   "Most expensive run ~2x cheapest on average (abstract says up to 30x); accuracy peaks at intermediate cost",
+   "Cache reads dominate tokens and dollars in every phase; output ~80x pricier per token than cache reads",
+   "Self-prediction correlation up to 0.39; every model underestimates; Kendall tau-b 0.32 vs difficulty"
+  ],
+  "limits": "8 models, one framework (OpenHands), one benchmark; self-prediction noisy and underestimates.",
+  "use_for_project": "rows 1, 5, 45 (context re-reading, repeated file actions, no stop on failure): budget alert, early stop on repeated views or edits, cache-aware cost accounting.",
+  "corrections": "30x run variance is the abstract's extreme; body shows ~2x max/min per model on average. Add phase and cache-read dominance findings.",
+  "new_techniques": [
+   "per-round cost decomposition by token type",
+   "repeated view/edit as waste signal",
+   "self-prediction as early budget alert",
+   "shared-success subset to isolate model efficiency"
+  ]
+ },
+ {
+  "id": "A:091",
+  "read": "full body",
+  "algorithm": "Logit processor at inference sets logits of reflection keywords to a large negative value. 15 seed keywords were mined from 32 QwQ-32B runs on AIME 2025 (wait, alternatively, hmm, but, however, check, maybe, verify, again, now) and expanded to all vocabulary tokens containing a keyword as substring. No training or weight change.",
+  "methodology": "10 benchmarks (AMC23, AIME24/25, GPQA-D, MMMU, MMMU-Pro, MathVista, EMMA-mini, MMVU, VSI-Bench); QwQ-32B, Phi4-Reasoning-Plus, Qwen3-32B, Kimi-VL-A3B, QvQ-72B; 5 runs; 32,768-token cap; baselines NoThink, Token-Budget, O1-Pruner.",
+  "key_numbers": [
+   "QwQ-32B AMC23 95.50 (+4.25) at -30% tokens; AIME25 68.00 (+1.33) at -31%",
+   "Phi4-R+ AMC23 +6.00 at -28%; Qwen3-32B -13% to -16% tokens",
+   "Kimi-VL -40% to -60% tokens on some sets (-7.25 accuracy on EMMA-mini)",
+   "QwQ-32B-Preview AIME24 42.00 at 5764 tokens vs 8979 baseline; O1-Pruner 33.33"
+  ],
+  "limits": "Distilled Qwen3-4B/8B/14B degrade (>5 points AIME24, >12 AIME25); suits RL-trained reasoning models; math-heavy benchmarks.",
+  "use_for_project": "rows 45 and 29 (reasoning tokens). Needs decoding control (open-weight local model or logit bias); not applicable to closed API agents.",
+  "corrections": "Earlier record fine. Add distilled-model failure and that reductions are 27-51% across modalities, with 13-31% on text.",
+  "new_techniques": [
+   "keyword-token logit suppression",
+   "substring vocabulary expansion",
+   "keyword mining by frequency"
+  ]
+ },
+ {
+  "id": "A:006",
+  "read": "full body",
+  "algorithm": "Benchmark and framework with Collector, Evaluator, Adaptor. 21 datasets, 33 models, 391,645 instances, 23,945 prompts, ~1.8B tokens, $2,771.84 API cost, ~1K GPU hours. Two settings: performance-oriented (20 ~7B models, 15 datasets) and performance-cost (13 flagship models, 10 datasets). 10 routers compared; metrics AvgAcc, Gain@R/B, Gap@O, PerfGain, CostSave, ParetoDist.",
+  "methodology": "Routers: RouterDC, EmbedLLM, MODEL-SAT, GraphRouter, Avengers, HybridLLM, FrugalGPT, RouteLLM, Avengers-Pro, OpenRouter, against Oracle, Best Single and Random references.",
+  "key_numbers": [
+   "Best routers: up to +4% AvgAcc and up to 31.7% cost reduction vs GPT-5 (Best Single) at matched accuracy",
+   "OpenRouter -24.7% PerfGain, fails to match",
+   "Model-recall failure: when <=3 experts are right (410 queries, 11.9%), Avengers 24.6%, EmbedLLM 23.2%",
+   "Latency: Qwen3-Thinking vs GLM-4.6 similar cost and accuracy but 262.1s vs 32.4s"
+  ],
+  "limits": "Not all routers covered; excludes long-context, multimodal, vertical domains; latency approximate via OpenRouter throughput.",
+  "use_for_project": "row 12 (model routing): gate routing advice on measured Pareto gain, favour curated small pools, do not expect gains from better embeddings.",
+  "corrections": "Earlier record fine. Add that HybridLLM and FrugalGPT binary routers struggle to save cost, and the OpenRouter result; top routers are near-identical.",
+  "new_techniques": [
+   "Oracle/Best-Single/Random reference baselines",
+   "ParetoDist metric",
+   "pool curation jointly with routing",
+   "latency-aware tri-objective analysis"
+  ]
+ },
+ {
+  "id": "A:074",
+  "read": "Full text of A.txt (2967 lines) read: main text, appendices A.1-A.3 and B.1-B.17, all tables incl. Table 2, 4-22, and DP pseudocode. Skipped: reference list (lines ~800-1158, only the tail seen). Figures seen only as extracted text, not images.",
+  "algorithm": "kvtc: one-time per-model calibration computes a PCA basis (randomized SVD, 8 iterations) on 160K-200K tokens with RoPE removed and layers/heads concatenated. At runtime: project, drop low-variance components via dynamic-programming bit allocation (None/int2/int4/fp8, block sizes 1-1024), quantize, DEFLATE via nvCOMP. 4 sink tokens (FP8) and 128 recent tokens stay uncompressed.",
+  "methodology": "Models Llama 3.1 8B, Llama 3.3 70B, Mistral NeMo 12B, MN-Minitron, Qwen. Benchmarks GSM8K, MMLU, MATH-500, QASPER, Lost-in-the-Middle, RULER-VT. Baselines KIVI, GEAR, H2O, TOVA, xKV, Palu, and vLLM+LMCache for serving. Ablations on window size, calibration data, bit types and PCA vs alternatives.",
+  "key_numbers": "Llama 3.1 8B at kvtc 64x: GSM8K 57.2 vs 56.8 vanilla, MMLU 60.7 vs 60.5, LITM 90.2 vs 99.4, RULER-VT 95.9 vs 99.8, QASPER 37.8 vs 40.4. Llama 3.3 70B MATH-500: 75.6 vanilla, 73.2 at 8x, 74.4 at 10x, 72.6 at 20x. Latency at BS=8, 8K: compress 379 ms, decompress 267 ms; TTFT 380 ms vs 3098 ms recompute. vLLM+LMCache, 16 clients: TTFT 7.3 s vs 181.6 s.",
+  "limits": "Storage and transfer only: decoding attends over the decompressed cache, so no GPU memory saving during decode. Needs per-model calibration. Retrieval degrades at 64x (LITM 90.2 on Llama, 59.5 on MN-Minitron). Compress/decompress cost hundreds of ms per batch. Gains depend on long reusable prefixes.",
+  "use_for_project": "Counts as a prefix/KV-cache reuse technique: it lowers re-prefill cost and TTFT by storing or moving caches about 8-20x smaller with about 1 point quality loss on reasoning. At 64x, retrieval tasks lose quality. Do not credit it with decode-memory savings.",
+  "corrections": "Earlier record's 'text truncated, read ~40000 of 90.5k chars' is superseded: the full text was read except the references. Its 20x within about 1 point and 64x retrieval degradation claims are consistent with the paper. Unexplained oddity: Table 13 w=128 kvtc64x Llama row equals the vanilla row exactly; flagged, not asserted as error.",
+  "new_techniques": [
+   "RoPE removal before PCA so keys decorrelate across positions",
+   "Cross-layer and cross-head concatenation before PCA, motivated by Procrustes alignment",
+   "DP bit allocation over types [None,int2,int4,fp8] and block sizes [1,16,64,256,1024]",
+   "Calibration PCA basis reused across all compression ratios",
+   "Uncompressed 4 FP8 sink tokens plus 128-token recent window",
+   "Randomized SVD (Halko, 8 iterations) capped at 10K dims (8K for Qwen)",
+   "nvCOMP DEFLATE entropy coding of quantized PCA coefficients"
+  ]
+ },
+ {
+  "id": "A:047",
+  "read": "Full text of all 43 pages via pdftotext (3,591 lines), start to last line: all sections, tables, limitations, transfer conditions and appendices. Nothing skipped. Figures read only as extracted text.",
+  "algorithm": "Eight-step profiling method, Stage 1 built as testbed: sparse versioned model profile where missing never equals zero; comparability only for same attribute, context and dataset; evidence levels L0-L4; Pareto set with evidence counts; plan gate with SHA-256 plan hash and baseline arm; null-agent check; range noise rule with three-state verdict; fail-closed reporting. Constrained model-to-task-part selection (Eq. 11) is planned, not built.",
+  "methodology": "Four probes on one testbed: code migration (216 units), breadth conversion (1,448 fragments), automation (49 runs per arm, 4 frameworks, 6 models), intent and chatbot. Three-way cost separation (tested model, judge, agents). Unpaired Wilson and Fisher flagged descriptive. Monte Carlo (40,000 trials per cell) characterizes the noise rule; 10,000 property checks pass. 46 gated fix cycles ledgered.",
+  "key_numbers": "Migration fully-correct 98 to 108 of 216 (45.4 to 50.0%, Fisher p=0.39); accepted-but-wrong or unverifiable 9.7% to 21.9% (p=0.023); about 78% of ok verdicts proved nothing. Breadth: agent 91.9% vs cheap 90.5% (p=0.21); agent used 3.0% fewer tokens. Automation: model effect p=0.007, framework p=0.40; tokens 1,953-9,465; CrewAI about 4x. Judge churn 16.2% at T=0; full run $3-4.",
+  "limits": "Stage 1 only; model-vs-framework comparisons are non-causal separate sweeps. Migration inference unpaired, no multiplicity correction. Only P1 and chatbot integrated as probes; Grafana JSON never imported. Adapter-generation hook unevaluated. 15 automation samples unreadable. Caller key crosses a process boundary unprotected. Range rule loses power as repeats grow.",
+  "use_for_project": "Rows 12 and 50: judge spend exceeding conversion spend, plus accepted-but-wrong rates, quantify verification cost. Cite as descriptive, single-team evidence, not a causal effect size.",
+  "corrections": "Earlier record stopped at Section VI-C; now full. Frameworks are 4 and models 6. Earlier 'model effects 0.5-1.8 vs framework 0.4-0.7' is descriptive across separate sweeps (chi-square p=0.007 vs 0.40). Judge spend: 1,802 judge calls; eval with judge 14m38s vs about 7s without. Migration 115-120 estimate awaits next run.",
+  "new_techniques": [
+   "Monte Carlo characterization of the range noise rule: false positives 1.2% at r=3, below 0.01% at r>=5; power 4.65/5.78/7.17 sigma at r=3/5/10 versus Welch 3.51/2.09/1.32.",
+   "Three-state verdict (effect / suggestive via Welch / no result / unreplicated) added because the range rule loses power with more repeats.",
+   "Sign-instability table: two replications disagree in sign 33.7% at 0.5 sigma, 10.6% at 1 sigma, 0.16% at 2 sigma.",
+   "Property-based checks of lemmas (plan-hash permutation invariance, comparability equivalence, noise-rule symmetry) on 2,000 random instances each.",
+   "Generated sparse metamodel profile with an explicit not_measured list; Wilson intervals plus unpaired Fisher labelled descriptive.",
+   "Dashboard-per-probe generation with context, dataset and model template variables; two-objective Pareto on tokens and unbacked claims.",
+   "Transfer-conditions checklist (i)-(vi); a fixed global 2-sigma threshold gives 11.5% false positives on a 2-sigma axis, so thresholds must be per-axis."
+  ]
+ },
+ {
+  "id": "A:029",
+  "read": "full body",
+  "algorithm": "Two-tier cascade Mbase -> Mlarge -> human. Verification confidence from surrogate token probability YES/(YES+NO) (also self-verification, consistent self-verification, MC-dropout STP), calibrated by Bayesian logistic regression on 100 samples; posterior mean is confidence, posterior std is uncertainty. Defer if confidence <= phi_base; abstain if uncertainty > xi. Thresholds tuned online by Adam on a soft-masked system risk 1-E[Correct]+lc*E[Cost]+la*P(abstain).",
+  "methodology": "Qwen-2.5 1.5B->7B (also Llama pairs in appendix) on ARC-Easy, ARC-Challenge, MMLU, MedQA, MedMCQA; CoT; cost = size*(t_in + rho*t_out) with rho=5; online stream of 1,000 questions, lr 0.05, batch 10, lc=1e-5, la=0.1.",
+  "key_numbers": [
+   "Cascade has lower cumulative regret than either single model on 4 of 5 datasets; MedQA unclear",
+   "Verifying with the large model gives better delta-IBC; on ARC2-Easy delta-IBC up to 258.4 +-39.1 with large-model verification vs about -2 to -37 with base",
+   "Calibration set size 50-500 samples makes no significant difference",
+   "Label flipping in calibration raises regret"
+  ],
+  "limits": "Sensitive to cost and abstention weights (trivial solutions); initialisation affects convergence; needs human feedback; MedQA no gain; multiple-choice QA only.",
+  "use_for_project": "row 12 (model routing): confidence-gated escalation from cheap to strong model with calibrated verifier; shows a cheap verifier call by the larger model beats self-check. Needs ground-truth feedback loop.",
+  "corrections": "Earlier record fine. Add that gains are not uniform (medical sets weak), the cost model is parameter-size times tokens not dollars, and the 'human' tier is simulated by labels.",
+  "new_techniques": [
+   "surrogate token probability as confidence",
+   "Bayesian Platt calibration on 100 samples",
+   "gradient-based online threshold tuning via soft masks",
+   "verify a small model's answer with the large model"
+  ]
+ },
+ {
+  "id": "A:030",
+  "read": "full body except appendix",
+  "algorithm": "Dynamic value-thresholding: add abstention action with reward r_bot; abstain at any token position when estimated value V_t (probability the final answer is correct given the prefix) falls below r_bot. Value estimated by a two-layer MLP probe (~10^4 params) on last-layer hidden states, trained with binary cross-entropy over all non-terminal prefixes of completed traces. Threshold T_alpha is the alpha-quantile on held-out data.",
+  "methodology": "Qwen2.5-Math-7B-Instruct and Phi-3-mini on GSM8K and OlympiadBench, 5 seeds; baselines Constant Step Probe, self-assessment, LoRA abstention at t=0 and fixed k; also RealToxicityPrompts. Proofs of dominance over no-abstention, fixed-position abstention, and optimality.",
+  "key_numbers": [
+   "OlympiadBench Phi-3 at 90% abstention: 0.64 selective accuracy vs 0.34 best baseline (base 16%)",
+   "Qwen OlympiadBench at 90% abstention: 0.91 vs 0.75 best fixed-position baseline (base 43%)",
+   "Retains 63-86% of input-only token savings at 10% abstention, 92-95% at 90%",
+   "Threshold hits target abstention rate within 1.2 points MAE; zero-shot probe transfer works across datasets"
+  ],
+  "limits": "Needs hidden-state access and a trained probe per model; theory assumes oracle value; experiments on math and toxicity only; saves fewer tokens than input-only abstention at low rates.",
+  "use_for_project": "row 45 (no stop on failure): early termination of doomed reasoning. Needs open-weight hidden states; for API agents only the idea (stop and escalate on predicted failure) transfers.",
+  "corrections": "Earlier record fine. Add that token savings are a fraction of input-only savings, it needs a trained probe and hidden states, and results are on math reasoning not agents.",
+  "new_techniques": [
+   "mid-generation value probe on hidden states",
+   "quantile-threshold calibration for target abstention rate",
+   "state-dependent abstention reward (future work)"
+  ]
+ },
+ {
+  "id": "A:065",
+  "read": "full body",
+  "algorithm": "Cost per test = hourly GPU cost x wall time. Hourly cost = depreciation + power + maintenance (about $0.79/h per A800; cloud $2.82-5.64/h). Sweep serving concurrency to find the cheapest setting that still meets throughput (>20 tok/s) and TTFT (<1s) limits.",
+  "methodology": "WiNEval-3.0, 2,993 medical requests, nine models, 2xA800 80G, swept over concurrency; score vs cost per test set.",
+  "key_numbers": "WiNGPT-3.5 concurrency 8->48: total time 2034s->774s; 48 optimal. WiNGPT-3.5 76.2 at $0.34 vs Seed-OSS-36B 72.2 at $0.55. Thinking model WiNGPT-3.0 emits 3.44M output tokens vs about 0.35-1.4M for others.",
+  "limits": "No training cost or capex, hardware-stack dependent, proxy benchmark, no confidence intervals, weak link to API billing.",
+  "use_for_project": "Reasoning/output-token volume row (about row 45) and tokenizer inefficiency; supports cost = time x rate and an optimal-concurrency zone.",
+  "corrections": "Earlier record missed that reasoning models cost far more through output volume (4-8x tokens) and the tokenizer effect (Mistral-Small 2.11M input tokens vs about 1.35M, attributed to weaker Chinese tokenization). 48-concurrency figure correct.",
+  "new_techniques": [
+   "cost = wall time x amortised hourly GPU cost",
+   "concurrency sweep to throughput/TTFT-constrained optimum",
+   "tokenizer efficiency as input-token multiplier"
+  ]
+ },
+ {
+  "id": "A:023",
+  "read": "Full text of p.txt (2020 lines): intro, background, method, theory lemmas, experiments, all appendices. Bibliography skipped. Tables read from text; none garbled enough to need the PDF.",
+  "algorithm": "Speculative cascades. Drafter q proposes gamma tokens; verifier p scores them in parallel. A token-level deferral rule (Chow, Diff, OPT, or token-specific V1-V3) sets target (1-delta)q + delta*p. GenSpecSample (Algorithm 4) generalizes speculative sampling to that target. Lossy SD is a special case.",
+  "methodology": "T5 v1.1 small/base/large/XL on WMT EN-DE, XSum, CNN/DM; T in {0,0.1,0.5,1}, gamma in {3,5,7}. Gemma v2 2B drafter with 9B or 27B verifier, few-shot on 8 tasks, 1000 prompts each. Wall-clock latency on TPUv4, batch size 1, 500 examples, 3 trials.",
+  "key_numbers": "Table 2 (T=1, gamma=5, Small to Large) latency reduction at large-model quality, WMT/XSum/CNNDM: SpecDecode[Lossy] 1.61/1.10/1.57x; SpecCascade[OPT] 1.95/1.17/1.80x; Token 1.85/1.18/1.89x. Best quality at large-model latency, WMT BLEU: Lossy 17.26, OPT 18.33, Token 22.50.",
+  "limits": "Two-model setup only. Higher total compute than sequential cascades. Plug-in estimators need calibrated models. Objective is local per position. Batch size 1, TPU. Evaluation protocol differs from standard SD. No fairness analysis. Paper claims no new state of the art. OPT weaker on Gemma than T5.",
+  "use_for_project": "None for API users: needs token-level access to both models' logits inside the serving stack. Provider-side technique only; no billing lever.",
+  "corrections": "Earlier record said it matches cascade quality at reduced cost; replace with Table 2 numbers. The speedups are against the large model and baselines like Lossy SD, often modest (1.1-1.9x). Earlier black-box inapplicability note is now confirmed by the method.",
+  "new_techniques": [
+   "Diff deferral: defer when max q < max p - alpha, exactly computable because p is scored on every prefix",
+   "OPT deferral: threshold max p - alpha*TV(p,q), a plug-in estimate of the optimal rule",
+   "Token-specific multiplicative rule V3: p(v) < max p * (1-alpha)",
+   "GenSpecSample: speculative sampling for an arbitrary target distribution"
+  ]
+ },
+ {
+  "id": "A:061",
+  "read": "full body",
+  "algorithm": "Fit exponential price-decay half-lives per price tier, test structural break (Chow), compute Malmquist productivity and DEA efficiency, and regress inference price on training cost.",
+  "methodology": "OpenRouter prices for 318 models (2026-03-28 snapshot), Epoch AI for 3,237 models, 62 cross-validated milestone prices. Tiers: flagship >$5/M, mid $0.5-5, economy <$0.5.",
+  "key_numbers": "Half-lives: economy 1.10y (R2 0.192), mid 1.55y (R2 0.307), flagship 3.59y but R2 0.031 so not exponential. Reasoning premium averages 31.5x, range 0.51x to 83.3x. GPT-3 $60/M (2020) to Gemini 2.0 Flash $0.10/M (2025-02) is 600x.",
+  "limits": "Only 62 milestone observations, no transaction volume, fast-moving market, low R2 in each tier.",
+  "use_for_project": "Price-tier and routing rows; reasoning-token premium row; justifies tier-aware model choice and that hidden reasoning tokens distort $/M comparisons.",
+  "corrections": "600x window is 2020 to Feb 2025, not 2020-2026. 31.5x average masks 0.51-83x range (market-power effect). Flagship tier is not exponential. Chow break 2024-05-01 (F=5.74, p=0.005). Elasticity 0.432 has p=0.050 (HC3 0.071), n=18.",
+  "new_techniques": [
+   "tiered half-life price decay",
+   "Chow structural-break test on price series",
+   "Malmquist/DEA efficiency across models"
+  ]
+ },
+ {
+  "id": "A:096",
+  "read": "full body",
+  "algorithm": "Adaptive Length Penalty RL. Reward = 1[correct] - beta*N*max(p_solved,1/K), p_solved estimated online from K=16 rollouts per prompt. Easy prompts (high p_solved) get strong length penalty, hard prompts weak. Works with GRPO, RLOO, Reinforce++.",
+  "methodology": "DeepScaleR-1.5B, 100 steps, batch 512, beta=1e-7. Evaluated on AIME 24+25, MATH-500, OlympiadBench vs L1-Exact, L1-Max, ThinkPrune, R1-Alpha and public checkpoints (not matched training).",
+  "key_numbers": "About 50% fewer tokens; MATH-500 Pass@1 0.81->0.80 with tokens 2326->646. 40% higher Pass@1 at 1024 budget on easy math. Adaptation ratio 5.35x vs 2.41x base. R1 and QwQ-32B use >10,000 tokens on '2+3'.",
+  "limits": "Math only; compared against public checkpoints; mixed-difficulty stress test accuracy fell 0.89->0.52.",
+  "use_for_project": "Reasoning-overuse row 45. Token Economics cannot train but can mimic: lower effort or budget on easy tasks, higher on hard.",
+  "corrections": "Earlier record missed the adaptation-ratio analysis, behaviour analysis (repetition 269->126, backtracking 34.9->13.3) and L1-Max's inverted-U.",
+  "new_techniques": [
+   "per-prompt difficulty-scaled length penalty",
+   "online p_solved from K rollouts",
+   "adaptation ratio metric"
+  ]
+ },
+ {
+  "id": "A:108",
+  "read": "full body except appendix",
+  "algorithm": "Layer-wise post-training quantisation minimising ||WX - W^X||^2 using inverse-Hessian updates. All rows quantised in the same column order, lazy batch updates in blocks of 128, Cholesky reformulation with 1% dampening.",
+  "methodology": "Calibration on 128 C4 segments of 2048 tokens; OPT and BLOOM families; perplexity and per-token latency on A100 and A6000.",
+  "key_numbers": "OPT-175B quantised in about 4.2 GPU-hours on one A100. 4-bit perplexity 8.34->8.37 vs RTN 10.54. Per-token latency A100 230->71ms (5 GPUs to 1); A6000 589->130ms (8 GPUs to 2).",
+  "limits": "Speedup is memory-movement driven, weights only (no activation quantisation), kernels target batch size 1.",
+  "use_for_project": "none (server-side weight compression, not controllable by an API/CLI user).",
+  "corrections": "The 4.5x A6000 figure compares 2 GPUs with 8, not like-for-like; gains apply to low-batch memory-bound decoding.",
+  "new_techniques": [
+   "second-order one-shot weight quantisation",
+   "lazy block updates and Cholesky inverse"
+  ]
+ },
+ {
+  "id": "A:027",
+  "read": "full body",
+  "algorithm": "Test-Time Speculation: online distillation of the draft model during decoding, one gradient step per round on L = KL(p||q) + lambda*KL(q_t||q); update can run every S rounds on a separate CUDA stream. S=5 is the throughput sweet spot; K>1 steps overfit.",
+  "methodology": "Eight benchmarks; Qwen3-4B/8B/32B, Qwen3.5-122B, Llama3.1-8B; built on DFlash and EAGLE-3.",
+  "key_numbers": "Acceptance length up to +72% (+41% avg) vs DFlash; +67% (+34% avg) vs EAGLE-3. Throughput up to 1.71x. Baseline acceptance collapses to about 1.1 beyond roughly 20K tokens; AIME24 gain +15% in first 10K vs +183% at 20-30K tokens.",
+  "limits": "Needs a backward pass, server-side only, stride trade-off.",
+  "use_for_project": "none (server-side). Only supports the point that long outputs erode speculative-decoding gains.",
+  "corrections": "Earlier record conflated baselines: 72%/41% is vs DFlash only. PARD is only a diagnosed baseline, not a target. Missed throughput numbers.",
+  "new_techniques": [
+   "online draft-model distillation during decoding",
+   "asynchronous draft update on separate stream"
+  ]
+ },
+ {
+  "id": "A:009",
+  "read": "full body",
+  "algorithm": "FLARE length-aware router. Two XGBoost predictors give accuracy p^ and output length L^ from MiniLM-384 query embeddings plus model features. Latency = k_m*L^ + b_m, cost = pi_in*l_in + pi_out*L^. Filter models with p^ >= tau, then pick argmin alpha*T^ + beta*C^.",
+  "methodology": "Three modes (Acc, Efficient, Balance); KNN retrieval for unseen datasets; new model cold-starts from about 200 requests.",
+  "key_numbers": "Up to 68% lower latency and 75% lower cost (Efficient mode, 5-20% accuracy sacrifice). FLARE-Acc keeps accuracy with up to 59% latency and 69% cost cut. Latency vs output length Pearson r=0.96. Routing overhead 18.12ms.",
+  "limits": "Short benchmarks, open models only, three preset modes.",
+  "use_for_project": "Model-routing row 12: cost is predictable from predicted output length; route to the cheapest model passing an accuracy gate.",
+  "corrections": "68%/75% headline is the Efficient mode with accuracy loss. Earlier record missed cold-start method, XGBoost predictors and the length ablation (model-mean length is worse than per-query).",
+  "new_techniques": [
+   "per-query output-length prediction for cost/latency",
+   "accuracy-gated argmin routing",
+   "200-request cold start for new models"
+  ]
+ },
+ {
+  "id": "A:100",
+  "read": "full body",
+  "algorithm": "Measure tokenisation disparity: tokenise FLORES-200 with the gpt-3.5-turbo tokenizer, average tokens per sentence per language; run tasks to measure prompt+generation cost; correlate cost and utility with Human Development Index.",
+  "methodology": "XNLI, XFACT, XQUAD, CrossSum, XLSum, at most 500 test examples each, English instructions, ChatGPT and BLOOMZ; BBPE tokenizers trained with 5k-50k vocabularies.",
+  "key_numbers": "Telugu and Georgian up to 5x tokens of English; most mid-resourced Indic languages near 5x. XLSum prompt+generation up to 4x English for Telugu and Amharic. Cost vs HDI Spearman about -0.41 to -0.42.",
+  "limits": "2023 gpt-3.5-turbo tokenizer, only 2 models, FLORES translationese, zero-shot costs only.",
+  "use_for_project": "Tokenizer/language token-multiplier leak rows: non-English prompts silently cost several times more and may not fit few-shot context.",
+  "corrections": "none known. Note data is from the 2023 tokenizer; newer tokenizers may differ.",
+  "new_techniques": [
+   "tokens-per-sentence disparity metric",
+   "character-based or per-language pricing proposal"
+  ]
+ },
+ {
+  "id": "A:116",
+  "read": "full body",
+  "algorithm": "Compare long-context (LC) vs RAG with the same LLM (GPT-4o). Filter questions answerable without context; compare 5 retrievers (BM25, Contriever, text-embedding-3-small, Llama-Index Tree/Window, RAPTOR); pick the best; analyse by source and question type.",
+  "methodology": "12 QA datasets expanded to 19,188 questions, 13,628 kept after filtering. Exact match plus F1-based loose win/lose rate.",
+  "key_numbers": "LC 56.3% correct vs RAG (RAPTOR) 49.0%. LC-only correct 2,287 vs RAG-only 1,294 (about 10% only RAG). RAPTOR best retriever at 38.5% on the retriever-comparison sample.",
+  "limits": "Text only; Wikipedia long contexts are synthetic noise-padded (biases against RAG); no cost or token measurements.",
+  "use_for_project": "Row 37 (long-context vs retrieval): choose by source structure; LC wins on Wikipedia/stories, RAG on dialogue and yes/no.",
+  "corrections": "Paper contains no token or cost numbers; remove any cost claim attributed to it.",
+  "new_techniques": [
+   "route between LC and RAG by source/question type",
+   "filter questions answerable without context"
+  ]
+ },
+ {
+  "id": "A:102",
+  "read": "full body",
+  "algorithm": "CALM per-token early exit. At layer i exit if confidence >= threshold lambda_i (softmax top-2 gap, hidden-state saturation, or trained linear classifier); skipped layers copy state from exit layer; threshold decays with position. Calibrated by Learn-then-Test with Hoeffding-Bentkus p-values to bound textual or risk consistency.",
+  "methodology": "8-layer T5 1.1 on CNN/DM, WMT15 EN-FR, open-book SQuAD; 50 trials, 80/20 split; speed on TPUv3.",
+  "key_numbers": "Oracle exit uses 1.53 layers per token on CNN/DM (potential 5.2x). Calibrated speedup up to about 3x (3.15x on SQuAD at delta=0.1). Copying K/V instead of hidden state drops ROUGE-L to 23.02.",
+  "limits": "Requires model modification and training, small T5, short outputs gain less, softmax exit can increase FLOPs.",
+  "use_for_project": "none (server-side architecture). Calibrated risk-bound idea could inform gating a cheaper model.",
+  "corrections": "none known",
+  "new_techniques": [
+   "calibrated early exit with Learn-then-Test guarantee",
+   "position-decaying exit threshold"
+  ]
+ },
+ {
+  "id": "A:045",
+  "read": "full body except appendix and references",
+  "algorithm": "RouterEval: router as m-way classifier over an input embedding predicting a one-hot or multi-hot best-LLM vector. Splits 8:1:1; easy m in {3,5}, hard m in {10,100,1000}.",
+  "methodology": "Over 200M performance records, 8,500+ LLMs, 12 evaluations. Baselines oracle, ro(0.5), LinearR, MLPR, C-RoBERTa, MLC, PRknn, random; metrics VR, VB, entropy Ep.",
+  "key_numbers": "A router with p>=0.5 of matching the oracle improves quickly with candidates; about 3-10 candidates most cost-effective, can approach GPT-4 reference with weak models. Existing routers have VR<=1 and VB<=1. Some routers have Ep 0.00-0.03 (collapse to one model).",
+  "limits": "Accuracy only; cost objective deferred; most records not open source; data volume too small for a strong router.",
+  "use_for_project": "Model-routing row 12: supports 3-10 candidates but warns routers often collapse to the best single model; no cost modelled.",
+  "corrections": "Earlier record basically right; add the no-cost caveat, classification-bias collapse, and 3-10 candidate sweet spot.",
+  "new_techniques": [
+   "router entropy as collapse diagnostic",
+   "oracle-probability ro(p) simulation"
+  ]
+ },
+ {
+  "id": "A:094",
+  "read": "full body",
+  "algorithm": "Compute-optimal test-time scaling: estimate prompt difficulty (base pass@1 from 2048 samples, 5 quantile bins, or predicted via verifier scores); per bin and budget choose the best strategy on a validation fold. Strategies: PRM-guided search (best-of-N, beam, lookahead) and sequential revisions mixed with parallel sampling.",
+  "methodology": "PaLM 2-S* (Codey) on MATH, 12k train / 500 test; PRM trained with Monte Carlo rollouts; two-fold cross-validation.",
+  "key_numbers": "Up to 4x less test-time compute than best-of-N (16 vs 64 generations search; 64 vs 256 revisions). Beam search better at low budget and hard questions, best-of-N on easy and high budget. About 38% of correct answers flipped to wrong by naive revision. vs about 14x larger model: test-time compute wins on easy/medium or low inference load only.",
+  "limits": "Math only, one model family, needs fine-tuned revision and verifier models, difficulty-estimation cost excluded.",
+  "use_for_project": "Reasoning effort/overuse row 45: allocate effort or sample count by task difficulty; Token Economics can set effort tiers but not train.",
+  "corrections": "Earlier record omitted that difficulty-estimation cost is excluded from the 4x figure, that fine-tuned models are required, and that gains vanish on the hardest questions and under high inference load.",
+  "new_techniques": [
+   "difficulty-binned strategy selection",
+   "sequential vs parallel ratio by difficulty",
+   "verifier-predicted difficulty"
+  ]
+ },
+ {
+  "id": "A:048",
+  "read": "full body",
+  "algorithm": "ATLAS benchmark. 3+5 taxonomy (foundational: retrieval, aggregation, reasoning; application: QA, ICL, code, memory, holistic). Length-aware trapezoidal AUC per dimension; ATLAScore is the harmonic mean of three category aggregates; delta-method confidence intervals.",
+  "methodology": "Nine components, 6,438 instances, 8K-1M geometric length grid, 26 models.",
+  "key_numbers": "Gemini-3.1-Pro-Preview leads at 128K; Claude-Opus-4.6 leads at 1M (ATLAScore 70.55). 20 of 26 models change rank between 128K and 1M. Mean relative decay 24.3%; Opus-4.6 loses 8.5%, GLM-4.7 non-reasoning 60.5%. GPT-5.2 retrieval 88.21->47.31 at 1M.",
+  "limits": "English only, holistic at original lengths, model-generated AMemBench transcripts, no summarisation, contamination risk.",
+  "use_for_project": "Row 6 (long-context handling): nominal window is not usable capacity; decay is capability-specific. No cost data, so qualitative support for context caps and retrieval choice.",
+  "corrections": "Earlier record correct that it is methodology without cost effect; add the 128K vs 1M ranking reshuffle and capability-specific decay as load-bearing findings.",
+  "new_techniques": [
+   "length-aware trapezoidal AUC",
+   "harmonic-mean aggregate score",
+   "rank-shift analysis across context scopes"
+  ]
+ },
+ {
+  "id": "A:134",
+  "read": "full body except appendix (proofs skipped; Sections 1-7 read)",
+  "algorithm": "Mechanism-design model. Homogeneous gain g(x,z)=Psi(x)Phi(z) collapses buyer type to scalar aggregate type, giving one-dimensional Mussa-Rosen screening. Optimal menu: low types excluded, downward distortion, quantity discounts, implemented as max-spend, min-spend or two-part tariff. Efficient capacity-constrained allocation uses linear prices at shadow-cost-inflated marginal cost.",
+  "methodology": "Pure theory with propositions and a uniform-example figure; Section 6 maps real plans to the theory descriptively.",
+  "key_numbers": "Poe: GPT-4o-mini 9 points vs Claude Opus 4 4,105 points per message (about 450x); $20 per million points above Basic. Copilot overage $0.04 per premium request; multipliers 0 to 50. API output priced 3-5x input; batch about 50% off, caching up to 90% off. GPT-4-class price $30/$60 to $2.50/$10 in 16 months.",
+  "limits": "Homogeneity and constant marginal cost assumptions; stylised buyer; no empirical savings; results need regularity conditions.",
+  "use_for_project": "Pricing-structure and token-class rows (input vs output pricing, tier/committed-spend plans, model multipliers). Per-token price tracks class cost; plan model-access and usage are bundled. No empirical savings number.",
+  "corrections": "Earlier record correct that it is theory with no empirical savings. Add: efficient implementation is linear per-token pricing; each buyer type uses a single model; 'no volume discounts' is a claim about API pricing; plan and price data is dated (Jan 2025 API, Jan 2026 plans).",
+  "new_techniques": [
+   "committed-spend plans with per-model depletion multipliers",
+   "batch and prompt-cache discounts as price discrimination",
+   "leader-vs-open-source-fringe regions"
+  ]
+ },
+ {
+  "id": "A:025",
+  "read": "Full main text and Appendices A, B, C (Table C.1 and all figure captions). Bibliography skipped. Dense appendix figures read by caption only, not by plotted values.",
+  "algorithm": "DistillSpec: white-box knowledge distillation of the draft model toward the target before speculative decoding. Draft-generated (on-policy) data is recommended. Divergence (FKL, RKL, JSD, TVD) is a tuned hyperparameter. Acceptance rate is 1 - TV. Optional lossy SD lenience via epsilon.",
+  "methodology": "GPT-like 234M target and 33M draft on LM1B; T5 v1.1 small to XXL on XSum, CNNDM, WMT, GSM8K; BBH for transfer. 300k steps, batch 32, LR 3e-4, Adafactor. TPUv4, batch 1, 500 examples, 3 runs. Compares SupervisedKD, SeqKD, ImitKD, f-Distill, GKD.",
+  "key_numbers": "10-45% speedup over standard SD; 26% average on transfer. Table C.1 examples: XSum T=0 gamma=5 1.43x to 1.62x; CNNDM gamma=7 2.07x to 2.53x; LM1B gamma=3 3.66x to 3.97x. Distilling the target first cuts latency 6.4x on XSum (17.3 to 2.7) and 10.7x on GSM8K (15.0 to 1.4).",
+  "limits": "Needs target logits and training compute. Task-quality gains and SD-compatibility gains are only weakly correlated. SupervisedKD on fixed data is worst; SeqKD ignores logits. Direct TVD minimisation is not consistently best. Transfer shown only on T5 and BBH. Batch size 1.",
+  "use_for_project": "None for API users: requires white-box access to the target model. Relevant only to a provider or self-hosted team distilling its own draft.",
+  "corrections": "Earlier record said 20% speedup and 8x latency. Full text: 10-45% over standard SD (about 20% average on four tasks) and 6.4x on XSum, 10.7x on GSM8K. Earlier record said five tasks; it is LM1B plus four T5 tasks, plus BBH for transfer.",
+  "new_techniques": [
+   "On-policy data: sample training sequences from the draft itself, cheaper and as good as target data",
+   "Distill the target first, then DistillSpec the draft (model garden)",
+   "Lenience functions f_lin, f_sq, f_exp for lossy SD quality-latency control",
+   "Draft distilled on one task transfers to BBH tasks and a larger target"
+  ]
+ },
+ {
+  "id": "A:086",
+  "read": "full body",
+  "algorithm": "Add learned gist tokens (Ng in {1,2,4,8}) after every sentence-ending punctuation mark. Gist tokens see their own sentence plus earlier gist tokens; regular tokens see their sentence plus gist tokens. Standard LM loss. Three stages: gist embeddings only, full fine-tune, large-batch cooldown. About 4B FineWeb-Edu tokens.",
+  "methodology": "Llama-3.2-3B. Short context via lighteval; long context via HELMET-Tiny (4K-8K tokens). Baselines SepCache and Activation Beacon.",
+  "key_numbers": [
+   "Ng=4: about 6x average long-context compression vs about 2x for Activation Beacon",
+   "Ng=4 HELMET recall 96 vs base 100; icl 63.2 vs 68.2",
+   "Ng=1: recall drops to 1.0, ARC 49.77 vs 59.21"
+  ],
+  "limits": "Rule-based placement, fixed budget per segment, punctuation sensitivity, does not fully recover base, full mask memory-heavy at 128K, only 3B tested.",
+  "use_for_project": "Row [17] context compression, but needs fine-tuning and model access; not usable on hosted APIs.",
+  "corrections": "'No significant degradation' overstated: Ng=1 collapses recall and ARC; Ng=4 loses 4 to 5 points on recall and icl. 2x-8x is a KV-cache figure depending on Ng.",
+  "new_techniques": [
+   "sentence-anchored gist placement",
+   "mean-resize gist init",
+   "three-stage curriculum",
+   "HELMET-Tiny"
+  ]
+ },
+ {
+  "id": "A:135",
+  "read": "full body",
+  "algorithm": "CoThink: an instruct model (Qwen2.5-32B-Instruct) writes a 2-4 step outline with no numbers; the thinking model then expands it using only those steps. Defines token efficiency tau=Q/C and relative reasoning efficiency eta=(CR/CI)^beta, beta 0.3-0.5.",
+  "methodology": "Four thinking models (DAPO, DeepSeek-R1-Distill, QwQ, Qwen3) on GSM8K, MATH500, AIME24. Baselines Solo-Think, No-Think, Best-of-N (N=5, shortest).",
+  "key_numbers": [
+   "Tokens cut 21.1% on average vs Solo-Thinking, up to 41.8%",
+   "Accuracy +1.66% on average",
+   "Win rate 37/60 (61.7%): GSM8K 37.5%, MATH500 87.5%, AIME24 60%"
+  ],
+  "limits": "Weak on GSM8K (DAPO +6.3% tokens, Qwen3 no-think +25.7%); math only; DAPO follows outline inconsistently; scaling law speculative; needs two models.",
+  "use_for_project": "Row [45] overthinking / reasoning-token waste; a cheap-model outline prefix to bound thinking tokens.",
+  "corrections": "21.1% is an average, not uniform; some cells raise tokens or drop accuracy (Qwen3 think AIME24 -8.4%, R1-Distill AIME -19.0%). Win rate only 61.7%.",
+  "new_techniques": [
+   "relative reasoning efficiency eta",
+   "outline-as-prefix reverse design",
+   "regex episode segmentation"
+  ]
+ },
+ {
+  "id": "A:088",
+  "read": "full body",
+  "algorithm": "GPT-4o-mini builds an answer-hint prefix in next-token form. Context split into m-token chunks; per chunk one focal token is generated ('none' drops the chunk). Attention to the focal token is summed over layers; top-k tokens select the sentences kept. Training-free, batched.",
+  "methodology": "LongBench (2WikiMQA, HotpotQA, TriviaQA, GovReport) and BABILong. Llama-3.1-8B and Qwen2.5-7B readers; 8B/70B compressors. Baselines LLMLingua2, LongLLMLingua, BGE-M3 RAG.",
+  "key_numbers": [
+   "Llama 2WikiMQA: 6.3x (small) and 15x (large) compression, EM 0.42 vs 0.49 original",
+   "HotpotQA latency 3.99s + 4.94s vs 19.36s original",
+   "Compression only 1.7x-2.0x on TriviaQA"
+  ],
+  "limits": "Needs attention access; attention aggregated over all layers; no explicit compression-ratio control; low ratio on TriviaQA.",
+  "use_for_project": "Row [37] retrieved-context pruning; only with open-weight reader or local compressor, not hosted-model attention.",
+  "corrections": "'Up to 6.3x' understates the large setting (15x) and overstates typical (1.7x-4x). '~10% better than LLMLingua' is approximate. EM still below original.",
+  "new_techniques": [
+   "focal-token hint prefix",
+   "'none' chunk skipping",
+   "RAG+AttentionRAG pipeline"
+  ]
+ },
+ {
+  "id": "A:032",
+  "read": "full body",
+  "algorithm": "Self-MoA samples N outputs from the single best model (temperature 0.7); one aggregator synthesises them. Self-MoA-Seq aggregates with a sliding window of 6 responses. Regression of mixture performance on quality and Vendi-score diversity.",
+  "methodology": "AlpacaEval 2.0 (six models), MMLU-redux, CRUX, MATH; over 200 experiments, over 70 mixtures for regression.",
+  "key_numbers": [
+   "AlpacaEval LC: Self-MoA 65.7 vs Mixed-MoA 59.1 (+6.6)",
+   "Quality coefficient exceeds diversity coefficient (MMLU 2.558 vs 1.841)",
+   "Self-MoA with TaskBest averages +3.8%"
+  ],
+  "limits": "Mixed-MoA wins when models are similar in quality and complementary; gains not monotonic in samples; aggregator context limit.",
+  "use_for_project": "Row [12] model mixing: a quality technique that multiplies calls (6 samples plus 1 aggregator); not a cost saver.",
+  "corrections": "3.8% is the TaskBest average. Cost rises per query; the earlier record is correct.",
+  "new_techniques": [
+   "Self-MoA-Seq",
+   "Vendi Score diversity",
+   "quality-diversity regression"
+  ]
+ },
+ {
+  "id": "A:060",
+  "read": "full body",
+  "algorithm": "Adapter protocol (create_agent, send_task, backup_session, delete_agent, get_docker_args); patch exported from git diff; history after base_commit removed to stop leakage. Lite-80 subset picked by quartile-quota local search with ranking hinge and cost-parity filter.",
+  "methodology": "350 instances, 43 repos, 8 languages; 7 harnesses x 3 models, 3 runs each (22,050 executions); max_turns 300, 3,600s timeout.",
+  "key_numbers": [
+   "Bare adapter 19.3% vs full adapter 71.2% resolved; largest harness gap at fixed model 24.3 pp",
+   "Best Pass@1 Hermes Agent 81.7% at $36",
+   "Lite-80 vs full: MAE 0.81 pp at 25.3% of cost"
+  ],
+  "limits": "Meta-Harness evolved and evaluated on same instances; Lite is a proxy; appendix F is single-run.",
+  "use_for_project": "Rows [5],[12]: harness choice moves outcome and cost at a fixed model; cache hit rates about 65%-97%.",
+  "corrections": "Opus 4.7 vs DeepSeek-V4 Pro figures ($1,082.0 vs $81.3, 0.9 pp apart; about 13x) come from the one-run OpenClaw appendix, not the 3-run main table.",
+  "new_techniques": [
+   "patch-from-git contract",
+   "future-commit cleanup",
+   "quartile-quota subset selection",
+   "cost-parity filter"
+  ]
+ },
+ {
+  "id": "C:046",
+  "read": "full body",
+  "algorithm": "Place the corpus as a directory of txt files (one JSONL for NQ) and give an off-the-shelf coding agent (Codex GPT-5; Claude Code Sonnet 4.5) only the path and query. It uses grep/rg, sed, nl and Python scripts iteratively. Configs: no retriever, BM25, Gemini embeddings.",
+  "methodology": "BrowseComp-Plus, Oolong-Synthetic, Oolong-Real, LongBench-v2, NQ; 200-example samples; GPT-5 judge. Baselines full context, RAG, ReAct, RLM.",
+  "key_numbers": [
+   "Beats published SOTA by 17.3% on average; SOTA on 4 of 5 benchmarks",
+   "Native search commands per trajectory 14.92 (no retriever) vs 8.33 (Gemini retriever)",
+   "GPT-5 full-context cost $1.421 per query on Oolong-Syn vs $0.275 on BrowseComp-Plus"
+  ],
+  "limits": "Retrievers did not consistently help; optimised for coding not long context; costlier than RAG; 200-sample evals; about equal to full context on LongBench.",
+  "use_for_project": "Rows on context bloat and retrieval [30],[34]: filesystem plus grep slicing instead of stuffing context; cost vs quality trade-off.",
+  "corrections": "Earlier record says cost not evaluated; the paper does report cost per query. 17.3% is an abstract-level average.",
+  "new_techniques": [
+   "corpus-as-filesystem",
+   "coordinate reading with nl+sed",
+   "retrievers displace native exploration finding"
+  ]
+ },
+ {
+  "id": "A:013",
+  "read": "full body",
+  "algorithm": "Pairwise router (premium vs cheap). Bias between preference-based (PB) and gold-standard (GS) labels is a CATE, estimated with R- or DR-learners; pseudo-GS labels y+bias train a regressor on GS plus corrected PB. Route to premium if predicted gain exceeds cost factor w. GS scale normalised to PB scale.",
+  "methodology": "HealthBench (5,000 dialogues), Gemini 2.5 Pro vs Gemma 3 12B, GPT-5-mini judge; n in {100,500,1000}; 200 Monte Carlo rounds. PRBench (676 questions).",
+  "key_numbers": [
+   "PB-GS difference mean significantly below 0 (p<2.2e-16)",
+   "Meta-routers gain most when GS data is scarce",
+   "PRBench: DR-learner best at small n"
+  ],
+  "limits": "GS labels from an LLM judge not experts; pairwise only; needs overlapping query support; no headline cost number in text.",
+  "use_for_project": "Row [12] routing: train a router from few verified labels plus many LLM-judge labels.",
+  "corrections": "none (earlier record correctly notes no headline number)",
+  "new_techniques": [
+   "CATE debiasing of judge labels",
+   "DR/R-learner meta-router",
+   "GS-to-PB scale normalisation"
+  ]
+ },
+ {
+  "id": "A:062",
+  "read": "full body",
+  "algorithm": "Roofline-style token latency: network/kernel time plus max(bytes, FLOP) terms; optimal batch b*=p*C/(B*2FLOP); NCCL all-reduce latency; MoE, KV and MLA reads; maximise (tokens/s)^alpha per price; speculative decoding expected tokens (1-a^g)/(1-a).",
+  "methodology": "Pareto frontiers on H100 at $2/hr, checked against Artificial Analysis and PaLM data.",
+  "key_numbers": [
+   "Latency scales with sqrt(params); each halving of weight precision cuts latency about 20%",
+   "Llama 3 70B at 4/8/16-bit: $0.23/$0.37/$0.70 per M tokens",
+   "Input tokens about 3x cheaper than output; Mistral Large 2 at 100K context about $6.06/M output (lower bound)"
+  ],
+  "limits": "Theoretical, H100-focused, assumed fixed context and independent expert routing.",
+  "use_for_project": "Provider cost structure: why output and long-context tokens cost more; informs pricing model, not a client technique.",
+  "corrections": "none; note text says alpha about 3 while Table 3 caption says 4.",
+  "new_techniques": [
+   "roofline serving model",
+   "sqrt(N) latency law",
+   "speed-value utility alpha"
+  ]
+ },
+ {
+  "id": "A:028",
+  "read": "full body",
+  "algorithm": "Per tier sample N=16 at T=0.7; nonconformity s=1-freq(a); split-conformal threshold from calibration; accept if prediction set size is between 1 and kappa, else defer to next tier. Cost c1+c2*Pr[|C1|!=1]; beats always-strong if Pr[|C1|=1]>c1/c2.",
+  "methodology": "18 multiple-choice benchmarks, four open families, 72 pairs, K=2, c1=1, c2=2.7, 30/70 calibration/test split.",
+  "key_numbers": [
+   "Wins 49 of 72 pairs, ties 6, loses 17 vs oracle-tuned best heuristic",
+   "Llama/MMLU kappa 1 to 3 at alpha 0.10: cost 2.86 to 1.34 (-53%) at 5.3 pp accuracy cost",
+   "Tier-1 acceptance 0% (MMLU-Pro, GPQA) to 95.6% (Belebele-Eng)"
+  ],
+  "limits": "Finite answer sets only; marginal guarantee; K=2 only; needs 16 samples per tier and at least 200 labelled calibration examples.",
+  "use_for_project": "Row [12] cheap-first cascade and escalation rule; sampling overhead is a cost caveat.",
+  "corrections": "Guarantee is 1-K*alpha worst case (1-alpha only under selection preservation). Sampling cost is not free. 'Beats heuristics' holds on 49 of 72 pairs at oracle-tuned points.",
+  "new_techniques": [
+   "set-size deferral",
+   "frequency-based black-box nonconformity",
+   "break-even acceptance rate c1/c2"
+  ]
+ },
+ {
+  "id": "A:075",
+  "read": "full body (experiments read; appendix tables skipped)",
+  "algorithm": "Train linear predictors guessing each layer's keys from the previous layer's keys, and values from previous-layer values plus current keys; quantize only the residual (Quanto or HIGGS backbone). Calibrate layer by layer on reconstructed inputs; keep first 4 tokens and a 128-token recent buffer in 16-bit.",
+  "methodology": "Calibration on 256 RedPajama sequences of 8192 tokens; WikiText-2 perplexity and LongBench (14 tasks); Llama 3.x and Qwen 2.5 3B-72B. Baselines KIVI, KVQuant, KVSharer, HIGGS.",
+  "key_numbers": [
+   "Near-lossless at 2-2.5 bits per value (under 1% relative error on Llama 3.2)",
+   "Calibration 4 hours on one GPU, at most 16GB VRAM, for Llama-3.1-70B",
+   "Predictor compute at least 500x below base model per token (70B/72B)"
+  ],
+  "limits": "Needs cache access and kernel support; unoptimized PyTorch about 3% slower than plain HIGGS; per-model calibration; 2-bit baselines degrade sharply.",
+  "use_for_project": "none: provider or self-host KV memory technique; at most a long-context cost note.",
+  "corrections": "none",
+  "new_techniques": [
+   "inter-layer K/V linear predictors with residual quantization",
+   "sequential calibration on reconstructed inputs",
+   "compatible with H2O pruning"
+  ]
+ },
+ {
+  "id": "C:053",
+  "read": "full body",
+  "algorithm": "Longitudinal case study: Langfuse and vLLM telemetry plus Git mining. Fix Commit Ratio via regex over commit messages; difficulty-stratified Mantel-Haenszel odds ratio; TCO = M x (compute + ops + T_iter x wage); hybrid-routing offline counterfactual replay by difficulty tier.",
+  "methodology": "Single developer, two 28-day periods: Claude Code with Opus 4.7/4.8 vs Opencode with GLM-5.1/5.2 NVFP4 on a shared Blackwell tray.",
+  "key_numbers": [
+   "99.3% cache hit cut API cost 88.6% to $0.57/M tokens vs $2.83/M shared on-prem",
+   "FCR 74.9% vs 45.9%; Mantel-Haenszel OR 3.61",
+   "Shared on-prem saves 40.1% true TCO; dedicated costs 43.8% more; High-to-Claude hybrid saves 26.3%"
+  ],
+  "limits": "One developer, non-randomized, tasks differ between periods; keyword-classified fixes; Period A fix count inflated by CI work; replay assumes tier exchangeability.",
+  "use_for_project": "Rows [12],[2],[21],[50]: cache hit economics, cloud vs local TCO, hybrid routing frontier. Cached API can beat local per token.",
+  "corrections": "none (earlier record accurate); add: no routing policy that sends any tier local matches pure-API defect rate.",
+  "new_techniques": [
+   "difficulty-stratified defect OR",
+   "TCO with repair-labor term",
+   "offline counterfactual routing replay"
+  ]
+ },
+ {
+  "id": "A:034",
+  "read": "full body",
+  "algorithm": "DeepSeekMoE: split each expert into m smaller ones and activate mK (fine-grained), plus Ks always-on shared experts; expert-level and device-level balance losses.",
+  "methodology": "Validation at 2B on 100B tokens vs Hash Layer, Switch, GShard; 16B trained on 2T tokens vs DeepSeek 7B and LLaMA2 7B; SFT chat model; 145B preliminary.",
+  "key_numbers": [
+   "DeepSeekMoE 16B matches LLaMA2 7B with 39.6% of computation",
+   "2B model matches GShard 2.9B (1.5x expert parameters and compute)",
+   "145B comparable to DeepSeek 67B with 28.5% of computation"
+  ],
+  "limits": "Weaker on multiple-choice tasks (limited attention parameters); 145B is preliminary.",
+  "use_for_project": "none: model architecture; explains why MoE models are cheaper to serve per token.",
+  "corrections": "Earlier record says 'matches LLaMA2 7B at about 40% compute': correct. 145B figure is 28.5% (maybe 18.2%).",
+  "new_techniques": [
+   "fine-grained expert segmentation",
+   "shared expert isolation",
+   "device-level balance loss"
+  ]
+ },
+ {
+  "id": "A:035",
+  "read": "full body",
+  "algorithm": "Multi-head Latent Attention caches a compressed latent c_KV (d_c=512) plus a decoupled RoPE key, so cache per token is (d_c+d_hR)*layers, equal to GQA with 2.25 groups. DeepSeekMoE FFNs, device-limited routing (at most 3 devices), YaRN extension to 128K, GRPO RL.",
+  "methodology": "236B total / 21B active, 8.1T tokens; H800 cluster; compared with DeepSeek 67B on training cost and throughput.",
+  "key_numbers": [
+   "KV cache reduced 93.3% vs DeepSeek 67B",
+   "Generation throughput 5.76x; over 50K tokens/s on one 8-GPU node",
+   "Training cost down 42.5%; KV cache quantised to about 6 bits in deployment"
+  ],
+  "limits": "Shares usual LLM limits such as hallucination; mostly Chinese and English data.",
+  "use_for_project": "none: provider-side architecture; explains cheap long-context pricing for MLA models.",
+  "corrections": "none (earlier record accurate); throughput figure also uses FP8 weights and 6-bit KV quantization, not MLA alone.",
+  "new_techniques": [
+   "MLA latent KV compression",
+   "decoupled RoPE key",
+   "device-limited expert routing"
+  ]
+ },
+ {
+  "id": "A:026",
+  "read": "Full text of p.txt (2229 lines), all of it: abstract, sections 1-8, references, Appendix A (Python sketch), B (proofs of Lemmas 2-7 and Theorems 1-2), C (greedy block verification, Lemmas 8-10, Theorem 3), D (Tables 5-10). Proofs followed at skim level, not re-derived.",
+  "algorithm": "Block Verification replaces token-by-token rejection in speculative decoding. It computes p_i = min(p_{i-1}*Mb/Ms, 1) along the draft, accepts each sub-block with probability h_i (Eq. 5), keeps the longest accepted one, and samples the correction from a residual using p_i (Eq. 4). Same inputs, no extra model calls.",
+  "methodology": "PaLM-2-S target with PaLM-2-XXS or XXXS draft, 8 datasets, first 1000 prompts, 128 output tokens, temperature 1.0, batch 1, 3 seeds. Spec-Bench with Vicuna-7B target and Vicuna-68M draft on one H100. Compared against token verification, greedy block verification, SpecTr and SpecInfer at batch 8.",
+  "key_numbers": "XXS draft, gamma=8: block efficiency +8.30% avg (3.41 to 3.70, range 7.00-10.06%); wall clock +6.49% avg (2.30x to 2.45x, range 5.36-8.14%). XXXS gamma=8: +6.27% BE, +5.36% wall clock. Vicuna: up to +8.70% BE, +6.07% wall clock at T=1.0; +3.72% BE, +1.66% wall clock at T=0.2. Batch 8: speedup 1.381 vs 1.300 token on GPT Prompt.",
+  "limits": "Gain is single-digit percent. Zero at temperature 0 (greedy), because it reduces to token verification. Gain grows with gamma and temperature, but wall clock peaks at gamma 4-6. Optimality is among valid verifiers in the standard outer loop only. Multi-draft extension left as future work.",
+  "use_for_project": "Use as a lossless 5-8% wall-clock speedup, a free default for sampled decoding. Not a large cost lever. Because output distribution is identical, it carries no quality-risk term.",
+  "corrections": "Earlier record said none, could not verify beyond abstract. Full text confirms the abstract and adds specifics: proofs of validity and optimality, no gain at temperature 0, wall-clock gain smaller than block-efficiency gain, and greedy block verification does worse empirically.",
+  "new_techniques": [
+   "Greedy block verification (Appendix C): accepts more tokens per iteration but needs a distribution-modification step on later iterations. Empirically worse than block verification (BE 3.30 vs 3.49 on LM1B, token 3.21).",
+   "Block verification beats multi-draft SpecTr and SpecInfer on wall clock at batch 8 despite lower block efficiency (3.715 vs 3.898 SpecTr), because extra drafts cost compute.",
+   "Coupling view: block verification maximizes expected accepted prefix as an optimal-transport coupling between draft and target block distributions (Eq. 40)."
+  ]
+ },
+ {
+  "id": "C:048",
+  "read": "full body",
+  "algorithm": "Supervised fine-tuning of facebook/opt-350m for 1 epoch (HF TRL SFTTrainer) on ToolBench converted to 187,542 Thought/Action/Action Input examples; LR 5e-5, effective batch 32, FP16, gradient checkpointing, 5,860 steps.",
+  "methodology": "ToolBench/ToolEval, ChatGPT-judged pass rate, 6 categories, 1,100 test queries, temp 0.1, max 10 iterations, majority vote over at least 4 judge rounds. Baselines ChatGPT-CoT, ToolLLaMA-DFS/CoT, Claude-CoT.",
+  "key_numbers": "Pass rate 77.55% overall vs ToolLLaMA-DFS 30.18%, ChatGPT-CoT 26.00%, ToolLLaMA-CoT 16.27%, Claude-CoT 2.73%; 74.0-80.5% across categories.",
+  "limits": "Training data and evaluation tightly coupled; may not generalize beyond ToolBench; controlled API set; retraining needed as APIs evolve; still needs compute and data.",
+  "use_for_project": "Row 12 (route tool-call steps to a small fine-tuned model). Weak evidence: benchmark-specific, no dollar or token cost measured.",
+  "corrections": "Earlier record broadly right. Missed that the judge is ChatGPT, that no cost or token measurement exists despite the cost framing, and that the very low Claude-CoT baseline (2.73%) makes the comparison suspect.",
+  "new_techniques": [
+   "ToolBench Thought/Action/Action Input SFT conversion"
+  ]
+ },
+ {
+  "id": "A:016",
+  "read": "full body",
+  "algorithm": "EmbedLLM: model-embedding network maps each model to a vector; question embedded with all-mpnet-base-v2 plus projection; linear classifier on the Hadamard product gives a correctness score (BCE loss). Router picks the model with highest predicted correctness; linear regression on embeddings predicts benchmark accuracy.",
+  "methodology": "112 open models, 36,054 questions from 10 benchmarks (MMLU, GSM8K, GPQA etc.), 80/10/10 question split. Compared with KNN, single-best and weighted-random routers.",
+  "key_numbers": "Correctness forecasting 0.7409 (MF) vs 0.7152 (KNN) at 29K training questions. Routes 3,000 questions in 3.80 s on A100 (over 750/s, 15x the causal-LLM router). Training under 1GB GPU memory.",
+  "limits": "Only 112 models so embeddings are sparse; new model needs retraining; correctness labels only; not agentic.",
+  "use_for_project": "Row 12 router component. Needs per-model correctness logs from Token Economics's own traffic to train.",
+  "corrections": "Earlier 'better routing accuracy and latency than prior methods' overstated: routing is compared only to single-best and weighted-random routers; the latency comparison is against one causal-LLM router (Ong et al.).",
+  "new_techniques": [
+   "benchmark-contribution probing of embeddings",
+   "zero-shot benchmark accuracy prediction from model embeddings",
+   "single-best vs weighted-random router baselines"
+  ]
+ },
+ {
+  "id": "A:011",
+  "read": "full body",
+  "algorithm": "Qwen2.5-1.5B fully fine-tuned to generate a route-policy id given the conversation plus all policy (name, NL description) pairs in the prompt. A separate policy-to-model mapping is edited without retraining. Domain-Action taxonomy with fallback to domain if action is vague.",
+  "methodology": "43k synthetic samples built in two phases (clean data, then augmentation: irrelevance injection, policy modification, scenario mixing). Eval on CLINC-150, MANtIS, SGD, LMSYS-1M at turn, span and conversation level vs GPT-4o, Claude-sonnet-3.7, Gemini and others.",
+  "key_numbers": "Overall 93.17 vs Claude-sonnet-3.7 92.79 and GPT-4o 89.74; turn 96.05, span 94.98, conversation 88.48. Authors cite +7.71% average over the compared models.",
+  "limits": "Bounded by precision of policy descriptions; quality bounded by user's model-to-policy assignment; all policies sit in the prompt; no cost or answer-quality measurement.",
+  "use_for_project": "Row 12 router component: policy-based routing where models can be swapped without retraining. Measures policy-match accuracy, not savings.",
+  "corrections": "Earlier '+7.71% over top proprietary' is an average over all compared models; over the best (Claude-sonnet-3.7) it is +0.38. It is policy-match accuracy on synthetic dialogues, not cost savings.",
+  "new_techniques": [
+   "Domain-Action taxonomy fallback",
+   "route/model decoupling (policy then mapping)",
+   "irrelevance injection",
+   "policy modification",
+   "scenario mixing",
+   "span-level routing accuracy"
+  ]
+ },
+ {
+  "id": "C:049",
+  "read": "full body (position paper, no experiments)",
+  "algorithm": "S1-S6 conversion recipe: log non-HCI agent calls; curate and filter (10k-100k examples, remove PII); cluster tasks; select SLM; fine-tune (LoRA/QLoRA/full, optional distillation); iterate and retrain SLMs and router.",
+  "methodology": "Position paper with 13 arguments, barriers, an alternative view, and three case studies (MetaGPT, Open Operator, Cradle) with authors' estimates.",
+  "key_numbers": "Cited from other work: 7B SLM 10-30x cheaper than 70-175B LLM. Authors estimate replaceable LLM queries: MetaGPT about 60%, Open Operator about 40%, Cradle about 70%.",
+  "limits": "No measured savings; estimates are the authors'; acknowledges centralized LLM inference may still be cheaper per token (jury still out).",
+  "use_for_project": "Row 12: instrumentation plan (log agent calls, cluster tasks) and a prior for what share of agent traffic could move to a small model.",
+  "corrections": "Earlier 'no measured cost reduction' is right but missed the three 40-70% replaceable-query estimates and the explicit counter-arguments.",
+  "new_techniques": [
+   "call-interface logging as SLM training data source",
+   "code agency vs language-model agency",
+   "heterogeneous agentic systems"
+  ]
+ },
+ {
+  "id": "A:085",
+  "read": "full body except appendix",
+  "algorithm": "Segment-wise gist compression: L tokens into t gist tokens (ratio L/t); compares memory location (recurrent vs KV) and granularity (coarse vs fine): Coarse-Rec, Coarse-KV, Fine-KV. Adds fine-grained autoencoding and segment-wise token importance estimation (TIE) to fix failures.",
+  "methodology": "Llama3.1-8B and Qwen2-7B continued-trained on 3B SlimPajama tokens, ratios 4-32; eval on perplexity, weak-context and long-context tasks (RAG, rerank, QA, ICL, synthetic recall, summarization, code).",
+  "key_numbers": "Fine-KV best, near-lossless on RAG, LongQA, summarization, ICL at low ratios; weak on rerank, synthetic recall and BBH. Autoencoding reconstruction under 20% at high ratios. At ratio 4 synthetic recall improved 52.7% and 33.7% by the two fixes.",
+  "limits": "Models up to 7/8B, 16K window; only compared with full attention; requires continued training and KV access.",
+  "use_for_project": "Row 17 (context compression): informs failure modes (exact recall, surprising facts, long reasoning chains). Not deployable through closed APIs.",
+  "corrections": "Earlier record fine but missed BBH long-reasoning and rerank gaps, ratio dependence, and that all results need training and KV-level changes.",
+  "new_techniques": [
+   "fine-grained autoencoding with weak 1-layer decoder",
+   "segment-wise token importance estimation (TIE)",
+   "boundary-effect test",
+   "'lost if surprise' needle test"
+  ]
+ },
+ {
+  "id": "C:134",
+  "read": "full body",
+  "algorithm": "No new method; diagnostic study. Each intermediate solution is re-executed to get a test-outcome vector; transitions labelled breakthrough/stay/improved/regressed/churn/broke/stuck; spans labelled with 12 behaviors by GPT-5-Mini; mixed-effects model on output tokens with problem as random effect.",
+  "methodology": "mini-swe-agent, 5 models, 4 languages (Python, Java, Rust, OCaml), 100 LiveCodeBench v6 problems, 2,000 sessions, 40 turns, tests visible; metric is output tokens per trajectory (median).",
+  "key_numbers": "OCaml uses 1.28-1.69x Python tokens (p<0.001). Gemma on OCaml: 1,196 stuck self-loops, 92% of failed snapshots are compile errors. Gemma/Qwen keep working after the first correct solution; over 70% of their spans into STAY are bare writes with no test run.",
+  "limits": "One scaffold, competitive-programming problems only, 4 languages, 5 models; may not generalize to repo-scale work.",
+  "use_for_project": "Rows 22 and 27 (post-success rework, compile-error loops): supports stop-after-all-tests-pass, repeated-identical-edit detection and compile-loop circuit breakers.",
+  "corrections": "Earlier ranking right; missed the 1.28-1.69x size, post-solution waste, 92% compile-error loops, and 'wait/actually' second-guessing.",
+  "new_techniques": [
+   "test-outcome-vector trajectory graph",
+   "12-label snapshot-span taxonomy",
+   "mixed-effects token model controlling problem difficulty"
+  ]
+ },
+ {
+  "id": "A:095",
+  "read": "full body except appendix",
+  "algorithm": "LCPO: prompt adds 'Think for n_gold tokens' with n_gold ~ Uniform(100,4000); GRPO reward. L1-Exact: correctness minus 0.0003*|n_gold - n_y|. L1-Max: correctness times clipped length slack with delta 0.5, trained 120 steps after 700 of Exact.",
+  "methodology": "DeepScaleR-1.5B-Preview, 40K DeepScaleR data, 4K training context, 8K eval, targets 512-3600 tokens; AIME, MATH, AMC, Olympiad plus OOD GPQA, LSAT, MMLU.",
+  "key_numbers": "Beats S1 by 20-25% absolute at 512/1024 tokens. L1-Max matches DeepScaleR-4K with up to 2x fewer tokens. Mean length error about 3% on math (20-40% OOD). Short CoT beats GPT-4o by about 2% at equal length.",
+  "limits": "May not generalize to longer requested lengths; 4K training context; 1.5B math model (7B in appendix); little tuning.",
+  "use_for_project": "Rows 29, 36, 45 (reasoning/thinking length): supports thinking-budget caps, but requires RL fine-tuning, so only analogous to API budget settings.",
+  "corrections": "Earlier 'matches GPT-4o' is actually about +2% above GPT-4o on average; 'up to 20%' is 20-25% absolute. Missed L1-Max violation rate (0.3-2.3%) and that SFT on length-relabelled data fails.",
+  "new_techniques": [
+   "LCPO-Exact vs LCPO-Max",
+   "Short Reasoning Models",
+   "prompt-embedded length target"
+  ]
+ },
+ {
+  "id": "A:110",
+  "read": "full body except appendix",
+  "algorithm": "Sarathi-Serve: chunked prefills split a prompt into equal token-budget chunks; stall-free batching packs all running decodes first, then partial prefills, then new requests up to a token budget tau each iteration. Uniform hybrid batches also cut pipeline bubbles.",
+  "methodology": "Built on vLLM; Mistral-7B (1 A100), Yi-34B (2 A100), LLaMA2-70B (8 A40), Falcon-180B (8 A100, TP4-PP2); openchat_sharegpt4 and arxiv_summarization traces; capacity under P99 TBT SLO.",
+  "key_numbers": "Full-prefill hybrid batch raises TBT up to 28.3x vs decode-only. 3.5x vLLM capacity under strict 100ms SLO (Mistral-7B). Falcon-180B 4.3x and 3.6x over vLLM TP-only and hybrid, strict SLO.",
+  "limits": "Chunking adds overhead for small chunks; token budget needs profiling; tile quantization (chunk 257 vs 256 adds 32% prefill time); no comparison with disaggregated systems.",
+  "use_for_project": "none (provider-side scheduling; no client-controllable token leak).",
+  "corrections": "Earlier record right but omitted that gains are capacity under latency SLOs, that the 2.6x/3.7x/5.6x are best cases, and the 28.3x stall evidence.",
+  "new_techniques": [
+   "stall-free batching",
+   "token-budget selection via Vidur profiling",
+   "tile-quantization-aware chunk size"
+  ]
+ },
+ {
+  "id": "A:133",
+  "read": "full body except appendix",
+  "algorithm": "Byte Latent Transformer: small byte-level entropy LM sets patch boundaries where next-byte entropy exceeds a threshold; lightweight local encoder pools bytes into patches via cross-attention, a large global transformer runs per patch, a local decoder emits bytes.",
+  "methodology": "FLOP-controlled scaling study to 8B parameters and 4T bytes vs Llama 3 BPE; fixed-inference-FLOP study; robustness (noised HellaSwag, CUTE), FLORES-101 translation.",
+  "key_numbers": "Matches Llama 3 at equal training FLOPs; patch size 8 allows nearly 50% fewer inference FLOPs with minor loss. BLT-Entropy beats Llama 3 on 4 of 7 tasks; CUTE gain over 25 points; noised HellaSwag +8 points.",
+  "limits": "Scaling laws tuned for BPE; many experiments up to 1B; implementation not at wall-clock parity; separate entropy model.",
+  "use_for_project": "none (model architecture; cannot be adopted via API).",
+  "corrections": "Earlier '50% fewer flops' needs context: parity is at ~4.5-byte patches, the 50% figure is the ps=8 trade with a minor loss, and BLT-Space underperformed Llama 3 on all but one task.",
+  "new_techniques": [
+   "entropy patching with approximate monotonicity constraint",
+   "hash n-gram embeddings",
+   "byte-ifying a pre-trained Llama 3.1 global transformer"
+  ]
+ },
+ {
+  "id": "A:077",
+  "read": "full body except appendix",
+  "algorithm": "HeadInfer: offloads KV cache to CPU per attention head, keeping only a few heads' KV on GPU while computing attention head by head; chunked prefill, asynchronous non-blocking PCIe transfer, adaptive head grouping; roofline analysis guides chunk size (10K).",
+  "methodology": "Llama-3-8B and 70B, Mistral, Qwen, Gemma-2 on RTX-4090 24GB with 1TB CPU RAM; LongBench v2, SCBench, memory and throughput tests vs standard, chunked-prefill and layer-wise offload.",
+  "key_numbers": "1M-token Llama-3-8B: 207GB (15 weights, 64 activations, 128 KV) down to 17GB prefill / 16.4GB decode (92%). Max context 25K standard, 45K layer-wise, up to 4M with HeadInfer on one RTX-4090.",
+  "limits": "Decode is memory-bound so PCIe slows it; short contexts suffer kernel-launch overhead; 70B prefill 7,210 tok/s but decode about 6 tok/s.",
+  "use_for_project": "none (self-hosted memory optimization).",
+  "corrections": "Earlier numbers correct but missing: lossless/exact attention, consumer-GPU target, and slow decode.",
+  "new_techniques": [
+   "adaptive head grouping",
+   "head-wise roofline analysis",
+   "head-wise offload combined with head-wise sparsity"
+  ]
+ },
+ {
+  "id": "C:044",
+  "read": "full body except appendix",
+  "algorithm": "Survey, no algorithm. Taxonomy of RACG by retrieval substrate, control regime and evaluation; agent autonomy levels L0 (static pipeline), L1 (iterative feedback), L2 (autonomous agents).",
+  "methodology": "Literature review of repo-level retrieval-augmented code generation; RQs on methods, evaluation, and the necessity boundary between RAG and long context.",
+  "key_numbers": "Agentless (L0) cited at 32% on SWE-bench Lite at low cost. Long-context models can match RAG on small repos (Peng et al. 2025).",
+  "limits": "Survey only; no new measurements; cost and latency claims qualitative.",
+  "use_for_project": "Rows 31 and 34 (retrieval vs reading whole repo): RepoShapley and OrcaLoca context pruning are named only in one-line summaries; the necessity-boundary section supports a size-based retrieval rule.",
+  "corrections": "Shapley selection and OrcaLoca pruning are one-line mentions each; the survey gives no evidence of their savings.",
+  "new_techniques": [
+   "agentic search replacing RAG (Claude Code grep/ls/cat loop)",
+   "RepoShapley cooperative-game selection",
+   "LongCodeZip coarse/fine pruning",
+   "SpecAgent speculative contexts",
+   "DrainCode LLM-DoS"
+  ]
+ },
+ {
+  "id": "A:040",
+  "read": "full body except appendix",
+  "algorithm": "Elicit p(evidence|state) from M LLMs via contrastive 'assume state s' prompts, aggregate by median, apply Bayes with deployment prior, choose action by minimum expected cost, gather more evidence if value of information exceeds its cost or models disagree.",
+  "methodology": "1,000 synthetic resumes with sampled ground truth, GPT-4o-generated labels checked by 3 recruiters on 100 (kappa 0.83), simulated phone screens, 5 LLMs, hiring costs $40K/$2.5K/$150.",
+  "key_numbers": "$294,000 (34%) lower total cost vs best single-LLM; parity gap 22 to 5 points. Ablation shares: multi-LLM 51%, sequential 43%, disagreement-triggered screening 20%. 20 LLM queries per observation (M=5, K=4).",
+  "limits": "Synthetic data and simulated screens; latency of 20 queries per step; cost matrix assumed; model IDs and versions inconsistent between abstract and appendix.",
+  "use_for_project": "Row 12 only weakly: savings are hiring dollars, not tokens; the ensemble multiplies calls 5x. Transferable idea: value-of-information gating of extra calls.",
+  "corrections": "Earlier record omitted that the $294,000 is on synthetic resumes with simulated screens, is a hiring decision cost not LLM cost, and that the method uses 5 models x 4 states = 20 queries per observation.",
+  "new_techniques": [
+   "contrastive likelihood prompting",
+   "median aggregation of LLM likelihoods",
+   "disagreement-triggered information gathering"
+  ]
+ },
+ {
+  "id": "A:063",
+  "read": "full body except appendix",
+  "algorithm": "Inference auction: bids only reorder children in the SGLang radix-tree DFS schedule (keeps cache hit rate); children sorted by average subtree bid; VCG payments in quasilinear time; pacing autobidder scales values by a factor updated to hit a budget.",
+  "methodology": "Scheduling layer over unmodified SGLang, 32B model on one H100, semi-synthetic stars, chains, 3-ary trees (SQuAD, GSM8K, SWE-agent trajectories, tree-of-thought), synthetic Pareto values, truthful bids.",
+  "key_numbers": "Welfare +12-18.6% iid (up to 100% non-iid) over bid-blind cache-optimal order; about 80% of the unconstrained bid-sort welfare; bid-sort TTFT 2.4x on chains and 12x on long trees. Autobidding loses about 10% welfare.",
+  "limits": "Single worker, simulated values, truthful bids, linear value in priority; short trees fit cache so DFS restriction costs 20% welfare.",
+  "use_for_project": "none (provider-side mechanism; autobidder budget pacing is only an analogy for a per-task spend governor).",
+  "corrections": "Earlier record right; missed that it is welfare, not dollars saved, with synthetic bids and O(sqrt T) regret guarantee only under a stationary assumption.",
+  "new_techniques": [
+   "average-bid DFS scheduling",
+   "quasilinear VCG payment computation",
+   "value-pacing autobidder with node pacing condition number"
+  ]
+ },
+ {
+  "id": "A:109",
+  "read": "Full text of p.txt (1141 lines): abstract, sections 1 to 8, Table 1, Figures 1 to 11, Algorithm 1. Bibliography skimmed only to its start; remainder skipped. No appendices exist.",
+  "algorithm": "Orca: iteration-level scheduling (scheduler invokes the engine for one model iteration at a time, so finished requests return and new ones join immediately) plus selective batching (batch non-Attention ops token-wise; split and run Attention per request). Algorithm 1 is FCFS with max_bs and K/V slot reservation.",
+  "methodology": "13K lines C++/CUDA on Azure ND96asr A100 40GB VMs, up to 4 VMs. GPT configs 13B, 101B, 175B, 341B, fp16, max sequence 2048. Baseline NVIDIA FasterTransformer with a custom scheduler. Synthetic Poisson trace: input U(32,512), max_gen_tokens U(1,128), EOS never emitted.",
+  "key_numbers": "175B model, median normalized latency 190 ms: FasterTransformer 0.185 req/s vs Orca 6.81 req/s, 36.9x. Engine microbenchmark: up to 47% faster at 175B, similar or slightly worse at 13B and 101B. FasterTransformer peak 0.49 req/s on 101B under load.",
+  "limits": "Synthetic trace, no real workload. No EOS, so early stopping untested. Only GPT-style models measured. Max_bs needs tuning against a latency budget. K/V memory reserved at max_tokens, wasting slots. Tight scheduler-engine coupling; general interface left to future work.",
+  "use_for_project": "None for API users directly. Provider-side serving technique; explains why continuous batching lowers provider cost per token, not a billing lever for callers.",
+  "corrections": "Earlier record's 36.9x is correct but conditional: one 175B setting at matched 190 ms latency against a weak baseline, not a general figure. Add that the 101B model at low load showed no gain.",
+  "new_techniques": [
+   "Iteration-level scheduling: one-iteration engine calls, immediate return and join",
+   "Selective batching: split only Attention, flatten token batches elsewhere",
+   "Max_tokens K/V slot reservation to avoid scheduler deadlock",
+   "Control-plane gRPC separate from NCCL data plane, up to 47% faster",
+   "Pipelining across batches without microbatch splitting"
+  ]
+ },
+ {
+  "id": "C:031",
+  "read": "full body",
+  "algorithm": "Local proxy (ANTHROPIC_BASE_URL) with a rule-based O(1) router, no model calls. Requests with a non-empty tools field go straight to Opus. Simple prefixes go to the cheap model only (SKIPPED). Complex keywords or input over 1,500 chars get cheap draft then Opus verify (USE_DRAFT = ACCEPTED, or ENHANCE).",
+  "methodology": "Service benchmark N=125 live Claude Code requests; 20-task engineering benchmark; 3-endpoint quality comparison (N=20 each, binary pass/fail). Baseline native Opus. Prices: DeepSeek $1.74/$3.48, Opus $5.50/$27.50 per M in/out.",
+  "key_numbers": "Savings 45.8% (service, N=125), 47.4% (architecture set, N=39), 32% (current run, N=12); model predicted 67.2% vs 47.4% observed. p50 latency 2,026 vs 3,698 ms. Quality 100% vs 95% pass (N=20).",
+  "limits": "Tool-selection turns (70-80% of Claude Code turns) bypass to Opus, so savings apply to the ~20-30% text turns. Router is a keyword classifier. One cost inversion (+$0.01189). TTFT 2.1x worse. Learned router, parallel draft+verify, local tier are future work.",
+  "use_for_project": "Rows 12 and 5 (model tiering/routing); evidence for draft-then-verify cascade and the tool-turn carve-out.",
+  "corrections": "Earlier record said tool-selection turns go to the cheap draft model; the opposite: they bypass to Opus and the draft handles only simple text turns. 45.8% applies only to the text-generation subset; the 100% vs 95% quality rests on a 20-task benchmark.",
+  "new_techniques": [
+   "response-level speculative decoding",
+   "tool-call bypass to the strong model",
+   "USE_DRAFT/ENHANCE verdict protocol",
+   "break-even SKIPPED-rate formula (about 13.3%)",
+   "router error model (epsilon, delta, loss)",
+   "conservative-approval verifier prompt"
+  ]
+ },
+ {
+  "id": "A:083",
+  "read": "full body",
+  "algorithm": "A base causal LM (LLaMA-7B; GPT-3 curie for OpenAI models) computes self-information -log2 P(x_t|x_<t) sentence by sentence. Tokens are merged into lexical units (tokens, noun phrases via spaCy, sentences). Units at or above the p-th percentile of self-information are kept.",
+  "methodology": "BBC News, arXiv sections, ShareGPT (all after March 2023); tasks: reconstruction, summarisation, QA, conversation; GPT-3.5/4, LLaMA 7/13/30B, Vicuna. Ratios 0.2-0.8; BLEU/ROUGE/BERTScore vs full context; random-deletion baseline; 1000 QA pairs hand-checked.",
+  "key_numbers": "At ratio 0.5: BERTScore-F1 drop .023, unfaithfulness .038. At ratio 0.2: BERTScore-F1 .931 vs .899 random. Phrase-level units best. One vicuna-13b case: 36% memory (77,695 to 61,885 MB), 1.32x speed.",
+  "limits": "Needs phrase-boundary detection (no verb phrases). Best percentile varies by task and context. Quality drops noticeably from ratio 0.5 up. Never tested on code or tool output.",
+  "use_for_project": "Rows 17 and 37: context compression of prose-heavy context (documents, chat history), not code or tool output.",
+  "corrections": "The 36% memory and 1.32x speed come from a single case-study paragraph, not an average. Quality figures are at ratio 0.5. The 'not code/tool output' caveat is untested by the authors rather than stated as a limit.",
+  "new_techniques": [
+   "percentile-based adaptive filtering",
+   "phrase-level lexical units",
+   "sentence-by-sentence self-information to avoid later-unit bias"
+  ]
+ },
+ {
+  "id": "A:092",
+  "read": "full body (including appendix ablations)",
+  "algorithm": "At paragraph breaks, probe a tentative answer by appending a final-answer prefix. Certainty C = 1 - mean token entropy / log|V|. Suppression probability p = max(0,(C-delta)/(1-delta)), delta=0.9. With probability p, trigger-token logits (Wait, But, Alternatively, Hmm and variants) are set very negative.",
+  "methodology": "AIME24, AMC23, MATH500, GPQA-D. R1-Distill-Qwen-7B/Llama-8B, QwQ-32B, Qwen3-4/8/14/32B. vLLM, temp 0.6, three runs. Baselines: Vanilla, TALE, NoThinking, Dynasor, DEER.",
+  "key_numbers": "18.5-41.9% token reduction, accuracy drop up to about 3 points. Qwen3-14B: 25.4% fewer tokens, accuracy 80.1 to 80.8; NoThinking cuts 77.3% but loses 17.8% accuracy. AMC23 ablation: fixed p=1 gives 76.7 acc at 2373 tokens vs certainty-guided 88.3 at 3406 (vanilla 87.5 at 5861).",
+  "limits": "Needs decoding-time logit access (open models). No overhead analysis found in the text read. Probing runs concurrently with decoding.",
+  "use_for_project": "Row 45 (reasoning overthinking). Only the idea transfers to hosted APIs, via effort/thinking-budget controls.",
+  "corrections": "18.5-41.9% is a range across models, and accuracy loss is up to about 3 points, not zero. The hosted-API caveat is an inference, not stated by the authors.",
+  "new_techniques": [
+   "checkpoint probing",
+   "certainty score from token entropy",
+   "trigger-token suppression",
+   "certainty-gated suppression probability"
+  ]
+ },
+ {
+  "id": "A:041",
+  "read": "full body",
+  "algorithm": "Six-step LLM-to-SLM conversion: secure logging of non-human-facing calls; curate and filter data (10k-100k examples rule of thumb, PII removal); task clustering; SLM selection; specialised fine-tuning (LoRA/QLoRA, optional distillation); iterate and retrain including the router.",
+  "methodology": "Position paper, no experiments. Numbers are capability claims from other papers plus case-study estimates of replaceable query share: MetaGPT ~60%, Open Operator ~40%, Cradle ~70%.",
+  "key_numbers": "7B SLM 10-30x cheaper than 70-175B LLM in latency/energy/FLOPs (cited). Replaceable query share 40-70% across three agents (authors' estimates, not measured). SLM defined as under 10B params.",
+  "limits": "Authors list opposing views: LLM generalists win on general language, centralisation economies of scale ('jury is still out'), equally possible worlds. Barriers: infrastructure investment, generalist benchmarks, awareness.",
+  "use_for_project": "Rows 12 and 5: tiering and routing narrow, repetitive agent subtasks to small models.",
+  "corrections": "Earlier 'no single cost number' is correct. Add the 40-70% replaceable-query estimates and that they are authors' estimates.",
+  "new_techniques": [
+   "logger at the tool/model interface to harvest fine-tune data",
+   "heterogeneous agent architectures",
+   "code agency vs language-model agency"
+  ]
+ },
+ {
+  "id": "A:002",
+  "read": "Entire paper, main text sections 1-7 and appendices A-E, via pdftotext default and -layout. Read Appendix Table 1 (per-model accuracy and cost per dataset), hyperparameters, overalignment note and figure captions. Figure plot data read from AIQ legends only; Figure 3 heatmap and Figure 7 and 9 curves not readable as text. References skimmed.",
+  "algorithm": "Routers are points in the cost-quality plane. Mixing two routers with probability t gives any point on their segment; extrapolation adds cost without quality. The non-decreasing convex hull is the Zero router; AIQ is hull area over [cmin, cmax] divided by the cost span. KNN and MLP routers pick argmax of lambda times predicted quality minus cost; the cascade calls models cheapest first until a judge passes.",
+  "methodology": "405,467 samples, 11 models plus 3 RAG-only (14 LLMs run), 8 datasets, 64 tasks: MMLU, MT-Bench, MBPP, HellaSwag, Winogrande, ARC-C, GSM8K and an 800-query RAG set. 5-shot on the exact-match sets, 0-shot on MBPP, MT-Bench, RAG graded by GPT-4. Predictive routers trained on 70%, tested on 30%, MT-Bench excluded (80 questions). Cascade judge is oracle-like with error flip probability.",
+  "key_numbers": "Oracle: MMLU 0.957 at $0.297 vs GPT-4 0.828 at $4.086; HellaSwag 0.994 at $0.86 vs GPT-4 0.923 at $24.29. Predictive AIQ vs Zero: MMLU 0.773/0.769 vs 0.763; ARC 0.871/0.875 vs 0.877; MBPP 0.644/0.642 vs 0.660; HellaSwag 0.588 all. Cascade at zero error: MMLU 0.901, MBPP 0.862, ARC 0.923, GSM8K 0.680 (Zero 0.628), HellaSwag 0.469 vs Zero 0.607. RAG AIQ: KNN 0.695, MLP 0.675, cascade 0.657, Zero 0.632.",
+  "limits": "Cost and quality only, no latency. Mostly academic multiple-choice tasks, 2023-era models, no coding agents or long contexts. Cost for predictive routers approximated by per-token price. Cascade judge is simulated with perfect knowledge, so results are an upper bound. Three tasks graded by GPT-4. RAG has few models and one client's queries. In-domain train and test split; out-domain test only plotted.",
+  "use_for_project": "Row 12 and the evaluation framework: use AIQ with a Zero-router baseline (mix of existing models on the hull) to judge any Token Economics router, and require a router to beat Zero before claiming savings. Cascade results show the judge error rate is the lever.",
+  "corrections": "Earlier record omitted that RAG is the eighth dataset and 3 of 14 LLMs are RAG-only. Its claim that cascades beat Zero at low judge error misses HellaSwag, where the zero-error cascade loses (0.469 vs 0.607). Exact AIQ values now given, including Zero beating both predictive routers on MBPP and ARC. GSM8K Zero AIQ is 0.632 in Fig 4 but 0.628 in Fig 5, an internal inconsistency.",
+  "new_techniques": [
+   "AIQ: normalised area under the non-decreasing convex hull",
+   "Zero router baseline as probabilistic mix on the hull",
+   "Linear interpolation and extrapolation of routers with null router at zero cost",
+   "Oracle router: cheapest correct model, ties broken by price",
+   "Cascade with total-cost cap T and injected judge error epsilon",
+   "Overgenerate-and-rerank variant",
+   "Predictive score lambda times predicted quality minus cost, lambda as willingness to pay",
+   "KNN (k=40, MiniLM, cosine) and 2x100 MLP quality predictors",
+   "Query features like 2024 route time-sensitive RAG queries to online models"
+  ]
+ },
+ {
+  "id": "A:184",
+  "read": "full body except appendix",
+  "algorithm": "DeepSeek Sparse Attention: lightning indexer I=sum_j w_j ReLU(q_j.k_s) picks top-k=2048 KV entries per query, cutting core attention O(L^2) to O(Lk). Dense warm-up (1000 steps, KL loss) then sparse stage (15,000 steps). Agent: reasoning kept across tool-call turns, dropped only when a new user message arrives.",
+  "methodology": "Benchmarks vs GPT-5-high, Kimi-K2-Thinking, Gemini-3.0-Pro; agent RL on 1,827 synthetic environments / 4,417 tasks; BrowseComp context-management comparison.",
+  "key_numbers": "BrowseComp 51.4 without context management; Summary 60.2; Discard-all 67.6 (triggered at over 80% of context). Terminal Bench 2.0: 46.4 (Claude Code framework). Comparable to Kimi-K2-Thinking with substantially fewer output tokens.",
+  "limits": "Token efficiency below Gemini-3.0-Pro; redundant self-verification pushes MCP tasks past 128K. Reasoning retention breaks in frameworks that simulate tool output as user messages (Roo Code, Terminus).",
+  "use_for_project": "Rows on reasoning re-generation and context overflow: keep reasoning across tool rounds; summarise/discard at 80% context.",
+  "corrections": "Earlier 'provider-side, no user lever, no rows' was shallow: it has agent context-management strategies and reasoning-retention finding that map to context and reasoning rows.",
+  "new_techniques": [
+   "thinking retention across tool calls",
+   "Summary / Discard-75% / Discard-all context management",
+   "length-penalty reward",
+   "specialist distillation"
+  ]
+ },
+ {
+  "id": "A:120",
+  "read": "full body",
+  "algorithm": "Reuse precomputed per-chunk KV caches in non-prefix positions, then selectively recompute KV for high-KV-deviation tokens (HKVD). HKVD tokens are picked on the first layer and refined by progressively smaller ratios on later layers, since deviation rank is correlated across layers. Recompute is pipelined with loading KV from the next layer.",
+  "methodology": "Built on vLLM; Mistral-7B, Yi-34B, Llama-70B on A40 GPUs with NVMe SSD; four datasets (2WikiMQA, Musique, MultiNews, SAMSum). Baselines: full recompute, prefix caching, full KV reuse, MapReduce, MapRerank.",
+  "key_numbers": "TTFT 2.2-3.3x lower and throughput 2.8-5x higher than full recompute, at no quality loss. Default recompute ratio 15%; quality holds at 5-18%. Full KV reuse has similar TTFT but 0.1-0.2 lower F1.",
+  "limits": "Transformer-only; self-hosted serving engine with KV storage. Not applicable to hosted APIs. Integration with newer serving engines left to future work.",
+  "use_for_project": "none for user-side Token Economics; provider/self-host RAG prefill concern (adjacent to prefix-cache rows, no direct row).",
+  "corrections": "Earlier '10-20% recompute' is approximately right (15% default, 5-18% range). Abstract and intro compare against different baselines (full recompute vs prefix caching), so state the baseline.",
+  "new_techniques": [
+   "HKVD token selection",
+   "layer-wise progressive token selection",
+   "KV load/recompute pipelining",
+   "loading controller picking storage device and ratio"
+  ]
+ },
+ {
+  "id": "A:073",
+  "read": "full body",
+  "algorithm": "PagedAttention: KV cache split into fixed-size blocks mapped by a block table, allocated on demand, not contiguous. Blocks are shared across sequences by reference count with copy-on-write (parallel sampling, beam search, shared prefix). On memory exhaustion, evict whole sequences and recover by swap or recompute.",
+  "methodology": "vLLM on OPT and LLaMA models; ShareGPT and Alpaca traces; WMT16 for prefix sharing. Baselines: FasterTransformer and self-implemented Orca variants (Oracle, Pow2, Max).",
+  "key_numbers": "2-4x throughput over FasterTransformer/Orca at same latency. Existing systems use only 20.4-38.2% of KV memory for token states. 1.7-2.7x higher request rate than Orca (Oracle) on ShareGPT. Shared one-shot prefix: 1.67x over Orca (Oracle).",
+  "limits": "Kernel overhead 20-26% higher attention latency vs FasterTransformer. Helps only memory-bound workloads; compute-bound DNNs may degrade.",
+  "use_for_project": "none (provider-side memory management; no user lever).",
+  "corrections": "none (2-4x confirmed; note Orca baselines are the authors' own reimplementation since Orca was not available)",
+  "new_techniques": [
+   "block-level copy-on-write",
+   "recompute vs swap recovery",
+   "whole-sequence eviction (all-or-nothing)",
+   "fused block read + attention kernel"
+  ]
+ },
+ {
+  "id": "A:099",
+  "read": "full body except appendix",
+  "algorithm": "Train about 7,000 comparable monolingual tokenizers (BPE, Unigram) for 97 languages at 300MB, 7 vocab sizes (16,384-114,688). Measure corpus token count (CTC) on FLORES-200 parallel text. Interventions: parallel training data, per-language optimal vocab size via power-law fit, SuperBPE (merges across whitespace).",
+  "methodology": "Linear mixed-effects models on CTC vs byte-premium scaling, tokenizer type, vocab size, word length, whitespace share, writing system. Compared with OLMo, Pythia, SmolLM tokenizers.",
+  "key_numbers": "Token premiums vary widely even with identical training; raising vocab size does not shrink variance (F-test p=0.565). Per-language optimal vocab sizes significantly cut CTC variance (p<0.001). SuperBPE lowers mean CTC and variance at every vocab size.",
+  "limits": "No link to downstream model performance tested. Small 300MB training data. Authors note too much compression may reduce compute per token.",
+  "use_for_project": "Language-token premium (non-English prompts cost more tokens); no matching token-leak row unless one covers language. Advice: keep prompts/tool text in English.",
+  "corrections": "Earlier record fine. Add: byte-premium scaling and parallel data had little effect; whitespace pre-tokenization is the main driver; a user cannot change a hosted tokenizer.",
+  "new_techniques": [
+   "corpus token count (CTC) metric",
+   "per-language optimal vocabulary size via power-law fit",
+   "SuperBPE for non-English",
+   "byte-premium scaling"
+  ]
+ },
+ {
+  "id": "A:022",
+  "read": "full body",
+  "algorithm": "Two-model cascade (FLAN-T5 Base to Large). Deferral score from token-level uncertainty: Chow-Sum, Chow-Average, Chow-Quantile (quantiles of per-token probabilities), and a learned post-hoc MLP (5 layers, 32 units) on quantile features, optionally plus small-model and large-model intermediate embeddings.",
+  "methodology": "17 datasets (classification, QA, reading comprehension, translation, reasoning) up to 10k examples each; deferral curve and AUC-DF; 5 random runs; target = large right and small wrong (or BLEURT difference for translation).",
+  "key_numbers": "Chow-Sum defers long outputs, Chow-Average defers short ones (length bias). Post-hoc rule is consistently best or near-best on AUC-DF. Using large-model first-token embedding helps most on classification.",
+  "limits": "Only FLAN-T5 encoder-decoder; decoder-only and RLHF-calibration effects untested. Intermediate large-model embeddings add non-trivial cost. No single best quantile across tasks.",
+  "use_for_project": "Row 12: confidence-based deferral for small-to-large cascades; needs token log-probs, which hosted APIs may not expose.",
+  "corrections": "Earlier 'AUC-DF' fine. Missed length bias, no universal quantile, and that the best variant uses large-model embeddings (extra cost).",
+  "new_techniques": [
+   "Chow-Quantile deferral",
+   "Post-Hoc-Embed variants",
+   "length-bias analysis of sequence probability"
+  ]
+ },
+ {
+  "id": "A:020",
+  "read": "full body",
+  "algorithm": "Cost-Spectrum Contrastive Routing: prompts (frozen MiniLM + MLP head) and models embedded in one space. Models described by logit footprints (open models) or perplexity fingerprints (black-box APIs). Cost-Spectrum InfoNCE: banded positives (K=5), band-specific temperatures, cost-weighted negatives (gamma=0.2). Routing is one FAISS k-NN lookup.",
+  "methodology": "EmbedLLM, Mix-Instruct, RouterBench. Metrics AUDC, peak accuracy, QNC. Baselines UMR, Thompson, others; unseen-LLM and OOD-prompt tests.",
+  "key_numbers": "Best AUDC on all three benchmarks; up to 25% better accuracy-cost trade-off. OOD AUDC 0.5146 vs next-best 0.4863. Cost-aware loss lifts AUDC 0.342 to 0.495 and peak accuracy 36% to 54% (ablation).",
+  "limits": "Did not test very large pools. Perplexity descriptor is at least 2x slower. Cost-aware training raises cost versus vanilla variant.",
+  "use_for_project": "Row 12: learned prompt router; cheap lookup router if Token Economics has per-task outcome data.",
+  "corrections": "'Up to 25%' is a best case. Add: ablation gains, and that routing is trained on labelled correctness data.",
+  "new_techniques": [
+   "logit footprints",
+   "perplexity fingerprints",
+   "Cost-Spectrum InfoNCE",
+   "cost-band temperatures"
+  ]
+ },
+ {
+  "id": "A:050",
+  "read": "pdftotext (default and -layout) of all 162 pages, read without line filtering. Read in full: sections 1-12, Appendices A through J, section 4.9 efficiency, Table 5 (tokens, queries, cost), Table 6 (hardware), Table 9 (GPT-3 energy), Table 13 (contamination), Table 14 (adaptation defaults). Skipped: bibliography only (pages 100-117). Figures were read as extracted text only, not visually. This PDF has no per-model results appendix; per-model data appear only in the tables listed above.",
+  "algorithm": "HELM = scenarios x adaptation x metrics. 42 scenarios, 30 models, 16 families, 12 organizations. Adaptation is 5-shot in-context prompting with black-box access. Metrics: accuracy (exact match, quasi-exact match, F1, RR@10, NDCG@10, ROUGE-2, BPB, pass@k); calibration (ECE with uniform-mass bins, acc@10%, SCAA = (1/n) sum a_i); robustness (min over perturbations j of m(model(T_j(x_i)), y_i), identity transform included, so robustness is at most accuracy); fairness (same worst-case form on counterfactual perturbations, plus subgroup disparities compared by hand); bias (total variation distance of group mentions or stereotype associations from a uniform reference; maximum 0.5 for gender, 2/3 for race); toxicity (fraction of generations with Perspective API score >= 0.5); efficiency (training energy e = n_GPU * W_GPU * t_train * PUE with PUE 1.1, CO2 = energy times carbon intensity; inference denoised and idealized runtime).",
+  "methodology": "Adaptation: 5 fixed in-context examples chosen by class coverage, 3 seeds, 1000 evaluation instances per scenario. Temperature 0 for short outputs; stop sequence newline, with max tokens set from the longest reference as a fail-safe; prompts truncated to the context window. Multiple choice is joint by default (one query per question), separate for natural continuations. Ranking uses per-passage Yes/No queries over BM25 top-30 passages. Robustness recipe: lowercase, expand contractions, misspell each word with probability 0.1, replace each space with 1 to 3 spaces; also contrast sets for BoolQ and IMDB. Fairness perturbations: SAE to AAE dialect, gender pronouns, gender terms, first names, last names; references perturbed the same way; perturbations deterministic. Robustness and fairness apply only to classification, QA and retrieval scenarios. Denoised runtime = provider hardware with queue noise removed; idealized runtime = A100 GPUs with Megatron, only for models with public architecture. Total time = F(num_prompt_tokens) + g * num_output_tokens. Run priorities 1 to 4; all models run on priority 1 and 2. Significance tests: paired bootstrap, 10,000 samples, p < 0.05. Disinformation human evaluation on 6 models.",
+  "key_numbers": "4,939 runs, 12,169,227,491 tokens, 17,431,479 queries, $38,001 for commercial APIs (Cohere's $1,743 is one combined total across its four rows), about 19,500 GPU hours for open models. Per-model cost $85 (code-cushman-001) to $10,926 (J1-Jumbo v1). 98 of 112 (scenario, metric) pairs measured (87.5%). Seed range: median below 0.03 for 24 of 28 models; NaturalQuestions open-book median range 0.1730 (davinci F1 0.376, 0.611, 0.636). text-davinci-002 wins accuracy comparisons over 90% of the time. Win rate clearly above chance (above 55%) only for models of at least 50B parameters. text-davinci-002 HellaSwag accuracy 81.5%, TruthfulQA accuracy 62.0% against 35.4% for second place (Anthropic-LM v4-s3); those are accuracy figures, not fairness. Its fairness-perturbed HellaSwag accuracy is 70.3%; Cohere xlarge drops more than 15 points to 66%. OPT (175B) HellaSwag: 79.1% separate 0-shot, 54.8% separate-calibrated, 30.2% joint 5-shot. Denoised inference time BLOOM 0.075s separate vs 0.271s joint; text-davinci-002 idealized denoised ranking request 0.21s per query-passage pair. Training CO2: GPT-J 13.8 metric tons, TNLG v2 405.3 metric tons.",
+  "limits": "Authors' caveats: 3 seeds and 1000 instances may leave some claims insignificant; contamination unresolved (Table 13, Pile-trained models flagged); prompting only, no fine-tuning; dataset validity unverified; no single aggregate score; missing scenarios, metrics, models (Gopher, PaLM) and adaptation methods. Robustness and fairness cover only classification, QA and retrieval, with mild synthetic perturbations; fairness by perturbation is a weak proxy for dialects. Idealized runtime exists only for models with public architecture, and idealized energy and CO2 cannot be derived from denoised runtime. Training energy mostly estimated. Disinformation judged by crowd workers on 6 models. Cost figures are API spend at 2022 prices, not a price model.",
+  "use_for_project": "Not a cost-control method. Use as a measurement template: report accuracy beside cost and tokens for every run (Table 5 gives tokens, queries, $ per model); use worst-case-over-perturbations for a robustness check on routed or cached answers; report seed ranges; the F(prompt) + g * output runtime model matches the prompt-versus-output token split that drives dollar cost. Efficiency in HELM is runtime and energy, not dollars per task. Joint versus separate multiple choice shows prompt format changes both accuracy and query count, so cost comparisons must fix adaptation.",
+  "corrections": "Earlier record confirmed on 3 seeds, 1000 instances, denoised and idealized runtimes. text-davinci-002 correction kept: 81.5% HellaSwag accuracy and 62.0% TruthfulQA accuracy are accuracy, not fairness; its fairness-perturbed HellaSwag score is 70.3%. Corrected: the 79.1% OPT figure is for separate 0-shot prompts (joint 5-shot is 30.2%); total commercial cost $38,001 counts Cohere's $1,743 once. Added: exact token and query totals, perturbation recipe, 5-shot class-coverage sampling, human evaluation limited to 6 models. Read now covers every page except the bibliography.",
+  "new_techniques": [
+   "Metric inclusion rule: measure a desideratum only if it needs no knowledge of model construction, only black-box access, and no knowledge of the broader system.",
+   "Denoised runtime (provider stack, queue noise removed) versus idealized runtime (uniform A100 with Megatron); idealized energy and CO2 derivable only from the latter.",
+   "Runtime model: total time = F(num_prompt_tokens) + g * num_output_tokens.",
+   "Selective classification at coverage 0.1 and area under the coverage-accuracy curve (SCAA), reported beside ECE.",
+   "Fixed in-context examples across instances, chosen for class coverage, repeated over 3 seeds to expose prompt sensitivity.",
+   "Worst-case accuracy across a perturbation set with identity included, as one robustness number, reused for fairness with counterfactual substitutions.",
+   "Bias as total variation distance from a uniform reference; association bias counted only where the target term appears.",
+   "Joint versus separate multiple-choice ablation: OPT HellaSwag 79.1% separate 0-shot vs 30.2% joint 5-shot; separate needs one query per choice.",
+   "Run priorities 1 to 4 with a knapsack-style budget selection of scenario-model runs.",
+   "Contamination register (model x scenario, evidence) published as Table 13; coverage matrix of prior evaluations (42 x 30).",
+   "Per-scenario Pearson correlation between metric pairs to show when trade-offs are scenario-dependent."
+  ]
+ },
+ {
+  "id": "A:131",
+  "read": "full body",
+  "algorithm": "Budget forcing: cap thinking by appending the end-of-thinking delimiter (optionally 'Final Answer:'), or lengthen it by suppressing that delimiter and appending 'Wait'. Applied to Qwen2.5-32B-Instruct fine-tuned on s1K (1,000 curated questions from a 59K pool).",
+  "methodology": "s1K chosen by quality, difficulty, diversity filters. Trained 26 minutes on 16 H100 (7 H100 hours). Evaluated AIME24, MATH500, GPQA Diamond; compared token/step/class-conditional control and rejection sampling; majority voting, REBASE.",
+  "key_numbers": "AIME24 50.0 to 56.7 with budget forcing; MATH500 93.0; beats o1-preview by up to 27% (MATH, AIME24). 59K-full training costs 394 H100 hours vs 7 for s1K with no substantial gain.",
+  "limits": "Scaling flattens after about six forced Waits and can loop. Context window caps scaling. Token-conditional control fails (model cannot count tokens); rejection sampling shows inverse scaling.",
+  "use_for_project": "Row 45 (reasoning length control): hard cap on thinking is controllable; forced extension is the opposite of a saving. Only transfers via API thinking-budget settings.",
+  "corrections": "The 50 to 57 and 27% hold. Add: 'up to 27%' is vs o1-preview on MATH/AIME24 and gains flatten; budget forcing targets more compute, so it is not a cost saver by itself.",
+  "new_techniques": [
+   "s1K data curation (quality, difficulty, diversity)",
+   "token/step/class-conditional length control",
+   "rejection-sampling length control",
+   "REBASE comparison"
+  ]
+ },
+ {
+  "id": "A:033",
+  "read": "Read directly, whole of dl/A033/p.txt, lines 1-1182 in two chunks: body, Algorithm 1, Tables 1-6, figures as extracted text only, Appendices A-B. Nothing skipped.",
+  "algorithm": "Agent Forest: sample N outputs from the same LLM, then majority-vote. Code tasks vote by BLEU similarity between samples; closed-ended tasks by answer frequency. Combinable with CoT, debate and other prompting. Hierarchical variant votes within sub-groups, then across groups.",
+  "methodology": "Single versus ensemble sizes up to 40 on Llama2-13B/70B, GPT-3.5, GPT-4 across GSM8K, MATH, Chess, MMLU, HumanEval. Studies gain against steps, sub-task share and prior probability 1/K, with ANOVA at p<0.05 for all sizes.",
+  "key_numbers": "Gains: GSM8K 12-24%, MATH 6-10%, Chess 1-4%, MMLU 5-11%, HumanEval 4-9%. Llama2-13B GSM8K .35 to .59; GPT-3.5 .73 to .85. Hierarchical: 21% to 31% homogeneous, 35% to 47% GPT-3.5+GPT-4. Table 5 single-run tokens 138-495.",
+  "limits": "Cost scales with N: every sample is a full generation. Curves stop at N=40. Gain peaks at mid inherent difficulty (steps 100-200) then tapers at 400. Debate on Llama2 HumanEval gave 0 to 0. Code voting relies on BLEU.",
+  "use_for_project": "Use as an N-fold token multiplier for an accuracy gain. Table 4: Agent Forest has the best average rank, 2.5. Do not cite a saturation point, because the paper gives none.",
+  "corrections": "Earlier record repeated a commenter's asymptote near 30 agents. Text shows curves only to N=40 and no such claim. Also adds the non-monotonic difficulty finding, Tables 5-6 and the hierarchical variant.",
+  "new_techniques": [
+   "BLEU-similarity voting: pick the sample with highest summed BLEU to the others, so voting works for code.",
+   "Hierarchical Agent Forest: vote inside groups, then across group winners; lets a cheap model and GPT-4 be mixed.",
+   "Difficulty properties: gain rises with number of steps and with prior probability 1/K, and is non-monotonic in inherent difficulty.",
+   "Orthogonal stacking: ensembling adds on top of CoT, debate and other prompting methods."
+  ]
+ },
+ {
+  "id": "C:063",
+  "read": "full body",
+  "algorithm": "SLM-default routing: small model with guided decoding and validators handles the task; uncertainty or validation failure escalates to a large model. Track Cost per Successful task (CPS) and schema validity; rollback thresholds trigger fallback.",
+  "methodology": "Position/survey-style paper; Table II holds placeholder illustrative data, not measurements.",
+  "key_numbers": [
+   "Body claims 10-30x lower cost; abstract says 10x-100x (inconsistent).",
+   "Table II is placeholder data."
+  ],
+  "limits": "Not a controlled experiment; headline factors unmeasured.",
+  "use_for_project": "Row 12 (route to cheaper model) and row 27; adopt CPS as a metric and validator-gated escalation as a design pattern.",
+  "corrections": "Prev says 10x-100x; body says 10-30x and the supporting table is placeholder. Overstated as an effect.",
+  "new_techniques": [
+   "Cost per Successful task (CPS)",
+   "rollback thresholds",
+   "validator-gated escalation"
+  ]
+ },
+ {
+  "id": "A:036",
+  "read": "full body except appendix",
+  "algorithm": "Extends the MoE scaling law with inference cost per token as a constraint; compares loss-optimal MoEs with over-trained smaller-expert MoEs that trade extra training tokens for cheaper serving.",
+  "methodology": "Scaling-law fits across MoE configurations (expert counts) with training-token and inference-cost accounting.",
+  "key_numbers": [
+   "Same quality at 47.0-52.0% of inference cost vs loss-optimal 4-expert MoE.",
+   "Training budget 68.4% in one setting.",
+   "2.4-4.3x (intro) vs 2.5-3.5x (abstract) more training cost for 4/8-expert MoEs.",
+   "23.7-42.8% FLOPs reduction."
+  ],
+  "limits": "Model-provider training concern; does not apply to API users or agent sessions.",
+  "use_for_project": "none",
+  "corrections": "Prev quotes 2.5-3.5x; intro states 2.4-4.3x. Adds the 23.7-42.8% FLOPs figure.",
+  "new_techniques": [
+   "inference-cost-aware MoE scaling law",
+   "over-training of small-expert MoEs"
+  ]
+ },
+ {
+  "id": "A:124",
+  "read": "full body",
+  "algorithm": "Workload-binned energy model: bin input/output token lengths and batch sizes, measure energy under batching, decoding strategy and parallelism, compare to theoretical bounds.",
+  "methodology": "Measured energy of serving stacks (vLLM, speculative decoding, tensor parallel, MoE) across workload bins.",
+  "key_numbers": [
+   "Up to 73.00% energy saving vs unoptimized baseline (also 37.58%, 72.18% in other settings).",
+   "vLLM within 26.59-64.22% of theoretical.",
+   "Speculative decoding saves 29.14% at batch<=16 but costs 25.65% more energy at batch 128.",
+   "OLMoE +54.24%."
+  ],
+  "limits": "Energy not dollars; provider-side.",
+  "use_for_project": "none",
+  "corrections": "Prev gives only the 73% best case; misses that speculative decoding raises energy at large batch (+25.65% at batch 128).",
+  "new_techniques": [
+   "workload-binned energy modelling"
+  ]
+ },
+ {
+  "id": "A:015",
+  "read": "full body",
+  "algorithm": "RouterDC: encoder plus learnable LLM embeddings, trained with sample-LLM and sample-sample contrastive losses; route a query to the LLM whose embedding is most similar. Clustering similar queries stabilises training.",
+  "methodology": "Candidate-LLM scores on training queries supply labels; evaluated in-distribution and out-of-distribution.",
+  "key_numbers": [
+   "Average 58.54 vs 54.56 (+3.98) in-distribution; OOD 45.85 vs 43.95 (+1.90).",
+   "About 6x faster than voting."
+  ],
+  "limits": "Needs scored training data per candidate LLM. Limitations section only says scenarios are left to future work.",
+  "use_for_project": "Row 12: learned model routing; needs training data, so treat as optional.",
+  "corrections": "Abstract reports +2.76 in-distribution but body shows +3.98 (comparator not determined); prev mixes the two. Adds the ~6x speed over voting.",
+  "new_techniques": [
+   "sample-LLM contrastive loss",
+   "sample-sample contrastive loss"
+  ]
+ },
+ {
+  "id": "A:093",
+  "read": "full body",
+  "algorithm": "THINK-Bench: 1375 questions; metrics for thinking efficiency, useful tokens and reflection quality over reasoning-model chains.",
+  "methodology": "Evaluation of reasoning models on a curated question set; no mitigation tested.",
+  "key_numbers": [
+   "1375 questions.",
+   "Efficiency Grok-3-mini 61.69% vs QwQ-plus 44.58%."
+  ],
+  "limits": "Benchmark only; no mitigation.",
+  "use_for_project": "Rows 45 and 29 (overthinking): evidence for measuring wasted reasoning tokens.",
+  "corrections": "Prev vague on numbers; adds efficiency values above.",
+  "new_techniques": [
+   "THINK-Bench efficiency and reflection-quality metrics"
+  ]
+ },
+ {
+  "id": "A:107",
+  "read": "full body except appendix",
+  "algorithm": "AWQ: weight-only PTQ (W4A16, INT3/INT4, group 128), no backprop. Salient channels chosen by activation magnitude; per-channel scale s=s_X^alpha, Q(w*s)(x/s); alpha by grid search (20 points) minimizing layer output error; plus weight clipping. TinyChat adds fused dequantization and SIMD-aware packing.",
+  "methodology": "Calibration on a small Pile sample; WikiText-2 perplexity; GPT-4 judging on Vicuna (160 trials); models LLaMA, Llama-2, OPT, Mistral, Mixtral, Vicuna, VILA, OpenFlamingo, CodeLlama.",
+  "key_numbers": [
+   "Llama-2-7B INT3-g128 PPL: AWQ 6.24 vs RTN 6.66 vs GPTQ 6.43 (FP16 5.47).",
+   "16 calibration sequences suffice vs 192 for GPTQ; distribution shift raises PPL 0.5-0.6 vs 2.3-4.9 for GPTQ.",
+   "TinyChat 2.7-3.9x over HF FP16 on RTX 4090; Llama-2-13B 33 tok/s on laptop 4070.",
+   "OpenFlamingo-9B COCO INT4 drop: AWQ -1.17, RTN -4.57, GPTQ -6.72."
+  ],
+  "limits": "Weight-only: no help for compute-bound large-batch prefill; focus is batch size 1 on-device; perplexity is the main metric.",
+  "use_for_project": "Self-hosted serving cost lever (quantization); no direct token-leak row.",
+  "corrections": "Prev says more than 3x speedup; body gives 2.7-3.9x desktop and up to 1.7x vs llama.cpp. Adds calibration robustness and AWQ+GPTQ INT2 combination.",
+  "new_techniques": [
+   "activation-aware per-channel scaling",
+   "TinyChat",
+   "SIMD-aware weight packing",
+   "AWQ+GPTQ combination"
+  ]
+ },
+ {
+  "id": "A:076",
+  "read": "full body",
+  "algorithm": "TokenLake: segment-level prefix cache pool with declarative interface (get_prefix_tree, get_cache_load, gen_plans; init_query, query, init_transfer, put). Heavy-hitter-aware load balancing (hash normal segments, replicate top heavy hitters), power-of-two-choices replica pick, global LRU, bipartite-matching dispatch, DP goodput scheduler.",
+  "methodology": "16k-LOC prototype on FlashInfer/SGLang/LoongServe; 8xA100-80GB, Llama-2-7B based LWM-1M; LooGLE, SCBench, ShareGPT; baselines SGLang-Router and MoonCake.",
+  "key_numbers": [
+   "Throughput up to 2.6x vs cache-aware routing, 2.0x vs PD disaggregation.",
+   "P90 goodput 2.55x on SCBench vs SGLang-Router.",
+   "Load-balance CV 11% vs 99% (Router) and 62%/122% (MoonCake).",
+   "Segment size threshold about 568 tokens."
+  ],
+  "limits": "GPU-cluster infrastructure needing high-bandwidth interconnect; tested on 7B; gains concentrate in long-context multi-turn.",
+  "use_for_project": "Prefix-cache hit-rate lever for self-hosted serving; not applicable to API-only use. Cites 75-95% production hit rates and Manus 100:1 input:output ratio as context.",
+  "corrections": "Prev says none relevant; relevant only to the cache-hit-rate lever when self-hosting. Adds concrete numbers.",
+  "new_techniques": [
+   "heavy-hitter-aware segment load balancing",
+   "bipartite-matching dispatch",
+   "declarative cache interface",
+   "stateless elastic scheduling",
+   "power-of-two-choices replica selection"
+  ]
+ },
+ {
+  "id": "A:005",
+  "read": "full body",
+  "algorithm": "Router is a 3B LLM policy trained with PPO that interleaves think with search calls to a pool of 6 LLMs (max 4 routing steps). Reward = format + (1-alpha)*EM outcome + alpha*cost; hierarchical (format failure zeroes others); cost normalized with sliding-window percentiles. New LLMs added via descriptors without retraining.",
+  "methodology": "Trained on 14K NQ+HotpotQA samples; 7 QA datasets, 500 test each, Exact Match; Together API pricing for cost.",
+  "key_numbers": [
+   "Average EM 0.416 (Qwen router) and 0.409 (Llama router) above baselines.",
+   "Adding two unseen LLMs: average EM 0.458 to 0.463 without retraining.",
+   "Average API calls about 1.01-1.36.",
+   "Alpha 0.6-0.9: performance falls as cost reward rises; emergent small-first then escalate."
+  ],
+  "limits": "QA only with Exact Match; cost reward studied only for QA; router itself costs 3B inference per step; no cost-weighted Pareto in the main table.",
+  "use_for_project": "Row 12 / model-routing component: cost-aware learned router; needs RL training, QA-only evidence.",
+  "corrections": "Prev found no cost figure; body gives EM numbers and alpha trade-off but still no dollar saving.",
+  "new_techniques": [
+   "hierarchical reward (format>outcome>cost)",
+   "sliding-window cost normalization",
+   "descriptor-based generalization to unseen LLMs"
+  ]
+ },
+ {
+  "id": "A:049",
+  "read": "full body except appendix",
+  "algorithm": "LiveBench: 18 tasks in 6 categories built from recent sources (arXiv, news, Kaggle, competitions), scored automatically against ground truth with no LLM judge; about 1/6 of questions replaced each monthly update.",
+  "methodology": "40 LLMs (0.5B to 405B), single-turn, temperature 0, zero-shot CoT, scores 0-1 averaged per task, category, overall.",
+  "key_numbers": [
+   "Top model o1-preview 64.7; claude-3-5-sonnet-20241022 58.5; all below 70%.",
+   "Correlation with Chatbot Arena 0.91 and Arena-Hard 0.88.",
+   "Rank correlation between updates > 0.997; mean score drops about 1.2% as questions refresh."
+  ],
+  "limits": "No non-English tasks; ground truth cannot cover open-ended tasks; prompt-style biases across model families.",
+  "use_for_project": "none directly; usable as a contamination-limited quality check when validating cheaper-model substitutions.",
+  "corrections": "Prev none; body also gives Appendix B token/cost per API model (not read).",
+  "new_techniques": [
+   "monthly 1/6 question refresh",
+   "ground-truth scoring without LLM judge"
+  ]
+ },
+ {
+  "id": "C:131",
+  "read": "full body except appendix",
+  "algorithm": "Budget Tracker: plug-in that shows remaining and used per-tool budgets each ReAct iteration. BATS: structured tree plan (exploration vs verification clues), self-verification with SUCCESS/CONTINUE/PIVOT decisions, trajectory summarization, LLM judge picks final answer. Unified cost = token cost (input/output/cache) + tool-call cost.",
+  "methodology": "Web search agents (search, browse) on BrowseComp, BrowseComp-ZH, HLE-Search, plus tau2-bench retail; Gemini-2.5-Pro; budget 100 per tool.",
+  "key_numbers": [
+   "Budget Tracker at budget 10 matches ReAct at 100 (12.8% vs 12.6%) with 40.4% fewer search calls, 19.9% fewer browse calls, 31.3% lower cost.",
+   "BATS 24.6% BrowseComp, 46.0% BrowseComp-ZH, 27.0% HLE-Search, training-free.",
+   "Ablation: removing verification drops BrowseComp 18.7% to 15.4%."
+  ],
+  "limits": "Evaluated on web search agents only; tool-call budget, not token budget.",
+  "use_for_project": "Rows 27 and 5: expose remaining budget to the agent to curb runaway tool calls.",
+  "corrections": "Prev omits the 40.4% fewer search calls and that the saving is at budget 10 vs 100; also BATS accuracy numbers.",
+  "new_techniques": [
+   "Budget Tracker",
+   "BATS",
+   "unified token+tool cost metric",
+   "PIVOT/CONTINUE verification"
+  ]
+ },
+ {
+  "id": "A:078",
+  "read": "full body except appendix",
+  "algorithm": "RetroInfer: wave index (cluster-based vector index over KV: GPU-resident centroids meta index) with tripartite attention approximation (steady, retrieval, estimation zones), accuracy-bounded estimation from centroids, segmented clustering; wave buffer with CPU-managed GPU block cache.",
+  "methodology": "Llama3.1-8B, Llama3-8B-1048K, Qwen2.5-7B/72B and R1-distill models on A100; RULER and long-context tasks; baselines Quest, MagicPIG, InfiniGen, PQCache.",
+  "key_numbers": [
+   "Up to 4.4x decoding throughput over full attention at 120K, up to 12.2x over sparse baselines.",
+   "Accuracy +1.40-46.47% over sparse baselines at same retrieval budget.",
+   "Attention estimation improves accuracy up to 20%."
+  ],
+  "limits": "Inference-engine internals needing GPU/CPU control; not usable by API users.",
+  "use_for_project": "none; self-hosted long-context serving only.",
+  "corrections": "Prev is accurate; adds accuracy gains and ablation.",
+  "new_techniques": [
+   "tripartite attention approximation",
+   "accuracy-bounded attention estimation",
+   "segmented clustering",
+   "CPU-managed GPU block cache"
+  ]
+ },
+ {
+  "id": "A:136",
+  "read": "full body except appendix",
+  "algorithm": "Empirical study: GPTQ, AWQ, SmoothQuant, FP8 applied to Llama 1B-405B instruction models; 13 datasets in 6 categories plus MT-Bench with GPT-4 judge.",
+  "methodology": "Multi-cluster GPU evaluation; OpenLLM Leaderboard v1/v2 tasks and MT-Bench.",
+  "key_numbers": [
+   "Llama-3.2-1B 4-bit: -25.32% GSM8K, -16.01% IFEval.",
+   "Llama-3.1-8B: 8-bit beats 4-bit by +2.51%/+2.11%; at 70B 4-bit beats 8-bit by +1.89%.",
+   "FP8 most stable; SmoothQuant poor on 405B; AWQ usually beats GPTQ."
+  ],
+  "limits": "Runtime limits (over 30 days) prevented some configs; GPT-4 judge errors; no cost measurements.",
+  "use_for_project": "Self-hosting quantization choice; no token-leak row.",
+  "corrections": "Prev accurate; adds task difficulty finding (little effect), MT-Bench coding/STEM drops, FP8 halves KV cache.",
+  "new_techniques": [
+   "FP8 KV cache halving note"
+  ]
+ },
+ {
+  "id": "A:064",
+  "read": "full body except appendix",
+  "algorithm": "Mechanism design: buyers have type (willingness-to-pay, task volume, time preference); hardware tiers induce self-selection on time preference (separation theorem), reducing to 1-D Mussa-Rosen screening per tier; per-task prices independent of volume.",
+  "methodology": "Cost model from prefill/decode physics, latency quadratic in input; calibrated to 8-GPU H100 and B200 clusters; 105 configurations.",
+  "key_numbers": [
+   "Separation theorem holds in 83% of 105 configurations, 96% at relevant WTP scales.",
+   "Two-tier gives 26-66% higher seller profit than best single tier.",
+   "No quantity discounts, matching flat per-token pricing."
+  ],
+  "limits": "Monopolist, independence assumptions; no queueing; one hardware pair with decode ratio 0.68.",
+  "use_for_project": "none; seller-side theory, useful only to reason about priority/fast-mode price tiers.",
+  "corrections": "Prev accurate; adds assumptions and that gains are regime-dependent (single tier suffices for generational upgrades).",
+  "new_techniques": [
+   "separation theorem",
+   "latency-slack utility"
+  ]
+ }
+]

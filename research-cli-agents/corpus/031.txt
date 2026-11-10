@@ -1,0 +1,1162 @@
+TITLE: Response-Level Speculative Decoding for Cost-Efficient LLM API Serving
+URL: https://arxiv.org/abs/2606.22840
+ORG: arXiv  TYPE: paper  DATE: 2026-06
+
+RLM-Cascade: Response-Level Speculative Decoding
+for Cost-Efficient LLM API Serving
+Haifeng Wu
+
+Srinivasan Manoharan
+
+Fangbo Tu
+
+Junhua Zhao
+
+Jian Wan
+
+arXiv:2606.22840v1 [cs.LG] 22 Jun 2026
+
+{haifwu, srinivmanoharan, fatu, zhahua, jwan}@paypal.com
+
+Abstract
+
+unpredictably, particularly on tasks requiring multi-step
+reasoning, code correctness, or precise instruction following. Serving systems therefore require a principled
+mechanism for capturing the quality of large models at
+a fraction of the cost, without requiring access to model
+internals or co-located deployment.
+This challenge is especially acute in agentic coding
+workloads, where a coding assistant issues dozens of
+turns per session, interleaving tool-selection commands
+(Bash execution, file reads and writes, web searches)
+with text-generation turns (code synthesis, explanations,
+documentation). These turn types differ in cost sensitivity and quality requirements: tool-selection turns must
+emit schema-compliant JSON or they break the client’s
+execution loop; text-generation turns have more flexible
+output formats and are more amenable to draft-and-verify
+pipelines.
+
+We present RLM-Cascade, a proxy-layer system that applies speculative decoding at the response level to reduce
+LLM API costs without requiring model architecture access or a shared vocabulary. A fast, inexpensive draft
+model generates a candidate response; a capable verify
+model accepts, enhances, or is bypassed entirely depending on a lightweight complexity router. On a real-world
+agentic coding workload (Claude Code), RLM-Cascade
+achieves a draft-use rate of 88.8% across 125 production requests, reducing API cost by 45.8% relative to
+a direct Opus baseline. Counter-intuitively, the proxy
+also reduces end-to-end latency: median response time
+is 2,026 ms versus 3,698 ms for Native Opus—a 1.83×
+speedup at p50—because the SKIPPED path (DeepSeek
+only, no Opus call) dominates the workload distribution.
+Quality matches or exceeds the Opus baseline: 100%
+pass rate on a 20-task Code/Math/Instruct benchmark
+versus 95% for Native Opus. We further describe a rulebased complexity router that selects the SKIPPED path
+for simple agentic turns and a hybrid tool-call strategy
+that bypasses the speculative pipeline for schema-critical
+tool-selection turns. RLM-Cascade is deployed in production as an enterprise AI infrastructure component and
+published as open source with a live metrics dashboard
+and Prometheus endpoint.
+CCS Concepts: Computing methodologies → Natural
+language generation; Computer systems organization → Cloud computing; Software and its engineering → Distributed systems organizing principles.
+
+1.2
+
+Token-level speculative decoding [1, 2] achieves significant throughput improvement: a small model drafts k
+tokens, which a large model verifies in a single forward
+pass. This works because both models share a vocabulary and logit distributions. The technique is inapplicable
+when draft and verify models are served through separate
+HTTP APIs with no access to internal logit distributions.
+LLM cascade and routing systems [3, 4] route entire
+requests to one model or another based on predicted
+difficulty. This reduces cost when cheaper models are
+sufficient, but provides no fallback mechanism when
+the cheap model fails. Neither paradigm combines both
+models on a single request through an API-only interface.
+
+Keywords: LLM serving, speculative decoding, LLM
+cascade, cost optimization, agentic AI, API proxy.
+
+1
+1.1
+
+Prior Art Gap
+
+1.3
+
+Introduction
+
+Contributions
+
+1. Response-level speculative decoding at the API
+layer. We treat the full model response as the unit
+of speculation, enabling draft/verify pipelines that
+operate over standard HTTP without logit access.
+
+Problem
+
+Frontier large language models such as Claude Opus
+and GPT-4 deliver state-of-the-art accuracy, but their
+inference cost is 50–100× higher than smaller models. Smaller models reduce cost but degrade quality
+
+2. Cross-provider, cross-architecture pipeline.
+Draft (DeepSeek-V4-Pro, Azure AI Foundry)
+1
+
+V ∈ {U SE _D RAFT, E NHANCE} over the full sequence:
+
+and verify (claude-opus-4-8 via the Native Opus
+enterprise endpoint on Google Vertex AI) are
+heterogeneous models from different providers,
+connected only through the Anthropic API wire
+format.
+
+T
+Y
+
+Mp (x̃i | x<i )
+P (V = U SE _D RAFT | x̃, xprompt ) ≈
+min 1,
+Mq (x̃i | x<i )
+i=1
+(2)
+In practice, Mp cannot compute this product without
+token-level access; instead it uses natural language judgment as a proxy. The trade-off is expressiveness for deployability: response-level verification works across any
+pair of API-accessible models with no shared vocabulary
+requirement.
+
+3. Rule-based complexity router with tool-call
+carve-out. A lightweight keyword classifier routes
+simple agentic turns directly through DeepSeek
+(SKIPPED, ≈2% of Opus cost), complex turns
+through the draft→verify pipeline, and toolselection turns directly to Opus.
+
+2.2
+
+4. Counter-intuitive empirical result. Against a Native Opus baseline, RLM-Cascade is simultaneously
+cheaper (45.8% savings), faster (1.83× lower p50
+latency), and at least as accurate (100% vs. 95%
+pass rate on a 20-task benchmark), because the
+SKIPPED path dominates the agentic workload distribution (64–70% of requests).
+
+Background
+
+2.1
+
+Token-Level Speculative Decoding
+
+LLM Cascade and Routing
+
+FrugalGPT [3] learns a routing policy that assigns each
+request to the cheapest model predicted to answer it
+correctly, with the policy trained offline on labeled
+datasets. LLM-Cascade [4] uses confidence scores to
+decide whether to escalate to a more capable model. BigLittle LM [10] generalizes this with dynamic switching
+based on token-level uncertainty. These systems route
+whole requests to one model at a time; RLM-Cascade
+applies both models to the same request in a draft-thenverify structure.
+
+5. Open observability stack.
+Per-request
+Langfuse traces,
+a live dashboard at
+/dashboard,
+Prometheus
+metrics
+at
+/metrics/prometheus, and a JSON metrics
+API provide full visibility into cost, latency, and
+verdict distribution at runtime.
+
+2
+
+
+
+2.3
+
+Agentic LLM Workloads
+
+Agentic systems such as Claude Code issue structured
+multi-turn conversations consisting of two qualitatively
+different turn types:
+• Tool-selection turns: The assistant emits a
+tool_use content block containing a JSON
+tool name and parameters. Schema validity is
+mandatory—a malformed block aborts the execution loop.
+
+The speculative decoding framework of Leviathan et
+al. [1] and Chen et al. [2] achieves lossless throughput
+gains by exploiting the asymmetry in cost between drafting and verifying tokens. A small draft model Mq generates k token candidates x̃ = (x̃1 , . . . , x̃k ); a large verify
+model Mp verifies all k tokens in a single forward pass.
+The acceptance criterion for each token x̃i is:
+
+
+Mp (x̃i | x<i )
+P (accept x̃i ) = min 1,
+. (1)
+Mq (x̃i | x<i )
+
+• Text-generation turns: The assistant emits a
+natural-language response (explanations, code, documentation). Output format is flexible; minor imprecisions are generally tolerable.
+In production Claude Code sessions, approximately 70–
+80% of turns are tool-selection turns. Speculative decoding applies to the remaining 20–30%, making the hybrid
+tool-call strategy essential.
+
+This guarantees that the distribution of accepted tokens is identical to Mp ’s distribution—the process is
+lossless with respect to the verifier. The technique requires shared vocabulary and access to both models’ logit
+distributions—preconditions that do not hold when models are accessed through black-box APIs.
+RLM-Cascade as a coarsened generalization. Our
+system operates at the response level: Mq generates
+a complete response x̃ = (x̃1 , . . . , x̃T ) and Mp verifies the entire sequence at once. This replaces the
+per-token acceptance probability with a binary verdict
+
+3
+
+System Design
+
+3.1
+
+Architecture Overview
+
+Figure 1 shows the end-to-end architecture. The proxy
+intercepts all Anthropic API calls from the Claude
+Code client by setting ANTHROPIC_BASE_URL to the
+proxy’s local address, speaking the Anthropic API wire
+2
+
+
+.
+
+Table 1: Complexity routing rules (evaluated in order).
+Signal
+
+Examples
+
+Decision
+
+Simple prefix
+Complex keyword
+Input length
+Default
+
+what is, summarize
+class, security, sql
+>1,500 characters
+—
+
+SKIPPED
+Draft+Verify
+Draft+Verify
+Draft+Verify
+
+with no draft stage. In a typical Claude Code session,
+70–80% of turns are tool-selection turns; speculative decoding applies only to the remaining 20–30%, which
+constitutes the pipeline’s reach within any agentic session.
+
+3.6
+
+Token pricing (USD per million tokens, as of deployment): DeepSeek-V4-Pro $1.74 input / $3.48 output;
+claude-opus-4-8 $5.50 input / $27.50 output. The output
+cost ratio is approximately 8× higher for Opus, making
+the SKIPPED path the primary economic lever.
+Per-verdict cost formulas. Let pin = original prompt
+input tokens, din /dout = draft input/output tokens, and
+aout = Opus output tokens in the ENHANCED case (full
+derivation in Appendix B):
+
+Table 2: Verdict outcomes, triggers, and relative cost.
+Verdict
+
+Trigger
+
+S KIPPED
+ACCEPTED
+E NHANCED
+
+Router: simple turn
+Opus emits USE_DRAFT
+Opus emits ENHANCE
+
+Cost Model
+
+Cost vs. Opus-only
+≈2%
+≈20%
+≈115%
+
+format on both sides. No client modifications are required.
+
+Cskip = din ·1.74 + dout ·3.48 ≈ 0.02 Cbase
+
+3.2
+
+Rule-Based Complexity Router
+
+Cacc = Cskip + (pin + dout )·5.50 + 5·27.50 ≈ 0.20 Cbase
+
+The router classifies each incoming text-generation request in O(1) time with no model calls. Two hard rules
+apply first:
+Tool-selection bypass: Requests with a non-empty
+tools field are forwarded directly to Opus. Draft models do not reliably conform to Anthropic’s tool-use JSON
+schema.
+Complexity signals (for tool-free requests) are shown
+in Table 1. The 1,500-character threshold captures longcontext injections that do not match any keyword.
+
+Cenh = Cskip + (pin + dout )·5.50 + aout ·27.50 ≈ 1.15 Cbase
+
+3.3
+
+where Cbase = pin ·5.50 + adirect
+out ·27.50 is the Opusonly baseline cost (all prices in USD/M tokens).
+Parameterized expected cost model.
+Let
+πs , πa , πe ∈ [0, 1] denote the SKIPPED, ACCEPTED,
+and ENHANCED verdict proportions (πs +πa +πe = 1),
+and let rs , ra , re denote the corresponding per-verdict
+cost ratios. The expected cost ratio is:
+
+Draft → Verify Pipeline
+
+(3)
+
+E[savings] = 1 − (πs rs + πa ra + πe re ).
+
+(4)
+
+Substituting the empirical architecture all-time distribution (πs =0.641, πa =0.103, πe =0.256) yields a predicted savings of 1 − (0.013 + 0.021 + 0.294) = 67.2%.
+Empirical all-time savings are 47.4% (§4.3); the gap
+is attributable to tool-pass-through overhead and tokenlength variation.
+Sensitivity to πs . Parameterize the non-SKIPPED
+split as πa = α(1 − πs ) and πe = (1 − α)(1 − πs ) for
+α ∈ [0, 1]. Then:
+
+
+E[savings] = 1 − πs rs − (1 − πs ) αra + (1 − α)re ,
+
+For complex requests, the pipeline executes sequentially:
+(1) DeepSeek-V4-Pro (Azure AI Foundry) generates a
+draft using the original system prompt and user messages unchanged; (2) the Native Opus endpoint—the
+enterprise deployment of claude-opus-4-8 on Google Vertex AI that RLM-Cascade wraps—receives the original
+request concatenated with the draft, wrapped in the enhancement prompt (Appendix A); (3) Langfuse receives
+a nested trace asynchronously after the client response is
+returned, adding zero latency to the critical path.
+
+3.4
+
+E[cost ratio] = πs rs + πa ra + πe re ,
+
+Verdict Protocol
+
+(5)
+
+The verify model returns one of two outputs, producing
+three system-level outcomes summarized in Table 2.
+
+∂ E[savings]
+= αra + (1 − α)re −rs > 0.
+∂ πs
+|
+{z
+}
+
+
+
+
+(6)
+
+≥ ra > rs
+
+3.5
+
+Hybrid Tool-Call Strategy
+
+Equation (6) shows that expected savings increase monotonically with πs for any fixed α; the router’s primary
+objective is therefore to maximize the SKIPPED rate
+
+Tool-selection turns are identified by a non-empty
+tools array and forwarded directly to claude-opus-4-8
+3
+
+SKIPPED — simple turn, no Opus call
+
+DeepSeek
+V4-Pro
+
+complex
+
+Opus
+Verify
+
+simple / complex
+ACCEPTED /
+ENHANCED
+
+Claude Code HTTPS
+Client
+
+FastAPI
+Proxy
+
+Client
+Response
+
+Router
+
+tool-call
+result
+has_tools
+
+Langfuse
+
+dashboard
+Prometheus
+
+Opus
+Direct
+
+Figure 1: RLM-Cascade end-to-end architecture. SKIPPED (64–70% of requests): simple turns are routed to DeepSeek
+only and returned directly to the client with no Opus call (top rail). Draft+Verify: complex turns go to DeepSeek, then
+the draft is validated by Opus, which emits ACCEPTED (USE_DRAFT) or E NHANCED (rewritten response), arriving at
+the client via out.west. Direct: tool-selection turns bypass the pipeline and go straight to Opus to guarantee JSON
+schema compliance (bottom path). Langfuse traces and Prometheus metrics fire asynchronously after the response is
+returned, adding zero latency to the critical path.
+Table 3: Predicted savings vs. SKIPPED rate (α = 0.28,
+matching empirical ACCEPTED/ENHANCED ratio).
+πs
+
+πa
+
+πe
+
+E[savings]
+
+40%
+55%
+64%
+75%
+90%
+
+17%
+13%
+10%
+7%
+3%
+
+43%
+32%
+26%
+18%
+7%
+
+22.5%
+40.2%
+66.8%
+76.4%
+87.1%
+
+draft (DeepSeek call), and an optional child span
+enhance (Opus call). The dashboard at /dashboard
+provides real-time verdict distribution, savings rate, latency percentiles, and per-request history. Prometheus
+metrics at /metrics/prometheus expose:
+rlm_requests_total{verdict="SKIPPED|ACCEPTED
+|ENHANCED"}
+rlm_savings_usd_total
+rlm_latency_ms_histogram{quantile
+="0.5|0.95|0.99"}
+
+subject to a quality constraint. Table 3 quantifies savings
+at representative operating points.
+Break-even condition. Setting E[cost ratio] < 1 and
+solving for the minimum SKIPPED rate (worst case α =
+0, all complex turns ENHANCED):
+πs∗ >
+
+re − 1
+1.15 − 1
+=
+≈ 0.133.
+re − rs
+1.15 − 0.02
+
+Evaluation
+
+4.1
+
+Experimental Setup
+
+We evaluate on three distinct workloads:
+(7)
+1. Service benchmark (N =12 current run / N =125
+all-time): Requests from live Claude Code sessions
+routed through the production proxy, covering greetings, factual questions, code generation, SQL, explanation, and refactoring.
+
+As long as more than 13.3% of text-generation requests
+take the SKIPPED path, the system achieves positive net
+savings—even if every complex turn is ENHANCED. In
+production, πs ≈ 64–70%, providing a >50 pp safety
+margin above the break-even threshold.
+
+3.7
+
+4
+
+2. 20-task extended engineering benchmark: A
+structured prompt suite covering algorithmic tasks
+(adaptive rejection sampler, write-compressor,
+query-optimize), engineering tasks (fix-codevulnerability, extract-moves-from-video, mteb-
+
+Observability Stack
+
+Langfuse captures per-request nested traces: a root span
+(end-to-end latency, verdict, total cost), a child span
+4
+
+retrieve), and standard data-structure tasks. Designed to stress the ENHANCED path.
+
+defers the first token. This is a Pareto trade-off discussed
+in §6.2.
+Service benchmark latency—all-time, N =125: avg
+4,493 ms; p50 2,623 ms; p95 20,923 ms. The p95 tail is
+driven by ENHANCED-path requests with long outputs.
+
+3. 3-endpoint quality comparison benchmark
+(N =20 per endpoint): 10 Code + 5 Math + 5 Instruct tasks, evaluated as binary pass/fail against
+expected outputs.
+Endpoints:
+• Local vLLM — DeepSeek-R1-Distill-Qwen-7B
+(4bit, MLX framework)
+• Remote Speculate — DeepSeek-V4-Pro (Azure AI
+Foundry) → Native Opus (Google Vertex AI)
+• Remote Native Opus — claude-opus-4-8 served via
+the enterprise Native Opus endpoint (Google Vertex
+AI); this is the production baseline that RLM-Cascade
+wraps
+Baseline: Remote Native Opus (direct calls to the Native
+Opus endpoint, no speculative pipeline).
+
+4.2
+
+Verdict Distribution
+
+Table 4 shows verdict proportions across all evaluation
+sets. The SKIPPED rate is consistently 64–70% regardless of task distribution.
+Table 5 details per-prompt verdicts for the current
+service-benchmark run. The SKIPPED path dominates (8/12 prompts); the sole ENHANCED case
+(sql_injection) is the only negative-savings entry.
+
+4.3
+
+Table 8 reports pass/fail results on the 20-task 3-endpoint
+benchmark.
+Remote Speculate matches Native Opus on Code
+and Math (both 100%) and exceeds Native Opus on Instruct (100% vs. 80%). We hypothesize that the errorcorrection framing of the verification prompt focuses
+Opus’s attention on constraint satisfaction more effectively than open-ended generation (§6.5).
+Local vLLM fails all Math tasks (quantization-induced
+numerical degradation) and 8/10 Code tasks (logically
+incorrect implementations), confirming that its 165 ms
+TTFT advantage does not constitute a cost-quality Pareto
+improvement.
+
+4.6
+
+Extended Engineering Benchmark
+
+Table 9 details the 6 ENHANCED tasks in the 20-task extended suite. The 14 SKIPPED tasks cover standard data
+structures and introductory algorithms where DeepSeekV4-Pro’s quality is indistinguishable from Opus.
+ENHANCED tasks cluster around two failure modes:
+(1) domain knowledge gaps where DeepSeek-V4-Pro
+lacks specialized training data (CV, IR, security); (2) algorithmic precision requirements where approximate
+drafts are systematically rejected.
+
+Cost Savings
+
+Table 6 reports API cost savings across evaluation sets.
+The all-time savings rate (45–48%) exceeds the
+current-run rate (32%) because the current run contained
+more complex prompts that triggered the ENHANCED
+path. At 100 requests/day, a 47% savings rate on the
+text-generation subset (≈30% of all turns) yields approximately $2,000–$3,000/month in API cost reduction for
+a production agentic coding assistant.
+
+4.4
+
+4.5 Quality: Code, Math, and Instruct
+Tasks
+
+4.7 Case Study:
+Cost Inversion on
+mteb-retrieve
+The mteb-retrieve task is the only case across
+all 39+20+125 evaluated requests where RLM-Cascade
+costs more than the Native Opus baseline. DeepSeek
+generated a short, incorrect draft (≈120 tokens); Opus
+rewrote it into a substantially longer correct response
+(≈380 tokens vs. ≈280 tokens direct), inflated further by
+the correction preamble:
+
+Latency, TTFT, and Throughput
+
+Table 7 shows the three-endpoint head-to-head comparison (20 tasks per endpoint).
+End-to-end latency: Remote Speculate is 1.65×
+faster on average and 1.83× faster at p50 than Native
+Opus. This counter-intuitive result arises from two mechanisms: (1) the SKIPPED path (64–70% of requests)
+completes in DeepSeek-only time (≈800–1,200 ms), far
+below Opus’s minimum latency; (2) even on the ACCEPTED path, Opus need only emit USE_DRAFT (≈5
+tokens), eliminating Opus’s full generation phase.
+TTFT: Remote Speculate is 2.1× slower than Native
+Opus at TTFT. The sequential draft-then-verify execution
+
+DeepSeek draft:
+$0.00021
+Opus verify input:
+$0.00330
+(670 tokens
+* $5.50/M)
+Opus verify output: $0.01050
+(380 tokens
+* $27.50/M)
+----------------------------------------Total actual:
+$0.01401
+Native Opus-only:
+$0.00212
+Cost premium:
++$0.01189
+
+5
+
+Table 4: Verdict distribution across evaluation sets.
+Evaluation set
+
+N
+
+SKIPPED
+
+ENHANCED
+
+Service bench (current run)
+Service bench (all-time)
+Architecture all-time
+20-task extended suite
+
+12
+125
+39
+20
+
+66.7%
+—†
+64.1%
+70.0%
+
+8.3%
+10.4%
+25.6%
+30.0%
+
+Draft-used
+91.7%
+88.8%
+74.4%
+70.0%
+
+† SKIPPED/ACCEPTED breakdown not retained in early logging; total draft-used count (112/125) is available.
+
+Table 5: Per-prompt verdict detail—service benchmark,
+current run.
+Prompt
+
+Category
+
+Verdict
+
+Medusa [8] attaches multiple draft heads to the verifier
+model; EAGLE [9] predicts feature vectors rather than
+tokens, further tightening draft-verify coupling. Neither
+Savings is applicable here.
+
+hello
+math_simple
+haiku
+explain_bst
+reverse_str
+fizzbuzz
+fix_bug
+sql_injection
+rest_api_design
+big_o
+refactor
+async_explain
+
+General
+Math
+Creative
+CS
+Code
+Code
+Debug
+Security
+Design
+Analysis
+Code
+Concept
+
+SKIPPED
+SKIPPED
+SKIPPED
+SKIPPED
+SKIPPED
+SKIPPED
+ACCEPTED
+ENHANCED
+SKIPPED
+SKIPPED
+ACCEPTED
+ACCEPTED
+
++$0.00196
++$0.00301 5.2 LLM Cascade and Routing
++$0.00215
++$0.00587 FrugalGPT [3] learns an offline routing policy; LLM+$0.00312 Cascade [4] uses online confidence scores; Big-Little
++$0.00198 LM [10] switches dynamically at token level. All route
++$0.00284 whole requests to one model; RLM-Cascade applies both
+−$0.00174 models to the same request with a runtime verdict used
++$0.00467 as feedback.
++$0.00523
++$0.00183
++$0.00162 5.3 LLM Serving Systems
+
+vLLM [6] introduced PagedAttention for KV-cache
+management; Orca [7] proposed continuous batching; Sarathi-Serve [12] addresses chunked-prefill stalls.
+These operate at the model layer and are orthogonal
+to—and composable with—RLM-Cascade’s applicationlayer response composition.
+
+Table 6: API cost savings by evaluation set.
+Evaluation set
+
+Actual
+
+Baseline
+
+Savings
+
+Service bench, current run
+Service bench, all-time
+Architecture all-time
+
+$0.047
+$1.155
+$0.943
+
+$0.069
+$2.130
+$1.791
+
+32.0%
+45.8%
+47.4%
+
+5.4
+aenhance
+out
+
+adirect
+out
+
+Cost inversion requires
+≫
+(Appendix B, break-even derivation), which occurs when
+Opus substantially expands a short wrong draft into
+a long correct answer. Across the extended suite, 5
+of 6 ENHANCED tasks produced positive savings;
+mteb-retrieve is the exception. This motivates routing precision as the primary engineering priority ahead
+of enhancement quality.
+
+5
+
+Related Work
+
+5.1
+
+Token-Level Speculative Decoding
+
+Draft-Verify Patterns
+
+Self-consistency [5] samples multiple responses from
+the same model and takes a majority vote, improving
+quality at 3–10× compute cost with no savings. LLMas-Judge [11] uses a capable model to evaluate another’s
+output—structurally similar to our verify stage, but focused on evaluation rather than cost-efficient generation.
+RLM-Cascade biases the verify prompt toward acceptance as the default to avoid inflating ENHANCED rates
+on stylistic disagreements.
+
+Leviathan et al. [1] proved that token-level draft-thenverify is lossless with respect to the verifier’s distribution
+under rejection sampling (Equation 1). Chen et al. [2]
+extended this to speculative sampling with more general acceptance criteria. Both require shared vocabulary
+and logit access, precluding cross-provider API settings.
+
+6
+
+Discussion
+
+6.1
+
+The Counter-Intuitive Latency Result
+
+The simultaneous improvement in cost, latency, and quality resolves when one recognizes that the SKIPPED path
+does not add a stage to Opus—it replaces Opus for the
+majority of requests. The router’s classification accuracy
+is the key variable: when it correctly identifies simple
+6
+
+Table 7: Latency and throughput—3-endpoint comparison (20 tasks each). Bold indicates best result per metric.
+Metric
+
+Local vLLM (4-bit 7B)
+
+Remote Speculate
+
+Remote Native Opus
+
+5,072
+5,234
+165
+1.66
+3,004
+
+2,520
+2,026
+2,520
+2.50
+2,000
+
+4,159
+3,698
+1,213
+2.53
+1,976
+
+Avg end-to-end latency (ms)
+p50 latency (ms)
+Avg TTFT (ms)
+Throughput (c=5, req/s)
+Wall time (c=5, ms)
+
+Table 8: Quality benchmark pass rates (20 tasks per endpoint, binary pass/fail). Bold indicates best result per row.
+Category
+
+N
+
+Local vLLM (4-bit 7B)
+
+Remote Speculate
+
+Remote Native Opus
+
+Code generation
+Math reasoning
+Instruction follow
+
+10
+5
+5
+
+20%
+0%
+0%
+
+100%
+100%
+100%
+
+100%
+100%
+80%
+
+Overall
+
+20
+
+10%
+
+100%
+
+95%
+
+Table 9: ENHANCED task results—20-task extended
+suite.
+
+difficulty y. The two error rates are:
+ε = P (ŷ = simple | y = complex),
+
+(8)
+(9)
+
+Task
+
+Category
+
+Savings
+
+δ = P (ŷ = complex | y = simple).
+
+adaptive-rejection-sampler
+extract-moves-from-video
+fix-code-vulnerability
+mteb-retrieve
+query-optimize
+write-compressor
+
+Statistical alg.
+Computer vision
+Security
+Info. retrieval
+Database
+Systems
+
++$0.023
++$0.018
++$0.011
+−$0.012
++$0.009
++$0.014
+
+Here ε is the false-negative rate (missed complex turns)
+and δ is the false-positive rate (over-routed simple turns).
+Quality risk from false negatives. Complex turns
+routed via SKIPPED without verification incur a quality
+penalty bounded by:
+Quality risk ∝ ε · P (draft incorrect | y = complex).
+(10)
+The draft’s error rate on known-complex tasks is bounded
+empirically by the ENHANCED rate in the extended
+suite (30%), yielding a quality-at-risk fraction of at most
+ε · 0.30 of all requests.
+Savings loss from false positives. Simple turns
+routed to the Draft+Verify pipeline incur unnecessary
+cost:
+
+requests (64–70% of the workload), those requests complete at DeepSeek latency and cost, neither of which
+is bounded below by Opus’s floor. The verify path is
+invoked only for the minority of complex requests.
+
+6.2
+
+TTFT Regression as Pareto Trade-Off
+
+RLM-Cascade accepts a 2.1× TTFT regression in exchange for lower end-to-end latency and cost. This is
+acceptable for batch and background tasks (code linting, documentation generation) and for agentic pipelines
+where the agent waits for a complete tool-call response
+before executing—making TTFT perceptually irrelevant. For streaming-sensitive interactive chat, parallel
+draft + verify execution (both models begin simultaneously; verify waits only for draft completion) could recover TTFT at the cost of wasted compute on discarded
+drafts.
+
+6.3
+
+∆E[savings] = −δ·πs∗ ·(ra −rs ) ≈ −δ·0.64·0.18. (11)
+For δ = 0.10 (10% of simple turns misrouted), expected
+savings decrease by only ≈1.2 pp—a small perturbation
+given the large SKIPPED proportion. The asymmetry
+in Equations (10) and (11) reflects the fact that false
+positives are economically cheap but false negatives carry
+quality risk.
+Optimization objective. The ideal router minimizes:
+
+
+L(θ) = λq · Ex ε(x, θ) · ℓq (x)
+
+
+(12)
++ λc · Ex δ(x, θ) · ℓc (x) ,
+
+Formal Router Error Analysis
+
+where θ is the router’s parameter vector, ℓq (x) is a
+task-specific quality-loss function (e.g., test-case failure), ℓc (x) = (ra − rs ) · Cbase is the cost overhead,
+
+Define the router’s binary classification decision ŷ ∈
+{simple, complex} on each text-generation turn with true
+7
+
+and λq ≫ λc reflects the asymmetric cost of quality
+degradation. The current keyword router implicitly sets
+λq = ∞ for complex-keyword requests and λq = 0 for
+simple-prefix matches. A learned router optimizes L(θ)
+continuously from historical (request, verdict, quality)
+triples.
+
+vate routing precision as the primary engineering priority.
+Future work: (1) a learned semantic router optimizing
+L(θ); (2) parallel draft + verify to recover TTFT; (3) a
+local inference tier eliminating network latency on the
+dominant SKIPPED path.
+
+6.4
+
+A
+
+Cross-Provider Failure Modes
+
+Draft (Azure AI Foundry) and verify (Vertex AI) are
+subject to independent outages, rate limits, and silent
+model updates. The proxy implements: (1) fallback
+on draft failure—forward directly to Opus; (2) fallback
+on verify failure—return the draft directly; (3) model
+version pinning to prevent silent quality drift.
+
+The following prompt is used verbatim in the verify
+stage:
+System: You are a quality-enhancement layer
+reviewing
+another model’s draft. Your job is
+NOT to rewrite
+for style -- only catch genuine
+errors.
+The default is to approve the draft.
+
+6.5 On the Instruction-Following Quality
+Advantage
+
+Respond with either:
+USE_DRAFT (draft is correct and
+complete)
+ENHANCE
+<enhanced>...improved response
+...</enhanced>
+
+The 100% vs. 80% pass rate on Instruct tasks arises from
+the ENHANCE path on a multi-constraint instruction
+(format, length, and style simultaneously) where Opus
+generated a response satisfying only two of three constraints in direct generation. In the Speculate condition,
+Opus corrected the draft with explicit attention to all
+three constraints. We hypothesize that error-correction
+framing directs Opus’s attention toward constraint satisfaction more effectively than open-ended generation; a
+controlled study varying instruction complexity and constraint count is needed to establish this effect robustly.
+
+7
+
+Opus Enhancement Prompt
+
+Only ENHANCE when: factual error,
+real code bug,
+critical missing step, or
+fundamental
+misunderstanding of the user’s need.
+User: [Original user request]
+--DeepSeek’s draft response:
+[Draft response text]
+--Review the draft and respond with USE_DRAFT
+or ENHANCE.
+
+Conclusion
+
+RLM-Cascade demonstrates that speculative decoding
+can be applied at the response level using only standard
+LLM HTTP APIs, enabling cross-provider and crossarchitecture draft/verify pipelines with no model internals access. The key insight—formalizing the relationship to token-level speculative decoding in Equation (2)—
+is that treating the response, not the token, as the speculation unit enables API-layer deployment, cross-vendor
+composition, and decoupled draft/verify model evolution.
+On a real-world agentic coding workload, RLMCascade achieves a 47.4% API cost reduction and a
+1.83× speedup at p50 latency versus a direct Opus baseline, while exceeding Opus quality (100% vs. 95% on
+a 20-task benchmark). The parameterized cost model
+(Equations 4–7) shows that break-even requires only
+πs > 13.3%; in production, πs ≈ 64–70% provides
+a large safety margin.
+The cost-inversion case study (§4.7) and the formal
+router error model (§6.3, Equations 8–12) together moti-
+
+The conservative bias toward USE_DRAFT is the
+mechanism that prevents inflating the ENHANCED rate
+on stylistic disagreements.
+
+B
+
+Per-Verdict Cost Derivation
+
+Notation: pin = prompt input tokens; din /dout = draft
+input/output tokens; adirect
+= Opus output tokens anout
+swering from scratch; aenh
+=
+Opus output tokens when
+out
+enhancing (≥ adirect
+);
+v
+=
+p
+in
+in +dout +100 = Opus verout
+ify input tokens (overhead for the enhancement prompt
+wrapper).
+Baseline: Cbase = pin ·5.50+adirect
+out ·27.50 (all prices
+in USD/M tokens).
+SKIPPED ratio: For pin =200, aout =300:
+rs =
+8
+
+200·1.74 + 300·3.48
+1392
+=
+≈ 1.5% → reported as ≈ 2%.
+200·5.50 + 300·27.50
+9350
+
+ENHANCED break-even: Setting Cenh = Cbase :
+
+[9] Y. Li et al., “EAGLE: Speculative sampling requires
+rethinking feature uncertainty,” arXiv preprint
+arXiv:2401.15077, 2024.
+
+din ·1.74 + dout ·(3.48+5.50) + 100·5.50 + aenh
+out ·27.50
+= pin ·5.50 + adirect
+out ·27.50,
+
+[10] D. Xu et al., “Big-little transformer decoder
+for optimal inference-time cost,” arXiv preprint
+direct
+(aenh
+out −aout )·27.50 = pin ·5.50−din ·1.74−dout ·8.98−550.
+arXiv:2302.07030, 2023.
+For typical dout > 0 and din ≈ pin , the right-hand side
+is negative, so ENHANCED is usually cost-neutral or
+direct
+slightly positive. Cost inversion requires aenh
+out ≫ aout ,
+i.e., Opus substantially expanding a short, incorrect draft
+into a long correct answer—as in the mteb-retrieve
+case.
+
+[11] L. Zheng et al., “Judging LLM-as-a-judge with
+MT-Bench and Chatbot Arena,” in Proc. 37th
+Annu. Conf. Neural Information Processing Systems (NeurIPS), 2023.
+[12] A. Agrawal et al., “Taming throughput-latency
+tradeoff in LLM inference with Sarathi-Serve,” in
+Proc. 18th USENIX Symp. Operating Systems Design and Implementation (OSDI), 2024.
+
+References
+[1] Y. Leviathan, M. Kalman, and Y. Matias, “Fast
+inference from transformers via speculative decoding,” in Proc. 40th Int. Conf. Machine Learning
+(ICML), PMLR, 2023.
+[2] C. Chen, S. Borgeaud, G. Irving, J.-B. Lespiau,
+L. Sifre, and J. Jumper, “Accelerating large language model decoding with speculative sampling,”
+arXiv preprint arXiv:2302.01318, 2023.
+[3] L. Chen, M. Zaharia, and J. Zou, “FrugalGPT:
+How to use large language models while reducing
+cost and improving performance,” arXiv preprint
+arXiv:2305.05176, 2023.
+[4] X. Yue et al., “Large language model cascades with mixture of thoughts representations for cost-efficient reasoning,” arXiv preprint
+arXiv:2310.03094, 2023.
+[5] X. Wang et al., “Self-consistency improves chain
+of thought reasoning in language models,” in Proc.
+11th Int. Conf. Learning Representations (ICLR),
+2023.
+[6] W. Kwon et al., “Efficient memory management
+for large language model serving with PagedAttention,” in Proc. 29th ACM Symp. Operating Systems
+Principles (SOSP), ACM, 2023.
+[7] G. Yu et al., “Orca: A distributed serving system
+for Transformer-based generative models,” in Proc.
+16th USENIX Symp. Operating Systems Design and
+Implementation (OSDI), 2022.
+[8] T. Cai et al., “Medusa: Simple LLM inference
+acceleration framework with multiple decoding
+heads,” in Proc. 41st Int. Conf. Machine Learning
+(ICML), PMLR, 2024.
+9

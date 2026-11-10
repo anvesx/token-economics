@@ -1,0 +1,214 @@
+TITLE: s1-llm-auto-router
+URL: https://huggingface.co/decisionmodels/s1-llm-auto-router
+ORG: Decision Models  TYPE: model  DATE: 2026-10
+
+decisionmodels/s1-llm-auto-router · Hugging Face
+
+ s1-llm-auto-router
+
+A decision model fine-tuned to classify a request to an LLM before you route it. In one CPU pass it answers
+the seven questions an LLM auto-router needs to pick a model. It is served as a Jev-compatible decision model
+on the Decision Models API, and the weights are published here under the MIT licence.
+
+question
+type
+answer
+
+category
+choice
+coding, agentic, math, knowledge, long_context, tool_use, design, summarisation, general
+
+difficulty
+score, 5 levels
+trivial, easy, moderate, hard, frontier
+
+stakes
+score, 4 levels
+negligible, low, medium, high
+
+needs_tools, needs_vision, needs_long_context, follow_up
+yes/no probability
+
+Architecture: jhu-clsp/mmBERT-small (MIT), pruned to 11 layers and distilled from a fine-tuned
+mmBERT-base teacher, with seven classification heads. Per-head calibration temperatures are in meta.json.
+
+Format: ONNX with int8 embeddings (model.gq.onnx, 183 MB) and a fast tokenizer. It needs neither
+PyTorch nor transformers.
+
+Latency: engine only, about 14 ms p50 and 47 ms p99 per decision (all seven answers) on 4 pinned cores of an AMD
+EPYC 9555 server, and 26 ms p50 on 4 threads of an older Xeon E5-2680 v4. Through the hosted API, end to end: about 93 ms p50
+(measured 2 Oct 2026).
+
+Input: the user turn (up to 512 tokens in total) plus an optional short conversation summary (first 600
+characters are used).
+
+ Use it through the API
+
+Model id s1-llm-auto-router on https://api.decisionmodels.io/v1/systemone. It costs USD 0.001 / EUR 0.001
+per million input tokens in both tiers (launch price as listed on decisionmodels.io/pricing
+on 15 Oct 2026; it can change); output is free.
+
+curl https://api.decisionmodels.io/v1/systemone \
+ -H "Authorization: Bearer $DECISIONMODELS_API_KEY" -H 'Content-Type: application/json' \
+ -d '{"model":"s1-llm-auto-router",
+ "state":{"request":"Write a Python function that returns the square of a number.","context":"(new conversation)"},
+ "questions":{
+ "category":{"type":"choice","criteria":{"coding":"","agentic":"","math":"","knowledge":"","long_context":"","tool_use":"","design":"","summarisation":"","general":""}},
+ "difficulty":{"type":"score","criteria":["trivial","easy","moderate","hard","frontier"]},
+ "stakes":{"type":"score","criteria":["negligible","low","medium","high"]},
+ "needs_tools":{"type":"noul"},"needs_vision":{"type":"noul"},"needs_long_context":{"type":"noul"},"follow_up":{"type":"noul"}}}'
+
+The model answers only these seven questions with these exact option sets. Docs:
+decisionmodels.io/docs/s1-llm-auto-router.
+
+ Run it locally (CPU)
+
+pip install onnxruntime tokenizers numpy huggingface_hub
+python example.py "Refactor this ABAP report to use CDS views"
+
+example.py in this repo contains the full code; the core is:
+
+import json, numpy as np, onnxruntime as ort
+from tokenizers import Tokenizer
+from huggingface_hub import snapshot_download
+
+root = snapshot_download("decisionmodels/s1-llm-auto-router")
+T = json.load(open(f"{root}/meta.json"))["temperatures"]
+tok = Tokenizer.from_file(f"{root}/tokenizer/tokenizer.json")
+tok.enable_truncation(512, strategy="only_second")
+sess = ort.InferenceSession(f"{root}/model.gq.onnx", providers=["CPUExecutionProvider"])
+
+def softmax(x): e = np.exp(x - x.max()); return e / e.sum()
+enc = tok.encode("(new conversation)"[:600], "Refactor this ABAP report to use CDS views")
+ids = np.asarray([enc.ids], dtype=np.int64)
+cat, dif, stk, flg = sess.run(None, {"input_ids": ids, "attention_mask": np.ones_like(ids)})
+CATS = ["coding", "agentic", "math", "knowledge", "long_context", "tool_use", "design", "summarisation", "general"]
+p = softmax(cat[0] / T["category"]); print(CATS[p.argmax()], p.max())
+
+ Results
+
+Held-out routing test, n = 2,175 synthetic requests in 22 languages, gold labels from a five-LLM consensus. The chart also includes Laya (a small local router) for reference; the table below has the full breakdown.
+
+Measured 2 Oct 2026 on a held-out test set of n = 2,175 synthetic routing requests (22 languages). Gold labels
+are the plurality vote of up to five open LLMs (mean 4.0 votes per row; a request's author never votes on it; see Limitations). Routing agreement is the share of requests where the
+open-source auto-model-router decision policy picks the same
+model from the predicted labels as from the gold labels (offline model catalogue).
+
+system
+category
+flags (mean)
+all 7 exact
+routing agreement
+p50 latency
+
+s1-llm-auto-router
+0.898
+0.974
+0.819
+0.742
+26 ms CPU (4 threads, Xeon E5-2680 v4)
+
+Jev 1.13 (hosted, TypeSafe)
+0.845
+0.935
+0.603
+0.630
+247 ms API
+
+Winnow-12B (own GPU pod)
+0.841
+0.928
+0.608
+0.577
+671 ms GPU
+
+Weiche-395M fp16
+0.784
+0.903
+0.553
+0.622
+499 ms CPU
+
+On an independent set of 100 test requests labelled blind by Claude Opus (not used in training), the scores were:
+
+system
+category
+routing agreement
+
+s1-llm-auto-router
+0.88
+0.60
+
+Jev 1.13 (hosted, TypeSafe)
+0.80
+0.57
+
+Winnow-12B
+0.75
+0.35
+
+At n = 100 these numbers carry roughly ±8 points of uncertainty. Jev 1.13 is a general typed-decision model, so this fixed
+routing task is outside its design target; its latency is the hosted API round trip. Calibration (expected calibration error, test
+set): 0.018 for category and 0.008–0.028 for the flags. We built this model, so treat the comparison as a
+vendor result; the method is described above.
+
+ Limitations
+
+Fixed schema. It answers only the seven questions above. It is not a general-purpose classifier or a
+typed-decision model, and it does not read the question text. For arbitrary typed decisions use the other
+Decision Models.
+
+Synthetic training data. About 39k routing requests that LLMs wrote from a persona × stack × task × language
+grid (22 languages, 29 stacks including SAP ABAP, PL/I and COBOL). It contains no real user traffic or customer
+data, so real traffic may be distributed differently.
+
+LLM labels. Requests were written by DeepSeek-V4-Flash, Kimi-K2.6, Gemma-4-31B and Qwen3.8-27B. Five open LLMs
+(those four plus GLM-5.1) labelled each request blind; a model never labelled its own requests. Training uses their soft vote. Most test gold labels come
+from the same process, which is why the Claude-labelled set is reported separately.
+
+Decontaminated. The data was deduplicated against all public and sealed JevBench items (exact, containment and
+embedding near-duplicate checks) before training.
+
+Language gaps. Weakest on Greek, Korean and Italian (category accuracy 0.73–0.78 at n ≈ 20 each).
+
+Truncation. Inputs are cut to 512 tokens; only the first 600 characters of the conversation context are used.
+
+Text only. needs_vision is a probability from the text of the request; the model cannot inspect images.
+
+ Training
+
+Teacher: mmBERT-base, fine-tuned on soft labels. Student: mmBERT-small layers 0, 2, …, 18 and 21, distilled with
+alpha 0.9 for 12 epochs at learning rate 1.5e-4, on one RTX 4090 for about one hour.
+
+Split by generation group: 34,671 train, 2,275 dev and 2,175 test examples. Temperatures fitted on dev.
+
+ Licence and attribution
+
+MIT (see LICENSE). Built on jhu-clsp/mmBERT-small (MIT):
+
+@misc{marone2025mmbertmodernmultilingualencoder,
+ title={mmBERT: A Modern Multilingual Encoder with Annealed Language Learning},
+ author={Marc Marone and Orion Weller and William Fleshman and Eugene Yang and Dawn Lawrie and Benjamin Van Durme},
+ year={2025}, eprint={2509.06888}, archivePrefix={arXiv}, primaryClass={cs.CL}, url={https://arxiv.org/abs/2509.06888}
+}
+
+Published by Decision Models. "Jev" and "TypeSafe" belong to their owners; this model is
+Jev-compatible on the wire, it is not Jev.
+
+Downloads last month 
+
+- 
+Downloads are not tracked for this model. How to track 
+
+ Model tree for decisionmodels/s1-llm-auto-router 
+
+Base model 
+ jhu-clsp/mmBERT-small
+
+ Quantized (307) 
+
+this model 
+
+ Paper for decisionmodels/s1-llm-auto-router 
+
+ Paper • 2509.06888 • Published Sep 8, 2025 • 16

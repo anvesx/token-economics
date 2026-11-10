@@ -1,0 +1,2511 @@
+TITLE: Rerouting LLM Routers
+URL: https://arxiv.org/abs/2501.01818
+ORG: arXiv  TYPE: paper  DATE: 2025-01
+
+R EROUTING LLM ROUTERS
+A P REPRINT
+
+arXiv:2501.01818v1 [cs.CR] 3 Jan 2025
+
+Avital Shafran
+The Hebrew University
+of Jerusalem
+
+Roei Schuster
+Wild Moose
+
+Thomas Ristenpart
+Cornell Tech
+
+Vitaly Shmatikov
+Cornell Tech
+
+A BSTRACT
+LLM routers aim to balance quality and cost of generation by classifying queries and routing them to
+a cheaper or more expensive LLM depending on their complexity. Routers represent one type of what
+we call LLM control planes: systems that orchestrate use of one or more LLMs. In this paper, we
+investigate routers’ adversarial robustness.
+We first define LLM control plane integrity, i.e., robustness of LLM orchestration to adversarial inputs, as a distinct problem in AI safety. Next, we demonstrate that an adversary can generate queryindependent token sequences we call “confounder gadgets” that, when added to any query, cause LLM
+routers to send the query to a strong LLM.
+Our quantitative evaluation shows that this attack is successful both in white-box and black-box settings
+against a variety of open-source and commercial routers, and that confounding queries do not affect
+the quality of LLM responses. Finally, we demonstrate that gadgets can be effective while maintaining
+low perplexity, thus perplexity-based filtering is not an effective defense. We finish by investigating
+alternative defenses.
+
+1
+
+Introduction
+
+Large language models (LLMs) exhibit remarkable capabilities on many tasks. Today, hundreds of open-source and
+proprietary LLMs are available at different prices, ranging from expensive, state-of-the-art models to cheaper, smaller,
+less capable ones. LLM operators typically provide API access to their models (especially higher-quality models) on a
+pay-per-query basis. This imposes non-trivial costs on LLM-based applications and systems.
+Developers who want to integrate LLMs into their applications must therefore consider both utility and cost. They want
+to maximize the quality of responses to their queries while minimizing the cost. The two objectives conflict with each
+other: larger models tend to generate higher-quality answers but charge more per query. For example, at the time of
+this writing, GPT-3.5-turbo costs $0.5/$1.5 per 1M input/output tokens, GPT-4o-mini $0.15/$0.6, GPT-4o $2.5/$10,
+o1-preview $15/$60. The difference in quality between models is not uniform across queries. For some queries, even a
+cheap model can generate an acceptable response. More complex queries require an expensive model to obtain a quality
+answer.
+A natural solution to balancing performance and economic considerations is to take advantage of the availability of multiple LLMs at different price-performance points. Recently proposed LLM routing systems [5, 12, 27, 47, 53] orchestrate
+two or more LLMs and adaptively route each query to the cheapest LLM they deem likely to generate a response of
+sufficient quality. In the two-LLM case, let Ms be an expensive, high-quality model and Mw a weaker, lower-grade one.
+Given query q, the routing algorithm R(·) applies a classifier to q that outputs 0 if Mw is sufficient for answering q, or 1
+if Ms is required. The system then routes q accordingly.
+LLM routing is an example of a general class of systems we call LLM control planes, which orchestrate the use of multiple
+LLMs to process inputs, as further described in Section 2.
+Our contributions. First, we introduce LLM control plane integrity as a novel problem in AI safety. Recently proposed
+LLM control-plane algorithms are learned, calibrated classifiers (see Section 2). Their inputs are queries from potentially
+adversarial users. Robustness of control-plane algorithms to adversarial queries is a new problem, distinct from adversarial
+robustness of the underlying LLMs.
+
+Figure 1: LLM routers classify queries and route complex ones to an expensive/strong model, others to a cheaper/weak
+model. To control costs, LLM routers can be calibrated to maintain (for an expected workload) a specific ratio between
+queries sent to the strong and weak models.
+
+To initiate the study of this problem, we show that existing LLM routing algorithms are not adversarially robust. We
+design, implement, and evaluate a method that generates query-independent adversarial token sequences we call “confounder gadgets.” If a gadget is added to any query, this query is routed to the strong model with high probability. Next,
+we show that this attack is effective even in the transfer setting where the adversary does not have full knowledge of the
+target LLM router (it is black-box), but has access to another router (e.g., an internally trained surrogate). We also evaluate
+the integrity of commercial LLM routers, showing that they can be confounded as well.
+Third, we investigate defenses. Our basic method generates gadgets that have anomalously high perplexity. Confounded
+queries are thus easily distinguished from normal queries and can be filtered out by the routing system. Unfortunately, this
+defense can be evaded by an adversary who incorporates a low-perplexity objective into the gadget generation algorithm,
+producing gadgets that have low perplexity—and yet are effective at re-routing queries to the strong model. We also
+discuss higher-level defenses, such as identifying users whose queries are routed to the strong model with abnormal
+frequency.
+Routing attacks can be deployed for various adversarial objectives, e.g., to ensure that the adversary always obtains the
+highest-quality answer regardless of the target applications’s internal routing policies and cost constraints, or to maliciously inflate the target’s LLM costs. As LLM control planes grow in importance and sophistication, we hope that this
+work will motivate further research on their adversarial robustness.
+
+2
+
+LLM Control Planes and Routing
+
+Inference using large language models (LLMs) is traditionally monolithic: a single model is applied to an input or sequence of inputs. This methodology can be sub-optimal for various reasons. State-of-the-art models are often expensive,
+with API access to LLMs costing as much as several dollars for each query. Elsewhere, distinct LLMs may excel at different tasks, and selectively using them may improve overall quality on a diverse workload. Finally, combining multiple
+LLMs, even all trained for similar tasks, may become increasingly prevalent as performance improvements of individual
+LLMs plateaus [8–10].
+Researchers and practitioners are therefore now developing inference architectures that use multiple LLMs to answer
+queries. These LLMs are orchestrated by what we call an LLM control plane (borrowing the terminology from networking [13]). The control plane may route queries or parts of queries to different LLMs, derive new strings to query to
+underlying LLMs, combine answers from underlying LLMs, and more.
+LLM routers. A prominent example of this emerging class of LLM control planes are LLM routers [27, 41, 47, 53, 59].
+LLM routers decide which of the two (or, sometimes, more) LLMs to use to answer a query. In prescriptive routing,
+the router applies some lightweight classifier to the input query that determines which underlying LLM to utilize for a
+response. The classifier is itself a learned function that scores the complexity of the query. Deployments can then configure
+a score threshold for when to route a query to the more expensive LLM. This threshold can be tuned using representative
+workloads to achieve a desired cost-performance trade-off. Figure 1 shows the basic workflow of binary LLM routers.
+Non-prescriptive routing [15, 20, 68] uses the responses from one or more underlying LLMs to determine which response
+to return to the user. For example, FrugalGPT [20] submits the query to a sequence of models (ordered by price) called a
+cascade, stopping when it obtains a response classified by the router as sufficient.
+2
+
+In contrast to routers motivated by controlling costs, several LLM router designs focus solely on improving quality of
+responses [31, 45, 57, 58].
+The LLM routers described thus far do not modify the queries or individual LLM responses. Other types of control planes
+do. Ensemble approaches such as mixture-of-expert (MoE) [29, 30, 52, 56] architectures select a subset of underlying
+models to apply to each token of a query and merge their responses. LLM synthesis [40] architectures operate similarly,
+but route the entire query to a subset of underlying LLMs and merge their responses. These approaches reduce inference
+costs by using fewer and/or less complex underlying models.
+Applications of LLM routers. A key use case for LLM routers is to help LLM-based application reduce cost. Several
+commercial routers, including Unify [12], Martian [5], NotDiamond [7], and others, offer this as a service. By replacing a
+few lines of code, the application can send user queries to a router service, rather than directly to some LLM provider. The
+service selects the optimal LLM and forwards the queries. Commercial router services claim that this results in significant
+cost savings: up to 98% in the case of Martian [5], and 10× in the case of NotDiamond [7].
+
+3
+
+LLM Control Plane Integrity
+
+In this section, we define LLM control plane integrity. Informally, it means that decisions made about underlying LLM
+queries made by the control plane algorithms cannot be subverted by adversarial queries. Looking ahead, we will focus
+on one class of control plane: predictive LLM routing as used to manage cost.
+Formalizing control planes. An LLM control plane Rω is a potentially randomized algorithm. It is parameterized by
+a string ω, called the parameters. It utilizes some number n of LLMs denoted by M. We will mostly focus on the
+case of n = 2, and, for reasons that will be clear in a moment, use Ms (“strong”) and Mw (“weak”) to denote the two
+underlying LLMs. Then inference on an input x ∈ X for some set X of allowed queries is performed by computing
+a response via y ←$ RωM (x). Here we use ←$ to denote running R with fresh random coins; we use ← when R is
+deterministic. We focus on inference for a single query, but it is straightforward to extend our abstraction for control
+planes to include sessions: the controller would maintain state across invocations, potentially adapting its behavior as a
+function of a sequence of queries and responses.
+LLM control planes should, in general, be relatively computationally lightweight, at least compared to the underlying
+LLMs. This is particularly so in the cost-motivated usage of control planes, as a computationally or financially expensive
+control plane would eat into cost savings incurred by utilizing cheaper underlying LLMs for some queries. For example,
+predictive binary routers use relatively simple classifiers to determine which of Ms or Mw should be used to respond to a
+query.
+Inference flow. Given a set of LLMs M, a control plane Rω , and an input x, an LLM inference flow is the sequence of
+LLM invocations Mij (zj ) for 1 ≤ j ≤ m and ij ∈ {w, s} made when executing RωM (x). Here m is the total number of
+LLM invocations, and z1 , . . . , zm are the queries made to the underlying LLMs. Should R be randomized, the sequence
+and its length are random variables. An inference flow can be written as a transcript
+T = (i1 , z1 ), (i2 , z2 ), . . . , (im , zm )
+of pairs of model indexes ij ∈ {w, s} and model inputs zj . Note that for simplicity we ignore the potential for parallelization, assuming execution proceeds serially. For binary routers, we have m = 1 and T ∈ {(w, x), (s, x)}. We write
+submitting a sequence of inferences ⃗x = ⃗x1 , . . . , ⃗xq to a control plane as
+RωM (⃗x) = (RωM (⃗x1 ), . . . , RωM (⃗xq ))
+where note that each invocation could result in multiple underlying LLM invocations. In the binary router case, however,
+each invocation results in a single LLM invocation.
+An inference flow policy dictates the control plane designer’s intention regarding use of the underlying models. For
+example, an application may want to ensure that only a small fraction of queries go to the expensive model Ms . We can
+define this as a predicate over a sequence of transcripts. In our binary router example, the policy can be more simply
+defined as a predicate P over (input, model) pairs (⃗x1 , i1 ), . . . , (⃗xq , iq ) since this fully defines the sequence of transcripts.
+For example, a policy might specify that the strong model is used in at most an ϵ fraction of inferences:
+
+
+q
+X
+I(i
+)
+j
+P((⃗x1 , i1 ), . . . , (⃗xq , iq )) = 
+≤ ϵ
+q
+j=1
+3
+
+where I(ij ) = 1 if ij = s and I(ij ) = 0 if ij = w. In other words, the predicate is that the fraction of queries routed to the
+strong model is bounded by ϵ.
+Control plane integrity. A control plane integrity adversary is a randomized algorithm A that seeks to maliciously guide
+inference flow.
+In an unconstrained LLM control plane integrity attack, the adversary A seeks to generate inputs ⃗x = ⃗x1 , . . . , ⃗xq such
+that running RωM (⃗x) generates a transcript for which P((x1 , i1 ), . . . , (xq , iq )) = 0. This attack could be launched by an
+adversary who wants to maximize inference costs for a victim application using an LLM router.
+A harder setting requires input adaptation, where the adversary is given inputs x1 , . . . , xq and it must find new inputs
+x̂1 , . . . , x̂q for which the transcript resulting from P((x̂1 , i1 ), . . . , (x̂q , iq )) = 0. There will be some competing constraint,
+such as that xj and x̂j are very similar for each j, or that the outputs yj ←$ RωM (xj ) and ŷj ←$ RωM (x̂j ) are close. In the
+routing context, the adversary’s goal is to increase the fraction of queries that get routed to the strong model, in order to
+improve the overall quality of responses, drive up the victim application’s inference costs, or both.
+Relationship to evasion attacks. Evasion attacks [25, 43, 60] against an inference system (also called adversarial examples [32, 48, 49]) would, in our setting, seek to find a small modification ∆ to an input x such that RωM (x + ∆) ̸= RωM (x)
+where addition is appropriately defined based on input type (e.g., slight changes to text).
+Our attack setting is not the same. The control plane integrity adversary seeks to maliciously control the inference flow, not
+necessarily the output of inference. In an unconstrained attack, the adversary does not care what outputs are generated.
+In the input adaptation attack, the adversary seeks to craft inputs that modify the inference flow yet do not change the
+responses of the strong underlying LLM to the extent possible. Looking ahead, we will use evasion techniques in our
+adaptation attacks against learned control plane routers, but, importantly, not the overall inference.
+In the other direction, undermining LLM control plane integrity could be a stepping stone toward evasion attacks. For
+example, if RωM is used to classify malicious content by combining LLMs each tuned to different types of harm categories,
+then modifying inputs to force inference flows away from appropriate models could aid evasion. We leave evaluation of
+how control-plane integrity attacks can enable evasion to future work.
+Threat models. Within the context of control plane integrity attacks against LLM routers, we identify several threat
+models that differ in terms of the adversary’s goals and their knowledge about the target control plane RωM .
+In terms of goals, an adversary may seek to inflate the costs of a victim application that utilizes an LLM control plane.
+As a kind of denial-of-service attack, such cost inflation would penalize the application developer who expects routing
+to control costs. Another adversarial goal could be arbitrage: consider an application that charges X dollars per query,
+whereas directly using Ms costs Y > X. The application’s lower rate X makes economic sense assuming it uses a router
+to route the bulk of queries to a cheaper model Mw . An input adaptation attack in this setting can gain (indirect) access to
+Ms , obtaining an arbitrage advantage of Y − X per query. To be effective, this arbitrage adversary would want to ensure
+that adaptations do not lower response quality (i.e., it extracts all the value out of rerouting to Ms ). As before, the victim
+in this case is the application that relies on routing to lower its costs (unsuccessfully, under this attack).
+We now discuss adversarial capabilities. We assume that our victim application’s prompt includes a substring that can be
+controlled by the adversary. This represents many real-world apps such as chatbots, coding assistants, writing assistants,
+and others, that insert user inputs into an LLM prompt. In crafting adversarial portions of prompts, an adversary may have
+various levels of knowledge about the victim application’s router. We consider the following knowledge settings:
+•
+
+White-box setting: The adversary knows the control plane algorithm and its parameters ω.
+
+•
+
+Black-box (transfer) setting: The adversary does not know the control plane algorithm R and ω for the target model,
+but knows instead another control plane algorithm Rω′ ′ and its parameters. We refer to Rω′ ′ as the surrogate. For
+example, this could arise if an adversary trains their own router using available data. In this setting our attacks are
+also zero-shot in that they do not require any interaction with the target control plane before the query that is being
+rerouted.
+
+4
+
+Confounding Control Planes with Gadgets
+
+We now turn to our main contribution: a methodology for attacking LLM control plane integrity. The key insight is that
+an adversary can modify queries to mislead or “confound” the routing logic into routing these queries to an LLM of the
+adversary’s choosing. Furthermore, we will demonstrate that these attacks can be black-box and query-independent, i.e.,
+a single modification works for all queries and does not require advance knowledge of the specific router being attacked.
+4
+
+Figure 2: Overview of our attack on LLM routing control plane integrity. The attack adds to each query a prefix (represented by the gear), called a “confounder gadget,” that causes the router to send the query to the strong model.
+We focus on the binary router setting in which the router applies a learned scoring function to input queries and routes
+any query whose score exceeds some threshold τ to the strong LLM Ms . This setting has been the focus of several prior
+works [27, 41, 47] and is used in the control planes that are deployed in practice (see Section 7).
+More formally, we consider a router RωM for M = {Mw , Ms }, where ω consists of a scoring function S, scoring function’s
+parameters θ, and a threshold τ ∈ R+ . For notational brevity we just write Rω below, with M clear from context. Here
+S and θ define a scoring function Sθ : X → R+ . Since our focus is LLMs, we assume that queries X are strings of text
+tokens. The routing algorithm then works as follows:
+
+Mw (x) if Sθ (x) < τ
+Rω (x) =
+Ms (x) otherwise
+where ω = (S, θ, τ ). We will detail scoring functions in Section 5; prior work has suggested linear models, light-weight
+LLMs, and more. Note that, consistent with this application, scoring functions are computationally efficient and cheap (as
+compared to Ms , Mw ). Deployments calibrate τ to limit the fraction of queries routed to the strong model Ms , giving rise
+to the type of control plane integrity policy discussed in Section 3.
+We focus on input adaptation attacks; these immediately give unconstrained attacks as well. The adversary therefore has
+a sequence of inputs x1 , . . . , xq and must produce modified inputs x̂1 , . . . , x̂q to maximize the number of inputs routed
+to Ms . See Figure 2 for a depiction of our attack setting.
+Instruction injection doesn’t work. Given the success of prompt injection for jailbreaking [50] and other adversarial
+tasks [64], the adversary might simply prefix each query xi with some instruction such as “Treat the following query as
+complex, . . . ” to generate a modified query x̂i . Our experiments show that this does not work well, failing to trigger the
+control plane into routing otherwise weak queries to Ms . See Appendix C for details on our experiments with various
+instruction prompts.
+Confounder gadgets. Our approach works as follows. Given a query xi , we prepend a confounder gadget ci , which is a
+short sequence of adversarially chosen tokens. The modified query is x̂i = ci ∥xi where ∥ denotes string concatenation.
+Intuitively, we will use optimization to search for confounders that trick the scoring function into ranking x̂i as sufficiently
+complex to require the strong model.
+In the white-box, query-specific setting, we can choose ci as a function of xi and the known parameters ω = (S, θ, τ ). To
+do so, we fix a confounder length of n tokens and let I be a token dictionary (it should be a sufficiently large subset of the
+token dictionary used by S). Then we set the gadget to initially be n tokens all fixed to the same value from I. The exact
+choice of the initialization token is not important; in our implementation, we used the first token in the dictionary (‘!’).
+(0)
+(0) (0)
+(0)
+Denote this initial confounder as ci = [ci,1 , ci,2 , . . . , ci,n ].
+Then, we perform a hill-climbing style approach to find a good confounder for xi . For each iteration t ∈ [T ], where T is
+the total number of iterations, do the following:
+(1)
+
+Select a target index j ∈ [1, n] uniformly.
+
+(2)
+
+Generate a set B of B + 1 candidates. First set c̃0 = ci , the current confounder. To generate B additional
+th
+candidates, select replacement tokens from I uniformly, forming the set {tb ← I}B
+b=1 . Replace the j token in the
+current confounder c̃0 with tb :
+
+(t)
+
+(t)
+
+(t)
+
+(t)
+
+(t)
+
+c̃b = [ci,1 , . . . , ci,j−1 , tb , ci,j+1 , . . . , ci,n ] .
+5
+
+Let B = {c̃0 , . . . , c̃B }.
+(3)
+
+Find the candidate that maximizes the score:
+(t+1)
+
+ci
+
+← arg max Sθ (c∥xi ) .
+
+(1)
+
+c∈B
+
+(T )
+
+The final confounder ci is used with query xi . We early abort if, after 25 iterations, there is no update to the confounder
+gadget. Technically, we could abort early if we find a confounder whose score exceeds τ . Running further can be useful
+when an adversary does not know τ .
+The attack’s runtime is dominated by T · B times the cost of executing S. In practice, S are designed to be fast (otherwise
+routers would significantly increase the latency of applications that use them). We report precise timings later; in summary,
+the attack is fast because we can set T to be relatively small and still find high-scoring confounders.
+Due to the randomness in index and token selection, the method converges to different, yet similarly effective, confounder
+gadgets on each run. Our evaluation will thus measure average performance over multiple gadgets.
+Query-independent confounders. One downside of the per-query approach is that the adversary must repeat, for each
+query, the search for a good confounder. In practice, the adversary might prefer a query-independent attack. Our confounder gadget approach extends to this setting readily: perform the search routine above for an empty query. In other
+words, just ignore xi in the query-dependent attack above, replacing Sθ (c∥xi ) in Eq. 1 with Sθ (c). This finds a single query-independent confounder c that can be prefixed to all queries, i.e., x̂i = c∥xi . We will show that this works
+surprisingly well.
+It is tempting to assume the reason a query-independent confounder works well is that a good scoring function should be
+roughly monotonic in query extensions, i.e., one might expect that Sθ (c∥x) ≥ Sθ (c) for almost any suffix x. This intuition
+is not correct. In our experiments, we found that Sθ (c∥x) < Sθ (c) for many x and some of the routers discussed below.
+Nevertheless, by ensuring that Sθ (c) is pretty high (set the number of iterations T higher) the resulting query-independent
+confounder works well. That is, we at least get that Sθ (c∥x) > Sθ (x).
+The black-box setting: confounders that transfer. Finally, the attacks so far are in the white-box setting, where the
+attacker can optimize directly against Sθ . While in some cases routing control planes will be public knowledge, in others,
+including the proprietary control planes we explore in Section 7, they are hidden. This gives rise to the black-box setting.
+While an attacker might seek to perform model extraction attacks [43, 65] to learn θ, we instead explore attacks that
+transfer from one router to another.
+In more detail, we assume the adversary has access to a router Rω′ ′ , called the surrogate, that is trained on data similar to
+that used for the target router. Then the attack is the same as above, except that we use the surrogate’s scoring function
+Sθ′ ′ instead of the target’s Sθ . Again, we will see that this works surprisingly well: the query-independent confounders
+found for the surrogate transfer to successfully reroute queries against the target router.
+Putting it all together. In summary, our methodology for input adaptation attacks is:
+(1)
+
+(Preprocessing) Develop a single query-independent confounder gadget c, using either the target router or surrogate
+to score the confounder.
+
+(2)
+
+(Input adaptation) For each query xi , submit x̂i = c∥xi instead to obtain a response ŷi .
+
+The confounder is applied to all queries, i.e., the adversary does not need to guess whether the original query would
+have been routed to the weak or strong model. In the rest of the paper, we demonstrate the confounders rarely result in
+“downgrades,” i.e., rerouting of queries from the strong to weak model.
+We have experimented with variations of this approach that don’t work quite as well, for example adding c as a suffix
+instead of a prefix. See Appendix B for details.
+
+5
+
+Open-Source Routers: Experimental Setup
+
+To evaluate efficacy of confounder gadgets generated using the method from Section 4, we perform experiments with
+several LLM routers. This section explains our experimental setup for the open-source routers proposed in the research
+literature [47]; results of this evaluation appear in Section 6. In Section 7, we discuss experiments with proprietary,
+commercial routers. Figure 3 shows the summary of our experimental setup.
+6
+
+Routers
+Similarity-weighted ranking
+Matrix factorization
+BERT classifier
+LLM scoring
+LLM pair
+1
+2
+3
+4
+
+Notation
+RSW
+RM F
+RCLS
+RLLM
+
+Strong (Ms )
+Llama-3.1-8B
+Llama-3.1-8B
+Llama-3.1-8B
+GPT-4-1106-preview
+
+Benchmark
+MT-Bench [71]
+MMLU [35]
+GSM8K [24]
+
+Weak (Mw )
+4-bit Mixtral 8x7B
+Mistral-7B-Instruct-v0.3
+Llama-2-7B-chat-hf
+4-bit Mixtral 8x7B
+
+Description
+160 open-ended questions
+14,042 multi-choice questions
+1,319 grade-school math problems
+
+Figure 3: Summary of our setup for routers, underlying LLMs, and benchmark datasets used in the experiments.
+
+In all experiments, we assume that the adversary’s goal is to reroute queries to the strong model. In Appendix E, we
+evaluate efficacy of the attack when the goal is to reroute to the weak model.
+Target routers. We focus our evaluation on the four prescriptive routing algorithms proposed by Ong et al. [47],
+which provides open-source code and trained parameters, and does so for a representative variety of routing approaches: similarity-based classification [41, 59], an MLP constructed via matrix factorization [59], BERT-based classification [27, 53, 59], and a fine-tuned LLM.
+The routers we evaluate were trained in a supervised fashion using a set of reference (training) queries whose performance
+score on each of the considered models is known. The scores were computed from a collection of human pairwise rankings
+of model answers for each of the queries. We note that while the routers we consider are all learned using this training
+set, there is no reason to believe a non-learning-based approach (e.g., rule based) to routing would be more adversarially
+robust.
+We now outline the routing methods considered in this work. See Ong et al. [47] for their full implementation details.
+Similarity-weighted ranking: The first method is based on the Bradley-Terry (BT) model [17]. For a given user query,
+this model derives a function to compute the probability of the weak model being preferred over the strong model. The
+probability-function expressions all share parameters, which are optimized to minimize the sum of cross-entropy losses
+over the training-set queries, where each element in the sum is weighted by the respective query’s similarity with the
+user’s query (computed as embeddings cosine similarity, with the embedding derived using OpenAI’s text-embedding-3small [6]). We denote this method as RSW .
+Matrix factorization: The second method is based on matrix factorization. The training queries are used to train a bilinear
+function mapping a model’s embedding and a query’s embedding to a score corresponding to how well the model performs
+on the query. Routing is done by computing the score of the input query for each model, and choosing the highest-scoring
+model. We denote this method as RM F .
+BERT classifier: The third method involves fine-tuning a classifier, based on the BERT-base architecture [26], to predict
+which of the two models produces a better response for the given query or whether they do equally well (a tie). The
+routing decision is based on the probability of the weak model providing a better response versus the strong model or the
+tie. We denote this method as RCLS .
+LLM classifier: The last method is based on asking an LLM to provide a score in the range 1–5 of how an AI expert
+would struggle to respond to a given query based on the query’s complexity. For this, Ong et al. fine-tuned a Llama-3-8B
+model [4] using their reference set of queries and corresponding scores. We denote this method as RLLM .
+Underlying LLMs. In [47], Ong et al. trained the routers with GPT-4-1106-preview [14] as the strong model and Mixtral
+8x7B [39] as the weak model. They report successful generalization between the underlying LLMs, stating that their
+routers trained for a particular strong-weak LLM pair can be used with other strong-weak LLM pairs.
+To allow our evaluation to scale, we use as the strong model Ms the open-sourced Llama-3.1-8B [3] and as Mw the
+4-bit quantized version of Mixtral 8x7B (for efficiency reasons). This reduced the cost of our experiments by avoiding
+expensive GPT API calls and lowering the computational costs of Mixtral. Unless mentioned otherwise, all of our results
+7
+
+will be evaluated with respect to this pair, which we refer to as LLM pair 1. We performed more limited experiments with
+the original strong, weak model pair (LLM pair 4) and had similar success in rerouting.
+We additionally performed experiments with two further weaker models, in order to better evaluate the case where weak
+models produce much lower-quality responses for queries (compared to the strong model). In particular, we define LLM
+pair 2 as the strong model plus Mistral-7B-Instruct-v0.3 [38] and LLM pair 3 as the strong model plus Llama-2-7B-chathf [63]. The weaker models in pairs 2 and 3 were chosen to represent smaller (Mistral 7B) and older-generation (Llama-2)
+models: according to the Chatbot Arena LLM ranking leaderboard [1, 21], Llama-3.1-8B is ranked in the 58th place,
+Mixtral 8x7B at the 88th place, Mistral-7B at the 108th place, and Llama-2-7B at the 125th place.
+The LLM strong-weak pairs with which we performed experiments are summarized in Figure 3.
+Evaluation datasets. We will evaluate our attacks using three standard LLM benchmarks as workloads: MT-Bench [71],
+a dataset of 160 open-ended questions, MMLU [35], a dataset of 14,042 multi-choice questions, and GSM8K [24], a
+dataset of 1,319 grade-school math problems. Note that Ong et al. [47] flagged that some data points are “contaminated”,
+i.e., they are too similar to the ones used in their training of the routers. We use these datasets without these contaminated
+elements, resulting in 72 MT-bench queries, 14,037 MMLU queries, and 1,307 GSM8K queries.
+For MMLU and GSM8K, we will require that the LLMs respond in a predefined format so we can parse and compare
+the responses to ground-truth answers. To facilitate this, we prepended formatting instructions to the query, inserted as
+a prefix before the gadget in the case of confounded queries. In other words, a confounded query ends up defined as
+x̂i = instr∥c∥xi for instruction template instr, confounder gadget c, and original query xi . Thus in this case we model
+a scenario where the adversary only controls a part of the prompt rather than the entire prompt. See Appendix B for
+formatting examples and ablations.
+Router calibration. For each workload, we must calibrate each router by setting the threshold τ to achieve some target
+fraction ϵ of queries routed to the strong model. Note that the calibration process we use is agnostic to the underlying
+LLM pair. We therefore must define 12 distinct thresholds, one for each router, dataset pair. For our experiments here,
+we set ϵ = 0.5, meaning the goal is to have about half the queries routed to the strong model. This reflects an application
+developer that seeks to control for costs, even if it may mean sacrificing some performance for some workloads.
+To calibrate for MT-bench, we use the Chatbot Arena [21] dataset as the calibration set, computing the threshold using
+the 55 K queries for which Ong et al. precomputed the scoring function outputs. To calibrate for MMLU and GSM8K,
+we select 1,000 queries uniformly at random and uses these to set thresholds. Looking ahead, we do not use these queries
+during evaluation of the attacks.
+Note that it important that the distribution of calibration queries be similar to the distribution of the target workload (and,
+in our experiments, the test queries). We observed that the Chatbot Arena-based threshold did not transfer well to MMLU
+and GSM8K, resulting in the majority of queries (≈ 98%) routed to the strong model.
+
+6
+
+Rerouting Open-Source Routers
+
+We now empirically evaluate our rerouting attack against the open-source routers described in the previous section. Unless
+otherwise specified, our evaluation focuses on the query-independent attack setting where the attacker first finds a fixed
+set of gadgets and then uses them to attack arbitrarily many queries. This is the conservative setting, and query-specific
+gadgets — which carry a higher computational cost — generally work better.
+In Appendix C we evaluate optimization-free alternatives for generating our confounding gadgets, and show they significantly underperform our optimization-based approach.
+White-box confounder gadget generation. Following our attack framework described in Section 4, we construct a
+query-independent control-plane gadget designed to confuse each router. We start with the white-box setting, setting the
+batch size to B = 32 and the number of iterations to T = 100, ignoring thresholds. We generate four sets of n = 10
+gadgets, i.e., ten for each router. Examples of generated gadgets can be found in Appendix A.
+When reporting scores below, we therefore report the average over the n gadgets used with all 72 MT-bench queries, 100
+randomly selected MMLU queries, and 100 randomly selected GSM8K queries. None of these testing queries were used
+in the training of the routers or their calibration.
+Runtime and convergence. Figure 4 shows the convergence rates for 10 different gadgets, against different routing
+algorithms. The overall average number of iterations before convergence is 58. Generation against RSW converges the
+8
+
+0.9
+
+0.245
+
+0.8
+
+0.8
+0.8
+
+0.225
+0.220
+0
+
+20
+
+40
+
+Iterations
+
+0.4
+0.2
+
+60
+
+0
+
+(a) RSW
+
+20
+
+40
+
+Iterations
+
+Attack #0
+Attack #1
+Attack #2
+Attack #3
+Attack #4
+Attack #5
+Attack #6
+Attack #7
+Attack #8
+Attack #9
+
+0.7
+
+0.7
+
+Attack #0
+Attack #1
+Attack #2
+Attack #3
+Attack #4
+Attack #5
+Attack #6
+Attack #7
+Attack #8
+Attack #9
+
+0.6
+0.5
+
+60
+
+0
+
+(b) RM F
+
+20
+
+40
+
+Iterations
+
+Routing score
+
+Attack #0
+Attack #1
+Attack #2
+Attack #3
+Attack #4
+Attack #5
+Attack #6
+Attack #7
+Attack #8
+Attack #9
+
+0.230
+
+Routing score
+
+Routing score
+
+0.6
+
+0.235
+
+Routing score
+
+0.240
+
+60
+
+0.6
+0.5
+0.4
+0
+
+20
+
+(c) RCLS
+
+40
+
+Iterations
+
+Attack #0
+Attack #1
+Attack #2
+Attack #3
+Attack #4
+Attack #5
+Attack #6
+Attack #7
+Attack #8
+Attack #9
+
+60
+
+(d) RLLM
+
+Figure 4: Convergence of gadget generation against different routing algorithms.
+
+RSW
+MT-Bench
+MMLU
+GSM8K
+
+RM F
+
+Upgrade
+
+Strong
+
+Upgrade
+
+Strong
+
+Upgrade
+
+100 ± 0
+90 ± 1
+98 ± 0
+
+81 → 100 ± 0
+43 → 94 ± 1
+52 → 99 ± 0
+
+100 ± 0
+78 ± 4
+100 ± 0
+
+58 → 100 ± 0
+53 → 90 ± 2
+54 → 100 ± 0
+
+100 ± 0
+100 ± 0
+100 ± 0
+
+RCLS
+Strong
+67 → 100 ± 0
+47 → 100 ± 0
+56 → 100 ± 0
+
+Upgrade
+73 ± 5
+95 ± 1
+94 ± 3
+
+RLLM
+Strong
+57 → 88 ± 2
+53 → 98 ± 1
+53 → 97 ± 1
+
+Table 1: The white-box attack’s rerouting success rate. “Upgrade” is the percentage of “Weak” queries successfully
+rerouted to the strong model by adding a confounder gadget. “Strong” shows the change in the percentage of queries that
+are routed to the strong LLM Ms before and after our rerouting attack.
+
+fastest (50 iterations on average), RM F the slowest (66 iterations on average). Interestingly, the score of RSW does not
+increase much during optimization but is still sufficient for a successful attack.
+Runtime varies significantly when generating gadgets against different routing methods. On a machine with one A40 GPU,
+4 CPUs, and 180G RAM, a single iteration takes 36.9 s, 8.4 s, 0.8 s, and 6.9 s for the RSW , RM F , RCLS , and RLLM
+routers, respectively. On average, it takes around 31 minutes to generate a gadget for the RSW router, 9 minutes for RM F ,
+50s for RCLS , and 6 minutes for RLLM .
+Rerouting success rates. Recall that our attack adds the same confounder gadget to all queries. We start by evaluating the
+reroute success rates: What fraction of confounded queries does the target router send to the strong model Ms ? We show
+the results for our attack in Table 1. Focusing first on the columns labeled ‘Strong’, the notation “X → Y ± Z” relays
+that for unmodified queries, X% are routed to the strong model Ms , and that for the n = 10 confounders we achieved an
+average of Y % of queries sent to Ms . The standard error is Z. Note that while calibration targets ϵ = 0.5, we see some
+natural variance in X for the test sets.
+To breakdown success further, we additionally report the upgrade rate, which focuses on the percentage of queries that
+were (a) originally routed to the weak model, and (b) routed to the strong model after they were modified with the
+confounder gadget. Because in our attacks few queries get “downgraded” (confounders cause them to be rerouted to the
+weak model instead of strong), the upgrade rate dictates the success rate.
+As can be seen, the gadgets reroute almost all weak queries to the strong model. In most cases we see 100% success, or
+close to it. The worst case still achieves 88% rerouting success, boosting the fraction of queries sent to the strong LLM by
+1.5x. Rerouting fails only for some queries that even after confounding are sent to the weak model: the fixed gadget did
+not sufficiently increase the router’s estimate of those queries’ complexity. This is the only source of error for the attack:
+no queries in these experiments got “downgraded”, i.e., a query that would otherwise be sent to Ms ends up rerouted to
+Mw . This also means that adding the confounder to every single query does not have negative impact on rerouting efficacy.
+We report standard error values for both the upgrade rates and the total percentage of queries routed to the strong model.
+The maximal standard error is in the low single digits, indicating similar success rates across gadgets.
+Quality of attack responses. We now turn to evaluating the quality of the responses generated by the attack. Note that
+because we have calibrated the routers to target ϵ = 0.5, our attacks can improve response quality by rerouting to the
+stronger model. In the other direction, our attacks add confounder gadgets which might degrade response quality.
+9
+
+MT-Bench
+MMLU
+GSM8K
+
+Original
+
+RSW
+Confounded
+
+Original
+
+RM F
+Confounded
+
+Original
+
+RCLS
+Confounded
+
+Original
+
+RLLM
+Confounded
+
+13.8
+20.4
+17.1
+
+12.3 ± 0.2
+20.1 ± 0.1
+15.1 ± 0.3
+
+12.6
+20.0
+17.0
+
+12.3 ± 0.2
+20.3 ± 0.1
+15.2 ± 0.3
+
+13.1
+20.2
+17.0
+
+12.1 ± 0.2
+20.5 ± 0.1
+15.0 ± 0.2
+
+12.7
+21.0
+16.4
+
+12.7 ± 0.4
+19.6 ± 0.1
+15.2 ± 0.3
+
+Table 2: Average perplexity of responses to the original and confounded queries, in the white-box setting for LLM pair 1.
+Response perplexity does not change significantly when adding the confounder gadget.
+
+MT-Bench
+MMLU
+GSM8K
+
+Original
+
+RSW
+Confounded
+
+Original
+
+RM F
+Confounded
+
+Original
+
+RCLS
+Confounded
+
+Original
+
+RLLM
+Confounded
+
+8.4
+61
+46
+
+8.3 ± 0.0
+66 ± 0
+64 ± 1
+
+8.4
+64
+50
+
+8.4 ± 0.0
+64 ± 1
+67 ± 1
+
+8.4
+63
+50
+
+8.3 ± 0.0
+65 ± 0
+63 ± 1
+
+8.3
+67
+44
+
+8.2 ± 0.1
+66 ± 0
+64 ± 1
+
+Table 3: Average benchmark-specific scores of responses to the original and confounded queries, in the white-box setting
+for LLM pair 1. Rerouting to the strong model improves quality of responses as long as there is a significant gap between
+the benchmark performance of the weak and strong LLMs.
+
+As a first measure of response quality, we compare the perplexity scores for unmodified responses and confounded query
+responses. Text perplexity [37] is a well-known method for approximating “naturalness” of text sequences. Perplexity
+can be computed using an LLM, we use GPT-2 [51] for this purpose as it is a standard choice [16, 69];1 Table 2 shows the
+results. As can be seen, adding the confounder gadget to queries does not significantly change response perplexity. To the
+extent that it does, it usually somewhat decreases response perplexity, i.e., makes it more “natural”. That said, perplexity
+is a coarse measure of “naturalness,” and it does not measure whether the response is correct. In particular, responses of
+strong and weak LLMs tend to have similar perplexities. We further discuss this issue in Appendix D.
+We thus also evaluate using the following benchmark-specific metrics to assess response quality:
+•
+
+MT-bench: We score the responses on a scale of 1–10 using an LLM-as-a-judge methodology [71]. We use
+GPT-4o [2] as the judge and ask it to provide a score given a pair of a query and a corresponding response.
+
+•
+
+MMLU: We parse the responses and compare the answer to the ground truth. In cases where the response did not
+fit any known multi-choice format, we marked the response as a mistake. We report accuracy as the percentage of
+responses that match the ground truth.
+
+•
+
+GSM8K: similar to MMLU except questions are math rather than multiple choice, thus we parse the answers according to the expected format.
+
+Table 3 shows that, according to these metrics, in most cases responses to the confounded queries are no worse, and in
+some cases even better, than responses to the original queries. We attribute the improvement on the GSM8K benchmark
+to the fact that the strong model performs significantly better than the weak model on this benchmark (57% vs. 33%). On
+the MT-bench and MMLU benchmarks, strong and weak models have comparable performance (8.5 vs. 7.6 for MT-bench
+and 66% vs. 64% for MMLU), thus routing does not degrade quality of responses and, consequently, the attack cannot
+improve it.
+To further demonstrate that the attack improves the quality of responses when there is a significant gap between the weak
+and strong LLMs, we perform an additional evaluation with Mistral-7B-Instruct-v0.3 [38] and Llama-2-7B-chat-hf [63]
+as the weak LLMs (LLM pairs 2 and 3). Mistral-7B achieves 7.4, 57%, and 25% on MT-bench, MMLU, and GSM8K,
+respectively. Llama-2-7B achieves 6.4, 44%, and 21%. Table 4 shows that the rerouting attack improves quality of
+responses when either of these LLMs is the weak model, and in particular for the weaker Llama-2-7B model.
+LLM responses are sometimes affected by the confounder gadget. In some cases, the LLM responded with, for example,
+“I can’t answer that question as it appears to be a jumbled mix of characters”. Still, the response continued with “However,
+I can help you with the actual question you’re asking,” followed by the actual answer. We observed very few cases where
+an LLM refused to answer due to the presence of the gadget. In most cases, the response did not mention anything
+1
+Some responses had abnormally high perplexity values (> 100), which we found do not correlate with quality, but these variations
+disproportionately contribute to the average. We thus filter out such high-perplexity responses as outliers in both benign and attack
+settings. We provide examples of filtered responses in Appendix D.
+
+10
+
+Orig.
+
+RSW
+Conf.
+
+Orig.
+
+RM F
+Conf.
+
+Orig.
+
+RCLS
+Conf.
+
+Orig.
+
+RLLM
+Conf.
+
+LLM pair 2
+MT-Bench
+MMLU
+GSM8K
+
+8.5
+55
+46
+
+8.3 ± 0.0
+64 ± 1
+64 ± 1
+
+8.3 ± 0.1
+64 ± 0
+67 ± 1
+
+8.4
+63
+51
+
+8.4
+58
+49
+
+8.4 ± 0.1
+66 ± 1
+63 ± 1
+
+8.4
+62
+38
+
+8.3 ± 0.1
+66 ± 0
+63 ± 2
+
+8.3
+52
+45
+
+8.4 ± 0.1
+66 ± 1
+63 ± 1
+
+8.1
+59
+37
+
+8.2 ± 0.1
+66 ± 1
+64 ± 1
+
+LLM pair 3
+MT-Bench
+MMLU
+GSM8K
+
+8.4
+51
+40
+
+8.3 ± 0.0
+64 ± 1
+64 ± 1
+
+8.1
+57
+44
+
+8.3 ± 0.1
+63 ± 1
+67 ± 1
+
+Table 4: Average benchmark-specific scores of responses to the original and confounded queries with Mistral-7B-Instructv0.3 (LLM pair 2) or Llama-2-7B-chat-hf (LLM pair 3) as the weak model, in the white-box setting. Results further
+emphasize that the rerouting attack improves quality of responses when there is a significant gap between the weak and
+strong LLMs.
+Surrogate
+Target
+
+RM F
+
+R̂SW
+RCLS
+
+RLLM
+
+RSW
+
+R̂M F
+RCLS
+
+RLLM
+
+RSW
+
+R̂CLS
+SF M
+
+RLLM
+
+RSW
+
+R̂LLM
+RM F
+
+RCLS
+
+MT-Bench
+MMLU
+GSM8K
+
+99 ± 1
+66 ± 5
+99 ± 1
+
+88 ± 5
+44 ± 11
+72 ± 11
+
+45 ± 5
+81 ± 3
+63 ± 4
+
+100 ± 0
+82 ± 4
+92 ± 2
+
+96 ± 2
+56 ± 7
+88 ± 3
+
+39 ± 3
+74 ± 2
+62 ± 4
+
+100 ± 0
+64 ± 6
+76 ± 6
+
+79 ± 9
+16 ± 7
+60 ± 9
+
+51 ± 5
+80 ± 5
+65 ± 8
+
+100 ± 0
+53 ± 4
+60 ± 8
+
+83 ± 5
+20 ± 5
+70 ± 7
+
+85 ± 7
+46 ± 11
+73 ± 10
+
+Table 5: Average upgrade rates for our attack in the black-box setting. This is the average percentage of queries rerouted
+from the weak to strong model under the target router due to a confounder gadget generated using the surrogate. The
+average downgrade rate (i.e., strong-to-weak rerouting) is 1.2% across all routers. Upgrade rates are lower than in the
+white-box setting but still high, indicating that the attack transfers.
+
+abnormal about the query. Intuitively, this reflects the fact that while LLMs are built to be robust to noisy inputs, the
+router itself is not.
+In summary, the attack is highly successful at rerouting queries from the weak to the strong model. Overall, quality
+improves if there is a significant gap between the strong and weak LLMs used by the router. Either way, confounding has
+no negative impact on the quality of responses.
+Black-box attack results. Next, we consider the black-box attack, where the attacker does not know the algorithm
+used by the target router. We assume that the attacker has access to another, surrogate router that it can use to generate
+confounder gadgets. In effect, we evaluate transferability of the attack from a known, white-box router to unknown,
+black-box routers.
+Table 5 shows the results for all combinations of surrogate (denoted by R̂) and target routers. For conciseness we focus
+on the upgrade and downgrade rates for the remainder of this work. Upgrade rates are lower than in the white-box setting
+but still high, indicating that the attack transfers. The LLM-based routing algorithm RLLM has the lowest rates, perhaps
+because it is the most complex of the four. The downgrade rate is 0 in most cases and is 1.2% on average.
+Table 6 shows that the black-box attack does not increase the average perplexity of responses as generated by LLM
+pair 1. Table 7 shows that the attack does not decrease benchmark-specific scores, other than some small decrease in
+some cases for the MMLU benchmark. For GSM8K, similar to the behaviour observed in the white-box setting, we see
+an improvement with our attack due to the performance difference between the strong and weak models for this task. This
+indicates that confounding affects only the routing, not the quality of responses. When the weak model is significantly
+weaker than the strong model, i.e., LLM pairs 2 and 3, the attack can improve the quality of responses significantly.
+Query-specific gadgets. By default, our gadget generation method is query-independent and the same gadget can be used
+to reroute any query. An adversary with more resources may instead generate a dedicated gadget for each query (using
+the same algorithm).
+Table 8 and Table 9 show the results for the white-box and black-box settings, respectively. (Here, percentage numbers
+are not averaged and there is no standard error since we used a single gadget per query.) The white-box results are nearly
+perfect; the black-box results are often better but sometimes somewhat worse than those for query-independent gadgets.
+We conjecture that this is due to some level of overfitting.
+11
+
+Surrogate
+Target
+
+RM F
+
+R̂SW
+RCLS
+
+RLLM
+
+RSW
+
+R̂M F
+RCLS
+
+RLLM
+
+RSW
+
+R̂CLS
+SF M RLLM
+
+RSW
+
+R̂LLM
+RM F
+
+RCLS
+
+MT-Bench
+MMLU
+GSM8K
+
+0.4
+0.1
+1.9
+
+0.8
+0.8
+1.7
+
+0.6
+1.1
+0.6
+
+1.4
+0.2
+1.6
+
+0.7
+0.2
+1.7
+
+0.3
+1.1
+0.2
+
+1.7
+0.3
+1.7
+
+0.3
+0.8
+1.0
+
+0.8
+1.3
+1.3
+
+−0.6
+1.2
+1.3
+
+0.0
+0.9
+1.7
+
+0.7
+0.9
+0.4
+
+Table 6: Differences between average perplexity of responses to the original and confounded queries, in the black-box
+setting, when the confounder gadget was generated for a different surrogate router than the target, for LLM pair 1. Positive
+values indicate a lower average perplexity (more natural) of responses to the confounded queries; higher values are better
+for the attacker. Standard errors were omitted for readability but are 0.2 on average. As in the white-box setting, the attack
+does not increase the average response perplexity.
+Surrogate
+Target
+
+RM F
+
+R̂SW
+RCLS
+
+RLLM
+
+RSW
+
+R̂M F
+RCLS
+
+RLLM
+
+RSW
+
+R̂CLS
+SF M RLLM
+
+RSW
+
+R̂LLM
+RM F
+
+RCLS
+
+−0.1
+2.5
+13.4
+
+0.0
+−1.3
+6.8
+
+0.1
+−0.8
+12.6
+
+−0.2
+2.6
+13.6
+
+−0.1
+−0.9
+11.3
+
+−0.2
+0.3
+10.4
+
+−0.1
+5.0
+13.1
+
+−0.1
+−2.9
+4.0
+
+0.0
+3.2
+15.5
+
+−0.2
+5.2
+11.3
+
+−0.2
+−0.9
+8.4
+
+−0.2
+3.8
+10.8
+
+0.0
+8.1
+17.9
+
+0.2
+−3.7
+11.2
+
+0.2
+4.8
+18.9
+
+−0.1
+7.8
+16.7
+
+0.1
+0.1
+15.2
+
+−0.1
+7.2
+14.2
+
+LLM pair 1
+MT-Bench
+MMLU
+GSM8K
+
+−0.1
+−0.1
+14.9
+
+−0.1
+0.3
+9.6
+
+0.0
+−0.2
+15.2
+
+−0.1
+4.8
+18.6
+
+−0.1
+1.0
+13.8
+
+0.0
+0.5
+14.7
+
+LLM pair 2
+MT-Bench
+MMLU
+GSM8K
+
+−0.1
+1.6
+13.6
+
+−0.1
+4.0
+8.7
+
+−0.1
+4.2
+18.5
+
+−0.2
+7.9
+18.9
+
+−0.2
+5.0
+14.4
+
+−0.2
+4.4
+18.3
+
+LLM pair 3
+MT-Bench
+MMLU
+GSM8K
+
+0.2
+5.0
+20.5
+
+0.0
+6.8
+13.4
+
+0.1
+5.8
+20.9
+
+−0.1
+11.3
+24.3
+
+−0.1
+9.1
+18.6
+
+0.0
+4.7
+21.6
+
+Table 7: Differences between average benchmark specific scores of responses to the original and confounded queries,
+when the confounder gadget was generated for a different surrogate router than the target (black-box setting) for three
+LLM pairs. Positive values indicate a higher average score for responses to the confounded queries; higher values are
+better for the attacker. Results are averaged across gadgets. Standard errors were omitted for readability and are on
+average 0.1, 0.8, and 1.8 for MT-bench, MMLU and GSM8K, respectively. Aligned with the white-box setting, results
+show almost no decrease in performance, and improvement when there is a performance gap for the LLM pair.
+
+Results for LLM pair 4. As discussed in Section 5, we replace the strong model that was used by Ong et al. [47], GPT-41106-preview (rank 28 in the Chatbot Arena leaderboard [1, 21]), with the open-sourced Llama-3.1-8B (rank 58) to reduce
+the costs of our extensive set of evaluations. In this section we perform a smaller-scale evaluation of the quality-enhancing
+attack performance when using GPT as the strong model, i.e., LLM pair 4. We evaluate this setting using three of the
+n = 10 confounder gadgets for each router.
+Table 10 shows the results across benchmarks in the white-box setting. Compared to the pair 1 setting (Table 3), the attack
+results in a higher increase in benchmark performance. This further demonstrates higher attack effect on response quality
+when the performance gap between the weak and strong models is higher.
+
+7
+
+Rerouting Commercial Routers
+
+We evaluate our rerouting attack on several commercial routers: Unify [12], NotDiamond [7], OpenRouter [11], and
+Martian [5]. These routers are available through black-box APIs. Therefore, we use our black-box attack with the
+40 gadgets optimized for the open-sourced routers RSW , RM F , RCLS , and RLLM (10 per router). We perform this
+evaluation using the MT-bench benchmark.
+Unify. This router lets users specify a list of models from different providers and a metric configuration for routing
+decisions. The available metrics are quality, time to first token, inter-token latency, and cost. The user can specify the
+weight for each metric. Time, latency, and cost metrics are static and precomputed. The quality metric is computed for
+12
+
+MT-Bench
+MMLU
+GSM8K
+
+RSW
+
+RM F
+
+RCLS
+
+RLLM
+
+100
+100
+100
+
+100
+96
+100
+
+100
+100
+100
+
+100
+100
+100
+
+Table 8: Upgrade rates for query-specific gadgets, in the white-box setting. Results are nearly perfect, i.e. nearly all
+confounded queries are routed to the strong model.
+Surrogate
+Target
+
+RM F
+
+R̂SW
+RCLS
+
+RLLM
+
+RSW
+
+R̂M F
+RCLS
+
+RLLM
+
+RSW
+
+R̂CLS
+SF M RLLM
+
+RSW
+
+R̂LLM
+RM F
+
+RCLS
+
+MT-Bench
+MMLU
+GSM8K
+
+100
+96
+100
+
+83
+57
+68
+
+71
+89
+74
+
+100
+95
+100
+
+83
+43
+73
+
+48
+83
+68
+
+100
+74
+81
+
+73
+13
+65
+
+100
+77
+88
+
+67
+11
+54
+
+83
+30
+64
+
+52
+83
+70
+
+Table 9: Upgrade rates for query-specific gadgets, in the black-box setting. In most cases results are better than in the
+query-independent setting, at the cost of a more resource intensive process.
+
+each query using a neural scoring function that was trained on prompts from several open datasets (e.g., Open Hermes [62])
+and labeled using an LLM-as-a-judge [71].
+For our evaluation, we configure the router to choose between GPT-4o [2] as the strong model and Mixtral 8x7B [39] as
+the weak model. We focus on the cost and quality metrics, and set the weight of time and latency to 0 so that they are
+not factored into routing decisions. We manually calibrate the weights to 1 for the quality metric and 0.02 for the cost
+metric. These weights result in 49% of the original, unmodified queries being routed to the strong model and 51% to the
+weak model, resulting in a total cost of $0.13 for the 72 MT-bench queries. Adding confounder gadgets generated for the
+four open-sourced evaluated routers results in upgrade rates of 79%, 88%, 91%, and 89%, respectively, averaged across
+10 gadgets. The downgrade rate is zero in all cases. In terms of costs, the addition of the confounder gadget increased
+the cost to $0.22, $0.23, $0.22, and $0.21, respectively, averaged across 10 gadgets. In other words, the rerouting attack
+increased the cost of processing the queries, on average, by a factor of 1.7×.
+NotDiamond. This router lets users route their queries to a list of predefined models. Available objectives are to maximize
+quality, or balance quality and cost, or balance quality and latency. The exact details of the routing logic are not specified.
+We focus on cost-aware routing, for which the API docs state that “NotDiamond will automatically determine when a
+query is simple enough to use a cheaper model without degrading the quality of the response.” NotDiamond provides a
+router selection tool which gives the routing decision for a particular query without forwarding the query to the chosen
+model (thereby incurring no costs). We use this for our evaluation—of course a real attack would target the NotDiamond
+API when used for actual routing.
+Similar to the Unify experiments, we set GPT-4o as the strong model and Mixtral-8x7b as the weak model. Cost-aware
+routing routes 82% of the original queries to the strong model, 18% to the weak model. Confounded queries generated for
+RSW , RM F , RCLS , and RLLM achieve upgrade rates of 21%, 18%, 21%, and 15%, respectively. The downgrade rates
+are 1–3%.
+As opposed to our calibrated routers, NotDiamond aggressively routes to the stronger model even for unmodified queries
+in most settings. We tried several strong/weak model pairs including GPT-4o/Mistral-7B-Instruct-v0.2, GPT-4o/GPT-4omini, and Claude-3-Opus/Claude-3-Sonnet, and observed a similar 20%–80% split between strong and weak.
+When we changed the strong model to OpenAI’s o1-mini and kept Mixtral-8x7b as the weak model, 54% of the original
+queries were routed to the strong model, 46% to the weak model. In this setting, confounder gadgets yield 13–16%
+upgrade rates and, on average, 3–6% downgrade rates. We conclude that while the attack is still effective, NotDiamond is
+more robust than Unify.
+OpenRouter. This framework offers a unified interface for LLMs, and additionally offers a system that routes users’
+queries between three specific models: Llama-3-70b, Claude-3.5-Sonnet, and GPT-4o. Queries are routed “depending on
+their size, subject, and complexity,” as described in the documentation.2
+With OpenRouter, 96% of the original queries are routed to Llama, 4% to GPT, and none to Claude. Based on the pricing
+and number of input-output tokens, the queries’ total cost is $0.03 for processing all evaluated queries. After adding
+2
+
+https://openrouter.ai/openrouter/auto
+
+13
+
+MT-Bench
+MMLU
+GSM8K
+
+Original
+
+RSW
+Confounded
+
+Original
+
+RM F
+Confounded
+
+Original
+
+RCLS
+Confounded
+
+Original
+
+RLLM
+Confounded
+
+9.2
+76
+62
+
+9.2 ± 0.0
+84 ± 1
+86 ± 0
+
+9.1
+76
+65
+
+9.3 ± 0.0
+81 ± 0
+88 ± 1
+
+9.2
+76
+68
+
+9.1 ± 0.0
+84 ± 0
+90 ± 2
+
+8.9
+78
+66
+
+9.1 ± 0.1
+84 ± 1
+85 ± 2
+
+Table 10: Benchmark-specific average scores of responses to the original and confounded queries with GPT-4-1106preview as the strong model (LLM pair 4), in the white-box setting. Results demonstrate a higher increase in performance
+with respect to the LLM pair 1 setting, due to the larger performance gap between the models.
+
+confounder gadgets, queries originally routed to GPT are still routed to GPT and no queries are ever routed to Claude. For
+queries originally routed to Llama, some gadgets result in all of them being rerouted to GPT, and some have no impact.
+Specifically, 4 out of the 10 gadgets we optimized using RSW caused all queries to be rerouted to GPT, 2/10 using RM F ,
+and 3/10 using RLLM . None of the gadgets optimized using RCLS had any impact on routing. In terms of costs, having
+all queries being rerouted to GPT results with an average cost of $0.25, a greater than 8× increase over the cost of the
+original queries. Given the lack of documentation of the routing algorithm being used, we are unsure what explains the
+variability across gadgets.
+Martian. This router is supposed to let the user provide a list of models and to specify the maximum amount the user is
+willing to pay for a query or for 1M tokens. Unfortunately, as of November 14, 2024, the router appears to ignore the list
+models provided by the user, and forwards the input to the same LLM regardless of it. We tested this in settings including
+one, two, or multiple models. While responses do not specify which LLM was used, they were identical across settings,
+so we excluded Martian from our evaluation. We notified Martian about the seemingly buggy behavior.
+
+8
+
+Defenses
+
+Defenses against rerouting should be cheap. If the per-query cost of the defense is comparable to the per-query cost of a
+strong LLM, deploying the defense will defeat the main purpose of LLM routing, which is to reduce the cost of responding
+to queries.
+Perplexity-based filtering. As explained in Section 6, perplexity is a measure of how “natural” the text looks. Perplexitybased filtering has been suggested in many contexts as a defense against adversarial text inputs [16, 36]. This defense
+computes the perplexity of multiple “trusted” texts, then compares it with the perplexity of the suspicious text. If the latter
+is significantly higher, or above some predefined threshold, the text is considered adversarial. Specifically, we assume the
+defender has access to a set of unmodified queries. The defender computes their perplexity values and uses these values
+to establish a threshold. Given a new query, the defender checks if its perplexity exceeds the threshold. If so, the query
+is flagged as adversarial. The defender can then decide how to handle such queries. Options include rejecting them or
+routing them all to the weak model. Computing the perplexity of a query can be cheap to do, e.g., using GPT-2 as we do
+in this work; this makes it viable for use as a defense that doesn’t undermine the benefits of routing.
+To evaluate the effectiveness of such a defense against our attack, we compare the perplexity values of original and
+confounded queries. Figure 5 presents histograms of perplexity values for both the original evaluated GSM8K queries and
+their corresponding confounded versions, generated using one of the confounder gadgets, sampled uniformly at random.
+Additionally, the figure displays the ROC curve for the defense that detects confounded queries by checking if their
+perplexity exceeds a threshold. As can be seen, the confounded queries exhibit significantly higher perplexity values,
+making them readily distinguishable from the original queries. For instance, in the case of the RSW router, setting the
+threshold value at 55 yields a false-positive rate of 3% and a true-positive rate of 97%. Results are similar for other gadgets
+and benchmarks and were omitted due to space constraints.
+Unfortunately, this defense can be evaded if an adversary incorporates a perplexity constraint into the gadget generation
+process. To demonstrate the feasibility of this evasion strategy, we modify gadget generation to maximize the score of the
+routing algorithm R and simultaneously aligning the the gadget’s perplexity to some predefined perplexity value. In more
+detail, in each iteration t ∈ [T ], we uniformly sample a target index j ∈ [1, n] and generate a set B of B + 1 candidates as
+explained in Section 4. We then modify Eq. 1 such that we now find the candidate that maximizes the difference between
+the router’s score and the perplexity constraint for the confounder:
+
+c(t+1) ← arg max Sθ (c∥xi ) − α · |PPL(c) − ρ| ,
+c∈B
+
+14
+
+Original
+Confounded
+
+50
+
+Count
+
+Count
+
+30
+
+40
+20
+00
+
+50
+
+100
+
+150
+
+200
+
+Perplexity
+
+250
+
+40
+
+30
+
+30
+
+20
+
+20
+
+20
+
+10
+
+10
+
+10
+
+0
+
+300
+
+20
+
+40
+
+(a) RSW
+
+60
+
+80
+
+0
+
+100 120 140
+
+Perplexity
+
+50
+
+(b) RM F
+
+100
+
+Perplexity
+
+150
+
+0
+
+200
+
+0.9
+
+0.9
+
+0.8
+
+0.8
+
+0.8
+
+0.8
+
+0.7
+
+0.7
+
+0.7
+
+0.5
+
+AUC = 1.00
+0.0
+
+0.2
+
+0.4
+
+FPR
+
+0.6
+
+(e) RSW
+
+0.8
+
+1.0
+
+0.6
+
+0.5
+
+0.5
+
+0.4
+0.0
+
+0.2
+
+0.4
+
+FPR
+
+0.6
+
+0.8
+
+1.0
+
+100
+
+0.5
+
+AUC = 0.99
+0.0
+
+(f) RM F
+
+80
+
+0.6
+
+0.4
+
+AUC = 0.97
+
+60
+
+Perplexity
+
+TPR
+
+0.9
+
+TPR
+
+0.9
+
+TPR
+
+1.0
+
+TPR
+
+1.0
+
+0.6
+
+40
+
+(d) RLLM
+
+1.0
+
+0.6
+
+20
+
+(c) RCLS
+
+1.0
+
+0.7
+
+Original
+Confounded
+
+50
+
+40
+
+Count
+
+40
+
+60
+
+Original
+Confounded
+
+50
+
+Count
+
+Original
+Confounded
+
+80
+
+0.2
+
+0.4
+
+FPR
+
+0.6
+
+0.8
+
+1.0
+
+(g) RCLS
+
+0.4
+0.3
+
+AUC = 0.95
+0.0
+
+0.2
+
+0.4
+
+FPR
+
+0.6
+
+0.8
+
+1.0
+
+(h) RLLM
+
+Figure 5: Perplexity of the original queries in the GSM8K benchmark compared to the perplexity of confounded queries
+using a single uniformly sampled gadget. We additionally present the ROC curve of the defense that detects confounded
+queries by checking if they cross a perplexity threshold, and it’s corresponding ROCAUC score. Confounded queries have
+significantly higher perplexity values, and are thus easy to recognize and filter out.
+
+where PPL(·) denotes the perplexity function computed using GPT-2, the value ρ denotes a target perplexity value to
+which we want gadgets’ perplexity to be close, and the value α is a balancing coefficient. For the experiments below, we
+set ρ to be the average perplexity value of 100 uniformly sampled queries3 from the GSM8K benchmark.
+Figure 6 shows the results when setting α = 0.01, for the GSM8K benchmark and one confounder gadget. The results
+demonstrate that modified queries can no longer be easily distinguished from normal queries by their perplexity alone.
+For instance, in the case of the RSW router, setting the threshold value at 55 as before, no confounded queries are flagged
+as anomalous, meaning the true-positive rate is zero. We note that there is some variability across gadgets. The average
+ROCAUC scores of the defense across ten gadgets with standard deviation indicated parenthetically, are 0.66 (±0.04),
+0.69 (±0.02), 0.71 (±0.02), and 0.69 (±0.03) for the RSW , RM F , RCLS , and RLLM routers, respectively.
+At the same time, optimizing for low perplexity does not significantly impact the attack success rate. Table 11 compares
+the average upgrade rates (over n = 10 gadgets) of the original perplexity-agnostic optimization approach from Section 4
+and the perplexity-minimizing one described above. The attack efficacy might be improvable further by adjusting α to
+find a sweet spot that avoids the defense effectively while ensuring high rerouting success rate.
+The attack is not particularly sensitive to the choice of queries used to obtain the calibration value ρ. Although ρ was
+computed using GSM8K queries, we observe similar performance when evaluating on the MT-bench and MMLU benchmarks, with average ROCAUC scores of 0.50 (±0.01), 0.51 (±0.01), 0.52 (±0), and 0.51 (±0.01) for MT-bench, and 0.52
+(±0.03), 0.54 (±0.02), 0.55 (±0.01), and 0.53 (±0.02) for MMLU. One might also try removing the calibration value altogether, instead simply minimizing the gadget’s perplexity value. However, this can result with an “overshooting” effect,
+where the perplexity value is significantly lower than that of normal queries, thereby making it still distinguishable from
+standard queries.
+In summary, perplexity-based filtering is not an effective defense against against rerouting.
+
+3
+
+The perplexity calibration queries were chosen such that they do not overlap with the queries used for evaluation.
+
+15
+
+Original
+Confounded
+
+20
+
+17.5
+15.0
+
+Count
+
+Count
+
+15
+
+10.0
+
+10
+
+Original
+Confounded
+
+20
+15
+
+Count
+
+15
+
+12.5
+
+Original
+Confounded
+
+20
+
+Count
+
+Original
+Confounded
+
+20.0
+
+10
+
+10
+
+7.5
+5.0
+
+5
+
+5
+
+5
+
+2.5
+0.0
+
+20
+
+30
+
+40
+
+0
+
+50
+
+Perplexity
+
+20
+
+30
+
+(a) RSW
+1.0
+
+40
+
+0
+
+50
+
+Perplexity
+
+20
+
+(b) RM F
+1.0
+
+AUC = 0.65
+
+30
+
+40
+
+0
+
+50
+
+Perplexity
+
+(c) RCLS
+1.0
+
+AUC = 0.73
+
+1.0
+
+AUC = 0.64
+
+0.6
+
+0.6
+
+0.6
+
+0.2
+0.0
+
+0.0
+
+0.2
+
+0.4
+
+FPR
+
+0.6
+
+0.8
+
+1.0
+
+0.4
+
+0.2
+
+0.2
+
+0.0
+
+(e) RSW
+
+0.0
+
+0.2
+
+0.4
+
+FPR
+
+0.6
+
+0.8
+
+0.0
+
+1.0
+
+40
+
+50
+
+AUC = 0.65
+
+TPR
+
+0.6
+
+TPR
+
+0.8
+
+TPR
+
+0.8
+
+TPR
+
+0.8
+
+0.4
+
+30
+
+Perplexity
+
+(d) RLLM
+
+0.8
+
+0.4
+
+20
+
+0.4
+0.2
+
+0.0
+
+(f) RM F
+
+0.2
+
+0.4
+
+FPR
+
+0.6
+
+0.8
+
+1.0
+
+0.0
+
+0.0
+
+(g) RCLS
+
+0.2
+
+0.4
+
+FPR
+
+0.6
+
+0.8
+
+1.0
+
+(h) RLLM
+
+Figure 6: Perplexity values of the original and confounded queries, and the corresponding ROC curves of the defense that
+detects confounded queries by checking if they cross a perplexity threshold, when the confounder gadget is optimized for
+low perplexity, in the GSM8K benchmark and for one gadget sampled uniformly at random. Confounded queries have
+similar perplexity values as the original queries, and can no longer be easily distinguished based on perplexity alone.
+
+Orig.
+MT-Bench
+MMLU
+GSM8K
+
+RSW
+PPL-opt.
+
+100 ± 0
+90 ± 1
+98 ± 0
+
+100 ± 0
+59 ± 5
+70 ± 7
+
+Orig.
+
+RM F
+PPL-opt.
+
+100 ± 0
+78 ± 4
+100 ± 0
+
+98 ± 2
+74 ± 5
+98 ± 2
+
+Orig.
+
+RCLS
+PPL-opt.
+
+100 ± 0
+100 ± 0
+100 ± 0
+
+98 ± 1
+66 ± 12
+88 ± 6
+
+Orig.
+
+RLLM
+PPL-opt.
+
+73 ± 5
+95 ± 1
+94 ± 3
+
+51 ± 8
+89 ± 3
+81 ± 8
+
+Table 11: Average upgrade rates for gadgets generated without (“Orig.”) and with (“PPL-opt.”) low-perplexity optimization, for the balancing coefficient α = 0.01. In some cases, optimizing for low perplexity has a negative effect on the
+attack success rate, however the attack can still be considered successful. A more careful choice of α can potentially limit
+the effect on the attack success.
+
+LLM-based filtering. Even though adversarially modified queries cannot be easily detected using perplexity, they may
+still be “unnatural.” A possible defense is to employ an oracle LLM to determine if the query is natural or not. This defense
+requires the router to invoke an additional LLM for every processed query, which is computationally expensive in the case
+of a high-quality open-sourced LLM or financially costly in the case of a high-quality commercial LLM. Therefore, this
+defense is unlikely to be practical. Furthermore, it is possible to optimize gadgets so that they both have low perplexity
+and appear “natural” to LLM evaluators [69].
+Paraphrasing. Filtering defenses like those discussed above are passive. An active alternative is to paraphrase queries
+using an oracle LLM. LLMs are trained to generate natural text and are thus likely to remove unnatural substrings when
+paraphrasing a query. This defense is likely impractical for two reasons. First, and as with LLM-based filtering, it requires
+16
+
+an extra potentially expensive LLM invocation for each query processed by the router. Second, it may degrade the quality
+of responses from the destination LLMs, which are sensitive to the phrasing of queries and prompts.
+Detecting anomalous user workloads. Another possible defense requires the router to monitor individual user workloads, and identify those users whose queries are routed to the strongest model with an abnormally high frequency. The
+router can then impose a user-specific threshold. Of course such workloads may have a benign explanation, e.g., the user’s
+queries may be unusually complex. Even so, routers could potentially be designed to perform user-specific routing. For
+example, one could imagine using per-user thresholds that are calibrated dynamically to attempt to maintain a consistent
+fraction of queries being routed to the strong model.
+Such user-specific routing would complicate implementations, and would make inaccurate decisions for a user until there
+is sufficient data about their queries. The latter is relevant in adversarial settings, since such an approach would still be
+circumventable should attackers be able to mount Sybil attacks in which the attacker creates a new user for, in the limit,
+each query.
+
+9
+
+Related Work
+
+Evasion attacks against ML systems. A large body of work has investigated evasion attacks against ML systems [25,
+43, 60], also referred to as adversarial examples [32, 48, 49], and these attacks are now being explored in the context of
+multi-modal LLMs [28] as well as text-only LLMs (for just one example, see [22]). We discussed in Section 3 how our
+results compare: LLM control plane integrity is a distinct AI safety issue, but related in that: (1) control plane integrity
+attacks may use evasion-style techniques, and (2) control plane integrity attacks might be useful for performing evasion.
+Prompt injection against LLMs. Prompt injection is a class of attacks against LLMs in which the adversary manipulates
+the prompt, i.e., the textual input fed directly to the LLM, causing the LLM to generate outputs that satisfy some adversarial objective [50, 64]. Evasion attacks as discussed above can use prompt injection, jailbreaking attacks being a widely
+explored example in which the adversary aims to bypass some safety guardrail included in the LLM system, such as “do
+not output expletives” [23, 42, 54, 66, 72, 73].
+Prompt injection is also used for extraction attacks that aim to infer some information from or about the model, for
+example, the system prompt [50, 54, 70], training data samples [46], or model parameters [18]. In indirect prompt injection
+attacks [33], the adversaries do not directly interact with the target LLM, and instead inject adversarial inputs into thirdparty data, which is then added to the LLM prompt (intentionally or unintentionally) by the victim application and/or its
+users. This relates to another category of attacks that target LLM-based applications, such as RAG systems, and invalidate
+their integrity by exploiting the weaknesses of the underlying LLM [19, 55].
+Our attacks also modify queries, but with a different aim than the above types of attacks: undermining the integrity of the
+control plane routing, rather than the LLM itself. Future work might investigate indirect control plane integrity attacks
+that, analogously to indirect prompt injection, serve to somehow trick users of a routing system into forming controlplane-confounding queries.
+Attacks against MoE. Mixture-of-Experts (MoE) architectures enable using multiple expert modules for processing a
+given query with a lower computational cost by including an inner routing mechanism that in every layer routes different
+tokens to a small number of experts [29, 30, 52, 56]. This can be thought of as an internal router within a single LLM,
+rather than an external control plane that orchestrates multiple LLMs. MoE has increased in popularity as it allows to
+build larger models at a fixed compute budget—not all parameters are used at the same time.
+Hayes et al. [34] identified a vulnerability in MoE that can be exploited for a denial-of-service attack against MoE. Thus
+control plane integrity issues appear to extend to the context of single-LLM MoE systems, and future work could explore
+this connection further.
+Yona et al. [67] presented a side-channel attack on MoE that enables an attacker to reveal other users’ prompts. We expect
+that side-channel attacks against LLM control planes exist as well, for example, to infer which models are used via timing
+of responses. Such attacks, which target confidentiality, are outside the scope of control plane integrity.
+
+10
+
+Conclusion
+
+LLM routers balance quality and cost of LLM inference by routing different queries to different LLMs. They are an
+example of a broader, emerging class of systems we call “LLM control planes” that aim to achieve various quality,
+efficiency, and cost objectives by orchestrating use of multiple LLMs to respond to a query.
+17
+
+We introduced and defined a new safety property, LLM control plane integrity. Informally, this property holds if an
+adversarial user cannot influence routing decisions made by the control plane. To show that existing LLM routers do not
+satisfy this property, we designed, implemented, and evaluated a black-box optimization method for generating queryindependent “confounder gadgets.” When added to any query, the confounder gadget confuses the router into routing the
+query to the adversary-chosen LLM.
+We evaluated the efficacy of confounder gadgets on multiple open-source and commercial routers and demonstrated that
+they successfully reroute queries without a negative impact on the quality of responses. We also discussed defenses against
+these attacks and indicated directions for future research.
+
+Acknowledgments
+This research was supported in part by the Google Cyber NYC Institutional Research Program, the Israel Science Foundation (Grant No. 1336/22), and the European Union (ERC, FTRC, 101043243). Views and opinions expressed are however
+those of the author(s) only and do not necessarily reflect those of the European Union or the European Research Council.
+Neither the European Union nor the granting authority can be held responsible for them.
+
+18
+
+References
+[1] “Chatbot Arena LLM Leaderboard: Community-driven evaluation for best LLM and AI chatbots,” https://
+huggingface.co/spaces/lmarena-ai/chatbot-arena-leaderboard, accessed: 2024-11-14.
+[2] “Hello gpt-4o,” https://openai.com/index/hello-gpt-4o/, published: 2024-05-23.
+[3] “Introducing Llama 3.1: Our most capable models to date,” https://ai.meta.com/blog/meta-llama-3-1/, published:
+2024-07-23.
+[4] “Introducing Meta Llama 3: The most capable openly available LLM to date,” https://ai.meta.com/blog/
+meta-llama-3/, published: 2024-04-18.
+[5] “Martian LLM router,” https://withmartian.com/.
+[6] “New embedding models and API updates,” https://openai.com/index/new-embedding-models-and-api-updates,
+published: 2024-01-25.
+[7] “Notdiamond LLM router,” https://www.notdiamond.ai/.
+[8] “OpenAI
+and
+others
+seek
+new
+path
+to
+smarter
+AI
+as
+current
+methods
+hit
+limitations,”
+https://www.reuters.com/technology/artificial-intelligence/
+openai-rivals-seek-new-path-smarter-ai-current-methods-hit-limitations-2024-11-11, published: 2024-11-15.
+[9] “OpenAI, Google and Anthropic are struggling to build more advanced AI,” https://www.bloomberg.com/news/
+articles/2024-11-13/openai-google-and-anthropic-are-struggling-to-build-more-advanced-ai?sref=CrGXSfHu,
+published: 2024-11-13.
+[10] “OpenAI shifts strategy as rate of ‘GPT’ AI improvements slows,” https://www.theinformation.com/articles/
+openai-shifts-strategy-as-rate-of-gpt-ai-improvements-slows, published: 2024-11-9.
+[11] “Openrouter LLM router,” https://openrouter.ai/.
+[12] “Unify LLM router,” https://unify.ai/.
+[13] “What is a control plane?” https://www.ibm.com/think/topics/control-plane, published: 2024-10-31.
+[14] J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya, F. L. Aleman, D. Almeida, J. Altenschmidt, S. Altman,
+S. Anadkat et al., “GPT-4 technical report,” arXiv preprint arXiv:2303.08774, 2023.
+[15] P. Aggarwal, A. Madaan, A. Anand, S. P. Potharaju, S. Mishra, P. Zhou, A. Gupta, D. Rajagopal, K. Kappaganthu,
+Y. Yang et al., “Automix: Automatically mixing language models,” arXiv preprint arXiv:2310.12963, 2023.
+[16] G. Alon and M. Kamfonas, “Detecting language model attacks with perplexity,” arXiv preprint arXiv:2308.14132,
+2023.
+[17] R. A. Bradley and M. E. Terry, “Rank analysis of incomplete block designs: I. the method of paired comparisons,”
+Biometrika, vol. 39, no. 3/4, 1952.
+[18] N. Carlini, D. Paleka, K. D. Dvijotham, T. Steinke, J. Hayase, A. F. Cooper, K. Lee, M. Jagielski, M. Nasr, A. Conmy
+et al., “Stealing part of a production language model,” arXiv preprint arXiv:2403.06634, 2024.
+[19] H. Chaudhari, G. Severi, J. Abascal, M. Jagielski, C. A. Choquette-Choo, M. Nasr, C. Nita-Rotaru, and A. Oprea,
+“Phantom: General trigger attacks on retrieval augmented language generation,” arXiv preprint arXiv:2405.20485,
+2024.
+[20] L. Chen, M. Zaharia, and J. Zou, “FrugalGPT: How to use large language models while reducing cost and improving
+performance,” arXiv preprint arXiv:2305.05176, 2023.
+[21] W.-L. Chiang, L. Zheng, Y. Sheng, A. N. Angelopoulos, T. Li, D. Li, B. Zhu, H. Zhang, M. Jordan, J. E. Gonzalez, and I. Stoica, “Chatbot arena: An open platform for evaluating LLMs by human preference,” in Forty-first
+International Conference on Machine Learning (ICML), 2024.
+[22] S. Cho, S. Jeong, J. Seo, T. Hwang, and J. C. Park, “Typos that broke the RAG’s back: Genetic attack on RAG
+pipeline by simulating documents in the wild via low-level perturbations,” arXiv preprint arXiv:2404.13948, 2024.
+[23] J. Chu, Y. Liu, Z. Yang, X. Shen, M. Backes, and Y. Zhang, “Comprehensive assessment of jailbreak attacks against
+LLMs,” arXiv preprint arXiv:2402.05668, 2024.
+[24] K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano et al.,
+“Training verifiers to solve math word problems,” arXiv preprint arXiv:2110.14168, 2021.
+[25] N. Dalvi, P. Domingos, Mausam, S. Sanghai, and D. Verma, “Adversarial classification,” in Proceedings of the tenth
+ACM SIGKDD international conference on Knowledge discovery and data mining, 2004.
+19
+
+[26] J. Devlin, M.-W. Chang, K. Lee, and K. Toutanova, “BERT: Pre-training of deep bidirectional transformers for
+language understanding,” in Proceedings of the 2019 Conference of the North American Chapter of the Association
+for Computational Linguistics: Human Language Technologies, Volume 1 (Long and Short Papers), 2019.
+[27] D. Ding, A. Mallick, C. Wang, R. Sim, S. Mukherjee, V. Rühle, L. V. Lakshmanan, and A. H. Awadallah, “Hybrid
+LLM: Cost-efficient and quality-aware query routing,” in International Conference on Learning Representations
+(ICLR), 2024.
+[28] Y. Dong, H. Chen, J. Chen, Z. Fang, X. Yang, Y. Zhang, Y. Tian, H. Su, and J. Zhu, “How robust is Google’s Bard
+to adversarial image attacks?” arXiv preprint arXiv:2309.11751, 2023.
+[29] N. Du, Y. Huang, A. M. Dai, S. Tong, D. Lepikhin, Y. Xu, M. Krikun, Y. Zhou, A. W. Yu, O. Firat et al., “Glam:
+Efficient scaling of language models with mixture-of-experts,” in International Conference on Machine Learning
+(ICML), 2022.
+[30] W. Fedus, B. Zoph, and N. Shazeer, “Switch transformers: Scaling to trillion parameter models with simple and
+efficient sparsity,” Journal of Machine Learning Research (JMLR), 2022.
+[31] T. Feng, Y. Shen, and J. You, “Graphrouter: A graph-based router for LLM selections,” arXiv preprint
+arXiv:2410.03834, 2024.
+[32] I. J. Goodfellow, J. Shlens, and C. Szegedy, “Explaining and harnessing adversarial examples,” in International
+Conference on Learning Representations (ICLR), 2015.
+[33] K. Greshake, S. Abdelnabi, S. Mishra, C. Endres, T. Holz, and M. Fritz, “Not what you’ve signed up for: Compromising real-world LLM-integrated applications with indirect prompt injection,” in ACM AISec, 2023.
+[34] J. Hayes, I. Shumailov, and I. Yona, “Buffer overflow in mixture of experts,” arXiv preprint arXiv:2402.05526, 2024.
+[35] D. Hendrycks, C. Burns, S. Basart, A. Zou, M. Mazeika, D. Song, and J. Steinhardt, “Measuring massive multitask
+language understanding,” in International Conference on Learning Representations (ICLR), 2021.
+[36] N. Jain, A. Schwarzschild, Y. Wen, G. Somepalli, J. Kirchenbauer, P.-y. Chiang, M. Goldblum, A. Saha, J. Geiping, and T. Goldstein, “Baseline defenses for adversarial attacks against aligned language models,” arXiv preprint
+arXiv:2309.00614, 2023.
+[37] F. Jelinek, “Interpolated estimation of Markov source parameters from sparse data,” 1980. [Online]. Available:
+https://api.semanticscholar.org/CorpusID:61012010
+[38] A. Q. Jiang, A. Sablayrolles, A. Mensch, C. Bamford, D. S. Chaplot, D. d. l. Casas, F. Bressand, G. Lengyel,
+G. Lample, L. Saulnier et al., “Mistral 7B,” arXiv preprint arXiv:2310.06825, 2023.
+[39] A. Q. Jiang, A. Sablayrolles, A. Roux, A. Mensch, B. Savary, C. Bamford, D. S. Chaplot, D. d. l. Casas, E. B. Hanna,
+F. Bressand et al., “Mixtral of experts,” arXiv preprint arXiv:2401.04088, 2024.
+[40] D. Jiang, X. Ren, and B. Y. Lin, “LLM-Blender: Ensembling large language models with pairwise ranking and
+generative fusion,” in Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics
+(Volume 1: Long Papers), 2023.
+[41] C.-H. Lee, H. Cheng, and M. Ostendorf, “OrchestraLLM: Efficient orchestration of language models for dialogue
+state tracking,” in Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers), 2024.
+[42] Y. Liu, G. Deng, Z. Xu, Y. Li, Y. Zheng, Y. Zhang, L. Zhao, T. Zhang, K. Wang, and Y. Liu, “Jailbreaking ChatGPT
+via prompt engineering: An empirical study,” arXiv preprint arXiv:2305.13860, 2023.
+[43] D. Lowd and C. Meek, “Adversarial learning,” in ACM International Conference on Knowledge Discovery in Data
+Mining (SIGKDD), 2005.
+[44] S. Merity, C. Xiong, J. Bradbury, and R. Socher, “Pointer sentinel mixture models,” in International Conference on
+Learning Representations (ICLR), 2016.
+[45] S. Narayanan Hari and M. Thomson, “Tryage: Real-time, intelligent routing of user prompts to large language
+models,” arXiv e-prints, 2023.
+[46] M. Nasr, N. Carlini, J. Hayase, M. Jagielski, A. F. Cooper, D. Ippolito, C. A. Choquette-Choo, E. Wallace,
+F. Tramèr, and K. Lee, “Scalable extraction of training data from (production) language models,” arXiv preprint
+arXiv:2311.17035, 2023.
+[47] I. Ong, A. Almahairi, V. Wu, W.-L. Chiang, T. Wu, J. E. Gonzalez, M. W. Kadous, and I. Stoica, “RouteLLM:
+Learning to route LLMs with preference data,” arXiv preprint arXiv:2406.18665, 2024.
+20
+
+[48] N. Papernot, P. McDaniel, I. Goodfellow, S. Jha, Z. B. Celik, and A. Swami, “Practical black-box attacks against
+machine learning,” in Proceedings of the 2017 ACM on Asia conference on computer and communications security,
+2017.
+[49] N. Papernot, P. McDaniel, S. Jha, M. Fredrikson, Z. B. Celik, and A. Swami, “The limitations of deep learning in
+adversarial settings,” in IEEE European symposium on security and privacy (EuroS&P), 2016.
+[50] F. Perez and I. Ribeiro, “Ignore previous prompt: Attack techniques for language models,” in NeurIPS ML Safety
+Workshop, 2022.
+[51] A. Radford, J. Wu, R. Child, D. Luan, D. Amodei, and I. Sutskever, “Language models are unsupervised
+multitask learners,” https://cdn.openai.com/better-language-models/language models are unsupervised multitask
+learners.pdf, 2019.
+[52] C. Riquelme, J. Puigcerver, B. Mustafa, M. Neumann, R. Jenatton, A. Susano Pinto, D. Keysers, and N. Houlsby,
+“Scaling vision with sparse mixture of experts,” Advances in Neural Information Processing Systems (NeurIPS),
+2021.
+[53] M. Šakota, M. Peyrard, and R. West, “Fly-swat or cannon? cost-effective language model choice via meta-modeling,”
+in Proceedings of the 17th ACM International Conference on Web Search and Data Mining, 2024.
+[54] S. Schulhoff, J. Pinto, A. Khan, L.-F. Bouchard, C. Si, S. Anati, V. Tagliabue, A. Kost, C. Carnahan, and J. BoydGraber, “Ignore this title and HackAPrompt: Exposing systemic vulnerabilities of LLMs through a global prompt
+hacking competition,” in EMNLP, 2023.
+[55] A. Shafran, R. Schuster, and V. Shmatikov, “Machine against the RAG: Jamming retrieval-augmented generation
+with blocker documents,” arXiv preprint arXiv:2406.05870, 2024.
+[56] N. Shazeer, A. Mirhoseini, K. Maziarz, A. Davis, Q. Le, G. Hinton, and J. Dean, “Outrageously large neural networks: The sparsely-gated mixture-of-experts layer,” in International Conference on Learning Representations,
+2016.
+[57] T. Shnitzer, A. Ou, M. Silva, K. Soule, Y. Sun, J. Solomon, N. Thompson, and M. Yurochkin, “Large language model
+routing with benchmark datasets,” arXiv preprint arXiv:2309.15789, 2023.
+[58] K. Srivatsa, K. K. Maurya, and E. Kochmar, “Harnessing the power of multiple minds: Lessons learned from LLM
+routing,” arXiv preprint arXiv:2405.00467, 2024.
+[59] D. Stripelis, Z. Hu, J. Zhang, Z. Xu, A. Shah, H. Jin, Y. Yao, S. Avestimehr, and C. He, “Tensoropera router: A
+multi-model router for efficient LLM inference,” arXiv preprint arXiv:2408.12320, 2024.
+[60] C. Szegedy, W. Zaremba, I. Sutskever, J. Bruna, D. Erhan, I. Goodfellow, and R. Fergus, “Intriguing properties of
+neural networks,” arXiv preprint arXiv:1312.6199, 2013.
+[61] G. Team, R. Anil, S. Borgeaud, J.-B. Alayrac, J. Yu, R. Soricut, J. Schalkwyk, A. M. Dai, A. Hauth, K. Millican
+et al., “Gemini: a family of highly capable multimodal models,” arXiv preprint arXiv:2312.11805, 2023.
+[62] Teknium, “Openhermes 2.5: An open dataset of synthetic data for generalist LLM assistants,” 2023. [Online].
+Available: https://huggingface.co/datasets/teknium/OpenHermes-2.5
+[63] H. Touvron, L. Martin, K. Stone, P. Albert, A. Almahairi, Y. Babaei, N. Bashlykov, S. Batra, P. Bhargava, S. Bhosale
+et al., “Llama 2: Open foundation and fine-tuned chat models,” arXiv preprint arXiv:2307.09288, 2023.
+[64] S. Toyer, O. Watkins, E. A. Mendes, J. Svegliato, L. Bailey, T. Wang, I. Ong, K. Elmaaroufi, P. Abbeel, T. Darrell
+et al., “Tensor Trust: Interpretable prompt injection attacks from an online game,” in International Conference on
+Learning Representations (ICLR), 2023.
+[65] F. Tramèr, F. Zhang, A. Juels, M. K. Reiter, and T. Ristenpart, “Stealing machine learning models via prediction
+APIs,” in USENIX Security Symposium, 2016.
+[66] A. Wei, N. Haghtalab, and J. Steinhardt, “Jailbroken: How does LLM safety training fail?” in Advances in Neural
+Information Processing Systems (NeurIPS), 2023.
+[67] I. Yona, I. Shumailov, J. Hayes, and N. Carlini, “Stealing user prompts from mixture of experts,” arXiv preprint
+arXiv:2410.22884, 2024.
+[68] M. Yue, J. Zhao, M. Zhang, L. Du, and Z. Yao, “Large language model cascades with mixture of thought representations for cost-efficient reasoning,” in International Conference on Learning Representations (ICLR), 2024.
+[69] C. Zhang, T. Zhang, and V. Shmatikov, “Controlled generation of natural adversarial documents for stealthy retrieval
+poisoning,” arXiv preprint arXiv:2410.02163, 2024.
+[70] Y. Zhang, N. Carlini, and D. Ippolito, “Effective prompt extraction from language models,” in First Conference on
+Language Modeling, 2024.
+21
+
+[71] L. Zheng, W.-L. Chiang, Y. Sheng, S. Zhuang, Z. Wu, Y. Zhuang, Z. Lin, Z. Li, D. Li, E. Xing et al., “Judging LLMas-a-judge with MT-Bench and chatbot arena,” Advances in Neural Information Processing Systems (NeurIPS),
+2023.
+[72] S. Zhu, R. Zhang, B. An, G. Wu, J. Barrow, Z. Wang, F. Huang, A. Nenkova, and T. Sun, “AutoDAN: Automatic
+and interpretable adversarial attacks on large language models,” arXiv preprint arXiv:2310.15140, 2023.
+[73] A. Zou, Z. Wang, J. Z. Kolter, and M. Fredrikson, “Universal and transferable adversarial attacks on aligned language
+models,” arXiv preprint arXiv:2307.15043, 2023.
+
+A
+
+Gadget Examples
+
+Below are a few examples of the optimized confounder gadgets c we got, for the different routing algorithms:
+• RSW :
+legationbelongs967reglo’hui
+(DictionaryizedNameantal bidi.numberOf
+
+demanding RESULTS! XVI-ioibili Written Hormchriftlatable
+• RM F :
+041 personne.nama tomeTN Exact relação tinha seis.Description
+
+NUMAGEMENTMedian157 mut-camerauacao nije Hir Ter
+• RCLS :
+contiene DEM USERNAME fourteen chees781 consultants200 inici DOJ
+571:
+Ord:nth Norwegian Mercer docs Abr226 METADATA
+• RLLM :
+dated:frameifyumi345 Kurdasciiuzeiphertext
+
+Midnightexecution431!784 below1 unwrap : / n / n
+
+B
+
+Ablation Study
+
+In this section, we evaluate the effect of different hyperparameters and design choices (in the white-box setting).
+Prefix vs. suffix. As described in Section 4, we prepend the confounder gadget to the query. An alternative is to append
+it. This is straightforward for MT-bench and GSM8K, but MMLU consists of multi-choice questions followed by a list
+of possible answers, and the term “Answer:”. We insert the gadget at the end of the question text and before the possible
+answers. If we append it at the very end, after “Answer:”, the LLM assumes the query was answered and in many cases
+does not generate any output at all.
+Table 12 shows that average upgrade rates are similar regardless of whether the gadget was inserted as a prefix or a suffix.
+For MMLU, prefix works better. The downgrade rate is 0% in all cases.
+22
+
+RSW
+

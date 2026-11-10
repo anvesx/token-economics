@@ -1,0 +1,1365 @@
+TITLE: MultiTurnRoute: A Platform for Building and Evaluating Multi-Turn LLM Routers
+URL: https://arxiv.org/abs/2611.10848
+ORG: arXiv  TYPE: paper  DATE: 2026-11
+
+                                                      MultiTurnRoute: A Platform for Building and
+                                                       Evaluating Multi-Turn LLM Routers
+
+
+                                                              Jiaqi Xue1 , Mengxin Zheng1 , Heng Huang2 , Qian Lou1
+                                                1
+                                                    LoopLeap Lab, University of Central Florida, 2 University of Maryland, College Park
+                                                        {jiaqi.xue,mengxin.zheng,qian.lou}@ucf.edu heng@umd.edu
+                                                                Project https://github.com/loopleap-lab/MultiTurnRoute
+
+
+
+
+arXiv:2611.10848v1 [cs.CL] 7 Nov 2026
+                                                    MultiTurnRoute               Multi-turn LLM router platform
+
+                                            Session runtime                                   Update history and cached prefixes for the next turn
+
+                                             Turn input        Session state                   Shared router interface            LLM backend              Turn output
+                                             Query Qt          . . . Qt–1 At–1                   decide(turn, state)              vLLM or                  At Reply
+                                             Model pool        Cached prefixes                   Returns a model ID               OpenRouter               Tokens and cost
+
+
+
+                                            Router implementations                                                                 Each router implements the same interface
+
+                                                     Chain-of-Route (CoR)                     Our algorithm       Five built-in baselines            Custom routers
+                                             Gated dialogue history         Quality             Select one        Single-turn, full-history,         Register your own
+                                             Cached prefix per LLM          Cost                  model           RAG, kNN, simplified Bao           routing algorithm
+
+
+
+                                                    MultiTurnRoute Arena                                                                         Evaluate registered routers
+
+                                            Static replay              Recorded conversations                             Rank routers by AUDC
+
+                                            Dynamic sessions           Simulator reacts to replies                        Compare session quality and cost
+
+
+
+
+                                        Figure 1: MultiTurnRoute is a multi-turn LLM router platform. A registered router reads the
+                                        query and session state to select a model. The reply and token counts update the state for the next
+                                        turn. The Arena ranks routers by area under the deferral curve (AUDC) in static replay and compares
+                                        quality and cost in interactive sessions.
+
+                                                                                                     Abstract
+
+                                                     In a multi-turn conversation, the choice of language model at one turn can affect
+                                                     which model should answer the next. The selected model’s reply shapes the context
+                                                     for the next query, and its cached prompt prefix can reduce the cost of using that
+                                                     model again. We introduce MultiTurnRoute, a platform for building and evaluating
+                                                     multi-turn LLM routers. A shared interface gives built-in and user-defined routers
+                                                     the current query, dialogue history, and an estimate of each model’s reusable prefix
+                                                     length. Our routing algorithm, Chain-of-Route (CoR), uses a learned gate over
+                                                     recent and recurrent dialogue history to predict response quality and estimates
+                                                     cost from each model’s reusable prefix. MultiTurnRoute Arena ranks routers on
+                                                     recorded conversations and compares session quality and cost in interactive runs
+                                                     where a simulated user responds to each reply. On a benchmark drawn from
+                                                     WildChat and LMSYS-Chat-1M with per-turn quality annotations for five LLMs,
+                                                     CoR reduces the normalized cost required to match the strongest model’s quality by
+                                                     up to 20.3% relative to the strongest routing baseline, while matching or improving
+                                                     peak response quality.
+
+
+                                        40th Conference on Neural Information Processing Systems (NeurIPS 2026).
+1        Introduction
+A conversational assistant can draw on several large language models (LLMs), each with different
+capabilities and inference costs. A router decides which model should answer a given query. Most
+routers make this decision from the current input alone [1]. In an ongoing conversation [2], however,
+a short follow-up can depend on several earlier turns. In WildChat [3], a corpus of 1M real user
+interactions, 41% of conversations span multiple turns. Other conversation datasets show similar
+patterns [4, 5]. Topics and user goals can also shift within a conversation [6, 7], so the model best
+suited to one turn may be a poor choice for the next.
+We introduce MultiTurnRoute, a platform for building and evaluating routers that select a model
+at each turn (Figure 1). Its session runtime exposes two kinds of state through a common router
+interface. The dialogue state helps a router interpret the query. The serving state tracks the prefix
+each candidate model is expected to reuse. The selected model’s reply extends the dialogue, and its
+token usage updates the cache record for the next decision.
+
+          "Symptoms of         "What should I                               "Does this violate         "Symptoms of                     "What should I
+    Q1       covid?"      Q2      eat?"           Q1 "Write a web                                 Q1      covid?"                  Q2      eat?"
+                                        Medical           scraper"
+                                                                         Q2 copyright laws?"                                                     Medical
+                                                                                       Legacy                               low
+                                         Query                                                                        similarity                  Query
+                                                                                       Query
+          Router                Router                   Router             Router                     Router                            Router
+                                                                                                                          covid
+                                                                                                                      Memory
+ Medical                 General                  Code               Code                        Medical                       General
+                    A1                     A2                                             A2                      A1                                A2
+  LLM                     LLM                     LLM                LLM                          LLM                           LLM
+         (a) Route using Current Query                (b) Route using Full Context                    (c) Route using Selective Context
+            Limitation: Context-blind              Limitation: Context Overshadowing                Limitation: Implicit dependency miss
+
+Figure 2: Challenges of adapting single-turn LLM routing to multi-turn conversations regarding
+dialogue state. (a) Routing using only the current query ignores conversational context. (b) Routing
+using the full context can let dominant prior content overshadow the current query’s intent (context
+overshadowing). (c) Routing using selectively retrieved context misses implicit dependencies when
+users refer back without repeating keywords.
+Which history matters for quality? After a discussion of
+COVID symptoms, “what should I eat?” asks for dietary advice
+during illness. A router that sees only the current query can
+miss this dependency (Figure 2a). Feeding it the full history
+introduces context overshadowing when, for example, a long
+code response dominates an unrelated follow-up (Figure 2b).
+Retrieving the most similar turns can also miss an implicit
+reference because the dietary question shares few words with
+the medical discussion (Figure 2c). The amount and kind of Figure 3: Ignoring serving state pro-
+history needed therefore depend on the current query.           duces misleading cost rankings.
+Which prefix matters for cost? Serving engines such as vLLM [8] and SGLang [9] can reuse a
+model’s cached key–value (KV) states for a shared prompt prefix. For example, the cited Claude
+Sonnet prices are $3.00 per 1M input tokens and $0.30 per 1M cached tokens, a 90% reduction [10].
+Each model may have answered a different subset of earlier turns and retained a different prefix. In
+Figure 3, switching to a model with a lower nominal price costs more than continuing with the model
+that already holds the session prefix.
+Routing algorithm. Our router, Chain-of-Route (CoR), estimates quality and cost separately for
+each candidate. Its Dialogue State Propagator (DSP) combines recent turns with a compact recurrent
+history and learns how much context to use for each query. Its Serving State Tracker (SST) uses
+each model’s cached prefix to estimate the cost of answering. On WildChat and LMSYS-Chat-1M,
+CoR reduces Query-Normalized Cost (QNC), the minimum normalized cost required to match the
+strongest model’s quality, by up to 20.3% relative to the strongest routing baseline, while matching or
+improving peak response quality.
+Evaluating routers. CoR, five built-in baselines, and user-defined routers implement the same
+interface. MultiTurnRoute Arena uses that interface in two settings. Static replay compares choices
+on the same recorded turns and ranks routers by their quality–cost trade-off. In interactive sessions, a
+simulated user responds to the selected model’s reply, so an early routing decision can change the
+questions a router faces later.
+
+
+                                                                     2
+2     Background and Related Work
+
+Multi-Turn LLM Conversations. Both conversational assistants and multi-agent systems make
+successive LLM calls over shared context [2, 11, 12]. WildChat [3], ShareGPT [4], and LMSYS-Chat-
+1M [5] document these interactions. Studies of topic shifts [6, 7, 13] and context dependence [14, 15]
+help explain why different turns may call for models with different capabilities and costs [1, 16].
+Existing conversation datasets [3–5, 17, 18] generally record a single model’s replies in each dialogue.
+Routing benchmarks [19] provide quality labels for several models on individual queries. Evaluating
+per-turn routing requires both dialogue histories and ratings for multiple candidate models on each
+turn.
+KV-Cache Management in LLM Serving. Successive prompts in a conversation share a prefix,
+allowing an LLM to reuse key–value states from earlier turns [20, 21]. vLLM [8] manages these states
+with paged allocation, SGLang [9] supports automatic prefix caching, and CachedAttention [22]
+extends reuse by offloading states to host memory [23]. In the cited Claude Sonnet pricing, cached
+input tokens cost 10% of the standard input price [10]. Each routing decision affects which model
+accumulates reusable state. MultiTurnRoute tracks the reusable prefix length for each candidate, and
+CoR uses it to estimate cost.
+LLM Routing. Single-turn routers differ in how they predict model quality [1, 19, 24, 25] and
+cost [26–30] (Appendix A). GMTRouter [31] learns user preferences across conversations and selects
+one LLM for a session. Bao et al. [32] extend RouteLLM [1] to choose a model at each turn from
+the full dialogue history. Their cost model distinguishes switching from staying with the last model.
+CoR estimates how much of the prompt each candidate retains, including a model used several turns
+earlier. Concurrent work, MTRouter [33], jointly encodes model embeddings and a token-limited
+interaction history for agentic tool use. Its cost estimate uses token counts and list prices. The authors
+also observe that switching models frequently can limit prompt-cache reuse.
+
+
+3     The Chain-of-Route Algorithm
+
+3.1   Overview: From Single-Turn to Multi-Turn Routing
+
+Let M = {m1 , m2 , . . . , mK } denote a set of K candidate LLMs. At each turn t of a conversation,
+the user submits a query Qt and the router selects a model mt to generate the answer At . The
+router estimates each candidate’s response quality Q̂ and serving cost Ĉ, then selects the model that
+maximizes the quality-cost tradeoff, where λ ∈ [0, 1] controls cost sensitivity:
+                                             h                     i
+                                 mt = arg max (1 − λ) · Q̂ − λ · Ĉ .                                 (1)
+                                           m∈M
+
+Equation 1 is the Lagrangian relaxation of maximizing response quality subject to a serving-cost
+budget, with λ acting as the multiplier: sweeping λ over [0, 1] traces the quality-cost Pareto frontier,
+and our metrics in Section 4 summarize this entire frontier rather than any single operating point. In
+deployment, λ is a user-specified quality-cost preference, analogous to the effort levels exposed by
+commercial assistants. Following recent single-turn routers [26, 28], we estimate quality and cost
+separately. Decoupling the two estimates is natural here: KV-cache reuse avoids recomputing an
+identical prefix, so it changes serving cost but not the response. This lets SST compute the cache
+correction analytically while DSP focuses entirely on quality. Single-turn routers estimate Q̂ and Ĉ
+based solely on the current query Qt : Q̂ = fQ (m, Qt ) and Ĉ = fC (m, Qt ). This does not account
+for two forms of state that accumulate across turns in multi-turn conversations: the dialogue state,
+i.e., the conversation history that shapes query meaning, and the serving state, i.e., the KV-cache
+retained by each model’s serving engine that reduces serving cost.
+We observe that each routing decision both depends on and shapes the state available to future
+decisions. On one hand, the router must consult both forms of state to make an informed choice:
+the dialogue state determines how to assess each model’s quality on the current query, while the
+serving state determines each model’s true serving cost. On the other hand, the routing outcome
+alters both states for subsequent turns: the selected model’s answer extends the dialogue history, and
+its serving engine retains the KV-cache, reducing its serving cost if chosen again later. This means
+routing decisions are inherently chained, with state propagating from one turn to the next.
+
+
+                                                    3
+                              Turn 1 Route                                            Turn 2 Route                        …
+Q Query                Q1                                               Q2
+                                             Estimated                                           Estimated
+                       H1   DSP              Quality 𝑄෠                 H2   DSP                 Quality 𝑄෠               H1
+                                                                                                                          H3
+                                                              Update                                             Update
+ A    Answer
+                                             Estimated                                           Estimated
+                       C1
+                       K1   SST              Cost 𝐶መ                    K2    SST                Cost 𝐶መ                  C1
+                                                                                                                          K3
+ H    History State
+                              max 1 − 𝜆 ⋅ 𝑄෠ − 𝜆 ⋅ 𝐶መ                               max 1 − 𝜆 ⋅ 𝑄෠ − 𝜆 ⋅ 𝐶መ
+ K    KV-Cache State
+                                               A1                                                    A2
+
+
+Figure 4: Overview of Chain-of-Route (CoR). At each turn, the router receives the current query Qt ,
+the dialogue state Ht , and the serving state Kt . DSP conditions on Ht to estimate quality Q̂, while
+SST conditions on Kt to estimate cost Ĉ. The model maximizing (1 − λ) · Q̂ − λ · Ĉ is selected, and
+both states are updated before propagating to the next turn.
+Chain-of-Route (CoR), our routing algorithm in MultiTurnRoute, makes this dependence across turns
+explicit. As illustrated in Figure 4, the router receives the current query Qt along with two forms
+of accumulated state: the dialogue state Ht and the serving state Kt = {Lm,t                        m,t
+                                                                             cache }m∈M , where Lcache
+records the cached token count of candidate model m. Two dedicated modules produce state-aware
+estimates: the Dialogue State Propagator (DSP) conditions on Ht to produce Q̂ = fQ (m, Qt , Ht ),
+and the Serving State Tracker (SST) conditions on Lm,t                                    m,t
+                                                       cache to produce Ĉ = fC (m, Qt , Lcache ). These
+estimates are plugged into Equation 1 for model selection. After the selected model generates its
+answer At , both states are updated: DSP incorporates the new query-answer pair to produce Ht+1 ,
+and SST updates each model’s cache record to produce Kt+1 . The updated states carry forward to
+the next turn, forming a continuous route-then-update chain across the conversation. We detail DSP
+in Section 3.2 and SST in Section 3.3.
+
+3.2    Dialogue State Propagator (DSP)
+
+As illustrated in Figure 2, routing based solely on the current query is context-blind (a), feeding the
+full history introduces context overshadowing (b), and selectively retrieving relevant history misses
+implicit dependencies (c). Rather than conditioning on raw dialogue at each turn, DSP maintains a
+compact hidden state Ht that incrementally accumulates conversation-level information (e.g., topic
+evolution and cross-turn dependencies) through a learned recurrent update [34, 35]. This decouples
+the router from the raw dialogue while preserving the contextual signals necessary for accurate quality
+estimation.
+DSP decomposes Ht into two complementary components: a local history state Htℓ ∈ Rd that
+captures fine-grained, recent context (e.g., the current topic and turn-level difficulty), and a global
+history state Htg ∈ Rd that captures coarse-grained, conversation-level trends (e.g., overall user
+expertise and long-term topic distribution). The concatenated state Ht = [Htℓ ; Htg ] is used at each
+turn to inform the routing decision, then updated with the new query-answer pair before propagating
+to the next turn.
+DSP maintains two states that are read before routing each turn and updated only after the selected
+model generates its answer. Concretely, when routing turn t, DSP consults the buffer Bt−1 and global
+state Htg produced after turn t−1, computes a fresh local state Htℓ from Qt and Bt−1 , forms the
+dialogue state Ht = [Htℓ ; Htg ], and feeds Ht together with Qt to a context-dependency gate that
+controls how much history reaches the quality estimator. After At is generated, a frozen pretrained
+sentence encoder E (all-MiniLM-L6-v2 [36], d=384) produces d-dimensional embeddings of the
+new pair, which we denote Qt , At ∈ Rd (overloading the textual symbols), and concatenates them as
+                                                            g
+xt = [Qt ; At ] ∈ R2d to advance both states to Bt and Ht+1     . We use the convention that subscript t
+on Ht denotes the state available at the start of turn t (i.e., before observing At ). The remainder of
+this subsection details the three components in the order they execute.
+Local History State. The local history state maintains a fixed-size FIFO buffer Bt−1 =
+{xt−W , . . . , xt−1 } of the W most recent past turn embeddings, where W is the local-history win-
+dow size and each xi = [Qi ; Ai ] corresponds to a completed query-answer pair, i.e., Q and A in
+Figure 5 (b). When routing turn t, the local state is obtained via cross-attention, with the current
+query Qt as the query and the buffered past turn embeddings as keys and values:
+                                                                                                !
+                                                                            ℓ         ℓ ⊤
+                                                                       (Qt WQ )(Bt−1 WK )
+                  Htℓ = CrossAttn(Qt , Bt−1 ) = softmax                        √                    Bt−1 WVℓ ,                 (2)
+                                                                                 d
+
+
+                                                          4
+Input Query Q                                                     Q3 A3 Local History Buffer           Q3       Next Global State
+                     Context-
+                 dependency Gate         Quality Estimator                                                                          …
+                                     𝛼                       𝑄෠                                  Out   H3    GRU          H4
+                  𝝈(𝑾𝜶 𝑸; 𝑯 + 𝒃𝜶 )        𝒇𝑸 𝑸; 𝜶 ⊙ 𝑯                 In   Q2   A2    Q1 A1
+ Local Global
+History + History H                                                                                    A3
+                (a) Context-dependency Gate                           (b) Local History Update         (c) Global History Update
+
+Figure 5: Overview of the Dialogue State Propagator (DSP). (a) Context-dependency Gate: query Q
+and dialogue state H produce a gate αt , which scales H before the quality estimator fQ . (b) Local
+History Update: a FIFO buffer (e.g., of size W =2) evicts the oldest pair (Q1 , A1 ) upon each new
+arrival (Q3 , A3 ). (c) Global History Update: a GRU updates the global state at each turn (e.g.,
+H3 → H4 ), accumulating conversation-level trends.
+where WQℓ ∈ Rd×d and WK         ℓ
+                                  , WVℓ ∈ R2d×d are learned projections. After the selected model
+produces At , the buffer is advanced: Bt ← (Bt−1 ∪ {xt }) \ {xt−W }, with positional order preserved
+via position embeddings. This allows the router to selectively attend to the most relevant recent turns
+rather than treating all turns equally.
+Global History State. The global history state employs a gated recurrent update to selectively
+accumulate conversation-level information across all turns, as illustrated in Figure 5 (c). When
+routing turn t, the router reads the current global state Htg (produced after turn t − 1) directly. After
+the selected model generates At , two gates jointly determine how Htg is advanced to Ht+1   g
+                                                                                               using the
+                                                                                          g
+new turn input xt = [Qt ; At ]. The relevance gate rt assesses which dimensions of Ht are pertinent
+to the new turn, selectively filtering outdated information:
+                                               rt = σ(Wr [Htg ; xt ] + br ).                                                        (3)
+The retention gate zt controls the balance between preserving the accumulated state and incorporating
+new information, learning to make small updates for routine turns while allowing larger updates when
+the turn carries significant conversation-level signals (e.g., a shift in user expertise level):
+                                               zt = σ(Wz [Htg ; xt ] + bz ).                                                        (4)
+
+The candidate state H̃t is then computed by combining the relevance-filtered history with the new
+turn input:
+                                         H̃t = tanh(Wh [rt ⊙ Htg ; xt ] + bh ),                                                     (5)
+where σ denotes the sigmoid function and ⊙ denotes element-wise multiplication. Finally, the global
+state is advanced as a weighted combination of the previous state and the candidate:
+                                           g
+                                          Ht+1 = (1 − zt ) ⊙ Htg + zt ⊙ H̃t .                                                       (6)
+The global state is initialized as H1g = 0, and the local buffer B0 is initially empty, so at the first turn
+the router falls back to query-only routing.
+Context-dependency Gate. Not all queries in a multi-turn conversation depend equally on prior
+context. Some are follow-ups that inherit meaning from earlier turns, while others introduce entirely
+new topics and can be routed independently. This suggests that the router should adaptively decide
+how much history to incorporate for each query, rather than applying a fixed strategy. With Htℓ
+and Htg in hand, DSP forms the dialogue state Ht = [Htℓ ; Htg ] and computes a context-dependency
+gate αt ∈ [0, 1] that assesses whether the current query requires conversational context, as shown in
+Figure 5 (a):
+                                               αt = σ(Wα [Qt ; Ht ] + bα ).                                                         (7)
+When αt ≈ 1, the query is context-dependent and the router leverages the full dialogue state; when
+αt ≈ 0, the query is independent and the router effectively reduces to single-turn routing based on
+Qt alone. The quality estimator then incorporates context in proportion to this gate:
+                                         Q̂(m, Qt , Ht ) = fQ ([Qt ; αt ⊙ Ht ]),                                                    (8)
+where [·; ·] denotes concatenation and fQ is a learned scoring function.
+
+3.3    Serving State Tracker (SST)
+
+As discussed earlier, existing routers estimate cost using a static formula: C(m, Qt ) = cm             t
+                                                                                             prefill · Lprefill +
+cm      t            m            m                                          t       t
+ gen · Lgen , where cprefill and cgen are model m’s per-token prices and Lprefill , Lgen are the prefilling
+and generation token counts. This does not account for KV-cache reuse: a model that has served
+
+
+                                                                  5
+                        Q3            Static Cost         Costprefill= cprefill x Lprefill             Costgen           Costgen
+      Current Query
+                                      Evaluation          Costgen= cgen x Lgen
+                                                                                                       Costprefill       Costprefill
+                   KV-Cache            Cached                   Calculation Cost Saving
+       Q1    A1
+                     State           Token Lcache                DIVcache= dcache x Lcache             DIVcache      >   DIVcache
+       Q1    A1    Q2     A2                 Cache-aware Cost Estimation                               Costtotal > Costtotal
+
+Figure 6: Overview of SST. Taking turn 3 as an example, Qwen caches (Q1 , A1 ) while GPT caches
+(Q1 , A1 , Q2 , A2 ). (Left) Each model’s serving state and cached token count Lcache . (Middle) Static
+cost estimation yields a lower estimate for Qwen; cache dividend estimation computes each model’s
+DIVcache = dcache × Lcache . (Right) After subtracting DIVcache , GPT’s larger cache advantage reverses
+the ranking, making it the truly more cost-efficient option.
+
+prior turns benefits from cache hits on previously seen tokens, but the static formula prices every
+token at the full rate. Since each candidate may have served different prior turns, the true serving
+cost varies across models. SST addresses this by introducing a cache dividend correction to the static
+cost estimate. In short, SST prices each candidate by how many context tokens it already holds in
+its KV-cache: cached tokens are charged at the cached-input rate and only the rest at the full prefill
+rate. We illustrate SST with a concrete example in Figure 6. Qwen answered turn 1. GPT received
+that exchange as part of its prompt for turn 2 and generated A2 . When Q3 arrives at t=3, Qwen
+can therefore reuse (Q1 , A1 ) and GPT can reuse the longer prefix (Q1 , A1 , Q2 , A2 ), assuming both
+caches persist.
+Serving State Tracking. SST maintains the cache state Lm,t   cache for each candidate model m, defined
+as the number of tokens for which model m currently retains KV-cache at turn t. An instrumented
+serving engine can expose the retained prefix directly. With provider APIs, MultiTurnRoute estimates
+it from the prompt and output token counts on the most recent turn served by m, capped at the
+current prompt length. Eviction between calls can shorten the actual prefix. The backend’s reported
+cache hits determine the realized input cost when available (Appendix H). In the running example
+of Figure 6 (left), Qwen holds LQwen,3
+                                    cache   = |Q1 , A1 | while GPT holds LGPT,3
+                                                                              cache = |Q1 , A1 , Q2 , A2 |,
+reflecting their different serving histories.
+Static Cost Estimation. As shown in Figure 6 (middle, top), a state-unaware router prices each
+candidate by the same static formula based on the full context length Ltprefill : a prefilling cost
+Costprefill = cm          t                                        m      t
+               prefill · Lprefill and a generation cost Costgen = cgen · Lgen , following the static cost
+formulation adopted by single-query routing work [28]. Because per-token prices cm                      m
+                                                                                           prefill and cgen
+differ across candidates, the static estimate already produces a per-model ranking. In our running
+example, Qwen has lower per-token prices than GPT, so its static estimate is the smaller of the two.
+Crucially, this ranking is computed as if every candidate must prefill the entire conversation from
+scratch, ignoring how much of the context each candidate has already cached.
+Cache Dividend Estimation. SST corrects the static estimate by computing the cache dividend
+DIVcache , the savings from reusing cached KV states, shown in Figure 6 (middle, bottom). With
+per-token cache discount dm              m          m              m
+                               cache = cprefill − ccached (where ccached is the cached-input price set by
+the provider for black-box APIs, or ≈ 0 for self-hosted models), the dividend for candidate m is
+                           m,t
+DIVcache (m) = dm cache · Lcache . Subtracting it from the static estimate yields the cache-aware cost:
+
+
+                                                  Costprefill            DIVcache            Costgen
+                                            z       }|       { z        }|      { z }| {
+                      Ĉ(m, Qt , Lm,t        m          t          m        m,t      m      t
+                                  cache ) = cprefill · Lprefill − dcache · Lcache + cgen · Lgen .                                      (9)
+
+As illustrated in Figure 6 (right), although Qwen has a lower static estimate than GPT, GPT enjoys a
+much larger DIVcache because it retains a longer prefix. Subtracting the dividend reverses the cost
+ranking in this example. A state-unaware router would prefer Qwen based on the static estimate and
+miss this opportunity.
+By integrating DSP and SST, the final routing decision at turn t reduces to Equation 1, where Q̂ is the
+dialogue-state-conditioned quality from DSP and Ĉ is the serving-state-aware cost from SST, jointly
+optimizing quality and cost under realistic multi-turn serving conditions.
+
+
+                                                                6
+4     Evaluation of Chain-of-Route
+
+4.1   Experimental Setup
+
+Model pool. We evaluate CoR and the comparison methods on a shared pool of K=5 models. The
+Arena protocols are described separately in Section 5. The experimental pool comprises Qwen3-0.6B,
+Qwen3-8B, Qwen3-14B, Qwen3-32B, and Qwen3-Next-80B-A3B-Instruct. We take each model’s
+full-prefill price cm                              m
+                    prefill and generation price cgen from publicly listed OpenRouter pricing, and set
+                               m           m
+the cached-input price as ccached = 0.2 cprefill following Alibaba Cloud Model Studio’s context-cache
+convention.1 The full per-model pricing table is in Appendix C.
+Dataset. Existing multi-turn dialogue benchmarks [5, 17, 18] are single-model and do not provide
+per-turn multi-model quality scores; we therefore construct evaluation data from WildChat [3]
+and LMSYS-Chat-1M [5]. From each corpus we randomly sample 20,000 English conversations
+(∼80,000 turns) with ≥ 2 turns per conversation, and split 80/20 by conversation hash.
+To train the quality predictor, we need per-(turn, candidate) quality labels. We obtain them by having
+every candidate model m ∈ M generate a response for every training turn t under the same dialogue
+history, using the dataset’s original responses for prior turns:
+                                                     orig                 orig
+                         contexttrain (t) = {(Q1 , A1 ), . . . , (Qt−1 , At−1 ), Qt }.                (10)
+Each candidate response is independently scored on a 1–10 scale by DeepSeek-V3.1, selected from a
+panel of candidate judges via meta-evaluation against human ratings [18] (details in Appendix B).
+We adopt this shared-context construction as a tractable offline protocol: faithfully enumerating all
+routing trajectories scales as |M|T in the conversation length, which is intractable. These quality
+scores supervise DSP. A separate head predicts output length from observed response lengths. SST
+combines this prediction with the tracked prefix length and token prices to estimate cost (Appendix D).
+At evaluation, each routing strategy follows one trajectory per held-out conversation. For each
+user query in that conversation, CoR uses DSP and SST to select a model under Equation 1. Each
+comparison method uses its own decision rule. The selected model generates a reply, which DeepSeek-
+V3.1 judges and which becomes part of the history for the next query.
+Baseline Methods. Random selects uniformly per turn. Single-turn routers RouteLLM [1], CAR-
+ROT [28], and CSCR [27] route each turn from the current query alone. Multi-turn routers Bao
+et al. [32] (full-history input + binary switch penalty) and GMTRouter [31] (cross-conversation
+user graph) are the closest competitors. The Myopic Oracle in Figure 7 (a) is a per-turn hindsight
+oracle: along its own trajectory, it picks the candidate maximizing Equation 1 using judge-assigned
+quality and realized cost under the current states, without branching over future decisions (O(KT )
+per λ, not O(K T )). All learned routers share all-MiniLM-L6-v2 [36] as the text encoder; training
+hyperparameters, λ grid, and baseline adaptations are in Appendix D.
+Evaluation Metrics. We evaluate each routing strategy using a deferral curve [27, 37], which
+plots the average per-turn response quality against the average normalized cost. Sweeping the cost-
+sensitivity parameter λ over the interval [0, 1] (Equation 1) traces the deferral curve. Following [37],
+we employ three evaluation metrics: (i) Area Under the Deferral Curve (AUDC), measuring the
+overall quality-cost trade-off; (ii) Peak Quality, the maximum quality achievable by the router; and
+(iii) Query-Normalized Cost (QNC), the minimum normalized cost required to match the quality of
+the most capable LLM in the pool. Unless noted otherwise, ablations are run on WildChat with the
+default configuration; a sensitivity analysis over CoR’s main design choices (local-history window,
+global state architecture, text encoder, cache discount) is provided in Appendix F.
+
+4.2   Results
+
+Overall Quality-Cost Tradeoff. Table 1 shows that CoR delivers the best quality-cost trade-off on
+both datasets. Single-turn routers miss both the dialogue state and the serving state. GMTRouter
+targets cross-conversation personalization (who asks rather than what context accumulates) and lands
+near the single-turn cluster. Bao et al., the strongest baseline, feeds full history into a RouteLLM-style
+router and reduces serving cost to a binary switching penalty; CoR pulls ahead by maintaining a
+    1 https://www.alibabacloud.com/help/en/model-studio/context-cache
+
+
+
+
+                                                      7
+                                   (a) Deferral curves on WildChat                                             (b) Quality prediction MSE                                              (c) Cost estimation MAPE vs. turn
+                           1.0
+                                                                                                    0.25                        Query-only                                  1.0           MAPE saved by SST
+
+
+
+
+Average per-turn quality                                                   Quality prediction MSE
+                                                                                                                                Full History                                              Cache-unaware
+
+
+
+
+                                                                                                                                                     Cost estimation MAPE
+                           0.9
+                                                         Random                                     0.20                        RAG Retrieval                               0.8           SST (Ours)
+                                                         Oracle                                                                 DSP (Ours)
+                           0.8                                                                                                                                                                                             +0.59
+                                                         CoR (Ours)                                 0.15                                                                    0.6                                    +0.51
+                                                         Bao et al.
+                           0.7                        always-strongest                                                                                                                                     +0.39
+                                                         CSCR                                       0.10                                                                    0.4
+                                                                                                                                                                                                   +0.27
+                                                         GMTRouter
+                           0.6                           CARROT                                     0.05                                                                                 +0.12
+                                                                                                                                                                            0.2
+                                                         RouteLLM
+                           0.5                                                                      0.00
+                             0.0    0.2     0.4    0.6      0.8      1.0                                    Overall   Context-Dep.Context-Indep.                                   1       2         3      4      5        6
+                                      Average normalized cost                                                          Query type                                                                Conversation turn
+
+
+
+Figure 7: (a) Deferral curves on WildChat as the cost-sensitivity parameter λ is swept; “Oracle”
+is the per-turn Myopic Oracle defined in Section 4. (b) Quality prediction MSE for four history
+strategies, broken down by query type. (c) Cost estimation MAPE as a function of conversation turn
+for cache-unaware estimation vs. SST.
+
+compact dialogue state and tracking per-model cache. The QNC gap is the largest, as SST exploits
+cache reuse that baselines do not plan for.
+Figure 7 (a) plots the full deferral curve on WildChat as λ is swept over [0, 1]. CoR Pareto-dominates
+all baselines across most of the cost range, with the gap widest at moderate cost budgets where DSP’s
+context-aware selection and SST’s cache-aware costing combine to extract the largest savings.
+Effect of Dialogue State on Quality Prediction. To verify that DSP’s recurrent dialogue state
+improves quality prediction, we compare it against three history-consumption strategies (i.e., Query-
+only, Full History, and RAG Retrieval) on two kinds of queries: context-dependent (where removing
+all prior turns drops the gold quality score by at least 3 points on the 1–10 scale, a ≥ 30% relative
+drop) and context-independent (the rest). Under this partition, 58.7% of held-out WildChat turns
+and 54.2% of LMSYS-Chat-1M turns are context-dependent, so dialogue state materially affects
+quality on the majority of turns. As shown in Figure 7 (b), DSP outperforms all baselines on
+context-dependent queries. Query-only is the weakest on this slice, matching the context-blind
+failure in Figure 2 (a), while Full History and RAG Retrieval also underperform, consistent with
+context overshadowing (b) and implicit dependencies (c). On context-independent queries, DSP and
+Query-only perform comparably, so DSP does not inject harmful signals when history is unnecessary.
+Although never supervised with this partition, the gate fires strongly on
+context-dependent queries (mean αt ≈ 0.78) and stays low on context- Table 2: Context-dependency
+independent ones (≈ 0.28; Table 2), so DSP learns to modulate history gate αt behavior.
+use rather than uniformly mixing it in.                                   Query type    mean αt
+
+Effect of Serving State on Cost Estimation. Figure 7 (c) shows cost          Context-dependent   0.78
+                                                                             Context-independent 0.28
+estimation mean absolute percentage error (MAPE) versus conversa-
+tion turn. At turn 1, both methods start with the same MAPE (∼ 0.15);
+this floor reflects unavoidable output-length prediction uncertainty (both methods predict generation
+tokens before observing them), and any cost estimator inherits it. As turns increase, cache-unaware
+estimation grows steeply and approaches ∼ 0.95 by turn 6 because it prices every token at the full
+prefill rate and ignores cached reuse. SST grows only mildly with turn depth (the residual error
+reflects imperfect cache-state tracking under realistic serving variability) and stays within a narrow
+band well below cache-unaware. The widening gap shows that cache-unaware estimation increasingly
+
+                                                Table 1: Quality-cost tradeoff on WildChat and LMSYS-Chat-1M.
+
+                                                                                                           WildChat                                 LMSYS-Chat-1M
+                                         Method
+                                                                     AUDC ↑                                 QNC ↓           Peak ↑          AUDC ↑                                QNC ↓            Peak ↑
+                                         Random                          0.49                                 0.97          0.87             0.55                                 0.93              0.78
+                                         RouteLLM [1]                    0.56                                 0.98          0.94             0.62                                 0.93              0.83
+                                         CARROT [28]                     0.59                                 0.95          0.94             0.65                                 0.91              0.83
+                                         CSCR [27]                       0.68                                 0.85          0.94             0.65                                 0.87              0.83
+                                         GMTRouter [31]                  0.65                                 0.87          0.94             0.62                                 0.89              0.84
+                                         Bao et al. [32]                 0.70                                 0.74          0.95             0.67                                 0.78              0.85
+                                         CoR (Ours)                      0.74                                 0.59          0.95             0.70                                 0.65              0.87
+
+
+
+                                                                                                                        8
+overestimates cost in longer conversations, biasing routing toward unnecessary switches, while SST
+keeps the bias bounded and enables more efficient routing.
+Table 3: Quality-cost performance stratified by conversation length on WildChat. Buckets group test
+conversations by total turn count. CoR’s gain over the strongest single-turn baseline (CSCR) widens
+as conversations grow longer, consistent with SST exploiting more accumulated cache.
+
+                                        AUDC ↑               QNC ↓                Peak ↑
+           Turn bucket    #conv.
+                                    CSCR      CoR        CSCR     CoR      CSCR            CoR
+           2 turns       ∼1,680      0.69     0.71       0.86     0.65     0.96            0.94
+           3–4 turns     ∼1,240      0.67     0.74       0.85     0.58     0.94            0.95
+           5–7 turns     ∼ 700       0.65     0.75       0.88     0.53     0.92            0.96
+           8+ turns      ∼ 380       0.63     0.78       0.92     0.45     0.90            0.97
+           ∆ (8+ vs 2)     —        −0.06    +0.07       +0.06   −0.20     −0.06       +0.03
+
+The downstream effect appears in Table 3. As conversation length increases, CoR’s AUDC rises
+from 0.71 (2 turns) to 0.78 (8+ turns), while CSCR’s falls from 0.69 to 0.63. The QNC gap widens
+from 0.21 to 0.47. This divergence indicates that SST benefits from cache accumulation: longer
+conversations provide more reuse, whereas cache-unaware methods repeatedly incur full prefill cost.
+Cross-dataset transfer. Training on WildChat and evaluating on LMSYS yields AUDC 0.68, and
+the reverse direction (LMSYS → WildChat) gives 0.71, only 0.02–0.03 below in-domain results.
+This suggests DSP learns transferable conversation-level signals rather than dataset-specific features.
+Candidate-pool composition. Varying pool size K ∈ {2, 3, 4, 5, 6} and replacing Qwen3 members
+with Llama-3.1 and Mistral models in a cross-family ablation, CoR remains the best method in all
+settings, and cross-family performance matches the same-family pool, indicating no reliance on
+family-specific shortcuts. See Appendix G.
+Additional analyses. CoR’s gains hold under cross-family judges, dialogue-length and topic shift,
+and real commercial billing (Appendices I.1, I.3, and I.4).
+
+5     The MultiTurnRoute Platform
+5.1   Session Runtime and Router Interface
+
+MultiTurnRoute connects a conversational application to a pool of LLMs (Figure 1). At each turn a
+registered router reads the current query, dialogue history, and the estimated reusable prefix length
+for each candidate. It selects one model, and the runtime dispatches the request to its backend. The
+backend (vLLM [8] or a provider API) returns the reply and reports billed and cached tokens when
+available. The runtime records the exchange and updates the session state. Applications can use
+an OpenAI-compatible endpoint, including deployments behind gateways such as vLLM Semantic
+Router [38].
+CoR and five built-in baselines (single-turn, full-history, RAG, kNN, and simplified Bao et al.)
+implement decide(turn, state). A researcher can register another router with that interface and
+use the same implementation in the runtime and Arena. The router can use either part of the state.
+For example, a cache-aware policy can compare the cost of returning to a previously used model with
+that of continuing on the current model. A history-based policy can use the same input to estimate
+which model will answer a follow-up well. The runtime executes either choice and accounts for the
+realized cost using the backend’s input, cached, and output token counts. This lets researchers change
+the decision rule while using the same backend and accounting code. The implementation is available
+at https://github.com/loopleap-lab/MultiTurnRoute.
+
+5.2   MultiTurnRoute Arena
+
+Single-turn arenas such as RouterArena [39] can look up a pre-scored answer for each query. In
+a conversation, a model’s reply can also change what the user asks next. MultiTurnRoute Arena
+measures these effects in two tracks.
+Static replay. The static track uses 3,996 conversations drawn from the benchmark in Section 4. A
+separate pool of nine models answered every recorded turn in its original context, and a judge rated
+
+
+                                                     9
+each answer. On the held-out split, the Arena looks up the rating of the model selected by the router.
+All routers see the same user queries and recorded replies. Their costs can still diverge because each
+router’s sequence of model choices determines which prefixes its models can reuse. The Arena holds
+the model pool, prices, and cost weights fixed and ranks routers by area under the deferral curve
+(AUDC). The leaderboard therefore compares policies within this pool. The main experiments in
+Section 4 use their own model pool and quality annotations.
+Interactive sessions. The dynamic track starts routers from the same task. A simulated user reads
+the selected model’s reply and writes the next question or ends the conversation. An answer that
+requests clarification, for example, can lead to a different sequence of later turns than an answer that
+completes the task immediately. A judge rates each answer in its own dialogue context, and the Arena
+computes cost from the token usage reported by the backend. Routers run on matched tasks with the
+same model pool and user simulator. For each cost weight, the Arena averages answer quality and
+normalized cost over rated turns and sums the billed cost across all turns.
+
+
+6   Conclusion
+
+MultiTurnRoute gives researchers a common interface for building multi-turn LLM routers and
+comparing their decisions on recorded and interactive conversations. Our routing algorithm, Chain-
+of-Route, uses DSP to estimate response quality from dialogue history and SST to estimate cost from
+each model’s cached prefix. On WildChat and LMSYS-Chat-1M, CoR reduces QNC by up to 20.3%
+relative to the strongest baseline while matching or improving peak response quality. Ablations show
+that both modules contribute. MultiTurnRoute Arena lets researchers compare other routing policies
+under the same conditions and examine how a model choice affects later turns.
+
+
+Acknowledgements
+
+This work was supported in part by the National Science Foundation (NSF) under Award No. 2523407.
+H.H. was partially supported by NSF IIS 2347592, 2348169, DBI 2405416, CCF 2348306, CNS
+2347617, RISE 2536663. Any opinions, findings, and conclusions or recommendations expressed
+in this material are those of the author(s) and do not necessarily reflect the views of the National
+Science Foundation.
+
+
+References
+ [1] Isaac Ong, Amjad Almahairi, Vincent Wu, Wei-Lin Chiang, Tianhao Wu, Joseph E Gonzalez,
+     M Waleed Kadous, and Ion Stoica. RouteLLM: Learning to route LLMs from preference data.
+     In The Thirteenth International Conference on Learning Representations, 2025.
+
+ [2] Xi Shi, Mengxin Zheng, and Qian Lou. Learning latency-aware orchestration for multi-agent
+     systems. arXiv preprint arXiv:2601.10560, 2026.
+
+ [3] Wenting Zhao, Xiang Ren, Jack Hessel, Claire Cardie, Yejin Choi, and Yuntian Deng. WildChat:
+     1M ChatGPT interaction logs in the wild. In The Twelfth International Conference on Learning
+     Representations, 2024.
+
+ [4] ShareGPT Contributors. ShareGPT dataset. https://sharegpt.com, 2023. Accessed:
+     2024-01-01.
+
+ [5] Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Tianle Li, Siyuan Zhuang, Zhanghao Wu,
+     Yonghao Zhuang, Zhuohan Li, Zi Lin, Eric P Xing, et al. LMSYS-Chat-1M: A large-scale
+     real-world LLM conversation dataset. In The Twelfth International Conference on Learning
+     Representations, 2024.
+
+ [6] Yi Xu, Hai Zhao, and Zhuosheng Zhang. Topic-aware multi-turn dialogue modeling. In
+     Proceedings of the AAAI Conference on Artificial Intelligence, volume 35, pages 14176–14184,
+     2021.
+
+
+                                                  10
+ [7] Hainan Zhang, Yanyan Lan, Liang Pang, Hongshen Chen, Zhuoye Ding, and Dawei Yin.
+     Modeling topical relevance for multi-turn dialogue generation. In Proceedings of the Twenty-
+     Ninth International Joint Conference on Artificial Intelligence, pages 3737–3743. International
+     Joint Conferences on Artificial Intelligence Organization, 2020.
+
+ [8] Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu,
+     Joseph Gonzalez, Hao Zhang, and Ion Stoica. Efficient memory management for large language
+     model serving with PagedAttention. In Proceedings of the 29th symposium on operating systems
+     principles, pages 611–626, 2023.
+
+ [9] Lianmin Zheng, Liangsheng Yin, Zhiqiang Xie, Chuyue Sun, Jeff Huang, Cody H Yu, Shiyi
+     Cao, Christos Kozyrakis, Ion Stoica, Joseph E Gonzalez, et al. SGLang: Efficient execution
+     of structured language model programs. Advances in neural information processing systems,
+     37:62557–62583, 2024.
+
+[10] Anthropic. Model pricing. https://platform.claude.com/docs/en/about-claude/
+     pricing, 2025. Accessed: 2025-07-01.
+
+[11] Jiaqi Xue, Yanjun Wang, Xiangci Li, Lingbo Mo, Aritra Sengupta, Shweta Garg, Murali Krishna
+     Ramanathan, and Myeongsoo Kim. AECP: Artifact-exclusive communication protocol for
+     multi-agent code generation. arXiv preprint arXiv:2610.06481, 2026.
+
+[12] Rakibul Hasan Rajib, Mengxin Zheng, and Qian Lou. Learning what to retain: Gated-memory
+     routing for efficient collaboration in multi-agent LLM systems. In Proceedings of the 2026
+     Conference on Empirical Methods in Natural Language Processing (EMNLP), 2026.
+
+[13] Paweł Budzianowski, Tsung-Hsien Wen, Bo-Hsiang Tseng, Iñigo Casanueva, Stefan Ultes,
+     Osman Ramadan, and Milica Gašić. MultiWOZ - a large-scale multi-domain Wizard-of-Oz
+     dataset for task-oriented dialogue modelling. In Ellen Riloff, David Chiang, Julia Hockenmaier,
+     and Jun’ichi Tsujii, editors, Proceedings of the 2018 Conference on Empirical Methods in
+     Natural Language Processing, pages 5016–5026, Brussels, Belgium, October-November 2018.
+     Association for Computational Linguistics.
+
+[14] Hui Su, Xiaoyu Shen, Rongzhi Zhang, Fei Sun, Pengwei Hu, Cheng Niu, and Jie Zhou. Improv-
+     ing multi-turn dialogue modelling with utterance ReWriter. In Anna Korhonen, David Traum,
+     and Lluís Màrquez, editors, Proceedings of the 57th Annual Meeting of the Association for Com-
+     putational Linguistics, pages 22–31, Florence, Italy, July 2019. Association for Computational
+     Linguistics.
+
+[15] Yu Wu, Wei Wu, Chen Xing, Can Xu, Zhoujun Li, and Ming Zhou. A sequential match-
+     ing framework for multi-turn response selection in retrieval-based chatbots. Computational
+     Linguistics, 45(1):163–197, March 2019.
+
+[16] Ashmal Vayani, Dinura Dissanayake, Hasindri Watawana, Noor Ahsan, Nevasini Sasikumar,
+     Omkar Thawakar, et al. All languages matter: Evaluating LMMs on culturally diverse 100
+     languages. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern
+     Recognition (CVPR), 2025.
+
+[17] Ge Bai, Jie Liu, Xingyuan Bu, Yancheng He, Jiaheng Liu, Zhanhui Zhou, Zhuoran Lin, Wenbo
+     Su, Tiezheng Ge, Bo Zheng, et al. MT-Bench-101: A fine-grained benchmark for evaluating
+     large language models in multi-turn dialogues. In Proceedings of the 62nd Annual Meeting
+     of the Association for Computational Linguistics (Volume 1: Long Papers), pages 7421–7454,
+     2024.
+
+[18] Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu, Yonghao Zhuang,
+     Zi Lin, Zhuohan Li, Dacheng Li, Eric Xing, et al. Judging LLM-as-a-judge with MT-Bench and
+     Chatbot Arena. Advances in neural information processing systems, 36:46595–46623, 2023.
+
+[19] Qitian Jason Hu, Jacob Bieker, Xiuyu Li, Nan Jiang, Benjamin Keigwin, Gaurav Ranganath,
+     Kurt Keutzer, and Shriyash Kaustubh Upadhyay. RouterBench: A benchmark for multi-LLM
+     routing system. arXiv preprint arXiv:2403.12031, 2024.
+
+
+                                                11
+[20] Xi Shi, Mengxin Zheng, and Qian Lou. KVShareArena: KV-cache reuse across contexts and
+     model checkpoints. arXiv preprint arXiv:2609.10266, 2026.
+[21] Kunyang Li, Mubarak Shah, and Yuzhang Shang. PackCache: A training-free acceleration
+     method for unified autoregressive video generation via compact KV-cache. arXiv preprint
+     arXiv:2601.04359, 2026.
+[22] Bin Gao, Zhuomin He, Puru Sharma, Qingxuan Kang, Djordje Jevdjic, Junbo Deng, Xingkun
+     Yang, Zhou Yu, and Pengfei Zuo. Cost-efficient large language model serving for multi-turn
+     conversations with CachedAttention. In 2024 USENIX annual technical conference (USENIX
+     ATC 24), pages 111–126, 2024.
+[23] Rakibul Hasan Rajib, Mengxin Zheng, and Qian Lou. AgentServeSim: Serving-system simula-
+     tion and policy search for LLM agent programs. arXiv preprint arXiv:2606.09613, 2026.
+[24] Tao Feng, Yanzhen Shen, and Jiaxuan You. GraphRouter: A graph-based router for LLM
+     selections. arXiv preprint arXiv:2410.03834, 2024.
+[25] Jiaqi Xue, Qian Lou, Jiarong Xing, and Heng Huang. R2-Router: A new paradigm for LLM
+     routing with reasoning. ArXiv, abs/2602.02823, 2026.
+[26] Wei Song, Zhenya Huang, Cheng Cheng, Weibo Gao, Bihan Xu, GuanHao Zhao, Fei Wang, and
+     Runze Wu. IRT-Router: Effective and interpretable multi-LLM routing via item response theory.
+     In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics
+     (Volume 1: Long Papers), pages 15629–15644, 2025.
+[27] Reza Shirkavand, Shangqian Gao, Peiran Yu, and Heng Huang. Cost-aware contrastive routing
+     for LLMs. arXiv preprint arXiv:2508.12491, 2025.
+[28] Seamus Somerstep, Felipe Maia Polo, Allysson Flavio Melo de Oliveira, Prattyush Mangal,
+     Mírian Silva, Onkar Bhardwaj, Mikhail Yurochkin, and Subha Maity. CARROT: A cost aware
+     rate optimal router. arXiv preprint arXiv:2502.03261, 2025.
+[29] Ahasan Kabir, Jiaqi Xue, Mengxin Zheng, and Qian Lou. HW-Router: Hardware-aware routing
+     for scalable multi-LLM serving. In Proceedings of the 63rd Design Automation Conference
+     (DAC), 2026.
+[30] Ahasan Kabir, Mengxin Zheng, and Qian Lou. INFRAMIND: Infrastructure-aware multi-agent
+     orchestration. arXiv preprint arXiv:2606.11440, 2026.
+[31] Yihang Sun, Encheng Xie, Tao Feng, and Jiaxuan You. GMTRouter: Personalized LLM router
+     over multi-turn user interactions. ArXiv, abs/2511.08590, 2025.
+[32] Rui Bao, Nan Xue, Yaping Sun, and Zhiyong Chen. Dynamic quality-latency aware routing for
+     LLM inference in wireless edge-device networks. In 2025 IEEE/CIC International Conference
+     on Communications in China (ICCC Workshops), pages 1–6. IEEE, 2025.
+[33] Yiqun Zhang, Hao Li, Zihan Wang, Shi Feng, Xiaocui Yang, Daling Wang, Bo Zhang, Lei
+     Bai, and Shuyue Hu. MTRouter: Cost-aware multi-turn LLM routing with history–model joint
+     embeddings. In Proceedings of the 64th Annual Meeting of the Association for Computational
+     Linguistics (ACL), 2026. arXiv:2604.23530.
+[34] Kunyang Li, Mubarak Shah, and Yuzhang Shang. Attend locally, remember linearly: Linear
+     attention as cross-frame memory for autoregressive video diffusion. In Advances in Neural
+     Information Processing Systems (NeurIPS), 2026.
+[35] Abdul Mohaimen Al Radi, Kunyang Li, Yuzhang Shang, Mubarak Shah, and Yu Tian. Keepsake:
+     Selective spatial memory for long-horizon video generation. arXiv preprint arXiv:2610.06588,
+     2026.
+[36] Nils Reimers and Iryna Gurevych. Sentence-BERT: Sentence embeddings using Siamese
+     BERT-networks. In Proceedings of the 2019 Conference on Empirical Methods in Natural Lan-
+     guage Processing and the 9th International Joint Conference on Natural Language Processing
+     (EMNLP-IJCNLP), pages 3982–3992, 2019.
+
+
+                                               12
+[37] Wittawat Jitkrittum, Harikrishna Narasimhan, Ankit Singh Rawat, Jeevesh Juneja, Congchao
+     Wang, Zifeng Wang, Alec Go, Chen-Yu Lee, Pradeep Shenoy, Rina Panigrahy, et al. Universal
+     model routing for efficient LLM inference. arXiv preprint arXiv:2502.08773, 2025.
+[38] vLLM Semantic Router Team.     vLLM semantic router.                 https://github.com/
+     vllm-project/semantic-router, 2025.
+[39] Yifan Lu, Rixin Liu, Jiayi Yuan, Xingqi Cui, Shenrun Zhang, Hongyi Liu, and Jiarong Xing.
+     RouterArena: An open platform for comprehensive comparison of LLM routers. In The
+     Fourteenth International Conference on Learning Representations, 2026.
+[40] Hugging Face. LLM router – Chat UI configuration. https://huggingface.co/docs/
+     chat-ui/configuration/llm-router, 2026. Online; accessed 26 Jan 2026.
+[41] OpenAI. GPT-5 system card. https://cdn.openai.com/gpt-5-system-card.pdf, Au-
+     gust 2025. Accessed: Sep 2025.
+[42] Microsoft. Model router for Microsoft Foundry. https://learn.microsoft.com/en-us/
+     azure/foundry/openai/concepts/model-router, 2025. Accessed: Sep 2025.
+[43] Shuhao Chen, Weisen Jiang, Baijiong Lin, James Kwok, and Yu Zhang. RouterDC: Query-based
+     router by dual contrastive learning for assembling large language models. Advances in Neural
+     Information Processing Systems, 37:66305–66328, 2024.
+[44] Marija Šakota, Maxime Peyrard, and Robert West. Fly-swat or cannon? Cost-effective language
+     model choice via meta-modeling. In Proceedings of the 17th ACM International Conference on
+     Web Search and Data Mining, pages 606–615, 2024.
+[45] Dimitris Stripelis, Zhaozhuo Xu, Zijian Hu, Alay Dilipbhai Shah, Han Jin, Yuhang Yao, Jipeng
+     Zhang, Tong Zhang, Salman Avestimehr, and Chaoyang He. TensorOpera router: A multi-
+     model router for efficient LLM inference. In Proceedings of the 2024 Conference on Empirical
+     Methods in Natural Language Processing: Industry Track, pages 452–462, 2024.
+[46] Fangzhou Wu and Sandeep Silwal. Efficient training-free online routing for high-volume
+     multi-LLM serving. In The Thirty-ninth Annual Conference on Neural Information Processing
+     Systems, 2025.
+[47] Quang H Nguyen, Thinh Dao, Duy C Hoang, Juliette Decugis, Saurav Manchanda, Nitesh V
+     Chawla, and Khoa D Doan. MetaLLM: A high-performant and cost-efficient dynamic frame-
+     work for wrapping LLMs. arXiv preprint arXiv:2407.10834, 2024.
+[48] Co Tran, Salman Paracha, Adil Hafeez, and Shuguang Chen. Arch-Router: Aligning LLM
+     routing with human preferences. ArXiv, abs/2506.16655, 2025.
+[49] Clovis Varangot-Reille, Christophe Bouvard, and Antoine Gourru. Generalising LLM routing
+     using past performance retrieval: A few-shot router is sufficient. In Proceedings of the 19th
+     Conference of the European Chapter of the Association for Computational Linguistics (Volume
+     4: Student Research Workshop), pages 304–319, 2026.
+[50] Kunyang Li, Jeffrey A Chan Santiago, Sarinda Dhanesh Samarasinghe, Gaowen Liu, and
+     Mubarak Shah. GVD: Guiding video diffusion model for scalable video distillation. arXiv
+     preprint arXiv:2507.22360, 2025.
+[51] Abdul Mohaimen Al Radi, Kunyang Li, Yuzhang Shang, Mubarak Shah, and Yu Tian. Aero-
+     World: Action-conditioned aerial video generation from inertial controls. arXiv preprint
+     arXiv:2605.19728, 2026.
+[52] Jiaqi Xue, Mengxin Zheng, Ting Hua, Yilin Shen, Yepeng Liu, Ladislau Bölöni, and Qian Lou.
+     TrojLLM: A black-box trojan prompt attack on large language models. In Advances in Neural
+     Information Processing Systems (NeurIPS), 2023.
+[53] Mengxin Zheng, Jiaqi Xue, Xun Chen, Yanshan Wang, Qian Lou, and Lei Jiang. TrojFSP:
+     Trojan insertion in few-shot prompt tuning. In Proceedings of the 2024 Conference of the North
+     American Chapter of the Association for Computational Linguistics (NAACL), 2024.
+
+
+                                                13
+[54] Mengxin Zheng, Jiaqi Xue, Zihao Wang, Xun Chen, Qian Lou, Lei Jiang, and Xiaofeng
+     Wang. SSL-Cleanse: Trojan detection and mitigation in self-supervised learning. In European
+     Conference on Computer Vision (ECCV), 2024.
+[55] Jiaqi Xue, Qian Lou, and Mengxin Zheng. BadFair: Backdoored fairness attacks with group-
+     conditioned triggers. In Findings of the Association for Computational Linguistics: EMNLP
+     2024, pages 8257–8270, 2024.
+[56] Jiaqi Xue, Mengxin Zheng, Yi Sheng, Lei Yang, Qian Lou, and Lei Jiang. TrojFair: Trojan
+     fairness attacks. In Proceedings of the 1st ACM Workshop on Large AI Systems and Models
+     with Privacy and Safety Analysis (LAMPS), 2024.
+[57] Jiaqi Xue, Mengxin Zheng, Yebowen Hu, Fei Liu, Xun Chen, and Qian Lou. BadRAG:
+     Identifying vulnerabilities in retrieval augmented generation of large language models. arXiv
+     preprint arXiv:2406.00083, 2024.
+[58] Qian Lou, Xin Liang, Jiaqi Xue, Yancheng Zhang, Rui Xie, and Mengxin Zheng. CR-UTP:
+     Certified robustness against universal text perturbations on large language models. In Findings
+     of the Association for Computational Linguistics: ACL 2024, 2024.
+[59] Jiaqi Xue, Yifei Zhao, Mansour Al Ghanim, Shangqian Gao, Ruimin Sun, Qian Lou, and
+     Mengxin Zheng. OpenMarkX: An extensible platform for watermarking open-source model
+     and agent outputs. In Advances in Neural Information Processing Systems (NeurIPS), 2026.
+[60] Mansour Al Ghanim, Jiaqi Xue, Rochana Prih Hastuti, Mengxin Zheng, Yan Solihin, and Qian
+     Lou. Evaluating the robustness and accuracy of text watermarking under real-world cross-lingual
+     manipulations. In Christos Christodoulopoulos, Tanmoy Chakraborty, Carolyn Rose, and Violet
+     Peng, editors, Findings of the Association for Computational Linguistics: EMNLP 2025, pages
+     7396–7416, Suzhou, China, November 2025. Association for Computational Linguistics.
+[61] Yancheng Zhang, Jiaqi Xue, Mengxin Zheng, Mimi Xie, Mingzhe Zhang, Lei Jiang, and
+     Qian Lou. CipherPrune: Efficient and scalable private transformer inference. In International
+     Conference on Learning Representations (ICLR), 2025.
+[62] Jiaqi Xue, Mengxin Zheng, and Qian Lou. RobPI: Robust private inference against malicious
+     client. In IEEE Conference on Secure and Trustworthy Machine Learning (SaTML), 2026.
+[63] Jiaqi Xue, Mayank Kumar, Yuzhang Shang, Shangqian Gao, Rui Ning, Mengxin Zheng,
+     Xiaoqian Jiang, and Qian Lou. DictPFL: Efficient and private federated learning on encrypted
+     gradients. In Advances in Neural Information Processing Systems (NeurIPS), 2025.
+[64] Muhammad Husni Santriaji, Jiaqi Xue, Yancheng Zhang, Qian Lou, and Yan Solihin. DataSeal:
+     Ensuring the verifiability of private computation on encrypted data. In IEEE Symposium on
+     Security and Privacy (S&P), 2025.
+[65] Jiaqi Xue, Yancheng Zhang, Yanshan Wang, Xueqiang Wang, Hao Zheng, and Qian Lou.
+     CryptoTrain: Fast secure training on encrypted dataset. In Proceedings of the 1st ACM
+     Workshop on Large AI Systems and Models with Privacy and Safety Analysis (LAMPS), 2024.
+[66] Jiaqi Xue, Xin Xin, Wei Zhang, Mengxin Zheng, Qianqian Song, Minxuan Zhou, Yushun Dong,
+     Dongjie Wang, Xun Chen, Jiafeng Xie, Liqiang Wang, David Mohaisen, Hongyi Wu, and Qian
+     Lou. SoK: Can fully homomorphic encryption support general AI computation? A functional
+     and cost analysis. Proceedings on Privacy Enhancing Technologies (PoPETs), 2026.
+[67] Ardhi Wiratama Baskara Yudha, Jiaqi Xue, Qian Lou, Huiyang Zhou, and Yan Solihin. Boost-
+     Com: Towards efficient universal fully homomorphic encryption by boosting the word-wise
+     comparisons. In International Conference on Parallel Architectures and Compilation Techniques
+     (PACT), 2024.
+[68] Mayank Kumar, Jiaqi Xue, Mengxin Zheng, and Qian Lou. FHE-Coder: Benchmarking secure
+     agentic code generation for fully homomorphic encryption. In International Conference on
+     Learning Representations (ICLR), 2026.
+
+
+                                                14
+[69] Jiaqi Xue, Yifei Zhao, Mengxin Zheng, Fan Yao, Yan Solihin, and Qian Lou. Securing
+     transformer-based AI execution via unified TEEs and crypto-protected accelerators. arXiv
+     preprint arXiv:2507.03278, 2025.
+[70] Yukuan Zhang, Mengxin Zheng, and Qian Lou. SecureRouter: Encrypted routing for efficient
+     secure inference. In Proceedings of the 63rd Design Automation Conference (DAC), 2026.
+[71] Seanie Lee, Dong Bok Lee, Dominik Wagner, Minki Kang, Haebin Seong, Tobias Bocklet,
+     Juho Lee, and Sung Ju Hwang. SafeRoute: Adaptive model selection for efficient and accurate
+     safety guardrails in large language models. In Findings of the Association for Computational
+     Linguistics: ACL 2025, 2025.
+[72] Kunyang Li, Hai Nguyen, Joshua Lowe, Chenguang Zhao, Peace C. Madueme, Mehdi Hedjazi
+     Moghari, Mubarak Shah, Pegah Khosravi, and Yuzhang Shang. CineMR: Tool-integrated vision-
+     language reasoning for quantitative cardiac MRI assessment. arXiv preprint arXiv:2610.01166,
+     2026.
+
+
+
+
+                                               15
+A    Survey of Single-Turn LLM Routers
+
+LLM routing has been widely adopted in open-source platforms [38, 40] and commercial deployments
+such as OpenAI’s GPT-5 [41] and Azure AI Foundry [42]. Existing routers vary primarily in how
+they predict per-candidate quality and cost, but uniformly treat each query in isolation.
+Quality predictors. Lightweight models are trained to estimate each candidate’s response quality
+via neural networks [1, 43, 44], k-nearest neighbors [19, 45, 46], and graph neural networks [24].
+Cost predictors. Early routers rely on static attributes such as per-token pricing [26, 27], while
+more recent work incorporates output-length prediction [28, 46, 47] for more accurate per-query cost
+estimates.
+Complementary routing signals. A separate line of work introduces complementary signals into
+the routing decision while still routing each query independently: Arch-Router [48] aligns routing
+with human preferences over latency-quality trade-offs, R2-Router [25] introduces reasoning into
+the routing decision, HW-Router [29] and INFRAMIND [30] incorporate real-time hardware and
+serving-system signals such as queue lengths, KV-cache usage, and recent latency to meet latency
+SLOs, and past-performance retrieval [49] retrieves past performance records to generalize routing to
+unseen models.
+Safety-aware routing. Beyond quality and cost, foundation models [50, 51] raise safety and security
+concerns. They are vulnerable to trojan and backdoor attacks that hijack their outputs through
+hidden triggers [52–54] or bias their predictions against specific groups [55, 56], to poisoned retrieval
+corpora in retrieval-augmented generation [57], and to adversarial text perturbations [58]. Tracing
+the provenance of model-generated text calls for robust watermarking [59, 60], and protecting user
+data during training and inference motivates cryptographic privacy-preserving computation [61–68]
+and trusted execution environments [69]. Routing offers a natural point at which to enforce such
+safeguards [70]: SafeRoute [71] routes each input between a small and a large safety guard model,
+invoking the large model only on hard inputs to keep guardrail accuracy high at lower cost. Like the
+routers above, it decides for each input independently.
+None of the above account for dialogue or serving state across turns; CoR explicitly and jointly
+models both. We compare against Bao et al. [32], which routes each turn of a conversation, as a
+baseline.
+
+
+B    Dataset Construction Details
+
+Why existing multi-turn benchmarks are inadequate. MT-Bench [18] contains only 80 two-turn
+dialogues, each completed by a single LLM. MT-Bench-101 [17] scales to 1,388 multi-turn dialogues
+but remains single-model. LMSYS Chatbot Arena [5] provides large-scale human preferences at the
+conversation level, not per-turn quality scores. None of these provides what per-turn routing requires:
+for each turn t, quality scores Q(m, Qt ) from multiple candidate models under the same dialogue
+context.
+Preprocessing. For both WildChat and LMSYS-Chat-1M we apply identical preprocessing: filter
+to English conversations with ≥ 2 turns and ≥ 10 characters per user query, then randomly sample
+20,000 conversations (∼80,000 turns) per corpus.
+Shared-context protocol for training-label construction. The shared-context design used to build
+the per-(turn, candidate) training labels ensures: (1) fair comparison—all candidate models see
+identical context at each turn, so quality differences reflect model capability alone; (2) tractability—it
+yields K comparable labels per turn in O(KT ) generation and judge calls, without depending on
+a particular routing policy; and (3) extensibility—adding a new model requires only generating
+and scoring its responses without regenerating existing data. This shared-context construction is
+restricted to label generation: at evaluation time we run auto-regressive routing, where each routing
+strategy traces a single trajectory per held-out conversation and the routed model’s actual response
+is fed back as context for the next turn, faithfully reflecting deployment conditions including any
+response-distribution shift induced by routing-driven model switches.
+LLM judge selection. To select a reliable LLM judge, we followed the LLM-as-a-judge validation
+protocol [18]: we randomly sampled 500 candidate responses, and recruited a pool of 30 expert
+
+
+                                                   16
+annotators with each response receiving independent ratings from 3 annotators (yielding 1,500 human
+ratings whose mean is the gold label). We then evaluated 4 candidate judges (DeepSeek-V3.1, Qwen3-
+235B-A22B, GPT-5-mini, and Llama-3.3-70B-Instruct) by computing their Pearson correlation with
+the gold labels. Among them, DeepSeek-V3.1 achieved the highest correlation (ρ = 0.84) and was
+selected as the final judge. This LLM-as-a-judge approach is crucial for evaluating open-ended
+dialogue queries, where traditional automatic evaluation methods such as exact match fail to capture
+response quality.
+Scoring details. Each model’s response at each turn is independently scored on a 1–10  scale. We
+                                                                                    K
+use individual (non-pairwise) scoring for scalability (K evaluations per turn vs. 2 for pairwise)
+and compatibility with our quality predictor Q̂, which estimates absolute quality rather than relative
+preference. Dialogue context is truncated to 1,000 characters per prior message to manage judge
+token cost; this caps prompt length while preserving topical and stylistic cues that drive multi-turn
+quality. Scores are returned in structured JSON format with reasoning.
+
+
+C     Per-Model Pricing Table
+
+Each candidate model m has three distinct per-token unit prices in our cost model: full-prefill cm     prefill
+(paid for tokens that miss the cache), cached-input cm  cached (paid for tokens served from KV-cache),
+and generation cmgen (paid per output token). The serving-state-aware cost in Section 3.3 multiplies
+each by the corresponding token count Ltprefill , Lm,t       t                m          m
+                                                    cache , Lgen . We take cprefill and cgen directly from
+publicly listed OpenRouter pricing for each model. The cached-input price is not separately listed for
+these open-source Qwen3 models, so we set cm                     m
+                                                cached = 0.2 cprefill (i.e., an 80% discount), following
+the cache-discount convention documented by Alibaba Cloud Model Studio.2 Table 4 reports the
+resulting per-token prices.
+
+Table 4: Per-token prices for the five Qwen3 models in our pool, in USD per 1M tokens. Full-prefill
+(cprefill ) and generation (cgen ) prices are taken from publicly listed OpenRouter pricing (snapshot
+retrieved during paper preparation); the cached-input price is set to ccached = 0.2 cprefill following
+Alibaba Cloud Model Studio’s context-cache convention. Note that posted prices are non-monotone in
+model size (e.g., Qwen3-32B at $0.16/M is cheaper than Qwen3-14B at $0.35/M) because providers
+set prices by tier rather than by size; we use posted prices as-is rather than imputing a monotone
+schedule.
+                       Model                         Total params   cprefill   ccached   cgen
+                       Qwen3-0.6B                       0.6B        $0.11      $0.022    $0.42
+                       Qwen3-8B                          8B         $0.18      $0.036    $0.70
+                       Qwen3-14B                        14B         $0.35      $0.070    $1.40
+                       Qwen3-32B                        32B         $0.16      $0.032    $0.64
+                       Qwen3-Next-80B-A3B-Instruct      80B         $0.15      $0.030    $1.20
+
+
+Cost accounting in evaluation. Cost accounting is identical for all methods. Equation 9 is used only
+by CoR at routing time. For evaluation, every method’s cost is recomputed from its realized cache-hit
+tokens, uncached tokens, and output tokens with the unit prices in Table 4, so baselines receive full
+credit for any cache reuse.
+
+
+D     Implementation Details
+
+Encoder and training. All learned routers (CoR and baselines) use all-MiniLM-L6-v2 [36] as the
+shared text encoder (d=384). Routing models are trained on the 80% training split with AdamW
+(lr 1×10−4 , batch size 64, 20 epochs, early stopping on validation MSE). The training objective is
+mean-squared error between predicted quality Q̂(m, Qt , Ht ) and the judge-assigned ground-truth
+quality, summed across all K=5 candidates.
+DSP configuration. The local-history window is W =2, and the global state dimension is d=384
+(matching the encoder).
+    2 https://www.alibabacloud.com/help/en/model-studio/context-cache
+
+
+
+
+                                                       17
+Cost normalization and λ sweep. We divide each turn’s raw cost (token-weighted by per-model unit
+cost) by the maximum-model cost so that costs lie in [0, 1]. Output length per candidate is predicted
+by a lightweight regression head following CARROT [28]: a per-candidate linear head on the same
+MiniLM-L6 query embedding, trained on the 80% training split with mean-squared error against the
+candidate’s actual response length and reused at routing time. We sweep λ ∈ {0, 0.05, 0.10, . . . , 1.0}
+when computing the deferral curve.
+Baseline adaptations. Bao et al. [32] originally route between two models with a binary switching
+penalty; we adapt their formulation to our five-model pool by treating each pairwise switch under
+the same penalty schedule. GMTRouter [31] originally learns per-user preferences from cross-
+conversation histories; we instantiate it by treating each conversation hash as a distinct user, using
+the authors’ reference implementation. History-strategy variants (Query-only, Full History, RAG
+Retrieval) share CoR’s encoder and training pipeline but differ in how they construct the input to the
+quality predictor. Full-history + SST baselines feed the concatenated dialogue history to CARROT,
+CSCR, and IRT-Router, keep each router’s own quality predictor, and replace its cost estimator with
+CoR’s SST. The BERT full-history variant fine-tunes a BERT-base encoder (109.5M parameters)
+end-to-end on the full dialogue history.
+Component ablation training. To ablate DSP or SST individually, we re-train CoR with the
+corresponding module replaced by its single-turn or cache-unaware counterpart while keeping the
+other module unchanged.
+
+
+E    Compute Resources
+
+Routing module training. CoR’s routing modules consist of a frozen all-MiniLM-L6-v2 encoder
+(∼22M parameters, kept fixed) plus lightweight per-candidate task heads. Each training configuration
+trains for at most 20 epochs over the 80% training split with batch size 64 and completes in under 2
+hours on a single NVIDIA A100 (40GB) GPU. The full sensitivity sweep (Appendix F: window W ,
+global-state architecture, encoder, cache discount; Appendix G: pool size K; Appendix H: eviction
+rate pevict ) totals roughly 30 training runs and approximately 60 GPU-hours.
+Candidate-response generation. Generating per-(turn, candidate) responses across the five Qwen3
+models on ∼160K turns (WildChat + LMSYS-Chat-1M) is performed via the OpenRouter API.
+The resulting shared-context responses are generated once and can be reused for training. Held-out
+evaluation generates the replies selected along each routing trajectory.
+LLM-judge scoring. DeepSeek-V3.1 scores each shared-context candidate response on a 1–10 scale.
+This one-time labeling cost scales with |turns| × K. The same judge scores replies generated during
+held-out evaluation. The judge meta-evaluation (500 samples × 4 candidate judges, Appendix B) is a
+small fraction of the total judge spend.
+Evaluation. Auto-regressive evaluation runs each routing strategy as a single end-to-end trajectory
+per held-out conversation. Per-strategy evaluation across the held-out test split with |λ|=21 values
+completes in under 1 hour on the same A100 GPU; total wall-clock is dominated by candidate
+inference latency rather than the routing decision itself, which is sub-millisecond per turn.
+
+
+F    Sensitivity to Design Choices
+
+This appendix provides the full sensitivity analysis referenced in the main text. Table 5 sweeps four
+key design axes of CoR on WildChat. (a) The local-history window W has a clear optimum at W =2:
+W =1 underfits short-range coreference, while W ≥3 admits diluting attention from less relevant
+turns. AUDC varies by at most 0.02 across the sweep, indicating mild sensitivity. (b) The global state
+architecture matters: the gated GRU update outperforms a plain RNN (∆AUDC +0.03) and matches
+a single-layer Transformer at a fraction of the compute, supporting the choice of a recurrent rather
+than purely attentional aggregator. (c) CoR is largely insensitive to the text encoder: substituting
+BERT-base or E5-small for MiniLM-L6 changes AUDC by ≤ 0.01, with E5-small giving a small
+additional gain. (d) The cache-discount sweep is the most consequential. As dm             m
+                                                                                   cache /cprefill shrinks
+from 0.95 (near-zero cache cost, vLLM-style) to 0.5 (small dividend), AUDC drops by 0.04 and QNC
+rises from 0.55 to 0.78. CoR remains the strongest method across all settings, but absolute gains
+
+
+                                                   18
+    Table 5: Sensitivity of CoR to design choices on WildChat. Default configuration in italics.
+
+                                  Variant                       AUDC ↑         QNC ↓
+                                  (a) Local-history window size W (DSP)
+                                  W =1                          0.72           0.65
+                                  W = 2 (default)               0.74           0.59
+                                  W =3                          0.74           0.61
+                                  W =5                          0.73           0.64
+                                  (b) Global state architecture (DSP)
+                                  GRU (default)                  0.74          0.59
+                                  RNN                            0.71          0.68
+                                  Linear Attention               0.73          0.62
+                                  Transformer (1-layer)          0.74          0.60
+                                  (c) Text encoder
+                                  all-MiniLM-L6 (default)         0.74         0.59
+                                  BERT-base                       0.74         0.61
+                                  E5-small-v2                     0.75         0.58
+                                  (d) Cache discount dm        m
+                                                       cache /cprefill (SST)
+                                  0.5 (small dividend)            0.71         0.78
+                                  0.8 (default)                   0.74         0.59
+                                  0.95 (vLLM near-zero)           0.75         0.55
+
+Table 6: Robustness to candidate-pool composition on WildChat. Top: pool size K varied from 2 to
+6 over Qwen3 models. Bottom: cross-family pool at K=5 that replaces three Qwen3 models with
+Llama-3.1 and Mistral to test family generalization.
+                                                                         CoR (Ours)         CSCR
+               K Pool composition
+                                                                     AUDC ↑ QNC ↓ AUDC ↑ QNC ↓
+               2   Qwen3-0.6B + Qwen3-Next-80B-A3B-Instruct            0.78     0.49    0.74    0.74
+               3   + Qwen3-32B                                         0.77     0.53    0.71    0.79
+               4   + Qwen3-14B                                         0.75     0.56    0.70    0.81
+               5   + Qwen3-8B (default)                                0.74     0.59    0.68    0.85
+               6   + Qwen3-4B                                          0.73     0.61    0.66    0.87
+               Cross-family pool at K=5 (replaces 3 Qwen3 members with Llama-3.1 and Mistral)
+               5 Qwen3-0.6B + Llama-3.1-8B + Mistral-7B-Instruct
+                      + Qwen3-32B + Qwen3-Next-80B-A3B-Instruct      0.73      0.62     0.66    0.86
+
+
+are correlated with how much the deployment platform actually rewards cache reuse, an empirically
+observable property of the serving stack.
+
+G    Candidate-Pool Composition
+This appendix expands the candidate-pool composition study summarized in the main text. Table 6
+reports the full quality-cost metrics for pool sizes K ∈ {2, 3, 4, 5, 6} over Qwen3 members, and a
+cross-family pool at K=5 that replaces three Qwen3 members with Llama-3.1 and Mistral models.
+CoR’s AUDC ranges from 0.78 at K=2 to 0.73 at K=6, declining gracefully as harder routing
+decisions are introduced while QNC stays below 0.62 across all pool sizes. The cross-family pool at
+K=5 matches the same-family K=6 result on AUDC (0.73) within rounding, indicating that DSP’s
+quality estimator and SST’s cache tracker do not exploit Qwen-family-specific shortcuts.
+
+H    Sensitivity to Cache Eviction
+Cache visibility and retention. An instrumented deployment can expose the surviving prefix of each
+candidate at turn t. Serving engines such as vLLM [8] and SGLang [9] can reuse cached prefixes
+across turns, but memory pressure can evict a prefix between calls. In the provider-API runtime, the
+router tracks the prefix from prior calls and learns the realized cache hits from the selected backend’s
+usage report when available.
+Sensitivity to eviction rate. We sweep an eviction rate pevict ∈ {0%, 10%, 30%} that the deployment
+applies between consecutive turns: with probability pevict a given prior-turn cache entry is evicted
+
+
+                                                          19
+Table 7: Sensitivity of CoR to per-turn cache eviction. The main experiments assume that cache from
+the current conversation is retained across consecutive turns of the same conversation, which is the
+typical behavior under prefix-caching engines (vLLM, SGLang) when serving traffic permits cache
+retention. In this experiment, SST observed the surviving prefix length of each candidate before CoR
+selected a model. We vary the eviction probability pevict ∈ {0%, 10%, 30%} on WildChat. CoR
+retains its lead over the strongest baseline (Bao et al.) at every eviction rate.
+
+                                                CoR (Ours)                     Bao et al.
+             pevict
+                                       AUDC ↑     QNC ↓      Peak ↑   AUDC ↑     QNC ↓      Peak ↑
+             0% (default, main text)    0.74       0.59      0.95      0.70       0.74      0.95
+             10%                        0.72       0.63      0.95      0.69       0.76      0.95
+             30%                        0.69       0.71      0.95      0.67       0.80      0.95
+
+
+before the next turn arrives, in which case the corresponding tokens are charged at the full prefill rate.
+After eviction and before model selection, SST observed each candidate’s surviving prefix length
+and used it to estimate that candidate’s cost. Table 7 reports the result. As expected, CoR’s lead over
+the cache-unaware Bao et al. baseline narrows monotonically as fewer cache hits are available to
+exploit: the AUDC gap shrinks from 0.04 at pevict =0% to 0.02 at pevict =30%, and the QNC gap
+shrinks from 0.15 to 0.09. CoR nonetheless retains higher AUDC and lower QNC at every eviction
+rate (e.g., at pevict =30%: AUDC 0.69 vs. 0.67; QNC 0.71 vs. 0.80). Both methods attain the same
+reported peak quality at every eviction rate.
+Memory overhead in local deployments. CoR does not require the serving stack to retain KV-cache
+for all K candidates. The serving engine manages retention and eviction. SST uses prefix lengths to
+estimate routing costs. The memory-cost trade-off of retaining per-model conversation caches under
+high load therefore manifests as a higher effective eviction rate, which is exactly the axis swept in
+Table 7: CoR maintains its AUDC and QNC advantages even at a 30% eviction rate. End-to-end
+results under real, finite commercial cache lifetimes are reported in Appendix I.4.
+
+I     Additional Analyses
+This appendix reports the full results of the additional analyses summarized in Section 4. Unless noted
+otherwise, all experiments use WildChat, the default five-model pool, and the evaluation protocol of
+Section 4.
+
+I.1   Robustness to the LLM Judge
+
+Our main experiments use DeepSeek-V3.1 both to construct training labels and to score evaluation
+trajectories, which raises the concern that a learned router could exploit judge-specific preferences.
+We therefore evaluate two cross-family configurations in which the training judge (used to re-label the
+training set and re-train all methods) and the test judge come from different model families; no model
+responses are regenerated. The test judge never sees the training labels. As shown in Table 8, method
+rankings and the relative gaps between methods are preserved. Together with the human-anchored
+judge selection in Appendix B (ρ=0.84 against human gold labels), this indicates that the observed
+gains are not explained by sharing a judge between label construction and evaluation.
+
+I.2   Stability of the Recurrent State across Dialogue Depth
+
+A recurrent state could in principle drift over long conversations. Table 9 reports quality-prediction
+MSE by turn depth. DSP remains stable from turns 1–2 to turns 8+ (0.094 → 0.088), as does
+Global-only (0.128 → 0.127), whereas Query-only degrades substantially (0.154 → 0.193). We find
+no evidence of state drift.
+
+I.3   Out-of-Distribution Generalization
+
+Dialogue-length shift. We train both the full-history BERT and DSP quality predictors only on
+2–4-turn WildChat conversations and test on longer conversations without retraining; SST and all
+other routing settings are unchanged. Within the training range, the two predictors are comparable.
+
+
+                                                       20
+Table 8: Cross-judge evaluation on WildChat. All methods are re-trained on labels from the training
+judge and evaluated with the test judge.
+
+           Training judge        Test judge                     Method        AUDC ↑       QNC ↓      Peak ↑
+                                                                CSCR           0.68         0.85      0.94
+           DeepSeek-V3.1         DeepSeek-V3.1 (Table 1)        Bao et al.     0.70         0.74      0.95
+                                                                CoR            0.74         0.59      0.95
+                                                                CSCR          0.664         0.873     0.836
+           DeepSeek-V4-Pro       Claude Opus 4.8                Bao et al.    0.693         0.761     0.875
+                                                                CoR           0.719         0.642     0.902
+                                                                CSCR          0.676         0.847     0.851
+           Claude Opus 4.8       DeepSeek-V4-Pro                Bao et al.    0.704         0.746     0.886
+                                                                CoR           0.737         0.608     0.916
+
+
+               Table 9: Quality-prediction MSE by conversation depth on WildChat.
+
+           Variant          Turns 1–2 ↓    Turns 3–4 ↓      Turns 5–7 ↓      Turns 8+ ↓     ∆ (8+ vs. 1–2) ↓
+           Query-only         0.154           0.169             0.181         0.193               +0.039
+           Local-only         0.115           0.106             0.112         0.123               +0.008
+           Global-only        0.128           0.119             0.118         0.127               −0.001
+           DSP (Ours)         0.094           0.081             0.079         0.088               −0.006
+
+
+Under length shift, BERT’s error rises sharply, whereas DSP remains stable through its explicit
+local/global state (Table 10). End-to-end, DSP + SST gains 0.089 AUDC and reduces QNC by 0.187
+at 8+ turns. Since AUDC and QNC include realized cost, DSP’s improvement with length does not
+imply easier quality prediction: longer sessions offer more prefix-cache reuse, and stable routing
+avoids unnecessary switches, letting SST exploit the accumulated cache.
+
+Table 10: Dialogue-length shift: both quality predictors are trained on 2–4-turn WildChat conversa-
+tions only.
+
+                                          Quality MSE ↓            BERT + SST               DSP + SST
+            Test length
+                                          BERT     DSP           AUDC ↑      QNC ↓        AUDC ↑    QNC ↓
+            2–4 turns (in-distribution)   0.086    0.092          0.735       0.605       0.730      0.613
+            5–7 turns                     0.121    0.096          0.701       0.668       0.737      0.576
+            8+ turns                      0.183    0.098          0.653       0.739       0.742      0.552
+
+
+Topic-distribution shift. We transfer bidirectionally between WildChat and LMSYS-Chat-1M
+without target-corpus training or recalibration. WildChat is dominated by creative and assistive
+writing (61.9%, vs. 6.7% coding [3]), whereas LMSYS-Chat-1M’s largest topic clusters are coding
+and software [5]. Table 11 shows that DSP + SST loses only 0.020–0.030 AUDC under transfer,
+compared with 0.073–0.075 for BERT + SST.
+
+I.4   End-to-End Commercial Billing
+
+Commercial serving platforms already implement the per-model prefix reuse assumed by Equation 9,
+and SST only tracks each candidate’s reusable-prefix length, not the KV-cache itself. The 20% cached-
+input price used in the main experiments follows Alibaba Cloud Model Studio’s explicit-cache policy;
+Anthropic publishes a similar explicit-cache structure with a 5-minute lifetime, and Gemini Flash
+uses an implicit cache with a lifetime of approximately 3–5 minutes. To validate the cost model
+end-to-end under such finite cache lifetimes, we run WildChat conversations through OpenRouter
+with a heterogeneous pool of three model families (Claude, Gemini, and Qwen), with a lightweight
+and a mid-tier model from each, under each provider’s own caching policy. Cache hits and charges
+for all methods, including baselines, are read directly from OpenRouter’s usage-accounting response
+rather than computed from our cost model. Table 12 shows that CoR’s billed cost is $1.142 per 1K
+turns, 19.7% lower than Bao et al.’s $1.422, with the cache-hit rate rising from 19.4% to 31.8%.
+Together with Appendix H, this shows that CoR’s advantage holds under real, finite commercial
+cache policies and in a cross-family pool.
+
+
+                                                           21
+Table 11: Topic-distribution transfer without target-corpus training. Drops are relative to target-
+trained models (BERT + SST / DSP + SST: 0.684 / 0.700 on LMSYS-Chat-1M; 0.723 / 0.740 on
+WildChat).
+
+                                                             BERT + SST                         DSP + SST
+         Train → Test
+                                                      AUDC ↑           Transfer drop     AUDC ↑       Transfer drop
+         WildChat (writing) → LMSYS (coding)          0.611              −0.073          0.680             −0.020
+         LMSYS (coding) → WildChat (writing)          0.648              −0.075          0.710             −0.030
+
+
+Table 12: End-to-end billing on WildChat under finite commercial cache policies (heterogeneous
+Claude / Gemini / Qwen pool via OpenRouter).
+
+            Method       AUDC ↑         QNC ↓     Peak ↑     Billed cost ($/1K turns) ↓         Cache-hit rate ↑
+            CSCR          0.664         0.869     0.887                   1.646                     11.0%
+            Bao et al.    0.699         0.758     0.912                   1.422                     19.4%
+            CoR           0.734         0.616     0.941                   1.142                     31.8%
+
+
+I.5   Routing Distribution across the Candidate Pool
+
+To test whether CoR makes fine-grained selections or relies on a small subset of the pool, we
+add Qwen3-4B to the default pool, producing a six-model pool with four intermediate candidates
+(AUDC/QNC 0.73/0.61 for CoR vs. 0.66/0.87 for CSCR; Table 6), and report routing shares at
+representative λ (Table 13). As λ increases, CoR shifts toward cheaper candidates while making
+substantial use of the intermediate models; at λ=0.5, the four intermediate models receive 70.7% of
+CoR’s turns, compared with 52.9% for Bao et al.
+
+             Table 13: Routing shares (%) in the six-model Qwen3 pool on WildChat.
+
+                λ / regime               Method       0.6B       4B       8B      14B    32B     80B-A3B
+                                         CoR          3.4        5.8      8.1     11.5   23.9       47.3
+                0.1 / quality-focused
+                                         Bao et al.   2.9        4.8      7.4     10.6   21.7       52.6
+                                         CoR          12.6       17.4     13.8    9.1    30.4       16.7
+                0.5 / balanced
+                                         Bao et al.   21.8       11.3     10.1    6.8    24.7       25.3
+                                         CoR          56.8       26.1     4.7     1.3    9.4         1.7
+                0.9 / cost-focused
+                                         Bao et al.   75.9       12.7     3.1     1.0    5.2         2.1
+
+
+
+
+J     Limitations
+
+Pool excludes proprietary frontier models. Our main pool consists of open-weight Qwen3 models,
+with cross-family checks using Llama-3.1 and Mistral. State-of-the-art proprietary models such as
+Claude Opus, Claude Sonnet, and Claude Haiku are not included, even though production routers in
+practice often mix open-weight and proprietary endpoints. Incorporating such models would broaden
+the quality-cost frontier the router operates over and is a natural next step. Our commercial-billing
+experiment (Appendix I.4) already includes lightweight and mid-tier Claude and Gemini models.
+Domain-specialized candidates. Evaluating explicitly domain-specialized candidates (e.g., medi-
+cal [72] or legal LLMs) requires only per-turn labels for them and no change to CoR.
+Cache retention under load. Measuring cache retention in a local multi-model deployment under
+sustained load is left to future work.
+
+
+K     Broader Impacts
+
+CoR is a routing layer over publicly available LLMs and does not generate content itself, so most soci-
+etal impact accrues to the underlying models rather than the router. We highlight three considerations
+specific to CoR’s operating regime.
+
+
+                                                            22
+Efficiency and access. By exploiting KV-cache reuse and cost-aware model selection, CoR can reduce
+per-conversation serving cost and energy, which may broaden access to high-quality conversational
+LLMs at lower price points and lower carbon footprints per query.
+Routing-induced exposure. If the router systematically prefers particular candidates for particular
+query types, any biases, factual errors, or failure modes of those candidates are amplified for users
+issuing those query types. Deployers should monitor per-model behavior across the realized routing
+distribution, not only models in isolation, and consider auditing routing decisions for fairness across
+sensitive query categories.
+Privacy and cache isolation. SST consumes KV-cache state from the serving engine across turns
+of the same conversation. Operators should ensure cache isolation across distinct user sessions (a
+default property of vLLM and SGLang under standard configurations) so that cache reuse cannot
+leak information across users; CoR itself adds no new persistence beyond what the serving engine
+already maintains.
+
+
+
+
+                                                  23
+

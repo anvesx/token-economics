@@ -1,0 +1,749 @@
+TITLE: GPT Semantic Cache: Reducing LLM Costs and Latency via Semantic Embedding Caching
+URL: https://arxiv.org/abs/2411.05276
+ORG: arXiv  TYPE: paper  DATE: 2024-11
+
+GPT Semantic Cache: Reducing LLM Costs and Latency via Semantic
+Embedding Caching
+
+Sajal Regmi Chetan Phakami Pun
+
+arXiv:2411.05276v3 [cs.LG] 9 Dec 2024
+
+Abstract
+
+Despite their capabilities, a significant challenge arises from
+the need to make individual API calls to the LLM for each
+user query. This process can be both time-consuming and
+costly, particularly when dealing with large volumes of similar or repetitive questions common in customer service scenarios. For instance, customer support chatbots frequently
+encounter repetitive queries with minor variations, leading to redundant processing and elevated computational
+expenses.
+
+Large Language Models (LLMs), such as GPT
+(Radford et al., 2019), have revolutionized artificial intelligence by enabling nuanced understanding and generation of human-like text across a
+wide range of applications. However, the high
+computational and financial costs associated with
+frequent API calls to these models present a substantial bottleneck, especially for applications like
+customer service chatbots that handle repetitive
+queries. In this paper, we introduce GPT Semantic
+Cache, a method that leverages semantic caching
+of query embeddings in in-memory storage (Redis). By storing embeddings of user queries, our
+approach efficiently identifies semantically similar questions, allowing for the retrieval of pregenerated responses without redundant API calls
+to the LLM.This technique achieves a notable reduction in operational costs while significantly
+enhancing response times, making it a robust solution for optimizing LLM-powered applications.
+Our experiments demonstrate that GPT Semantic
+Cache reduces API calls by up to 68.8% across
+various query categories, with cache hit rates ranging from 61.6% to 68.8%. Additionally, the
+system achieves high accuracy, with positive hit
+rates exceeding 97%, confirming the reliability
+of cached responses. This technique not only
+reduces operational costs, but also improves response times, enhancing the efficiency of LLMpowered applications.
+
+To address this inefficiency, various methods have been
+proposed to cache LLM responses. For instance, (Bang,
+2023) introduced GPTCache, a Python package designed to
+cache LLM responses to reduce latency and costs. Similarly,
+(Chen et al., 2023) explored techniques to improve the efficiency of LLM decoding employing speculative sampling
+(SpS), an approach that accelerates token generation using
+a draft model and rejection sampling. While their work
+focuses on reducing latency during sequence generation,
+our GPT Semantic Cache complements these efforts by addressing latency and cost issues through semantic caching of
+query embeddings, enabling efficient retrieval of responses
+for semantically similar queries.
+Building upon these ideas, we propose GPT Semantic Cache.
+By converting user queries into numerical embedding representations that capture the semantic meaning, we can
+store and quickly retrieve these embeddings (OpenAI, 2022).
+When a new query arrives, we compare its embedding to
+those stored in the cache. If a semantically similar query is
+found, we can provide the corresponding response immediately, bypassing the need for an additional API call to the
+LLM.
+This approach offers several advantages::
+
+1. Introduction
+
+• Reduced Latency: Users receive faster responses
+since the system can retrieve the responses directly
+from the cache.
+
+Large Language Models (LLMs) such as GPT have become
+integral to modern AI applications due to their ability to
+understand and generate human-like text. They are widely
+used in chatbots, virtual assistants, and customer support
+systems to interpret user queries and provide relevant responses.
+
+• Cost Efficiency: Fewer API calls to the LLM result in
+lower operational costs.
+• Scalability: The system can handle higher volumes
+of queries without a proportional increase in computational resources.
+
+. Correspondence to: Sajal Regmi <sajaregmi4@gmail.com>.
+Copyright 2024 by the author(s).
+
+1
+
+GPT Semantic Cache: Reducing LLM Costs and Latency via Semantic Embedding Caching
+
+2. System Architecture
+
+2.2. Embedding Generation
+
+The architecture of the GPT Semantic Cache system is
+designed to optimize the handling of repeated and semantically similar queries, reducing costs and improving response
+times. The system comprises several key components, each
+playing a crucial role in the overall workflow.
+
+The system can utilize either the OpenAI API for text embeddings or any ONNX-compatible model from platforms like
+Hugging Face. This flexibility allows the system to adapt to
+different deployment scenarios, whether using cloud-based
+models or self-hosted options. In the embedding generation
+process:
+
+2.1. Overview
+• OpenAI API: When using OpenAI embeddings, the
+text is sent to the API, and the response includes the
+embedding vector. The vector’s length is typically
+1536 for models like text-embedding-ada-002
+(OpenAI, 2022).
+
+The architecture consists of three main components:
+• Embedding Generation: Converts user queries into
+semantic embeddings.
+
+• Local Models: For local embeddings, the system loads
+ONNX-supported models and generates embeddings
+using libraries such as @xenova/transformers.
+The generated embeddings are normalized and pooled
+to create a consistent representation.
+
+• In-Memory Caching: Manages storage and retrieval
+of embeddings and responses using Redis.
+• Similarity Search: Identifies semantically similar
+queries using Approximate Nearest Neighbor (ANN)
+techniques.
+
+2.3. In-Memory Caching
+The caching layer uses Redis (Labs, 2022) to store embeddings and their corresponding responses. Redis provides
+a high-performance, in-memory data store, ensuring quick
+access and efficient management of cached data. The cache
+is organized by:
+
+Query
+Embedding Generation
+Cosine Similarity
+
+Redis
+
+Similarity
+
+• Embedding Size: Different embedding models may
+produce vectors of varying dimensions, so the cache is
+partitioned based on the embedding size.
+
+ANN Index
+
+• Time-To-Live (TTL): Cached data is assigned a TTL
+to prevent outdated information from persisting indefinitely. This feature ensures that the cache remains
+fresh and relevant, automatically expiring old entries.
+
+GPT API
+
+2.4. Similarity Search using ANN
+The system uses Approximate Nearest Neighbor (ANN)
+algorithms, such as Hierarchical Navigable Small World
+(HNSW) graphs (Malkov & Yashunin, 2018a) implemented via hnswlib-node, to perform efficient similarity searches. HNSW constructs a multi-layer graph
+G = (V, E), where nodes V correspond to stored embeddings, and edges E represent proximity connections. The
+process involves:
+
+Figure 1. The diagram illustrates the core components of the GPT
+Semantic Cache system, showcasing the flow of user queries
+through embedding generation, similarity calculation (Rahutomo
+et al., 2012), and Approximate Nearest Neighbors (ANN) indexing. The Redis-based in-memory cache stores embeddings and
+corresponding responses, facilitating quick retrieval. Queries are
+sent to the GPT API only when no matching response is found in
+the cache.
+
+• Index Initialization: When the cache is loaded, the
+system initializes the ANN index with stored embeddings. If the index has not been initialized, it starts with
+a minimal size and dynamically grows as new data is
+added.
+2
+
+GPT Semantic Cache: Reducing LLM Costs and Latency via Semantic Embedding Caching
+
+For an embedding e, its neighbors in the graph are
+chosen based on the top-k similarity scores:
+
+neighbors(e) = arg top-k cosine similarity(e, ei )
+
+cosine similarity(u, v) =
+
+u·v
+,
+∥u∥∥v∥
+
+where u · v is the dot product, and ∥u∥ and ∥v∥ are the
+Euclidean norms of u and v, respectively.
+
+• Embedding Search: When a new query embedding is
+generated, the ANN index searches for the k most similar embeddings using cosine similarity. This approach
+ensures rapid and scalable similarity matching. For a
+new query embedding q, the search involves a multilayer traversal of the HNSW graph. Starting from an
+entry point, the algorithm iteratively explores closer
+neighbors based on cosine similarity until it converges
+to the top-k closest nodes:
+
+result set = arg top-k cosine similarity(q, ei )
+
+In the caching system, cosine similarity is used to determine
+the proximity between a query embedding q and stored
+embeddings {e1 , e2 , . . . , en }, enabling the retrieval of the
+most relevant cached response.
+The calculated cosine of the angle between two vectors, provides a value between −1 and 1, where 1 indicates identical
+orientation. In the context of semantic embeddings, a higher
+similarity score implies greater semantic closeness. The
+system uses a similarity threshold (0.8) to decide whether a
+cached response is sufficiently similar to the new query to
+be reused.
+
+Compared to exhaustive search, HNSW reduces complexity from O(n) to approximately O(log n) for
+search queries, where n is the number of embeddings. This efficiency is achieved through hierarchical
+partitioning and greedy search strategies (Malkov &
+Yashunin, 2018b).
+
+2.7. Cache Management with Time-To-Live (TTL)
+To prevent the cache from becoming stale, each cached
+entry is assigned a Time-To-Live (TTL) value. The TTL
+ensures that data is automatically removed after a certain
+period, maintaining the relevance of cached responses. This
+mechanism also helps manage the cache size, preventing it
+from growing indefinitely.
+
+To ensure robustness in handling dynamic updates, our
+system periodically rebalances the HNSW graph, maintaining search efficiency even as new embeddings are
+added. Future iterations will explore adaptive indexing
+strategies for further performance gains.
+
+2.8. System Workflow Summary
+The overall workflow of the GPT Semantic Cache system is
+as follows:
+
+2.5. Query Handling Workflow
+1. Cache Lookup: When a query is received, it is
+first converted into an embedding. The system then
+searches the ANN index for similar embeddings. If a
+match with a similarity score above a specified threshold (e.g. 0.8) is found, the cached response is returned.
+
+1. Receive Query: The user submits a query to the system.
+2. Generate Embedding: The query is converted into
+an embedding using either the OpenAI API or a local
+ONNX model.
+
+2. Cache Miss: If no suitable match is found, the system
+sends the query to the LLM API (e.g., OpenAI GPT) to
+generate a new response. The query, embedding, and
+response are then stored in the cache for future use.
+
+3. Search Cache: The embedding is used to search the
+ANN index for similar embeddings.
+4. Determine Similarity: Cosine similarity is calculated
+between the query embedding and cached embeddings.
+
+3. Embedding Storage: New embeddings and their responses are added to both the ANN index and the Redis
+cache. The system manages the cache size and ensures
+that the index can accommodate growing data by resizing when necessary.
+
+5. Retrieve or Generate Response:
+• Cache Hit: If a similar embedding is found above
+the threshold, the corresponding cached response
+is returned.
+• Cache Miss: If no similar embedding is found,
+the query is sent to the LLM API to generate a
+new response, which is then cached.
+
+2.6. Cosine Similarity and Similarity Threshold
+Cosine similarity is employed to measure the similarity
+between query embeddings.
+
+6. Update Cache and ANN Index: The new embedding
+and response are stored in Redis and added to the ANN
+index for future queries.
+
+Given two embeddings u, v ∈ Rd , the cosine similarity
+between them is defined as:
+3
+
+GPT Semantic Cache: Reducing LLM Costs and Latency via Semantic Embedding Caching
+
+2.9. Advantages of the Architecture
+
+3.2. Test Query Generation and Execution
+
+The GPT Semantic Cache system offers several benefits:
+
+To evaluate the system’s performance, we generated an additional 2,000 test queries, with 500 queries per category.
+Each query was submitted to the system, where it was converted into an embedding and compared against cached
+embeddings using the ANN index. If a similar embedding
+was found (similarity >= 0.8), the corresponding cached
+response was returned (cache hit). Otherwise, the query
+was forwarded to the LLM for a new response (cache miss),
+which was subsequently cached.
+
+• Reduced Latency: By serving responses from the
+cache when possible, the system provides faster response times to users.
+• Cost Savings: Reducing the number of API calls to
+the LLM lowers operational costs significantly.
+• Scalability: The use of ANN and in-memory caching
+allows the system to handle increasing volumes of
+queries efficiently.
+
+3.3. Validation of Cache Hits
+To verify the appropriateness of cached responses, we
+employed GPT-4o Mini to evaluate whether the retrieved
+cached response was valid for the test query. For each cache
+hit, both the test query and the original cached question
+were provided to the model, which returned a binary verdict
+indicating whether the queries were semantically similar
+and whether the cached response was accurate. This validation step enabled us to quantify the accuracy of the caching
+mechanism. Additionally, the response times for queries
+were measured and averaged for both the caching system
+and the traditional method (without cache). This allowed
+us to determine the performance improvement in terms of
+query response time.
+
+• Flexibility: Support for multiple embedding models
+and configurations makes the system adaptable to various deployment needs.
+2.10. Potential Extensions
+Future enhancements to the system could include:
+• Dynamic Threshold Adjustment: Implementing
+mechanisms to adjust the similarity threshold based on
+system performance or user feedback.
+• Distributed Caching: Expanding the caching layer
+to a distributed setup for higher availability and fault
+tolerance.
+
+4. Results
+
+• Advanced Embedding Models: Incorporating newer
+or domain-specific embedding models to improve semantic understanding.
+
+The evaluation of GPT Semantic Cache highlights its significant impact on reducing API calls and improving response
+times. This section provides a detailed analysis of system performance, comparing the traditional method to our
+caching approach.
+
+3. Testing Methodology
+To evaluate the effectiveness of our GPT Semantic Cache
+system, we conducted a series of experiments designed to
+simulate real-world user interactions with AI-based services.
+The primary objectives were to assess the system’s ability to
+efficiently handle repeated or semantically similar queries,
+validate the accuracy of cached responses, and quantify
+improvements in both response time and operational cost.
+
+4.1. Reduction in API Calls
+GPT Semantic Cache reduces the number of API calls by
+serving responses from the cache for semantically similar
+queries. As shown in Figure 1, the traditional method results in 100% API calls across all categories, whereas GPT
+Semantic Cache reduces API dependency significantly. The
+reduction rates for each category are as follows:
+
+3.1. Dataset Preparation and Cache Population
+We constructed a dataset of 8,000 question-answer pairs
+across four categories: basic Python programming, customer service inquiries, technical support questions, and
+general knowledge. These categories were selected to reflect the diverse range of queries typically encountered in
+real-world applications. Each question was converted into a
+semantic embedding using all-MiniLM-L6-v2 (Reimers &
+Gurevych, 2020), and both the embeddings and their corresponding responses were stored in Redis. An Approximate
+Nearest Neighbor (ANN) index was also updated to include
+these embeddings for efficient similarity searches.
+
+• Basics of Python Programming: 67% cache hit rate,
+reducing API calls to 33%.
+• Technical Support Related to Network: 67% cache
+hit rate, reducing API calls to 33%.
+• Questions Related to Order and Shipping: 68.8%
+cache hit rate, reducing API calls to 31.2%.
+• Customer Shopping QA: 61.6% cache hit rate, reducing API calls to 38.4%.
+4
+
+GPT Semantic Cache: Reducing LLM Costs and Latency via Semantic Embedding Caching
+
+API Call Percentage (%)
+
+Reduction in API Calls: Traditional Method vs GPT Semantic Cache
+
+100.0%
+
+100
+
+100.0%
+
+100.0%
+
+100.0%
+
+Traditional Method
+GPT Semantic Cache
+
+80
+60
+40
+
+33.0%
+
+33.0%
+
+38.4%
+
+31.2%
+
+20
+
+sR
+ela
+ted
+Qu
+
+ing
+pp
+ho
+rS
+me
+sto
+
+est
+ion
+
+Cu
+
+Or
+de
+to
+
+rt R
+ela
+po
+up
+lS
+ica
+Tec
+hn
+
+QA
+
+ing
+ipp
+ra
+nd
+
+to
+ted
+
+Pro
+g
+on
+yth
+fP
+so
+sic
+Ba
+
+Sh
+
+Ne
+
+tw
+
+ram
+mi
+
+ork
+
+ng
+
+0
+
+Category
+
+Figure 2. Comparison of API Call Frequency: Traditional Query
+Handling vs Semantic Caching System.
+Figure 4. Cache Hit Rates and Positive Match Accuracy Across
+Query Categories.
+
+4.2. Response Time Analysis
+To assess performance improvements, we measured and
+compared the average query response times for both the
+caching system and the traditional method. Figure 3 illustrates the substantial reduction in response times achieved
+through GPT Semantic Cache.
+
+Table 1. Cache Hit per 500 queries in each category and the no of
+positive hits
+
+C ATEGORY
+
+C ACHE H IT
+
+P OSITIVE H ITS
+
+BASICS OF P YTHON
+P ROGRAMMING
+T ECHNICAL S UPPORT
+R ELATED TO N ET-
+
+335
+
+310
+
+335
+
+326
+
+344
+
+331
+
+308
+
+298
+
+WORK
+Q UESTIONS R ELATED
+TO O RDER AND S HIP PING
+C USTOMER S HOPPING
+
+QA
+
+5. Discussion
+The results of the GPT Semantic Cache demonstrate a significant reduction in API calls and improvement in response
+times across all evaluated query categories. The cache hit
+rates of up to 68.8% and positive hit rates of the cache hit
+rates exceeding 97% highlight the system’s effectiveness
+in identifying and leveraging semantic similarity for query
+handling. However, it is essential to contextualize these outcomes within both their strengths and potential limitations.
+
+Figure 3. Comparison of Average Query Response Times: With
+Cache vs Without Cache.
+
+4.3. Cache Hit and Accuracy Analysis
+
+5.1. Strengths and Contributions
+
+The cache hit rates indicate the system’s efficiency in recognizing semantically similar queries, while the positive hit
+rates highlight the accuracy of responses retrieved from the
+cache. As presented in Figure 2, the system achieved high
+positive hit rates across all categories, ranging from 92.5%
+to 97.3%, confirming the reliability of cached responses.
+
+The high cache hit and positive hit rates confirm the robustness of the semantic embedding approach combined
+with an in-memory caching system. Specifically, the system
+shows remarkable efficiency in categories like ”Order and
+Shipping Queries,” where user questions tend to follow predictable patterns, leading to higher semantic overlaps. This
+5
+
+GPT Semantic Cache: Reducing LLM Costs and Latency via Semantic Embedding Caching
+
+efficiency validates the underlying design, making the system highly suitable for applications like customer support
+chatbots, where such patterns are prevalent.
+
+compromising response accuracy (positive hit rates
+exceeding 97%).
+
+Additionally, the operational cost savings achieved by reducing LLM API calls are substantial. The use of time-tolive (TTL) mechanisms ensures that cached data remains
+relevant, addressing a common concern of response accuracy over time. Moreover, by supporting both cloud-based
+(OpenAI API) and local ONNX models for embedding generation, the system demonstrates flexibility and adaptability
+for diverse deployment scenarios.
+
+This threshold was thus selected as the optimal trade-off
+between efficiency and accuracy, aligning with the system’s
+objectives. performance in such environments.
+5.4. Scalability and Future Enhancements
+The architecture demonstrates strong scalability in its current form, with Redis providing fast in-memory storage
+and HNSW ensuring efficient similarity searches. However, deploying the system across distributed environments
+with multiple nodes may require additional optimizations
+to manage data consistency and minimize synchronization
+delays. Integrating advanced embedding models, particularly domain-specific ones, could further enhance semantic
+understanding and accuracy in specialized applications.
+
+5.2. Challenges and Limitations
+While the system performed well in categories with structured or repetitive queries, certain limitations were observed
+in more diverse query types, such as ”Customer Shopping
+QA.” This category exhibited slightly lower cache hit rates
+(61.6%), likely due to the broader variety of customer inquiries and the greater semantic variability in the language
+used. In such cases, the fixed similarity threshold (0.8) may
+exclude some valid matches. Adaptive thresholding, tailored to specific categories or use cases, could mitigate this
+issue and improve hit rates further.
+
+Additionally, dynamic adjustment of similarity thresholds
+based on query patterns, user feedback, or system performance metrics could refine cache hit rates over time. Incorporating mechanisms to detect and handle edge cases,
+such as highly ambiguous queries or those requiring context beyond semantic similarity, would further enhance the
+system’s reliability.
+
+Maintaining the ANN index for large-scale datasets presents
+a computational overhead, particularly when embeddings
+grow into millions of entries. Although the current implementation with HNSW is efficient, scenarios with frequent
+updates or dynamic embeddings (e.g., real-time user input
+streams) might introduce latency or consistency challenges.
+A hybrid caching approach, combining semantic caching
+with heuristic-based query grouping, could enhance
+
+6. Use Cases
+GPT Semantic Cache is highly applicable in domains where
+repetitive or similar queries are common. Key use cases
+include:
+
+5.3. Threshold Selection (0.8 as Optimal Value)
+
+6.1. Customer Support Chatbots
+
+The threshold value of 0.8 for cosine similarity was determined empirically through extensive testing on a validation
+dataset. The experiments involved varying the threshold
+from 0.6 to 0.9 in increments of 0.05 and measuring the
+impact on cache hit rates and response accuracy. The results
+revealed that:
+
+Frequently asked questions generate redundant queries to
+LLM APIs, increasing costs and response times. By caching
+embeddings of past queries and responses, the system retrieves answers directly for semantically similar questions,
+bypassing LLM calls. For example, a banking chatbot can
+instantly answer repeated queries like “What are the interest
+rates for savings accounts?” or “How do I reset my online
+banking password?” from the cache.
+
+• Thresholds below 0.8 led to higher cache hit rates but
+also introduced irrelevant matches, decreasing the positive hit rate and, consequently, the overall response
+accuracy.
+
+6.2. Retrieval-Augmented Generation (RAG) Systems
+RAG systems frequently query LLMs for context-specific
+answers, leading to high latency. GPT Semantic Cache
+allows these systems to reuse cached results for semantically similar queries, reducing API calls and accelerating
+responses. For instance, a document search system can
+avoid redundant LLM invocations for similar summaries
+like “Summarize the financial trends for Q3 2024.”
+
+• Thresholds above 0.8 reduced cache hit rates significantly, as fewer queries were identified as semantically
+similar, leading to more LLM API calls and higher
+costs.
+• At 0.8, the system achieved an optimal balance, maintaining a high cache hit rate (up to 68.8%) without
+6
+
+GPT Semantic Cache: Reducing LLM Costs and Latency via Semantic Embedding Caching
+
+6.3. Real-Time Code Assistants
+
+8. Limitations
+
+Developers often generate similar queries for code completion or debugging. By caching embeddings of code-related
+queries and solutions, the system enables rapid reuse for
+identical or similar prompts. A query like “How do I write
+a function to reverse a string in Python?” can reuse cached
+responses for prompts like “Python function to reverse text.”
+
+While GPT Semantic Cache significantly reduces LLM
+costs and latency, it has limitations. The fixed similarity
+threshold (0.8) may not generalize across all use cases, potentially missing nuanced query variations. Scalability to
+massive datasets could degrade as the embedding set grows,
+introducing latency in dynamic updates. Domain-specific
+queries may require tailored embeddings for improved accuracy. Additionally, the reliance on TTL for cache freshness
+is insufficient for rapidly changing data, and the system
+does not handle context-dependent multi-turn interactions.
+Resource overhead for cache management might also pose
+challenges in constrained environments.
+
+6.4. E-Commerce Product Support
+E-commerce platforms receive redundant queries about
+product features and availability. Embedding-based caching
+enables quick retrieval of responses to semantically similar
+questions, improving customer support efficiency. Questions like “What are the features of this phone?” and “Does
+this phone have a dual camera?” can utilize cached responses.
+
+7. Conclusion
+This paper introduced GPT Semantic Cache, a system that
+leverages semantic embeddings to cache and retrieve responses from Large Language Models (LLMs) for semantically similar queries. By converting user queries into embeddings and storing them with corresponding responses
+in an in-memory cache, the system efficiently identifies
+similar questions and provides immediate answers without
+redundant API calls to the LLM.
+Our experiments demonstrated significant reductions in API
+calls—up to 68.8% across various query categories—with
+cache hit rates ranging from 61.6% to 68.8%.The system
+demonstrated exceptional accuracy, with positive hit rates
+exceeding 97%, indicating that the cached responses closely
+aligned with user intent in most cases. These results highlight the system’s effectiveness in reducing operational costs
+and improving response times, making it highly beneficial for LLM-powered applications dealing with repetitive
+queries.
+GPT Semantic Cache offers a scalable and cost-effective
+solution for enhancing the efficiency of AI applications
+such as customer support chatbots, RAG-based systems,
+real-time code assistants, and e-commerce platforms. Its
+flexibility in supporting multiple embedding models and
+configurations allows for adaptation across various domains.
+Future work will explore dynamic threshold adjustments
+for similarity matching, distributed caching mechanisms for
+improved scalability, and the integration of domain-specific
+embedding models to enhance semantic understanding in
+specialized applications.
+
+7
+
+GPT Semantic Cache: Reducing LLM Costs and Latency via Semantic Embedding Caching
+
+References
+
+dense vector model for embedding sentences and
+paragraphs, useful for clustering and semantic search
+tasks.
+
+Bang, F. GPTCache: An open-source semantic cache
+for LLM applications enabling faster answers and cost
+savings. In Tan, L., Milajevs, D., Chauhan, G., Gwinnup, J., and Rippeth, E. (eds.), Proceedings of the 3rd
+Workshop for Natural Language Processing Open Source
+Software (NLP-OSS 2023), pp. 212–218, Singapore, December 2023. Association for Computational Linguistics. doi: 10.18653/v1/2023.nlposs-1.24. URL https:
+//aclanthology.org/2023.nlposs-1.24.
+Chen, C., Borgeaud, S., Irving, G., Lespiau, J.-B., Sifre,
+L., and Jumper, J. Accelerating large language model
+decoding with speculative sampling, 2023. URL https:
+//arxiv.org/abs/2302.01318.
+Labs, R. Redis: In-memory data structure store, used as a
+database, cache, and message broker, 2022. URL https:
+//redis.io/.
+Malkov, Y. A. and Yashunin, D. A. Efficient and robust
+approximate nearest neighbor search using hierarchical
+navigable small world graphs. IEEE transactions on
+pattern analysis and machine intelligence, 42(4):824–
+836, 2018a.
+Malkov, Y. A. and Yashunin, D. A. Efficient and robust
+approximate nearest neighbor search using hierarchical
+navigable small world graphs, 2018b. URL https:
+//arxiv.org/abs/1603.09320.
+OpenAI. Openai api text embedding models: Highperformance embeddings for text understanding, 2022.
+URL https://platform.openai.com/docs/
+guides/embeddings. OpenAI’s embeddings like
+text-embedding-ada-002 provide dense vector
+representations of text for tasks such as semantic search
+and clustering.
+Radford, A., Wu, J., Child, R., et al.
+Language
+models are unsupervised multitask learners,
+2019.
+URL https://cdn.openai.com/
+better-language-models/language_
+models_are_unsupervised_multitask_
+learners.pdf. OpenAI Technical Reports.
+Rahutomo, F., Kitasuka, T., Aritsugi, M., et al. Semantic cosine similarity. In The 7th international student
+conference on advanced science and technology ICAST,
+volume 4, pp. 1. University of Seoul South Korea, 2012.
+Reimers, N. and Gurevych, I.
+all-minilm-l6v2:
+A sentence-transformers model for semantic search and clustering.
+https://
+huggingface.co/sentence-transformers/
+all-MiniLM-L6-v2, 2020. A 384-dimensional
+8
+
+GPT Semantic Cache: Reducing LLM Costs and Latency via Semantic Embedding Caching
+
+A. Appendix
+The Package, Dataset and Code used to write this paper
+• Package: Test Script: https://www.npmjs.com/package/gpt-semantic-cache
+• Dataset: Test Dataset: https://github.com/sajalregmi/gpt-semantic-cache-test/tree/main/test dataset
+• Test Code: Test Script: https://github.com/sajalregmi/gpt-semantic-cache-test/blob/main/test.ts
+
+9

@@ -1,0 +1,167 @@
+TITLE: What is an AI gateway? (Vercel)
+URL: https://vercel.com/i/what-is-an-ai-gateway
+ORG: Vercel  TYPE: blog  DATE: 2026-07
+
+What is an AI gateway? | Vercel - Vercel
+Skip to content
+
+24 Jul 2026
+13 min read
+
+Copy
+
+Try Jev on Vercel AI Gateway
+Give your application a faster way to decide what should happen next. Use Jev to route requests, flag content, and score priorities.
+
+Get started
+Every team building AI features eventually calls more than one model provider, and the code supporting that grows more brittle with each addition: another SDK, another set of keys, another billing dashboard to check when something breaks. An AI gateway is the layer that absorbs that complexity so application code doesn't have to. Here's what it actually does, how it differs from a router or a generic API gateway, and when a team actually needs one.
+Key takeaways:
+
+An AI gateway sits in front of every model provider as a single endpoint, tracking tokens instead of requests and staying in the loop for the full lifecycle of a call.
+
+Direct provider integrations accumulate seven compounding failure modes: SDK fragmentation, key sprawl, no failover path, uneven rate limits, cost-attribution gaps, model-switching friction, and observability gaps.
+
+The latency case against gateways measures the wrong variable. Gateway overhead runs in single-digit milliseconds. Model inference dominates real request time.
+
+Teams at 1 million or more monthly requests route across 11 distinct models or more, and multi-model routing becomes the standard architecture at that scale.
+
+Every multi-provider AI application grows a gateway layer eventually. The real decision is who operates it, not whether it exists.
+Copy link to headingWhat is an AI gateway?
+An AI gateway is the control layer between an application and every LLM provider it calls. It replaces direct, one-off provider integrations with a single endpoint for routing, failover, key management, rate limits, and cost tracking.
+Calling providers directly works right up until a key leaks, a provider goes down, or a bill arrives with no attribution attached. Closing that gap is the job a gateway does.
+Copy link to headingHow an AI gateway differs from a router or a traditional API gateway
+An AI gateway is a proxy that every LLM request passes through before it reaches a provider. The application authenticates to the gateway once, and the gateway authenticates to each provider from there, so adding a new model becomes a configuration change instead of new client code.
+The difference that matters most is where control sits in the request lifecycle. A model router picks which model handles a request and hands off after that. A traditional API gateway manages HTTP traffic, authentication, and rate limiting generically, per client or per route. An AI gateway governs the call before, during, and after dispatch: it tracks tokens instead of requests, caches by prompt similarity instead of exact URL match, and holds state across a streamed response instead of treating each call as stateless.
+Here's how the three compare across the dimensions that actually change how a request gets handled:
+
+Dimension
+AI gateway
+Traditional API gateway
+Model router
+
+Rate limiting unit
+Tokens, matching provider billing
+Requests per client or route
+None, selection only
+
+Caching
+Semantic, based on prompt similarity
+Exact URL match
+None
+
+Response handling
+Streaming via SSE and WebSocket, stateful context
+Stateless request and response
+Hands off after dispatch
+
+Primary function
+Governance on every model call
+HTTP traffic routing and authentication
+Model selection before the call
+A router narrows the choice before a call goes out. A gateway stays in the loop for the entire request, which is what lets it fail over mid-stream instead of only failing before the first byte.
+Copy link to headingSeven failure modes an AI gateway prevents
+Wiring an application directly to one LLM provider works right up until that provider has an incident, and a single-provider outage is only the most visible failure. The other six build up quietly as usage spreads across models, teams, and workflows.
+These seven failure modes tend to show up together, and each one makes the others worse:
+
+API fragmentation: Every additional provider brings its own SDK, its own authentication flow, its own error format, and its own rate-limit rules. None of that logic is reusable, so the integration surface grows linearly with each new provider a team adds.
+
+API key sprawl: Provider keys end up copied across developer laptops, CI pipelines, and one-off scripts, with no single owner keeping track of where they've gone. A leaked key can run up real usage before anyone notices, often only when the invoice arrives.
+
+Provider outages with no failover path: A provider incident becomes the application's incident too, without a fallback route in place. Anthropic publishes no public SLA for the Claude API, for instance, and its status page documents the kind of recurring, multi-hour incidents that a single hardcoded integration has no way to route around.
+
+Rate-limit complexity: OpenAI alone exposes six distinct headers for rate-limit state, covering request and token limits, how much of each remains, and a separate reset timer for both. Every other provider defines its own version of this bookkeeping in its own rate-limit docs, so none of it carries over between integrations.
+
+Cost attribution gaps: Spend split across separate provider billing relationships doesn't map cleanly to teams, users, or workflows. The question of what a given feature actually costs often has no direct answer.
+
+Model-switching friction: Adding a new provider commonly means writing a new adapter from scratch each time, pulling an engineer off product work for days at a stretch.
+
+Observability gaps: When no shared layer sits in front of every call, a bad answer becomes nearly impossible to debug afterward, since nothing recorded the prompt, provider, model, latency, and token count that produced it.
+Picture the engineer who gets paged in the middle of the night for an outage. That same person usually has no idea what the incident is costing, can't identify which model produced the last bad response, and has no automatic fallback standing by. Seven distinct-sounding problems collapse into one operational gap.
+Copy link to headingHow AI Gateway routes, fails over, and reports on every request
+Vercel's AI Gateway is one implementation of this pattern. Vercel built the routing layer first to keep v0 online across multiple model providers, then opened it up as its own product once other teams asked for the same capability. The section below covers how that layer actually works, from infrastructure through cost reporting.
+Copy link to headingThe infrastructure runs on Vercel's existing network
+AI Gateway runs on top of Vercel's CDN, the same network that handles trillions of requests annually, which keeps the gateway's own latency under 20 milliseconds before a request even reaches a provider. Every hop between an application and a provider runs on infrastructure Vercel controls, without touching the open internet in between, according to the GA announcement.
+Most of what AI Gateway spends its time doing is waiting, not computing. A request sits idle while the upstream provider generates a response, so the workload is I/O-bound rather than CPU-bound. Active CPU pricing reflects that: it only bills for CPU time while code is actually executing, so the wait for a provider's response gets billed as memory provisioning instead of full compute time.
+Copy link to headingRouting, fallbacks, and per-provider timeouts
+The AI SDK lets an application call any provider through one base URL, using strings like anthropic/claude-opus-4.8 to pick the model. Changing which model handles a request is a one-line edit:
+
+import { streamText } from 'ai';
+
+const result = streamText({
+
+ model: 'anthropic/claude-opus-4.8', // defaults to Vercel AI Gateway
+
+ prompt: 'How does AI Gateway route around a provider outage?',
+
+});
+
+AI Gateway decides which provider handles a request by default, weighing each one's recent uptime and latency. A team that wants direct control over that decision can override it with an explicit provider order. Reliability comes from a separate mechanism, a list of fallback models: when the first choice fails, the gateway steps through that list until one responds, and the application only ever sees the final result. Per-provider timeouts catch the slower case, moving on to the next provider before a sluggish response turns into a multi-second wait.
+Copy link to headingKeys stay off the application and off the request path
+There's no key to rotate on a Vercel deployment, since OIDC tokens handle authentication automatically. Teams that want to use their own provider contracts can bring their own keys for any catalog provider on the paid tier, and Vercel charges the same price the provider does, with nothing added on top. Either path keeps the actual provider credentials out of application code entirely.
+Data policy works the same way regardless of which path a team takes. Vercel doesn't store or train on anything that passes through the gateway, on any tier. Providers upstream set their own retention rules, though, so teams that need a stronger guarantee can restrict routing to Zero Data Retention providers, the ones contractually committed to not retaining or training on prompt data. That distinction matters for privacy-sensitive workloads running through the same gateway as everything else.
+Copy link to headingCost and performance show up per request, not per invoice
+AI Gateway logs every request that passes through it. Query the reporting API docs and get back cost, market cost, input tokens, output tokens, cached input tokens, cache creation tokens, reasoning tokens, and request count, sliced by day and by user. That's the difference between a bill that arrives at the end of the month and a number a team can attribute to a specific feature while it's still cheap to fix.
+A separate models page shows the same kind of visibility from another angle: live P50 time-to-first-token, P50 throughput, and uptime for each provider, viewable across the last hour, day, or week. Teams that were previously guessing at which provider was actually slow that week get a number instead.
+Copy link to headingDoes an AI gateway add latency?
+The latency objection against gateways measures the wrong variable. Most proxy benchmarks clock forwarding time against a mock upstream, which strips out the one thing that dominates a real request: how long the model itself takes to respond.
+Ferro Labs' benchmark suite, which builds a Go-based AI gateway, isolates gateway overhead from provider latency by routing to a mock upstream with a fixed delay. Its published numbers put typical gateway processing overhead at around 25 microseconds per request. At 1,000 concurrent users, added latency runs about 8.1 milliseconds at the 50th percentile and 51.9 milliseconds at the 99th, measured against a mock upstream fixed at 60 milliseconds of latency. Those are vendor-published figures for a Go-native gateway specifically, and they read as a floor on proxy cost rather than a full-request measurement.
+Provider inference still dominates the real request. Caching flips the sign entirely for repeated queries: Cloudflare's caching docs report that caching can reduce latency by up to 90% on a cache hit, since the request skips the round trip to the provider entirely.
+Python-based proxies are where the objection gets legitimate. LiteLLM's benchmarks show P95 latency dropping from 630 milliseconds to 150 milliseconds, and P99 from 1,200 milliseconds to 240 milliseconds, once worker count is set to match the CPU count on the box. Skip that tuning, and throughput against direct vLLM calls can degrade by 1.7 to 4 times, according to one engineer's report. That's an implementation problem tied to Python's threading model, not a property of gateways generally. For applications already hosted on Vercel, the in-network routing described above means the direct-to-provider call over the open internet is usually the slower path anyway.
+Copy link to headingWhen do teams need a multi-model AI gateway?
+At low request volumes, a single provider integration is fine. Vercel's production index, drawing on anonymized routing data through April 2026, found that teams sending more than 1 million requests a month route across 11 distinct models or more in regular production use. Multi-model routing stops being an optimization at that scale and starts being the architecture.
+Agentic workloads are driving that shift. Across the same data, the share of tokens flowing through tool-call requests grew from 31.6% to 58.9% between October 2025 and April 2026, roughly doubling in six months. Every agent step that reaches for a tool is a request that has to route correctly, retry correctly, and get logged correctly, which is exactly the surface a gateway governs.
+The enterprise data outside Vercel points the same direction. One survey of 100 enterprise CIOs from a16z's 2025 survey put the figure at 37% now running five or more models in production, up from 29% a year earlier. A separate Menlo Ventures update breaks down what's behind that shift: 66% of builders moved to a newer model with the provider they already had, and only 11% actually left for a different vendor. Most model churn happens inside a single provider relationship, which means a gateway still removes SDK and reporting work regardless of how often a team actually changes labs.
+Copy link to headingHow AI Gateway helps engineering teams ship reliably
+The patterns above show up the same way across teams building on AI Gateway today, at very different scales.
+Copy link to headingStop rewriting adapters every time a new model ships
+Okara's AI Gateway story is a four-person team behind an AI marketing agent product used by more than 120,000 businesses. That team used to spend days writing a new adapter every time it added a model provider, an engineer pulled off product work for every integration, on a team too small to absorb it repeatedly. On AI Gateway, adding a provider is a configuration change instead of new client code, and Okara now makes a new model available to users the same day it ships.
+Copy link to headingShip customer-requested features without touching keys
+A small team testing new models across providers usually pays for it in SDK rewrites and key rotation every time. Searchable's story, which tracks how brands show up across AI search engines, built on AI Gateway and the AI SDK specifically to avoid that cycle. The team now ships customer-requested features in as little as 30 minutes after routing more than 100 billion tokens through the gateway, a 5x increase in development velocity.
+Copy link to headingMove retries and fallback logic out of application code
+Retry logic, fallback routing, and provider health checks living in application code accumulate silently, and nobody owns them until something breaks. Zo Computer's results came from moving that logic into AI Gateway's routing layer, which measured out to a 20x improvement in AI reliability. Teams routing through AI Gateway see similar gains on average, with P99 streaming latency improving by 10% to 14% and API error rates falling by 43.8%, relative to unmanaged direct calls.
+Copy link to headingSkip the build-versus-buy math on gateway infrastructure
+Every multi-provider application grows a gateway layer eventually, whether anyone names it that or not, and self-hosting one has a real dollar cost teams tend to underestimate. One cost breakdown puts a self-hosted, LiteLLM-style proxy at production scale at roughly $500 to $1,700 a month in infrastructure, database, and observability tooling alone. That's before counting the senior engineering time it takes to run it. AI Gateway ships with that layer already built and tested against tens of trillions of tokens across hundreds of models in live production traffic.
+Copy link to headingShip your AI Gateway integration
+Every multi-provider AI application grows retries, fallback routing, and key handling in its own code eventually, whether or not anyone on the team decided to build a gateway on purpose. The choice that's actually in front of a team is who operates that layer, and what breaks first when a provider has a bad day.
+Here's how AI Gateway covers each piece of that:
+
+Unified provider access: Call models like anthropic/claude-opus-4.8, xai/grok-4.3, and openai/gpt-5.5 through one endpoint and one API key, without separate contracts or SDKs for each provider.
+
+Automatic failover: Per-provider timeouts and a models fallback array keep a request moving to the next provider instead of surfacing an outage to users.
+
+Cost and usage reporting: The reporting API breaks down cost and tokens per day, per user, and per feature, before the number shows up as a surprise on the invoice.
+
+Zero Data Retention routing: Requests can be restricted to providers under a ZDR agreement, with no markup for bringing existing provider keys.
+
+Global, low-latency infrastructure: The same CDN handling trillions of requests a year sits at the core of every gateway call.
+Start a new project, or browse vercel.com/templates for a starting point that already wires up AI Gateway.
+Copy link to headingFAQs about AI gateways
+Copy link to headingWhat's the difference between AI Gateway and the AI SDK?
+The AI SDK is free, open source, and works with any model or infrastructure provider. AI Gateway is a separate product built on top of it, abstracting provider differences at the infrastructure level while the SDK does the same at the code level. Either works without the other.
+Copy link to headingDoes adding an AI gateway slow down LLM calls?
+Only by a small, usually negligible amount. Gateway overhead measures in single-digit milliseconds even under heavy concurrent load, while model inference, which typically takes hundreds of milliseconds to seconds, dominates the total request time. Caching can push net latency below a direct call for repeated prompts.
+Copy link to headingCan I use an AI gateway with providers outside its catalog?
+Bring-your-own-key typically covers any provider already in a gateway's catalog, which for AI Gateway spans OpenAI, Anthropic, xAI, Google, and dozens of others. Some provider-executed tools may still require a direct connection to that provider rather than routing through the gateway.
+Copy link to headingDoes Vercel store or train on prompts that pass through AI Gateway?
+No. Vercel doesn't store or train on customer data on any tier, including bring-your-own-key, and has no plans to use gateway traffic for training unless a customer opts in. Upstream providers set their own retention policies, and Zero Data Retention limits routing to providers that won't retain or train on prompt data.
+More AI Gateway articles
+
+AI Gateway
+Open weight models for teams routing production traffic off frontier APIs
+
+Open weight models are not open source. Compare the license conditions, the per-token economics, and what breaks when you swap a closed model out.
+
+AI Gateway
+LiteLLM vs OpenRouter for production AI teams
+
+Compare LiteLLM vs OpenRouter on deployment model, latency path, failover, observability, and ops burden, then pick the one your team can run.
+
+AI Gateway
+LiteLLM alternatives for platform teams weighing key custody against patch load
+
+Compare LiteLLM alternatives on license, self-hosting, provider coverage, and patch record, plus what moving off the proxy costs a team running it.
+Ready to deploy?
+Start deployingTalk to an expert
+
+Loading status…
+Select a display theme:systemlightdark

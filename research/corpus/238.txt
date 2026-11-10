@@ -1,0 +1,457 @@
+TITLE: Caching (Helicone advanced usage)
+URL: https://docs.helicone.ai/features/advanced-usage/caching
+ORG: Helicone  TYPE: doc  DATE: 2026-11
+
+LLM Caching - Helicone OSS LLM Observability
+
+Documentation Index
+Fetch the complete documentation index at: /llms.txt
+Use this file to discover all available pages before exploring further.
+Skip to main content
+
+When developing and testing LLM applications, you often make the same requests repeatedly during debugging and iteration. Helicone caching stores complete responses on Cloudflare’s edge network, eliminating redundant API calls and reducing both latency and costs.
+
+Looking for provider-level caching? Learn about Prompt Caching to cache prompts directly on provider servers (OpenAI, Anthropic, etc.) for reduced token costs.
+
+​
+Why Helicone Caching
+
+Save Money
+Avoid repeated charges for identical requests while testing and debugging
+
+Instant Responses
+Serve cached responses immediately instead of waiting for LLM providers
+
+Handle Traffic Spikes
+Protect against rate limits and maintain performance during high usage
+
+​
+How It Works
+Helicone’s caching system stores LLM responses on Cloudflare’s edge network, providing globally distributed, low-latency access to cached data.
+
+​
+Cache Key Generation
+Helicone generates unique cache keys by hashing:
+
+Cache seed - Optional namespace identifier (if specified)
+
+Request URL - The full endpoint URL
+
+Request body - Complete request payload including all parameters
+
+Relevant headers - Authorization and cache-specific headers
+
+Bucket index - For multi-response caching
+
+Any change in these components creates a new cache entry:
+
+// ✅ Cache hit - identical requests
+const request1 = { model: "gpt-4o-mini", messages: [{ role: "user", content: "Hello" }] };
+const request2 = { model: "gpt-4o-mini", messages: [{ role: "user", content: "Hello" }] };
+
+// ❌ Cache miss - different content 
+const request3 = { model: "gpt-4o-mini", messages: [{ role: "user", content: "Hi" }] };
+
+// ❌ Cache miss - different parameters
+const request4 = { model: "gpt-4o-mini", messages: [{ role: "user", content: "Hello" }], temperature: 0.5 };
+
+​
+Cache Storage
+
+Responses are stored in Cloudflare Workers KV (key-value store)
+
+Distributed across 300+ global edge locations
+
+Automatic replication and failover
+
+No impact on your infrastructure
+
+​
+Quick Start
+
+1
+
+Enable caching
+Add the Helicone-Cache-Enabled header to your requests:
+
+{
+ "Helicone-Cache-Enabled": "true"
+}
+
+2
+
+Make your request
+Execute your LLM request - the first call will be cached:
+
+import OpenAI from "openai";
+
+const client = new OpenAI({
+ baseURL: "https://ai-gateway.helicone.ai",
+ apiKey: process.env.HELICONE_API_KEY,
+});
+
+const response = await client.chat.completions.create(
+ {
+ model: "gpt-4o-mini",
+ messages: [{ role: "user", content: "Hello world" }]
+ },
+ {
+ headers: {
+ "Helicone-Cache-Enabled": "true"
+ }
+ }
+);
+
+3
+
+Verify caching works
+Make the same request again - it should return instantly from cache:
+
+// This exact same request will return a cached response
+const cachedResponse = await client.chat.completions.create(
+ {
+ model: "gpt-4o-mini", 
+ messages: [{ role: "user", content: "Hello world" }]
+ },
+ {
+ headers: {
+ "Helicone-Cache-Enabled": "true"
+ }
+ }
+);
+
+​
+Configuration
+
+​
+Helicone-Cache-Enabled
+
+string
+required
+Enable or disable caching for the request.Example: "true" to enable caching
+
+​
+Cache-Control
+
+string
+Set cache duration using standard HTTP cache control directives.Default: "max-age=604800" (7 days)Example: "max-age=3600" for 1 hour cache
+
+​
+Helicone-Cache-Bucket-Max-Size
+
+string
+Number of different responses to store for the same request. Useful for non-deterministic prompts.Default: "1" (single response cached)Example: "3" to cache up to 3 different responses
+
+​
+Helicone-Cache-Seed
+
+string
+Create separate cache namespaces for different users or contexts.Example: "user-123" to maintain user-specific cache
+
+​
+Helicone-Cache-Ignore-Keys
+
+string
+Comma-separated JSON keys to exclude from cache key generation.Example: "request_id,timestamp" to ignore these fields when generating cache keys
+
+All header values must be strings. For example, "Helicone-Cache-Bucket-Max-Size": "10".
+
+​
+Examples
+
+ Combined with Provider Caching
+
+ Development Testing
+
+ User-Specific Caching
+
+Use both provider caching and Helicone caching together by ignoring provider-specific cache keys:
+
+Learn more about provider caching here.
+
+const response = await client.chat.completions.create(
+ {
+ model: "gpt-4o-mini",
+ messages: [{ 
+ role: "user", 
+ content: "Analyze this large document with cached context..." 
+ }],
+ prompt_cache_key: `doc-analysis-${documentId}` // Different per document
+ },
+ {
+ headers: {
+ "Helicone-Cache-Enabled": "true",
+ "Helicone-Cache-Ignore-Keys": "prompt_cache_key", // Ignore this for Helicone cache
+ "Cache-Control": "max-age=3600" // Cache for 1 hour
+ }
+ }
+);
+
+// Requests with the same message but different prompt_cache_key values 
+// will hit Helicone's cache, while still leveraging OpenAI's prompt caching
+// for improved performance and cost savings on both sides
+
+This approach:
+
+Uses OpenAI’s prompt caching for faster processing of repeated context
+
+Uses Helicone’s caching for instant responses to identical requests
+
+Ignores prompt_cache_key so Helicone cache works across different OpenAI cache entries
+
+Maximizes cost savings by combining both caching strategies
+
+Avoid repeated charges while debugging and iterating on prompts:
+
+Node.js
+
+Python
+
+import OpenAI from "openai";
+
+const client = new OpenAI({
+ baseURL: "https://ai-gateway.helicone.ai",
+ apiKey: process.env.HELICONE_API_KEY,
+ defaultHeaders: {
+ "Helicone-Cache-Enabled": "true",
+ "Cache-Control": "max-age=86400" // Cache for 1 day during development
+ },
+});
+
+// This request will be cached - works with any model
+const response = await client.chat.completions.create({
+ model: "gpt-4o-mini", // or "claude-3.5-sonnet", "gemini-2.5-flash", etc.
+ messages: [{ role: "user", content: "Explain quantum computing" }]
+});
+
+// Subsequent identical requests return cached response instantly
+
+import os
+import openai
+
+client = openai.OpenAI(
+ base_url="https://ai-gateway.helicone.ai",
+ api_key=os.environ.get("HELICONE_API_KEY"),
+ default_headers={
+ "Helicone-Cache-Enabled": "true",
+ "Cache-Control": "max-age=86400" # Cache for 1 day
+ }
+)
+
+# Works with any model through the gateway
+response = client.chat.completions.create(
+ model="gpt-4o-mini", # or "claude-3.5-sonnet", "gemini-2.5-flash", etc.
+ messages=[{"role": "user", "content": "Explain quantum computing"}]
+)
+
+Cache responses separately for different users or contexts:
+
+const userId = "user-123";
+
+const response = await client.chat.completions.create(
+ {
+ model: "claude-3.5-sonnet",
+ messages: [{ 
+ role: "user", 
+ content: "What are my account settings?" 
+ }]
+ },
+ {
+ headers: {
+ "Helicone-Cache-Enabled": "true",
+ "Helicone-Cache-Seed": userId, // User-specific cache
+ "Cache-Control": "max-age=3600" // Cache for 1 hour
+ }
+ }
+);
+
+// Each user gets their own cached responses
+
+Dashboard view of cache hits, cost and time saved
+
+​
+Understanding Caching
+
+​
+Cache Response Headers
+Check cache status by examining response headers:
+
+const response = await client.chat.completions.create(
+ { /* your request */ },
+ { 
+ headers: { "Helicone-Cache-Enabled": "true" }
+ }
+);
+
+// Access raw response to check headers
+const chatCompletion = await client.chat.completions.with_raw_response.create(
+ { /* your request */ },
+ { 
+ headers: { "Helicone-Cache-Enabled": "true" }
+ }
+);
+
+const cacheStatus = chatCompletion.http_response.headers.get('Helicone-Cache');
+console.log(cacheStatus); // "HIT" or "MISS"
+
+const bucketIndex = chatCompletion.http_response.headers.get('Helicone-Cache-Bucket-Idx');
+console.log(bucketIndex); // Index of cached response used
+
+​
+Cache Duration
+Set how long responses stay cached using the Cache-Control header:
+
+{
+ "Cache-Control": "max-age=3600" // 1 hour
+}
+
+Common durations:
+
+1 hour: max-age=3600
+
+1 day: max-age=86400
+
+7 days: max-age=604800 (default)
+
+30 days: max-age=2592000
+
+Maximum cache duration is 365 days (max-age=31536000)
+
+​
+Cache Buckets
+Control how many different responses are stored for the same request:
+
+{
+ "Helicone-Cache-Bucket-Max-Size": "3"
+}
+
+With bucket size 3, the same request can return one of 3 different cached responses randomly:
+
+openai.completion("give me a random number") -> "42" # Cache Miss
+openai.completion("give me a random number") -> "47" # Cache Miss 
+openai.completion("give me a random number") -> "17" # Cache Miss
+
+openai.completion("give me a random number") -> "42" | "47" | "17" # Cache Hit
+
+Behavior by bucket size:
+
+Size 1 (default): Same request always returns same cached response (deterministic)
+
+Size > 1: Same request can return different cached responses (useful for creative prompts)
+
+Response chosen randomly from bucket
+
+Maximum bucket size is 20. Enterprise plans support larger buckets.
+
+​
+Cache Seeds
+Create separate cache namespaces using seeds:
+
+{
+ "Helicone-Cache-Seed": "user-123"
+}
+
+Different seeds maintain separate cache states:
+
+# Seed: "user-123"
+openai.completion("random number") -> "42"
+openai.completion("random number") -> "42" # Same response
+
+# Seed: "user-456" 
+openai.completion("random number") -> "17" # Different response
+openai.completion("random number") -> "17" # Consistent per seed
+
+Change the seed value to effectively clear your cache for testing.
+
+​
+Ignore Keys
+Exclude specific JSON fields from cache key generation:
+
+{
+ "Helicone-Cache-Ignore-Keys": "request_id,timestamp,session_id"
+}
+
+When these fields are ignored, requests with different values for these fields will still hit the same cache entry:
+
+// First request
+const response1 = await openai.chat.completions.create(
+ {
+ model: "gpt-4o-mini",
+ messages: [{ role: "user", content: "Hello" }],
+ request_id: "req-123",
+ timestamp: "2024-01-01T00:00:00Z"
+ },
+ {
+ headers: {
+ "Helicone-Cache-Enabled": "true",
+ "Helicone-Cache-Ignore-Keys": "request_id,timestamp"
+ }
+ }
+);
+
+// Second request with different request_id and timestamp
+// This will hit the cache despite different values
+const response2 = await openai.chat.completions.create(
+ {
+ model: "gpt-4o-mini",
+ messages: [{ role: "user", content: "Hello" }],
+ request_id: "req-456", // Different ID
+ timestamp: "2024-02-02T00:00:00Z" // Different timestamp
+ },
+ {
+ headers: {
+ "Helicone-Cache-Enabled": "true",
+ "Helicone-Cache-Ignore-Keys": "request_id,timestamp"
+ }
+ }
+);
+// response2 returns cached response from response1
+
+This feature only works with JSON request bodies. Non-JSON bodies will use the original text for cache key generation.
+Common use cases:
+
+Ignore tracking IDs that don’t affect the response
+
+Exclude timestamps for time-independent queries
+
+Remove session or user metadata when caching shared content
+
+Ignore prompt_cache_key when using provider caching alongside Helicone caching
+
+​
+Cache Limitations
+
+Maximum duration: 365 days
+
+Maximum bucket size: 20 (enterprise plans support more)
+
+Cache key sensitivity: Any parameter change creates new cache entry
+
+Storage location: Cached in Cloudflare Workers KV (edge-distributed), not your infrastructure
+
+​
+Related Features
+
+Prompt Caching
+Cache prompts on provider servers for reduced token costs and faster processing
+
+Custom Properties
+Add metadata to cached requests for better filtering and analysis
+
+Rate Limiting
+Control request frequency and combine with caching for cost optimization
+
+User Metrics
+Track cache hit rates and savings per user or application
+
+Need more help?
+Additional questions or feedback? Reach out to
+help@helicone.ai or schedule a
+call with us.
+
+Was this page helpful?
+
+YesNo
+Suggest editsRaise issue
+
+ {"docsConfig":{"theme":"mint","$schema":"https://mintlify.com/docs.json","name":"Helicone OSS LLM Observability","colors":{"primary":"#0CA5E9","light":"#0CA5E9","dark":"#0CA5E9"},"logo":{"light":"https://mintcdn.com/helicone/H0xDJmuTzfSrq5RW/logo/light.png?fit=max\u0026auto=format\u0026n=H0xDJmuTzfSrq5RW\u0026q=85\u0026s=748e5ab8e134752664c5847901a2cb8c","dark":"https://mintcdn.com/helicone/ktsfjvmR-7Ek3jBs/logo/dark.svg?fit=max\u0026auto=format\u0026n=ktsfjvmR-7Ek3jBs\u0026q=85\u0026s=f314847a2d2d458bc4725e80a5ff0c75"},"favicon":"https://mintcdn.com/helicone/uGUq-phGm2BuL59s/favicon.svg?fit=max\u0026auto=format\u0026n=uGUq-phGm2BuL59s\u0026q=85\u0026s=4fbb91a7620064003994e235f99335e1","api":{"openapi":["swagger.json","ai-gateway.openapi.json"]},"appearance":{"default":"light"},"navbar":{"links":[{"href":"https://helicone.ai/models","label":"Models"},{"href":"https://discord.com/invite/zsSTcH2qhG","label":"Discord"},{"href":"https://github.com/Helicone/helicone","label":"Github"}],"primary":{"type":"button","label":"Dashboard","href":"https://us.helicone.ai/#:~:text=Discord-,Sign,-In"}},"footer":{"socials":{"twitter":"https://twitter.com/helicone_ai","linkedin":"https://www.linkedin.com/company/helicone/about","github":"https://github.com/Helicone/helicone","discord":"https://discord.com/invite/zsSTcH2qhG"}},"seo":{"metatags":{"og:site_name":"Helicone OSS LLM Observability","og:image":"/favicon.svg","twitter:site":"@helicone_ai","twitter:image":"/favicon.svg"},"indexing":"navigable"},"integrations":{"koala":{"publicApiKey":"pk_28dd6b0bb95629a42e92bd526a1234a9fc79"},"posthog":{"apiKey":"phc_jeluwNoJNpc7zEzkQrPbjyMOqdnJQjFAVr849LaEaPG"}},"styling":{"latex":true},"navigation":{"pages":[]}},"deployment":{"deploymentMetadataValue":{"subdomain":"helicone","hasAudioNarration":false,"actualSubdomain":"helicone","customDomains":["docs.helicone.ai"],"gitSource":{"type":"github","owner":"helicone","repo":"helicone","deployBranch":"main","contentDirectory":"docs","mountPath":"","label":""},"feedback":{"thumbs":true,"edits":true,"issues":true},"entitlements":{"AI_CHAT":{"status":"DISABLED"}},"buildId":"6ad65e5e472882c577f682ba","clientVersion":"0.0.4088","searchFilterCounts":[{"language":"default","tag":"Documentation","count":131},{"language":"default","tag":"Legacy Integrations","count":65},{"language":"default","tag":"Guides","count":62},{"language":"default","tag":"Provider-Specific","count":50},{"language":"default","tag":"API Reference","count":49},{"language":"default","tag":"AI Gateway","count":30},{"language":"default","tag":"Prompts","count":19},{"language":"default","tag":"Observability \u0026 Analytics","count":18},{"language":"default","tag":"References","count":15},{"language":"default","tag":"How-to Guides","count":15}]},"assistantConfig":{"deflection":{"enabled":true,"email":"support@helicone.ai","showHelpButton":true}},"basePath":"","hasChatPermissions":false,"hasWebMcpPermissions":false,"toggles":[],"googleFontsInlined":false},"customCss":[],"page":{"pagePath":"features/advanced-usage/caching","slug":"/features/advanced-usage/caching","pageMetadata":{"title":"LLM Caching","sidebarTitle":"Caching","twitter:title":"LLM Cache - Helicone OSS LLM Observability","description":null,"href":"/features/advanced-usage/caching"},"pageType":"default","mdx":{"mdxSource":{"compiledSource":"\"use strict\";const{Fragment:_Fragment,jsx:_jsx,jsxs:_jsxs}=arguments[0];const{useMDXComponents:_provideComponents}=arguments[0];function _createMdxContent(props){const _components={a:`a`,code:`code`,hr:`hr`,li:`li`,p:`p`,pre:`pre`,span:`span`,strong:`strong`,ul:`ul`,..._provideComponents(),...props.components},{Accordion,Card,CardGroup,CodeBlock,CodeGroup,Frame,Heading,Info,Note,OptimizedImage,ParamField,Step,Steps,Tab,Tabs,Tip}=_components;if(!Accordion)_missingMdxReference(`Accordion`,true);if(!Card)_missingMdxReference(`Card`,true);if(!CardGroup)_missingMdxReference(`CardGroup`,true);if(!CodeBlock)_missingMdxReference(`CodeBlock`,true);if(!CodeGroup)_missingMdxReference(`CodeGroup`,true);if(!Frame)_missingMdxReference(`Frame`,true);if(!Heading)_missingMdxReference(`Heading`,true);if(!Info)_missingMdxReference(`Info`,true);if(!Note)_missingMdxReference(`Note`,true);if(!OptimizedImage)_missingMdxReference(`OptimizedImage`,true);if(!ParamField)_missingMdxReference(`ParamField`,true);if(!Step)_missingMdxReference(`Step`,true);if(!Steps)_missingMdxReference(`Steps`,true);if(!Tab)_missingMdxReference(`Tab`,true);if(!Tabs)_missingMdxReference(`Tabs`,true);if(!Tip)_missingMdxReference(`Tip`,true);return _jsxs(_Fragment,{children:[_jsx(_components.p,{children:`When developing and testing LLM applications, you often make the same requests repeatedly during debugging and iteration. Helicone caching stores complete responses on Cloudflare’s edge network, eliminating redundant API calls and reducing both latency and costs.`}),`\n`,_jsx(Note,{children:_jsxs(_components.p,{children:[_jsx(_components.strong,{children:`Looking for provider-level caching?`}),` Learn about `,_jsx(_components.a,{href:`/gateway/concepts/prompt-caching`,children:`Prompt Caching`}),` to cache prompts directly on provider servers (OpenAI, Anthropic, etc.) for reduced token costs.`]})}),`\n`,_jsx(Heading,{level:`2`,id:`why-helicone-caching`,children:`Why Helicone Caching`}),`\n`,_jsxs(CardGroup,{cols:3,children:[_jsx(Card,{title:`Save Money`,icon:`dollar-sign`,children:_jsx(_components.p,{children:`Avoid repeated charges for identical requests while testing and debugging`})}),_jsx(Card,{title:`Instant Responses`,icon:`bolt`,children:_jsx(_components.p,{children:`Serve cached responses immediately instead of waiting for LLM providers`})}),_jsx(Card,{title:`Handle Traffic Spikes`,icon:`chart-line`,children:_jsx(_components.p,{children:`Protect against rate limits and maintain performance during high usage`})})]}),`\n`,_jsx(Heading,{level:`2`,id:`how-it-works`,children:`How It Works`}),`\n`,_jsx(_components.p,{children:`Helicone’s caching system stores LLM responses on Cloudflare’s edge network, providing globally distributed, low-latency access to cached data.`}),`\n`,_jsx(Heading,{level:`3`,id:`cache-key-generation`,children:`Cache Key Generation`}),`\n`,_jsx(_components.p,{children:`Helicone generates unique cache keys by hashing:`}),`\n`,_jsxs(_components.ul,{children:[`\n`,_jsxs(_components.li,{children:[_jsx(_components.strong,{children:`Cache seed`}),` - Optional namespace identifier (if specified)`]}),`\n`,_jsxs(_components.li,{children:[_jsx(_components.strong,{children:`Request URL`}),` - The full endpoint URL`]}),`\n`,_jsxs(_components.li,{children:[_jsx(_components.strong,{children:`Request body`}),` - Complete request payload including all parameters`]}),`\n`,_jsxs(_components.li,{children:[_jsx(_components.strong,{children:`Relevant headers`}),` - Authorization and cache-specific headers`]}),`\n`,_jsxs(_components.li,{children:[_jsx(_components.strong,{children:`Bucket index`}),` - For multi-response caching`]}),`\n`]}),`\n`,_jsx(_components.p,{children:`Any change in these components creates a new cache entry:`}),`\n`,_jsx(CodeBlock,{filename:``,numberOfLines:`9`,language:`typescript`,children:_jsx(_components.pre,{className:`shiki shiki-themes github-light-default dark-plus`,style:{backgroundColor:`#ffffff`,\"--shiki-dark-bg\":`#0B0C0E`,color:`#1f2328`,\"--shiki-dark\":`#D4D4D4`},language:`typescript`,children:_jsxs(_components.code,{language:`typescript`,numberOfLines:`9`,children:[_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:`// ✅ Cache hit - identical requests`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`const`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` request1 = { model: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"gpt-4o-mini\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`, messages: [{ role: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"user\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`, content: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"Hello\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }] };`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`const`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` request2 = { model: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"gpt-4o-mini\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`, messages: [{ role: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"user\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`, content: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"Hello\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }] };`})]}),`\n`,_jsx(_components.span,{className:`line`}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:`// ❌ Cache miss - different content `})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`const`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` request3 = { model: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"gpt-4o-mini\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`, messages: [{ role: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"user\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`, content: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"Hi\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }] };`})]}),`\n`,_jsx(_components.span,{className:`line`}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:`// ❌ Cache miss - different parameters`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`const`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` request4 = { model: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"gpt-4o-mini\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`, messages: [{ role: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"user\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`, content: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"Hello\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }], temperature: 0.5 };`})]}),`\n`]})})}),`\n`,_jsx(Heading,{level:`3`,id:`cache-storage`,children:`Cache Storage`}),`\n`,_jsxs(_components.ul,{children:[`\n`,_jsx(_components.li,{children:`Responses are stored in Cloudflare Workers KV (key-value store)`}),`\n`,_jsx(_components.li,{children:`Distributed across 300+ global edge locations`}),`\n`,_jsx(_components.li,{children:`Automatic replication and failover`}),`\n`,_jsx(_components.li,{children:`No impact on your infrastructure`}),`\n`]}),`\n`,_jsx(Heading,{level:`2`,id:`quick-start`,children:`Quick Start`}),`\n`,_jsxs(Steps,{children:[_jsxs(Step,{title:`Enable caching`,children:[_jsxs(_components.p,{children:[`Add the `,_jsx(_components.code,{children:`Helicone-Cache-Enabled`}),` header to your requests:`]}),_jsx(CodeBlock,{filename:``,numberOfLines:`3`,language:`typescript`,children:_jsx(_components.pre,{className:`shiki shiki-themes github-light-default dark-plus`,style:{backgroundColor:`#ffffff`,\"--shiki-dark-bg\":`#0B0C0E`,color:`#1f2328`,\"--shiki-dark\":`#D4D4D4`},language:`typescript`,children:_jsxs(_components.code,{language:`typescript`,numberOfLines:`3`,children:[_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`{`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:` \"Helicone-Cache-Enabled\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"true\"`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`}`})}),`\n`]})})})]}),_jsxs(Step,{title:`Make your request`,children:[_jsx(_components.p,{children:`Execute your LLM request - the first call will be cached:`}),_jsx(CodeBlock,{filename:``,numberOfLines:`18`,language:`typescript`,children:_jsx(_components.pre,{className:`shiki shiki-themes github-light-default dark-plus`,style:{backgroundColor:`#ffffff`,\"--shiki-dark-bg\":`#0B0C0E`,color:`#1f2328`,\"--shiki-dark\":`#D4D4D4`},language:`typescript`,children:_jsxs(_components.code,{language:`typescript`,numberOfLines:`18`,children:[_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`import`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` OpenAI `}),_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`from`}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:` \"openai\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`;`})]}),`\n`,_jsx(_components.span,{className:`line`}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`const`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` client = `}),_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`new`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` OpenAI({`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` baseURL: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"https://ai-gateway.helicone.ai\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` apiKey: process.env.HELICONE_API_KEY,`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`});`})}),`\n`,_jsx(_components.span,{className:`line`}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`const`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` response = `}),_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`await`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` client.chat.completions.create(`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` {`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` model: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"gpt-4o-mini\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` messages: [{ role: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"user\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`, content: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"Hello world\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }]`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` },`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` {`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` headers: {`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:` \"Helicone-Cache-Enabled\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"true\"`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`);`})}),`\n`]})})})]}),_jsxs(Step,{title:`Verify caching works`,children:[_jsx(_components.p,{children:`Make the same request again - it should return instantly from cache:`}),_jsx(CodeBlock,{filename:``,numberOfLines:`12`,language:`typescript`,children:_jsx(_components.pre,{className:`shiki shiki-themes github-light-default dark-plus`,style:{backgroundColor:`#ffffff`,\"--shiki-dark-bg\":`#0B0C0E`,color:`#1f2328`,\"--shiki-dark\":`#D4D4D4`},language:`typescript`,children:_jsxs(_components.code,{language:`typescript`,numberOfLines:`12`,children:[_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:`// This exact same request will return a cached response`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`const`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` cachedResponse = `}),_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`await`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` client.chat.completions.create(`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` {`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` model: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"gpt-4o-mini\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`, `})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` messages: [{ role: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"user\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`, content: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"Hello world\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }]`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` },`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` {`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` headers: {`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:` \"Helicone-Cache-Enabled\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"true\"`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`);`})}),`\n`]})})})]})]}),`\n`,_jsx(Heading,{level:`2`,id:`configuration`,children:`Configuration`}),`\n`,_jsxs(ParamField,{header:`Helicone-Cache-Enabled`,type:`string`,required:true,id:`param-helicone-cache-enabled`,children:[_jsx(_components.p,{children:`Enable or disable caching for the request.`}),_jsxs(_components.p,{children:[`Example: `,_jsx(_components.code,{children:`\"true\"`}),` to enable caching`]})]}),`\n`,_jsxs(ParamField,{header:`Cache-Control`,type:`string`,id:`param-cache-control`,children:[_jsx(_components.p,{children:`Set cache duration using standard HTTP cache control directives.`}),_jsxs(_components.p,{children:[`Default: `,_jsx(_components.code,{children:`\"max-age=604800\"`}),` (7 days)`]}),_jsxs(_components.p,{children:[`Example: `,_jsx(_components.code,{children:`\"max-age=3600\"`}),` for 1 hour cache`]})]}),`\n`,_jsxs(ParamField,{header:`Helicone-Cache-Bucket-Max-Size`,type:`string`,id:`param-helicone-cache-bucket-max-size`,children:[_jsx(_components.p,{children:`Number of different responses to store for the same request. Useful for non-deterministic prompts.`}),_jsxs(_components.p,{children:[`Default: `,_jsx(_components.code,{children:`\"1\"`}),` (single response cached)`]}),_jsxs(_components.p,{children:[`Example: `,_jsx(_components.code,{children:`\"3\"`}),` to cache up to 3 different responses`]})]}),`\n`,_jsxs(ParamField,{header:`Helicone-Cache-Seed`,type:`string`,id:`param-helicone-cache-seed`,children:[_jsx(_components.p,{children:`Create separate cache namespaces for different users or contexts.`}),_jsxs(_components.p,{children:[`Example: `,_jsx(_components.code,{children:`\"user-123\"`}),` to maintain user-specific cache`]})]}),`\n`,_jsxs(ParamField,{header:`Helicone-Cache-Ignore-Keys`,type:`string`,id:`param-helicone-cache-ignore-keys`,children:[_jsx(_components.p,{children:`Comma-separated JSON keys to exclude from cache key generation.`}),_jsxs(_components.p,{children:[`Example: `,_jsx(_components.code,{children:`\"request_id,timestamp\"`}),` to ignore these fields when generating cache keys`]})]}),`\n`,_jsx(Info,{children:_jsxs(_components.p,{children:[`All header values must be strings. For example, `,_jsx(_components.code,{children:`\"Helicone-Cache-Bucket-Max-Size\": \"10\"`}),`.`]})}),`\n`,_jsx(Heading,{level:`2`,id:`examples`,children:`Examples`}),`\n`,_jsxs(Tabs,{children:[_jsxs(Tab,{title:`Combined with Provider Caching`,id:`combined-with-provider-caching`,children:[_jsx(_components.p,{children:`Use both provider caching and Helicone caching together by ignoring provider-specific cache keys:`}),_jsx(Note,{children:_jsxs(_components.p,{children:[`Learn more about provider caching `,_jsx(_components.a,{href:`/gateway/concepts/prompt-caching`,children:`here`}),`.`]})}),_jsx(CodeBlock,{filename:``,numberOfLines:`21`,language:`typescript`,children:_jsx(_components.pre,{className:`shiki shiki-themes github-light-default dark-plus`,style:{backgroundColor:`#ffffff`,\"--shiki-dark-bg\":`#0B0C0E`,color:`#1f2328`,\"--shiki-dark\":`#D4D4D4`},language:`typescript`,children:_jsxs(_components.code,{language:`typescript`,numberOfLines:`21`,children:[_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`const`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` response = `}),_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`await`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` client.chat.completions.create(`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` {`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` model: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"gpt-4o-mini\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` messages: [{ `})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` role: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"user\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`, `})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` content: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"Analyze this large document with cached context...\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` `})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }],`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` prompt_cache_key: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:\"`doc-analysis-${documentId}`\"}),_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:` // Different per document`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` },`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` {`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` headers: {`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:` \"Helicone-Cache-Enabled\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"true\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:` \"Helicone-Cache-Ignore-Keys\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"prompt_cache_key\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`, `}),_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:`// Ignore this for Helicone cache`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:` \"Cache-Control\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"max-age=3600\"`}),_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:` // Cache for 1 hour`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`);`})}),`\n`,_jsx(_components.span,{className:`line`}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:`// Requests with the same message but different prompt_cache_key values `})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:`// will hit Helicone's cache, while still leveraging OpenAI's prompt caching`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:`// for improved performance and cost savings on both sides`})}),`\n`]})})}),_jsx(_components.p,{children:`This approach:`}),_jsxs(_components.ul,{children:[`\n`,_jsx(_components.li,{children:`Uses OpenAI’s prompt caching for faster processing of repeated context`}),`\n`,_jsx(_components.li,{children:`Uses Helicone’s caching for instant responses to identical requests`}),`\n`,_jsxs(_components.li,{children:[`Ignores `,_jsx(_components.code,{children:`prompt_cache_key`}),` so Helicone cache works across different OpenAI cache entries`]}),`\n`,_jsx(_components.li,{children:`Maximizes cost savings by combining both caching strategies`}),`\n`]})]}),_jsxs(Tab,{title:`Development Testing`,id:`development-testing`,children:[_jsx(_components.p,{children:`Avoid repeated charges while debugging and iterating on prompts:`}),_jsxs(CodeGroup,{children:[_jsx(CodeBlock,{filename:`Node.js`,numberOfLines:`18`,language:`typescript`,children:_jsx(_components.pre,{className:`shiki shiki-themes github-light-default dark-plus`,style:{backgroundColor:`#ffffff`,\"--shiki-dark-bg\":`#0B0C0E`,color:`#1f2328`,\"--shiki-dark\":`#D4D4D4`},language:`typescript`,children:_jsxs(_components.code,{language:`typescript`,numberOfLines:`18`,children:[_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`import`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` OpenAI `}),_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`from`}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:` \"openai\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`;`})]}),`\n`,_jsx(_components.span,{className:`line`}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`const`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` client = `}),_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`new`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` OpenAI({`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` baseURL: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"https://ai-gateway.helicone.ai\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` apiKey: process.env.HELICONE_API_KEY,`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` defaultHeaders: {`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:` \"Helicone-Cache-Enabled\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"true\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:` \"Cache-Control\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"max-age=86400\"`}),_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:` // Cache for 1 day during development`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` },`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`});`})}),`\n`,_jsx(_components.span,{className:`line`}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:`// This request will be cached - works with any model`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`const`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` response = `}),_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`await`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` client.chat.completions.create({`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` model: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"gpt-4o-mini\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`, `}),_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:`// or \"claude-3.5-sonnet\", \"gemini-2.5-flash\", etc.`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` messages: [{ role: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"user\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`, content: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"Explain quantum computing\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }]`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`});`})}),`\n`,_jsx(_components.span,{className:`line`}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:`// Subsequent identical requests return cached response instantly`})}),`\n`]})})}),_jsx(CodeBlock,{filename:`Python`,numberOfLines:`17`,language:`python`,children:_jsx(_components.pre,{className:`shiki shiki-themes github-light-default dark-plus`,style:{backgroundColor:`#ffffff`,\"--shiki-dark-bg\":`#0B0C0E`,color:`#1f2328`,\"--shiki-dark\":`#D4D4D4`},language:`python`,children:_jsxs(_components.code,{language:`python`,numberOfLines:`17`,children:[_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`import`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` os`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`import`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` openai`})]}),`\n`,_jsx(_components.span,{className:`line`}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`client = openai.OpenAI(`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` base_url=`}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"https://ai-gateway.helicone.ai\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` api_key=os.environ.get(`}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"HELICONE_API_KEY\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`),`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` default_headers={`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:` \"Helicone-Cache-Enabled\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"true\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:` \"Cache-Control\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"max-age=86400\"`}),_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:` # Cache for 1 day`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`)`})}),`\n`,_jsx(_components.span,{className:`line`}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:`# Works with any model through the gateway`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`response = client.chat.completions.create(`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` model=`}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"gpt-4o-mini\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`, `}),_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:`# or \"claude-3.5-sonnet\", \"gemini-2.5-flash\", etc.`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` messages=[{`}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"role\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"user\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`, `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"content\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"Explain quantum computing\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`}]`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`)`})}),`\n`]})})})]})]}),_jsxs(Tab,{title:`User-Specific Caching`,id:`user-specific-caching`,children:[_jsx(_components.p,{children:`Cache responses separately for different users or contexts:`}),_jsx(CodeBlock,{filename:``,numberOfLines:`20`,language:`typescript`,children:_jsx(_components.pre,{className:`shiki shiki-themes github-light-default dark-plus`,style:{backgroundColor:`#ffffff`,\"--shiki-dark-bg\":`#0B0C0E`,color:`#1f2328`,\"--shiki-dark\":`#D4D4D4`},language:`typescript`,children:_jsxs(_components.code,{language:`typescript`,numberOfLines:`20`,children:[_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`const`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` userId = `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"user-123\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`;`})]}),`\n`,_jsx(_components.span,{className:`line`}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`const`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` response = `}),_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`await`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` client.chat.completions.create(`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` {`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` model: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"claude-3.5-sonnet\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` messages: [{ `})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` role: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"user\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`, `})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` content: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"What are my account settings?\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` `})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }]`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` },`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` {`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` headers: {`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:` \"Helicone-Cache-Enabled\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"true\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:` \"Helicone-Cache-Seed\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: userId, `}),_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:`// User-specific cache`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:` \"Cache-Control\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"max-age=3600\"`}),_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:` // Cache for 1 hour`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`);`})}),`\n`,_jsx(_components.span,{className:`line`}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:`// Each user gets their own cached responses`})}),`\n`]})})})]})]}),`\n`,_jsx(Frame,{caption:`Dashboard view of cache hits, cost and time saved`,children:_jsx(OptimizedImage,{src:`https://mintcdn.com/helicone/tEQUFyBH7IjDxuEd/images/example-cache.png?fit=max\u0026auto=format\u0026n=tEQUFyBH7IjDxuEd\u0026q=85\u0026s=e785dac816f7f9cc9b3cf315e9162b84`,alt:`Helicone Dashboard showing the number of cache hits, cost, and time saved.`,\"data-og-width\":`1440`,width:`1440`,\"data-og-height\":`796`,height:`796`,\"data-path\":`images/example-cache.png`,\"data-optimize\":`true`,\"data-opv\":`3`,srcset:`https://mintcdn.com/helicone/tEQUFyBH7IjDxuEd/images/example-cache.png?w=280\u0026fit=max\u0026auto=format\u0026n=tEQUFyBH7IjDxuEd\u0026q=85\u0026s=b5d50d94b631d23bbfe85bfaf464710d 280w, https://mintcdn.com/helicone/tEQUFyBH7IjDxuEd/images/example-cache.png?w=560\u0026fit=max\u0026auto=format\u0026n=tEQUFyBH7IjDxuEd\u0026q=85\u0026s=de447bbdc02c4f4491524baca11ea976 560w, https://mintcdn.com/helicone/tEQUFyBH7IjDxuEd/images/example-cache.png?w=840\u0026fit=max\u0026auto=format\u0026n=tEQUFyBH7IjDxuEd\u0026q=85\u0026s=c5ca9affb059b44cfa7cc2c93f78cb5f 840w, https://mintcdn.com/helicone/tEQUFyBH7IjDxuEd/images/example-cache.png?w=1100\u0026fit=max\u0026auto=format\u0026n=tEQUFyBH7IjDxuEd\u0026q=85\u0026s=1b081b05125c8a4ebc8e5833a1481e02 1100w, https://mintcdn.com/helicone/tEQUFyBH7IjDxuEd/images/example-cache.png?w=1650\u0026fit=max\u0026auto=format\u0026n=tEQUFyBH7IjDxuEd\u0026q=85\u0026s=c8db835d8930a3e95ecadf6fb6aa6686 1650w, https://mintcdn.com/helicone/tEQUFyBH7IjDxuEd/images/example-cache.png?w=2500\u0026fit=max\u0026auto=format\u0026n=tEQUFyBH7IjDxuEd\u0026q=85\u0026s=1e461bec8738b0af4df17f9b1abb46c7 2500w`})}),`\n`,_jsx(Heading,{level:`2`,id:`understanding-caching`,children:`Understanding Caching`}),`\n`,_jsx(Heading,{level:`3`,id:`cache-response-headers`,children:`Cache Response Headers`}),`\n`,_jsx(_components.p,{children:`Check cache status by examining response headers:`}),`\n`,_jsx(CodeBlock,{filename:``,numberOfLines:`20`,language:`typescript`,children:_jsx(_components.pre,{className:`shiki shiki-themes github-light-default dark-plus`,style:{backgroundColor:`#ffffff`,\"--shiki-dark-bg\":`#0B0C0E`,color:`#1f2328`,\"--shiki-dark\":`#D4D4D4`},language:`typescript`,children:_jsxs(_components.code,{language:`typescript`,numberOfLines:`20`,children:[_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`const`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` response = `}),_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`await`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` client.chat.completions.create(`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` { `}),_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:`/* your request */`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` },`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` { `})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` headers: { `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"Helicone-Cache-Enabled\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"true\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`);`})}),`\n`,_jsx(_components.span,{className:`line`}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:`// Access raw response to check headers`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`const`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` chatCompletion = `}),_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`await`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` client.chat.completions.with_raw_response.create(`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` { `}),_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:`/* your request */`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` },`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` { `})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` headers: { `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"Helicone-Cache-Enabled\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"true\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`);`})}),`\n`,_jsx(_components.span,{className:`line`}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`const`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` cacheStatus = chatCompletion.http_response.headers.get(`}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`'Helicone-Cache'`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`);`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`console.log(cacheStatus); `}),_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:`// \"HIT\" or \"MISS\"`})]}),`\n`,_jsx(_components.span,{className:`line`}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`const`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` bucketIndex = chatCompletion.http_response.headers.get(`}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`'Helicone-Cache-Bucket-Idx'`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`);`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`console.log(bucketIndex); `}),_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:`// Index of cached response used`})]}),`\n`]})})}),`\n`,_jsx(Heading,{level:`3`,id:`cache-duration`,children:`Cache Duration`}),`\n`,_jsxs(_components.p,{children:[`Set how long responses stay cached using the `,_jsx(_components.code,{children:`Cache-Control`}),` header:`]}),`\n`,_jsx(CodeBlock,{filename:``,numberOfLines:`3`,language:`typescript`,children:_jsx(_components.pre,{className:`shiki shiki-themes github-light-default dark-plus`,style:{backgroundColor:`#ffffff`,\"--shiki-dark-bg\":`#0B0C0E`,color:`#1f2328`,\"--shiki-dark\":`#D4D4D4`},language:`typescript`,children:_jsxs(_components.code,{language:`typescript`,numberOfLines:`3`,children:[_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`{`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:` \"Cache-Control\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"max-age=3600\"`}),_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:` // 1 hour`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`}`})}),`\n`]})})}),`\n`,_jsx(_components.p,{children:_jsx(_components.strong,{children:`Common durations:`})}),`\n`,_jsxs(_components.ul,{children:[`\n`,_jsxs(_components.li,{children:[`1 hour: `,_jsx(_components.code,{children:`max-age=3600`})]}),`\n`,_jsxs(_components.li,{children:[`1 day: `,_jsx(_components.code,{children:`max-age=86400`})]}),`\n`,_jsxs(_components.li,{children:[`7 days: `,_jsx(_components.code,{children:`max-age=604800`}),` (default)`]}),`\n`,_jsxs(_components.li,{children:[`30 days: `,_jsx(_components.code,{children:`max-age=2592000`})]}),`\n`]}),`\n`,_jsxs(Note,{children:[`Maximum cache duration is 365 days (`,_jsx(_components.code,{children:`max-age=31536000`}),`)`]}),`\n`,_jsx(Heading,{level:`3`,id:`cache-buckets`,children:`Cache Buckets`}),`\n`,_jsx(_components.p,{children:`Control how many different responses are stored for the same request:`}),`\n`,_jsx(CodeBlock,{filename:``,numberOfLines:`3`,language:`typescript`,children:_jsx(_components.pre,{className:`shiki shiki-themes github-light-default dark-plus`,style:{backgroundColor:`#ffffff`,\"--shiki-dark-bg\":`#0B0C0E`,color:`#1f2328`,\"--shiki-dark\":`#D4D4D4`},language:`typescript`,children:_jsxs(_components.code,{language:`typescript`,numberOfLines:`3`,children:[_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`{`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:` \"Helicone-Cache-Bucket-Max-Size\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"3\"`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`}`})}),`\n`]})})}),`\n`,_jsx(_components.p,{children:`With bucket size 3, the same request can return one of 3 different cached responses randomly:`}),`\n`,_jsx(CodeBlock,{numberOfLines:`6`,language:`text`,children:_jsx(_components.pre,{className:`shiki shiki-themes github-light-default dark-plus`,style:{backgroundColor:`#ffffff`,\"--shiki-dark-bg\":`#0B0C0E`,color:`#1f2328`,\"--shiki-dark\":`#D4D4D4`},language:`text`,children:_jsxs(_components.code,{language:`text`,numberOfLines:`6`,children:[_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{children:`openai.completion(\"give me a random number\") -> \"42\" # Cache Miss`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{children:`openai.completion(\"give me a random number\") -> \"47\" # Cache Miss `})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{children:`openai.completion(\"give me a random number\") -> \"17\" # Cache Miss`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{children:`openai.completion(\"give me a random number\") -> \"42\" | \"47\" | \"17\" # Cache Hit`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{})})]})})}),`\n`,_jsx(_components.p,{children:_jsx(_components.strong,{children:`Behavior by bucket size:`})}),`\n`,_jsxs(_components.ul,{children:[`\n`,_jsxs(_components.li,{children:[_jsx(_components.strong,{children:`Size 1 (default)`}),`: Same request always returns same cached response (deterministic)`]}),`\n`,_jsxs(_components.li,{children:[_jsx(_components.strong,{children:`Size > 1`}),`: Same request can return different cached responses (useful for creative prompts)`]}),`\n`,_jsx(_components.li,{children:`Response chosen randomly from bucket`}),`\n`]}),`\n`,_jsx(Note,{children:`Maximum bucket size is 20. Enterprise plans support larger buckets.`}),`\n`,_jsx(Heading,{level:`3`,id:`cache-seeds`,children:`Cache Seeds`}),`\n`,_jsx(_components.p,{children:`Create separate cache namespaces using seeds:`}),`\n`,_jsx(CodeBlock,{filename:``,numberOfLines:`3`,language:`typescript`,children:_jsx(_components.pre,{className:`shiki shiki-themes github-light-default dark-plus`,style:{backgroundColor:`#ffffff`,\"--shiki-dark-bg\":`#0B0C0E`,color:`#1f2328`,\"--shiki-dark\":`#D4D4D4`},language:`typescript`,children:_jsxs(_components.code,{language:`typescript`,numberOfLines:`3`,children:[_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`{`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:` \"Helicone-Cache-Seed\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"user-123\"`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`}`})}),`\n`]})})}),`\n`,_jsx(_components.p,{children:`Different seeds maintain separate cache states:`}),`\n`,_jsx(CodeBlock,{numberOfLines:`8`,language:`text`,children:_jsx(_components.pre,{className:`shiki shiki-themes github-light-default dark-plus`,style:{backgroundColor:`#ffffff`,\"--shiki-dark-bg\":`#0B0C0E`,color:`#1f2328`,\"--shiki-dark\":`#D4D4D4`},language:`text`,children:_jsxs(_components.code,{language:`text`,numberOfLines:`8`,children:[_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{children:`# Seed: \"user-123\"`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{children:`openai.completion(\"random number\") -> \"42\"`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{children:`openai.completion(\"random number\") -> \"42\" # Same response`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{children:`# Seed: \"user-456\" `})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{children:`openai.completion(\"random number\") -> \"17\" # Different response`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{children:`openai.completion(\"random number\") -> \"17\" # Consistent per seed`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{})})]})})}),`\n`,_jsx(Tip,{children:`Change the seed value to effectively clear your cache for testing.`}),`\n`,_jsx(Heading,{level:`3`,id:`ignore-keys`,children:`Ignore Keys`}),`\n`,_jsx(_components.p,{children:`Exclude specific JSON fields from cache key generation:`}),`\n`,_jsx(CodeBlock,{filename:``,numberOfLines:`3`,language:`typescript`,children:_jsx(_components.pre,{className:`shiki shiki-themes github-light-default dark-plus`,style:{backgroundColor:`#ffffff`,\"--shiki-dark-bg\":`#0B0C0E`,color:`#1f2328`,\"--shiki-dark\":`#D4D4D4`},language:`typescript`,children:_jsxs(_components.code,{language:`typescript`,numberOfLines:`3`,children:[_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`{`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:` \"Helicone-Cache-Ignore-Keys\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"request_id,timestamp,session_id\"`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`}`})}),`\n`]})})}),`\n`,_jsx(_components.p,{children:`When these fields are ignored, requests with different values for these fields will still hit the same cache entry:`}),`\n`,_jsx(CodeBlock,{filename:``,numberOfLines:`33`,language:`typescript`,children:_jsx(_components.pre,{className:`shiki shiki-themes github-light-default dark-plus`,style:{backgroundColor:`#ffffff`,\"--shiki-dark-bg\":`#0B0C0E`,color:`#1f2328`,\"--shiki-dark\":`#D4D4D4`},language:`typescript`,children:_jsxs(_components.code,{language:`typescript`,numberOfLines:`33`,children:[_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:`// First request`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`const`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` response1 = `}),_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`await`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` openai.chat.completions.create(`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` {`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` model: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"gpt-4o-mini\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` messages: [{ role: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"user\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`, content: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"Hello\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }],`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` request_id: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"req-123\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` timestamp: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"2024-01-01T00:00:00Z\"`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` },`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` {`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` headers: {`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:` \"Helicone-Cache-Enabled\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"true\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:` \"Helicone-Cache-Ignore-Keys\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"request_id,timestamp\"`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`);`})}),`\n`,_jsx(_components.span,{className:`line`}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:`// Second request with different request_id and timestamp`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:`// This will hit the cache despite different values`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`const`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` response2 = `}),_jsx(_components.span,{style:{color:`#CF222E`,\"--shiki-dark\":`#C586C0`},children:`await`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` openai.chat.completions.create(`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` {`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` model: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"gpt-4o-mini\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` messages: [{ role: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"user\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`, content: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"Hello\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }],`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` request_id: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"req-456\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`, `}),_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:`// Different ID`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` timestamp: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"2024-02-02T00:00:00Z\"`}),_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:` // Different timestamp`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` },`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` {`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` headers: {`})}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:` \"Helicone-Cache-Enabled\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"true\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`,`})]}),`\n`,_jsxs(_components.span,{className:`line`,children:[_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:` \"Helicone-Cache-Ignore-Keys\"`}),_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`: `}),_jsx(_components.span,{style:{color:`#0A3069`,\"--shiki-dark\":`#CE9178`},children:`\"request_id,timestamp\"`})]}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:` }`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#1F2328`,\"--shiki-dark\":`#D4D4D4`},children:`);`})}),`\n`,_jsx(_components.span,{className:`line`,children:_jsx(_components.span,{style:{color:`#6E7781`,\"--shiki-dark\":`#6A9955`},children:`// response2 returns cached response from response1`})}),`\n`]})})}),`\n`,_jsx(Note,{children:`This feature only works with JSON request bodies. Non-JSON bodies will use the original text for cache key generation.`}),`\n`,_jsx(_components.p,{children:_jsx(_components.strong,{children:`Common use cases:`})}),`\n`,_jsxs(_components.ul,{children:[`\n`,_jsx(_components.li,{children:`Ignore tracking IDs that don’t affect the response`}),`\n`,_jsx(_components.li,{children:`Exclude timestamps for time-independent queries`}),`\n`,_jsx(_components.li,{children:`Remove session or user metadata when caching shared content`}),`\n`,_jsxs(_components.li,{children:[`Ignore `,_jsx(_components.code,{children:`prompt_cache_key`}),` when using provider caching alongside Helicone caching`]}),`\n`]}),`\n`,_jsx(Heading,{level:`3`,id:`cache-limitations`,children:`Cache Limitations`}),`\n`,_jsxs(_components.ul,{children:[`\n`,_jsxs(_components.li,{children:[_jsx(_components.strong,{children:`Maximum duration`}),`: 365 days`]}),`\n`,_jsxs(_components.li,{children:[_jsx(_components.strong,{children:`Maximum bucket size`}),`: 20 (enterprise plans support more)`]}),`\n`,_jsxs(_components.li,{children:[_jsx(_components.strong,{children:`Cache key sensitivity`}),`: Any parameter change creates new cache entry`]}),`\n`,_jsxs(_components.li,{children:[_jsx(_components.strong,{children:`Storage location`}),`: Cached in Cloudflare Workers KV (edge-distributed), not your infrastructure`]}),`\n`]}),`\n`,_jsx(Heading,{level:`2`,id:`related-features`,children:`Related Features`}),`\n`,_jsxs(CardGroup,{cols:2,children:[_jsx(Card,{title:`Prompt Caching`,icon:`server`,href:`/gateway/concepts/prompt-caching`,children:_jsx(_components.p,{children:`Cache prompts on provider servers for reduced token costs and faster processing`})}),_jsx(Card,{title:`Custom Properties`,icon:`tag`,href:`/features/advanced-usage/custom-properties`,children:_jsx(_components.p,{children:`Add metadata to cached requests for better filtering and analysis`})}),_jsx(Card,{title:`Rate Limiting`,icon:`clock`,href:`/features/advanced-usage/custom-rate-limits`,children:_jsx(_components.p,{children:`Control request frequency and combine with caching for cost optimization`})}),_jsx(Card,{title:`User Metrics`,icon:`chart-line`,href:`/features/advanced-usage/user-metrics`,children:_jsx(_components.p,{children:`Track cache hit rates and savings per user or application`})})]}),`\n`,_jsx(_components.hr,{}),`\n`,_jsx(Accordion,{title:`Need more help?`,id:`need-more-help`,children:_jsxs(_components.p,{children:[`Additional questions or feedback? Reach out to\n`,_jsx(_components.a,{href:`mailto:help@helicone.ai`,children:`help@helicone.ai`}),` or `,_jsx(_components.a,{href:`https://cal.com/team/helicone/helicone-discovery`,children:`schedule a\ncall`}),` with us.`]})})]})}function MDXContent(props={}){const{wrapper:MDXLayout}={..._provideComponents(),...props.components};return MDXLayout?_jsx(MDXLayout,{...props,children:_jsx(_createMdxContent,{...props})}):_createMdxContent(props)}return{default:MDXContent};function _missingMdxReference(id,component){throw new Error(`Expected `+(component?`component`:`object`)+\" `\"+id+\"` to be defined: you likely forgot to import, pass, or provide it.\")}","frontmatter":{},"scope":{"config":{},"pageMetadata":{"title":"LLM Caching","sidebarTitle":"Caching","twitter:title":"LLM Cache - Helicone OSS LLM Observability","description":null,"href":"/features/advanced-usage/caching"}}},"mdxSourceWithNoJs":null},"mdxExtracts":{"tableOfContents":[{"title":"Why Helicone Caching","slug":"why-helicone-caching","depth":2,"children":[]},{"title":"How It Works","slug":"how-it-works","depth":2,"children":[{"title":"Cache Key Generation","slug":"cache-key-generation","depth":3,"children":[]},{"title":"Cache Storage","slug":"cache-storage","depth":3,"children":[]}]},{"title":"Quick Start","slug":"quick-start","depth":2,"children":[]},{"title":"Configuration","slug":"configuration","depth":2,"children":[]},{"title":"Examples","slug":"examples","depth":2,"children":[]},{"title":"Understanding Caching","slug":"understanding-caching","depth":2,"children":[{"title":"Cache Response Headers","slug":"cache-response-headers","depth":3,"children":[]},{"title":"Cache Duration","slug":"cache-duration","depth":3,"children":[]},{"title":"Cache Buckets","slug":"cache-buckets","depth":3,"children":[]},{"title":"Cache Seeds","slug":"cache-seeds","depth":3,"children":[]},{"title":"Ignore Keys","slug":"ignore-keys","depth":3,"children":[]},{"title":"Cache Limitations","slug":"cache-limitations","depth":3,"children":[]}]},{"title":"Related Features","slug":"related-features","depth":2,"children":[]}],"codeExamples":{}},"jsLinks":[],"subdomain":"helicone","siteName":"Helicone OSS LLM Observability","title":"LLM Caching - Helicone OSS LLM Observability","navMaps":{"firstHrefInVersion":{},"fir

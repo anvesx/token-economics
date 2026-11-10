@@ -1,0 +1,2169 @@
+TITLE: Pricing Time, Not Just Tokens: Latency-Aware Mechanism Design for LLM Inference
+URL: https://arxiv.org/abs/2609.40098
+ORG: arXiv  TYPE: paper  DATE: 2026-09
+
+Pricing Time, Not Just Tokens: Latency-Aware Mechanism
+Design for LLM Inference
+
+arXiv:2609.40098v2 [cs.GT] 2 Oct 2026
+
+IAN MCDOUGALL, University of Wisconsin-Madison, USA
+KARTHIKEYAN SANKARALINGAM∗ , University of Wisconsin-Madison, USA
+The economic theory of LLM pricing treats tokens as a homogeneous commodity considering aggregate token
+count as the main features buyers and sellers consider. We model inference as a service market where buyers
+have three-dimensional private information—willingness-to-pay, task volume, and time preference—and utility
+depends on latency slack alongside token quantities.
+Our main result is a separation theorem: discrete hardware tiers induce endogenous self-selection on time
+preferences, reducing three-dimensional screening to standard one-dimensional screening within each tier.
+We derive the cost structure from GPU inference physics—compute-bound prefill and bandwidth-bound
+decode—and characterize optimal tiered mechanisms via virtual-value techniques. Optimal per-task prices are
+volume-independent, providing theoretical grounding for flat per-token API pricing.
+We verify the mechanism empirically by calibrating to 8-GPU clusters of H100 and B200 hardware. The
+separation theorem holds in 83% of 105 tested configurations overall, rising to 96% at economically relevant
+WTP scales. A seller adopting two-tier pricing under the optimal mechanism captures 26–66% higher profit
+than the best single-tier alternative, with gains driven by efficient cross-tier allocation in regimes where
+hardware costs are a significant fraction of per-request value.
+
+1
+
+Introduction
+
+The prevailing economic literature on Large Language Models (LLMs) treats inference as a spot
+market for tokens—a homogeneous commodity priced by volume with no temporal dimension.
+This framing, exemplified by Bergemann et al. [2025], assumes the buyer’s production function
+depends solely on the total quantity of tokens consumed. Consequently, the singular metric of
+economic value is aggregate token count, and the question of when those tokens are delivered plays
+no role in either buyer utility or seller cost.
+We complement this throughput-dominated framework by modeling LLM inference as a service
+market with delivery time commitments. The distinction is economically substantive: in a spot
+market for tokens, the seller’s problem reduces to cost minimization over a fungible input; in a
+service market, the seller must jointly optimize over price, quality, and congestion. This reframing
+brings LLM pricing into dialogue with the classical economics of service industries—airlines,
+telecommunications, cloud computing—where time-sensitivity induces vertical differentiation and
+screening on latency preferences.
+The operational reality of commercial inference supports this reframing. Cloud providers have
+broken the flat-rate paradigm: AWS Bedrock offers “Priority Tier” pricing guaranteeing faster
+generation, while Google Vertex AI and Azure OpenAI sell “Provisioned Throughput” capacity.1
+Figure 1 illustrates this frontier. For GPU-based inference, a fundamental tension exists between
+throughput (aggregate tokens processed) and latency (delivery speed). The seller faces a choice
+between returns to specialization (faster service per buyer) and returns to scale (more buyers
+served via statistical multiplexing). In the regime studied by Bergemann et al. [2025], returns to
+∗ Also with NVIDIA.
+1 The premium on inference speed is substantial: a recent $20 billion Nvidia–Groq licensing agreement [Nellis, 2025] is
+
+predicated on Groq’s architecturally specialized inference hardware, which achieves latency reductions [Groq, Inc., 2024]
+through fundamentally different memory design (SRAM-based, eliminating the HBM bandwidth bottleneck) rather than
+incremental GPU generational improvement. Claude also announced the release of their Opus 4.6 LLM with “Fast Mode”,
+which improves latency without compromising quality, indicating similar trends in the LLM design space [Anthropic PBC,
+2026].
+Paper appears in the proceedings of the 27th ACM Conference on Economics & Computation (EC'26).
+
+1
+
+Ian McDougall and Karthikeyan Sankaralingam
+
+Token Throughput per GPU (tok/s/GPU) (Aggregate Capacity)
+
+Token Throughput per GPU vs. Interactivity
+H100 (vLLM)
+H200 (vLLM)
+H200 (TRT)
+B200 (TRT)
+B200 (vLLM)
+MI300X (vLLM)
+MI325X (vLLM)
+MI335X (vLLM)
+MI335X (ATOM)
+
+10000
+
+8000
+
+6000
+
+4000
+
+2000
+
+0
+
+0
+
+100
+
+200
+
+300
+
+400
+
+500
+
+Interactivity (tok/s/user) (Quality of Service)
+
+Fig. 1. The throughput–latency production frontier. Each curve traces feasible combinations for a GPU
+architecture: per-user quality (tokens/second/user) versus aggregate utilization (tokens/second/GPU). The
+negative slope reflects capacity constraints: faster service requires reserving resources that could otherwise
+be pooled. Data from Chen et al. [2025].
+
+scale dominate. Market evidence suggests latency-dominated regimes are also worth exploring:
+newer generations of GPU hardware demand premiums despite comparable throughput, and chip
+designers invest heavily in high-bandwidth interconnects for strong scaling effects. Observing
+throughput-maximization markets alone cannot explain why buyers pay for performance or why
+tiered offerings proliferate.
+1.1
+
+Primary Contributions
+
+We develop a mechanism design framework where a monopolistic seller offers LLM inference
+services to buyers with three-dimensional private information: willingness-to-pay 𝑤, task volume
+𝑠, and time preference 𝛾. The buyer’s utility function incorporates latency slack—the gap between
+maximally tolerable and actual delivery time—as a first-order argument alongside token quantities.
+This specification captures the temporal dimension that volume-centric models omit.
+Our first contribution derives an empirically-grounded cost structure from the production
+technology of GPU-based inference. We decompose latency into compute-bound (prefill) and
+memory-bound (decode) phases, yielding a cost function that is strictly convex in service quality,
+with marginal cost diverging as latency approaches hardware limits. This convexity reflects the
+fundamental physics: achieving low latency requires sacrificing batching efficiency, and the tradeoff
+becomes increasingly severe near capacity constraints. The cost structure satisfies the technical
+conditions required for Mussa-Rosen screening while remaining empirically calibrated to measured
+hardware performance.
+Our second contribution establishes a separation theorem that reduces the intractable threedimensional screening problem to a tractable one. We prove that when hardware tiers differ
+sufficiently in latency capabilities, a single-crossing property in time preferences induces endogenous self-selection: high-𝛾 (time-sensitive) buyers strictly prefer premium tiers, while low-𝛾
+
+Ian McDougall and Karthikeyan Sankaralingam
+
+2
+
+(time-tolerant) buyers select economy tiers. The key technical condition is that the quality gain from
+upgrading tiers is strictly increasing in 𝛾—a property we verify holds across empirically calibrated
+parameters. This separation transforms the problem into standard one-dimensional screening on
+willingness-to-pay within each tier, with the time-preference dimension screened through tier
+choice at zero informational cost to the seller.
+Our third contribution characterizes the optimal mechanism using virtual-value techniques
+adapted to our convex cost structure. Within each tier, quality schedules satisfy the Mussa-Rosen
+first-order condition equating virtual value with marginal cost; buyers below a threshold are
+excluded. The menu exhibits tiered pricing that mirrors observed practice: premium tiers charge
+for the right to not batch aggressively—valuable precisely to time-sensitive buyers. We establish that
+optimal per-task prices are independent of volume: the cost structure 𝐶 (𝑄, 𝑠) = 𝑠 · 𝑐˜ (𝑄/𝑠) implies
+no quantity discounts, providing theoretical grounding for the flat per-token pricing dominant in
+current API markets.
+We extend the analysis to continuous 𝛾 distributions, where 𝐾 discrete hardware tiers induce
+an endogenous partition of the time-preference space. Numerical analysis reveals a sharp regime
+dependence: when the premium tier is a generational upgrade—uniformly faster at a modest cost
+premium—it dominates all buyer types at high per-request values, and single-tier pricing suffices.
+When hardware costs are a significant fraction of per-request value, our tiered mechanism delivers
+profit gains of 26–66%, because efficient cross-tier allocation has proportionally larger impact on
+margins. As LLM inference matures from a high-margin novelty into a ubiquitous utility, hardware
+costs consume an increasing share of per-request value, making tiered pricing increasingly decisive.
+1.2
+
+Related Work
+
+Economics of AI Services. Bergemann et al. [2025] formalize token allocation for fine-tuning
+and inference but target throughput-maximizing regimes where timing is secondary; Duetting
+et al. [2024] price generative-AI content rather than the inference service. We complement both by
+isolating the regime where latency heterogeneity governs utility, introducing a three-dimensional
+screen over willingness-to-pay, volume, and time preference. Broader AI economics [Acemoglu
+and Restrepo, 2024, Agrawal et al., 2022, Korinek, 2024] does not model inference pricing.
+Versioning and Multidimensional Screening. Varian [2000] shows a “damaged” (higher-latency)
+good enables segmentation when marginal costs are near zero; here latency arises endogenously
+from hardware and batching rather than being injected, paralleling the “Paris Metro Pricing” of
+Odlyzko [1999]. Multidimensional screening is generally intractable, requiring complex ironing
+[Armstrong, 1996, Rochet and Choné, 1998]; our separation theorem circumvents this, reducing
+the problem to one-dimensional Mussa-Rosen screening within each tier [Mussa and Rosen, 1978,
+Myerson, 1981]. Our volume-independent per-task prices contrast with the quantity discounts of
+standard nonlinear pricing [Maskin and Riley, 1984], since the marginal cost of latency slack scales
+linearly with volume.
+Systems Foundations. Our cost structure derives from the bifurcation of GPU inference into
+compute-bound prefill and bandwidth-bound decode, building on the continuous batching of
+Orca [Yu et al., 2022] and PagedAttention of vLLM [Kwon et al., 2023]. Although we characterize
+tiers via monolithic GPU performance (H100 vs. B200), the framework extends to prefill-decode
+disaggregation [Patel et al., 2024], where the premium tier abstracts a low-latency decode pool
+and the economy tier a throughput-optimized one. Specialized accelerators such as TPUs [Jouppi
+et al., 2017] shift the latency coefficients but reinforce the batching-versus-slack tradeoff driving
+separation.
+
+Ian McDougall and Karthikeyan Sankaralingam
+
+3
+
+Service Operations, SLOs, and Timing. Emerging reasoning models (OpenAI o1, DeepSeek R1)
+push computation to test-time, producing latency-insensitive decode; our mechanism captures
+exactly this regime, where hardware costs are significant but latency sensitivity is low. We position
+the work as the economic dual of the Service Level Objective literature: Clockwork [Gujarati et al.,
+2020] and Shepherd [Zhang et al., 2023] treat latency as a hard constraint, whereas we internalize
+it into the objective, exposing the extractable value of the slack that aggressive scheduling discards.
+This generalizes the “FedEx problem” of Fiat et al. [2016] to continuous token streaming, replacing
+discrete deadlines with smooth 𝛾 and abstracting from queueing dynamics [Hassin and Haviv,
+2003, Mendelson and Whang, 1990] to isolate the structural signaling of speed [Debo et al., 2012].
+Engineering foundations draw on Ma and Patterson [2026] and Davies et al. [2025].
+2
+2.1
+
+Model
+Environment
+
+We study a market for LLM inference services between a monopolist seller and a unit measure
+of buyers with heterogeneous preferences. Each buyer privately learns their type 𝜃 = (𝑤, 𝑠, 𝛾)—
+willingness-to-pay, task volume, and time preference—then selects from a menu of contracts posted
+by the seller. Production technology is common knowledge; all parties have quasilinear preferences.
+A buyer of type 𝜃 = (𝑤, 𝑠, 𝛾) arrives with 𝑠 tasks requiring LLM processing, indexed by 𝑖 ∈
+{1, . . . , 𝑠}. For each task 𝑖, the buyer selects input tokens 𝑥𝑖 ≥ 0 and output tokens 𝑦𝑖 ≥ 0. Tasks
+are processed in batches of size 𝐵 ∈ {1, . . . , 𝑠} on hardware tier 𝑔 ∈ G, where G denotes the set of
+available tiers ordered by capability. The constraint 𝐵 ≤ 𝑠 reflects that batch size cannot exceed the
+number of available tasks.
+2.2
+
+Buyer Preferences
+
+The value a buyer derives from task 𝑖 depends on both the tokens allocated and the speed of delivery.
+We specify preferences through a production function over inputs and latency:
+𝑣 (𝑥, 𝑦; 𝐿, 𝛾) = 𝑥 𝛼 𝑦 𝛽 (𝐿max − 𝐿)𝛾 ,
+
+(1)
+
+where 𝛼, 𝛽 > 0 are common parameters governing returns to token inputs, 𝛾 > 0 is the buyer’s timepreference intensity, and 𝐿max is the buyer’s maximum tolerable latency. We impose 𝛼 + 𝛽 + 𝛾 < 1
+for all 𝛾 in the support, ensuring diminishing returns to the composite input bundle.
+This Cobb-Douglas specification with a deadline constraint follows the literature on timesensitive service systems [Fiat et al., 2016]. The term (𝐿max − 𝐿) captures latency slack—the margin
+between deadline and delivery. The exponent 𝛾 governs time-preference intensity: high-𝛾 buyers
+experience rapid utility loss as slack diminishes (real-time applications), while low-𝛾 buyers tolerate
+delay (batch workloads).
+𝑠 , experiences
+The total utility for a buyer of type 𝜃 = (𝑤, 𝑠, 𝛾) who receives allocations (𝑥𝑖 , 𝑦𝑖 )𝑖=1
+latency 𝐿, and pays transfer 𝑇 is:
+𝑠
+∑︁
+𝑢 (𝜃 ) = 𝑤
+𝑣 (𝑥𝑖 , 𝑦𝑖 ; 𝐿, 𝛾) − 𝑇 .
+(2)
+𝑖=1
+
+Since 𝑣 is strictly concave and all tasks share latency 𝐿, the optimal allocation is symmetric (𝑥𝑖 = 𝑥,
+𝑦𝑖 = 𝑦 for all 𝑖), so we work with per-task allocations without loss of generality [Bergemann et al.,
+2025].
+2.3
+
+Production Technology: Latency
+
+Unlike tokens, latency is a batch-level phenomenon: all tasks in a batch experience common delay
+𝐿 = 𝐿(𝐵, 𝑥, 𝑦, 𝑔), where 𝐵 is batch size and 𝑔 ∈ G is the hardware tier.
+
+Ian McDougall and Karthikeyan Sankaralingam
+
+4
+
+The latency function captures two sources of delay: (i) setup cost (prefill phase)—the time to
+initialize computation, scaling superlinearly in input complexity due to 𝑂 (𝑛 2 ) attention; and
+(ii) marginal service time (decode phase)—per-token processing that increases with batch size due
+to congestion externalities as co-batched requests compete for memory bandwidth.
+Our empirical analysis (Section 3.1) yields a latency function of the form:
+𝐿(𝐵, 𝑥, 𝑦, 𝑔) = 𝑎𝑔 𝑥 2 + 𝑏𝑔 𝑥 + 𝑐𝑔 + 𝑦 (𝑑𝑔 + 𝑒𝑔 𝐵 + 𝑓𝑔 𝐵𝑥) ,
+|
+{z
+}
+|
+{z
+}
+prefill (setup cost)
+
+(3)
+
+decode (marginal service time)
+
+where (𝑎𝑔 , 𝑏𝑔 , 𝑐𝑔 , 𝑑𝑔 , 𝑒𝑔 , 𝑓𝑔 ) are hardware-specific parameters estimated from measured GPU latencies.2
+The prefill phase does not depend on batch size 𝐵: modern continuous-batching systems process
+prefill requests individually [Kwon et al., 2023]. The decode phase is memory-bandwidth-bound,
+with terms 𝑒𝑔 𝐵 and 𝑓𝑔 𝐵𝑥 capturing congestion as batched sequences compete for bandwidth. This
+formulation embodies the fundamental tension: larger batches amortize setup costs but increase
+latency through congestion, with slack 𝐿max − 𝐿 decreasing in (𝐵, 𝑥, 𝑦).
+2.4
+
+Type Space and Distributional Assumptions
+
+Buyer heterogeneity spans three dimensions: willingness-to-pay 𝑤 ∈ R+ , task volume 𝑠 ∈ N+ , and
+time preference 𝛾 ∈ Γ ⊆ (0, 1 − 𝛼 − 𝛽). The full type space is Θ = R+ × N+ × Γ.
+Assumption 1 (Independence). The type components 𝑤, 𝑠, and 𝛾 are independently distributed
+according to 𝐹 𝑤 , 𝐹𝑠 , and 𝐹𝛾 respectively.
+Assumption 2 (Regularity). The distribution 𝐹 𝑤 admits a continuous density 𝑓𝑤 on R+ with
+monotone hazard rate:
+
+
+𝑑 1 − 𝐹 𝑤 (𝑤)
+≤ 0 for all 𝑤 > 0.
+(4)
+𝑑𝑤
+𝑓𝑤 (𝑤)
+Assumption 1 permits analysis of each screening dimension in partial isolation. Assumption 2
+ensures that the virtual value 𝜑 (𝑤) ≡ 𝑤 − (1 − 𝐹 𝑤 (𝑤))/𝑓𝑤 (𝑤) is strictly increasing [Myerson,
+1981].
+Our baseline assumes binary time preference: 𝛾 ∈ {𝛾𝐿 , 𝛾𝐻 } with 0 < 𝛾𝐿 < 𝛾𝐻 < 1 − 𝛼 − 𝛽,
+capturing the bimodality between latency-critical and latency-tolerant workloads. Section 4 extends
+to continuous 𝛾. Our main result (Theorem 3.1) establishes that the optimal mechanism induces
+self-selection: high-𝛾 buyers prefer the premium tier, low-𝛾 buyers prefer economy, reducing the
+three-dimensional problem to one-dimensional screening on 𝑤 within each tier.
+2.5
+
+Seller’s Cost Structure
+
+The seller incurs cost 𝑐𝑔 · 𝐿 for running a batch of duration 𝐿 on tier 𝑔. Processing 𝑠 tasks in batches
+of size 𝐵 yields total cost:
+Cost(𝑠, 𝐵, 𝑥, 𝑦, 𝑔) =
+
+𝑠
+· 𝑐𝑔 · 𝐿(𝐵, 𝑥, 𝑦, 𝑔).
+𝐵
+
+(5)
+
+The ratio 𝐿/𝐵 is per-task machine time, which is non-monotonic in 𝐵: larger batches reduce setups
+but increase per-batch latency, driving the fundamental tradeoff between batching efficiency and
+service speed.
+2 For notational simplicity, we suppress the 𝑔 subscript and write 𝐿 (𝐵, 𝑥, 𝑦) when the hardware tier is clear from context.
+
+Ian McDougall and Karthikeyan Sankaralingam
+
+The per-task cost function is the minimum cost to deliver quality 𝑞 on tier 𝑔:
+
+
+𝑐𝑔 · 𝐿(𝐵, 𝑥, 𝑦, 𝑔)
+∗
+𝑣 (𝑥, 𝑦; 𝐿, 𝛾) = 𝑞, 𝐿 < 𝐿max .
+𝑐˜ (𝑞; 𝑔, 𝛾) = min
+𝑥,𝑦,𝐵
+𝐵
+
+5
+
+(6)
+
+After 𝛾-separation (Section 3.2), each tier serves a single 𝛾 type, permitting notation 𝑐˜∗ (𝑞; 𝑔).
+Theorem 3.3 establishes that 𝑐˜∗ (𝑞; 𝑔) is strictly convex with 𝑐˜∗′ (0) = 0 and 𝑐˜∗′ (𝑞) → ∞ as 𝑞 → ¯
+𝑞(𝑔),
+ensuring the Mussa-Rosen approach yields well-behaved solutions.
+For 𝑠 tasks at aggregate quality 𝑄 = 𝑠 · 𝑞, the total cost function takes the form:
+𝐶 (𝑄, 𝑠; 𝑔) = 𝑠 · 𝑐˜∗ (𝑄/𝑠; 𝑔).
+
+(7)
+
+This structure implies that marginal cost depends only on per-task quality 𝑞 = 𝑄/𝑠, not on scale 𝑠
+directly—a property with important implications for quantity discounts.
+3
+
+Optimal Menu Pricing
+
+Having established the primitives of buyer preferences and seller costs, we turn to the mechanism
+design problem. A monopolist offering LLM inference services must screen buyers who differ along
+three dimensions: willingness-to-pay 𝑤, task volume 𝑠, and time preference 𝛾. Unlike standard tokenpricing models, our setting requires the seller to jointly determine computational resources—not
+merely quantities—since identical tokens delivered faster command higher value from time-sensitive
+buyers.
+Formally, the seller commits to a direct mechanism assigning, for each reported type 𝜃 = (𝑤, 𝑠, 𝛾),
+a complete specification of service delivery:
+((𝑥𝑖 (𝜃 ), 𝑦𝑖 (𝜃 ))𝑖 ∈N+ , 𝐵(𝜃 ), 𝑔(𝜃 ),𝑇 (𝜃 ))𝜃 ∈Θ .
+
+(8)
+
+This includes per-task token allocations (𝑥𝑖 , 𝑦𝑖 ), batch size 𝐵, hardware tier 𝑔 ∈ G, and monetary
+transfer 𝑇 . Allocations are contractible: once a buyer selects a menu option, reallocation of tokens
+across tasks is precluded. Payoffs are quasilinear in the transfer.
+Multi-dimensional screening is notoriously difficult [Armstrong and Rochet, 1999]. However, the
+economics of inference—specifically, the discrete nature of hardware and the structure of latency
+costs—admits a clean decomposition. First, discrete hardware tiers induce self-selection on 𝛾: high-𝛾
+buyers strictly prefer premium (low-latency) hardware while low-𝛾 buyers prefer economy tiers,
+revealing time preference without explicit screening (Theorem 3.1). In the direct mechanism (8),
+no buyer benefits from misreporting 𝛾, as the seller’s optimal tier assignment coincides with each
+buyer’s preferred tier. Second, within each tier the problem reduces to classical one-dimensional
+screening on 𝑤, amenable to Mussa-Rosen techniques [Mussa and Rosen, 1978].
+We develop these results for binary time-preference types (Section 3.2), which yields sharp closedform characterizations. Section 4 extends the analysis to continuous 𝛾 distributions, introducing
+bunching across tiers. First, we briefly describe the empirical latency function underlying our cost
+structure.
+3.1
+
+Latency Function Estimation
+
+We estimate the latency function (3) from measured GPU latency data. The specification decomposes
+inference into compute-bound prefill and bandwidth-bound decode phases, with hardware-specific
+parameters (𝑎𝑔 , 𝑏𝑔 , 𝑐𝑔 , 𝑑𝑔 , 𝑒𝑔 , 𝑓𝑔 ) estimated via nonlinear regression. Both fits achieve 𝑅 2 > 0.99 across
+the operational range (batch sizes 1–64, input contexts 1K–8K tokens), indicating the parametric
+form captures the essential structure of inference latency. Details of the simulation methodology
+and estimated coefficients appear in Appendix A.
+
+Ian McDougall and Karthikeyan Sankaralingam
+
+3.2
+
+6
+
+Binary Time-Preference Types
+
+We begin with the case where time preference takes one of two values: 𝛾 ∈ {𝛾𝐿 , 𝛾𝐻 } with 0 < 𝛾𝐿 <
+𝛾𝐻 < 1 − 𝛼 − 𝛽. Let 𝛾 = 𝛾𝐻 with probability 𝜋𝐻 and 𝛾 = 𝛾𝐿 with probability 𝜋𝐿 = 1 − 𝜋𝐻 . This binary
+specification captures the pronounced bimodality observed in practice—time-critical applications
+(real-time agents, interactive assistants) versus time-tolerant workloads (batch processing, offline
+analysis)—while maintaining analytical tractability.
+The seller faces a three-dimensional screening problem over (𝑤, 𝑠, 𝛾). We establish that discrete
+hardware tiers enable endogenous separation of the 𝛾 dimension, reducing the problem to onedimensional screening on willingness-to-pay 𝑤 within each tier.
+3.2.1 Hardware Tiers and Latency Slack. The seller offers two hardware tiers: a premium tier 𝑔𝐻
+and an economy tier 𝑔𝐿 . These tiers differ in their cost structure and latency characteristics:
+• Premium tier 𝑔𝐻 : Higher per-unit-time cost 𝑐𝑔𝐻 , but capable of achieving lower latency 𝐿𝑔𝐻
+for any configuration (𝐵, 𝑥, 𝑦).
+• Economy tier 𝑔𝐿 : Lower per-unit-time cost 𝑐𝑔𝐿 < 𝑐𝑔𝐻 , but with higher latency 𝐿𝑔𝐿 > 𝐿𝑔𝐻 .
+For a buyer of type 𝛾 selecting tier 𝑔, the optimal within-tier configuration (𝑥 ∗, 𝑦 ∗, 𝐵 ∗ ) (𝛾, 𝑔) yields
+an equilibrium latency slack 𝜇𝑔 . The premium tier achieves greater slack: 𝜇𝑔𝐻 (𝛾) > 𝜇𝑔𝐿 (𝛾) for all 𝛾.
+3.2.2 The Separation Condition. The key to reducing the multi-dimensional problem lies in establishing that 𝛾 types self-select into appropriate tiers without explicit screening. The following
+condition is sufficient for separation.
+Assumption 3 (Quality-Difference Separation). Let 𝑞𝑔 (𝛾) denote the per-task quality achieved
+by type 𝛾 on tier 𝑔 at the cost-minimizing allocation. The quality gain from upgrading to the premium
+tier is strictly increasing in time preference:
+𝑞𝑔𝐻 (𝛾𝐻 ) − 𝑞𝑔𝐿 (𝛾𝐻 ) > 𝑞𝑔𝐻 (𝛾𝐿 ) − 𝑞𝑔𝐿 (𝛾𝐿 ).
+
+(9)
+
+This condition states that high-𝛾 buyers benefit more from premium hardware than low-𝛾
+buyers—not merely in proportional terms, but in absolute quality units. When this holds, there
+exist tier prices that induce perfect self-selection: each 𝛾 type strictly prefers the tier designed for it.
+We now state the main separation result.
+Theorem 3.1 (𝛾-Separation). Under Assumption 3, for each 𝑤 > 0 there exist tier transfers
+(𝑇𝑔𝐻 ,𝑇𝑔𝐿 ) such that:
+(1) Type 𝛾𝐻 strictly prefers the premium tier 𝑔𝐻 ;
+(2) Type 𝛾𝐿 strictly prefers the economy tier 𝑔𝐿 ;
+(3) No type benefits from deviating to a tier designed for another 𝛾 type.
+Proof. Condition (9) makes the separating-price interval non-empty for every 𝑤 > 0; the full
+construction is in Appendix B.
+□
+Economic intuition. Two complementary forces explain why condition (9) is economically natural:
+Log-supermodularity of preferences. The production function 𝑣 = 𝑥 𝛼 𝑦 𝛽 𝜇𝛾 is log-supermodular in
+(𝜇, 𝛾): 𝜕 2 log 𝑣/𝜕𝜇 𝜕𝛾 = 1/𝜇 > 0. Economically, 𝛾 is the elasticity of quality with respect to latency
+slack—a 1% increase in slack yields a 𝛾% increase in quality. High-𝛾 buyers (interactive agents,
+real-time applications) thus value slack disproportionately, while low-𝛾 buyers (batch processing,
+offline analysis) are relatively insensitive to latency improvements.
+Diminishing speedup. Premium hardware exhibits diminishing speedup: the latency ratio decreases with batch size 𝐵. For example, at 𝐵 = 1, the premium tier may be 1.5× faster; at 𝐵 = 64,
+only 1.2× faster. This asymmetry arises because premium hardware’s advantage concentrates in the
+
+Ian McDougall and Karthikeyan Sankaralingam
+
+7
+
+serial floor 𝐹 (prefill-dominated), which is amortized away at large batch sizes. Since high-𝛾 buyers
+optimally choose small batches to maximize slack, they operate precisely in the regime where
+premium hardware’s advantage is largest. Low-𝛾 buyers batch aggressively and thus experience a
+smaller premium-economy gap. 3
+These forces combine: high-𝛾 buyers value slack more (log-supermodularity) and receive more
+of it on premium hardware (diminishing speedup), producing the quality-difference separation
+that condition (9) requires. For our H100/B200 calibration, Section 5 confirms condition (9) holds
+across 83% of tested parameter configurations (96% at economically relevant WTP scales), with the
+quality-difference gain from upgrading to B200 strictly increasing in 𝛾 throughout the operational
+range.
+3.2.3 Cost Function Convexity. Having established separation, we prove that the per-task cost
+function is strictly convex, enabling standard screening techniques within each tier. We first
+establish uniqueness of the cost-minimizing allocation.
+For clarity, define the auxiliary functions:
+𝐷 (𝑥, 𝑦) ≡ 𝑦 (𝑒 + 𝑓 𝑥),
+2
+
+𝐹 (𝑥, 𝑦) ≡ 𝑎𝑥 + 𝑏𝑥 + 𝑐 + 𝑦𝑑.
+
+(10)
+(11)
+
+The latency function (3) can then be written as 𝐿 = 𝐵 · 𝐷 (𝑥, 𝑦) + 𝐹 (𝑥, 𝑦), which is affine in batch
+size 𝐵.
+Lemma 3.2 (Uniqeness of Cost-Minimizing Allocation). For any quality level 𝑞 ∈ (0, ¯
+𝑞), the
+cost-minimizing input bundle (𝑥 ∗, 𝑦 ∗, 𝐵 ∗ ) solving (6) is unique.
+Proof. The production function 𝑣 (𝑥, 𝑦; 𝐿, 𝛾) with 𝛼, 𝛽, 𝛾 < 1 and 𝛼 + 𝛽 +𝛾 < 1 is strictly concave
+in (𝑥, 𝑦, 𝜇). Therefore, the level set is strictly convex. The cost objective 𝑐𝑔 𝐿/𝐵 is continuous on the
+feasible region. Since the feasible set is compact (bounded by the latency constraint 𝐿 < 𝐿max ) and
+the isoquant is strictly convex, the cost-minimizing bundle is unique.
+□
+Theorem 3.3 (Cost Function Convexity). Under the latency function 𝐿(𝐵, 𝑥, 𝑦) with 𝑎, 𝑏, 𝑒, 𝑓 ≥
+0, 𝑐, 𝑑 > 0, and 𝑒 + 𝑓 > 0, and the production function 𝑣 (𝑥, 𝑦; 𝐿, 𝛾) with 𝛼 + 𝛽 + 𝛾 < 1, the per-task
+cost function:
+
+
+𝑐𝑔 · 𝐿(𝐵, 𝑥, 𝑦)
+∗
+𝑐˜ (𝑞; 𝑔) = min
+𝑣 (𝑥, 𝑦; 𝐿, 𝛾) = 𝑞, 𝐿 < 𝐿max
+(12)
+𝑥,𝑦>0, 𝐵 ≥1
+𝐵
+is strictly convex on its domain (0, ¯
+𝑞), where 𝑞¯ is the maximum feasible quality.
+Proof. The affine structure 𝐿 = 𝐵 · 𝐷 + 𝐹 allows batch size elimination, reducing cost to a
+function of token allocations and quality alone. Define 𝑁 ≡ 𝐿max − 𝐹 (𝑥, 𝑦) − 𝜇 > 0 on the feasible
+region; the full reduction is carried out in Appendix D, where marginal cost is shown to be positive
+and strictly increasing, establishing strict convexity.
+Boundary behavior. As 𝑞 → 0, the cost-minimizing path takes 𝑥, 𝑦 → 0 so marginal cost
+vanishes. As 𝑞 → ¯
+𝑞, feasibility requires 𝑁 → 0, so marginal cost diverges.
+□
+3.2.4 Reduction to One-Dimensional Screening. Given 𝛾-separation (Theorem 3.1), buyers of type
+𝛾𝐻 select tier 𝑔𝐻 and buyers of type 𝛾𝐿 select tier 𝑔𝐿 . Within each tier, the seller faces a standard
+one-dimensional screening problem over willingness-to-pay 𝑤, with the scale dimension 𝑠 handled
+through the cost structure.
+3 Tier differentiation can also arise from scale-up domain architecture. Appendix C discusses this in detail.
+
+Ian McDougall and Karthikeyan Sankaralingam
+
+For each tier 𝑔 ∈ {𝑔𝐻 , 𝑔𝐿 }, the seller’s problem is:
+∫ ∞
+max
+[𝑇 (𝑤) − 𝐶 (𝑞(𝑤), 𝑠; 𝑔)] 𝑑𝐹 𝑤 (𝑤)
+𝑞 (𝑤 ),𝑇 (𝑤 )
+
+8
+
+(13)
+
+0
+
+subject to standard IC and IR constraints. This is precisely the Mussa and Rosen [1978] framework,
+with cost function 𝐶 (𝑞, 𝑠; 𝑔) = 𝑠 · 𝑐˜∗ (𝑞/𝑠; 𝑔).
+3.2.5 Virtual Values and Optimal Quality. Following Mussa-Rosen, recall the virtual value for a
+buyer of type 𝑤:
+1 − 𝐹 𝑤 (𝑤)
+𝜑 (𝑤) ≡ 𝑤 −
+.
+(14)
+𝑓𝑤 (𝑤)
+Under Assumption 2 (monotone hazard rate), 𝜑 (𝑤) is strictly increasing. Define the exclusion
+threshold 𝑤 as the solution to 𝜑 (𝑤) = 0; buyers with 𝑤 < 𝑤 are excluded from the market.
+Proposition 3.4 (Optimal Quality Schedule). Within tier 𝑔, the optimal quality schedule
+𝑞 ∗ (𝑤; 𝑔) for non-excluded buyers (𝑤 ≥ 𝑤) satisfies:
+𝜑 (𝑤) = 𝑐˜∗′ (𝑞 ∗ (𝑤; 𝑔); 𝑔),
+
+(15)
+
+where 𝑐˜∗′ denotes the marginal cost of per-task quality.
+Proof. The seller maximizes virtual surplus. By strict convexity of 𝑐˜∗ (Theorem 3.3), the firstorder condition 𝜑 (𝑤) = 𝑐˜∗′ (𝑞) yields a unique solution 𝑞 ∗ (𝑤) for each 𝑤 with 𝜑 (𝑤) > 0. Strict
+convexity ensures this is a maximum. Monotonicity of 𝜑 (by Assumption 2) and 𝑐˜∗′ (by convexity)
+implies 𝑞 ∗ (𝑤) is increasing in 𝑤, satisfying the monotonicity requirement for IC.
+□
+3.2.6 Optimal Transfers. The transfer schedule is pinned down by the binding IC constraint at the
+margin and the binding IR constraint at the exclusion threshold.
+Proposition 3.5 (Optimal Transfers). The optimal transfer schedule within tier 𝑔 is:
+∫ 𝑤
+𝑇 ∗ (𝑤; 𝑔) = 𝑤 · 𝑞 ∗ (𝑤; 𝑔) −
+𝑞 ∗ (𝑘; 𝑔) 𝑑𝑘
+
+(16)
+
+𝑤
+
+for 𝑤 ≥ 𝑤, and buyers with 𝑤 < 𝑤 are excluded.
+Proof. Standard envelope argument. See Appendix E for details.
+
+□
+
+3.2.7 Incentive Compatibility for Scale. Having established IC for 𝑤 within each tier and IC for
+𝛾 across tiers, we verify that buyers do not benefit from misreporting their scale 𝑠. Following
+Bergemann et al. [2025], we consider both downward deviations (claiming fewer tasks) and upward
+deviations (claiming more tasks).
+A key simplification arises from the cost structure. Because 𝐶 (𝑄, 𝑠; 𝑔) = 𝑠 ·𝑐˜∗ (𝑄/𝑠; 𝑔), the marginal
+cost of quality is independent of scale:
+𝐶𝑞 (𝑞, 𝑠; 𝑔) = 𝑐˜∗′ (𝑞; 𝑔).
+
+(17)
+
+Intuitively, latency depends on per-task token allocations and batch size, not on total task volume,
+so the cost of serving 𝑠 tasks at quality 𝑞 is exactly 𝑠 times the single-task cost. This implies that
+the optimal per-task quality 𝑞 ∗ (𝑤; 𝑔) depends only on 𝑤 and 𝑔—not on 𝑠—and per-task rents are
+also scale-independent:
+∫ 𝑤
+𝑢˜ ∗ (𝑤; 𝑔) ≡ 𝑤 · 𝑞 ∗ (𝑤; 𝑔) − 𝑡˜∗ (𝑤; 𝑔) =
+𝑞 ∗ (𝑘; 𝑔) 𝑑𝑘,
+(18)
+𝑤
+
+where 𝑡˜∗ (𝑤; 𝑔) is the per-task transfer. Total utility for type (𝑤, 𝑠) is 𝑢 ∗ (𝑤, 𝑠) = 𝑠 · 𝑢˜ ∗ (𝑤; 𝑔).
+
+Ian McDougall and Karthikeyan Sankaralingam
+
+9
+
+Proposition 3.6 (Scale Incentive Compatibility). Under the cost structure 𝐶 (𝑄, 𝑠; 𝑔) = 𝑠 ·
+𝑐˜∗ (𝑄/𝑠; 𝑔), no buyer benefits from misreporting scale:
+(1) Downward deviations: Type (𝑤, 𝑠) reporting 𝑠˜ < 𝑠 receives allocation for 𝑠˜ tasks and obtains
+utility 𝑠˜ · 𝑢˜ ∗ (𝑤) < 𝑠 · 𝑢˜ ∗ (𝑤).
+(2) Upward deviations: Type (𝑤, 𝑠) reporting ( ˜
+𝑤, ˜𝑠) with 𝑠˜ > 𝑠 receives allocation for 𝑠˜ tasks
+but can utilize only 𝑠 of them, paying for ˜𝑠. The optimal double deviation satisfies 𝑤˜ ∗ = 𝑤𝑠/˜𝑠,
+yielding utility at most 𝑠 · 𝑢˜ ∗ (𝑤).
+Proof. See Appendix F. Downward deviations forfeit tasks with positive rent. Upward deviations
+require the buyer to pay for tasks they cannot use; the optimal strategy mimics a lower-𝑤 type, but
+convexity of 𝑢˜ ∗ in 𝑤 ensures this yields at most the truthful payoff.
+□
+3.2.8 The Optimal Menu. Combining the preceding results, we characterize the complete optimal
+mechanism.
+Theorem 3.7 (Optimal Menu with Binary Time Preference). Under the separation condition
+(Theorem 3.1), Assumption 2 (monotone hazard rate on 𝐹 𝑤 ), and Assumption 1 (independence of 𝑤, 𝑠,
+𝛾), the optimal menu is:
+M ∗ = {(𝑔𝐻 , 𝑞 ∗ (𝑤; 𝑔𝐻 ),𝑇 ∗ (𝑤; 𝑔𝐻 ))} 𝑤 ≥𝑤 ∪ {(𝑔𝐿 , 𝑞 ∗ (𝑤; 𝑔𝐿 ),𝑇 ∗ (𝑤; 𝑔𝐿 ))} 𝑤 ≥𝑤 ,
+
+(19)
+
+where:
+(1) Quality schedules 𝑞 ∗ (𝑤; 𝑔) solve 𝜑 (𝑤) = 𝑐˜∗′ (𝑞∫∗ (𝑤; 𝑔); 𝑔);
+𝑤
+(2) Transfer schedules 𝑇 ∗ (𝑤; 𝑔) = 𝑤 · 𝑞 ∗ (𝑤; 𝑔) − 𝑤 𝑞 ∗ (𝑘; 𝑔) 𝑑𝑘;
+(3) Buyers with 𝛾 = 𝛾𝐻 select tier 𝑔𝐻 ; buyers with 𝛾 = 𝛾𝐿 select tier 𝑔𝐿 ;
+(4) Buyers with 𝑤 < 𝑤 are excluded regardless of 𝛾.
+Proof. Step 1: Cross-tier IC. By Theorem 3.1, separation is achievable when condition (9) holds.
+Log-supermodularity of preferences provides the economic foundation; numerical verification in
+Section 5 confirms the condition holds with margin for our calibration.
+Step 2: Within-tier IC. By Proposition 3.4, the quality schedule 𝑞 ∗ (𝑤; 𝑔) is increasing in 𝑤.
+Standard revealed preference arguments establish that the transfer schedule (16) is IC within each
+tier.
+∫𝑤
+Step 3: IR. 𝑢 ∗ (𝑤) = 0 so IR binds at the threshold. For 𝑤 > 𝑤, 𝑢 ∗ (𝑤) = 𝑤 𝑞 ∗ (𝑘) 𝑑𝑘 > 0, so IR
+is slack.
+Step 4: Scale IC. By Proposition 3.6, no buyer benefits from misreporting scale 𝑠.
+Step 5: Optimality. Substituting the transfer (16) and applying integration by parts, the seller’s
+profit reduces to virtual surplus:
+∑︁ ∫ 𝑤¯
+Π=
+𝜋𝑔
+[𝜑 (𝑤) · 𝑞 ∗ (𝑤; 𝑔) − 𝑐˜∗ (𝑞 ∗ (𝑤; 𝑔); 𝑔)] 𝑑𝐹 𝑤 (𝑤).
+(20)
+𝑔
+
+𝑤
+
+Since types are separated across tiers and screened within tiers, pointwise maximization yields the
+first-order condition 𝜑 (𝑤) = 𝑐˜∗′ (𝑞; 𝑔) as necessary and sufficient. Exclusion below 𝑤 follows from
+𝜑 (𝑤) < 0.
+□
+4
+
+Continuous Time Preference
+
+We extend the analysis where time preference is drawn from a continuous distribution: 𝛾 ∼ 𝐹𝛾
+on [𝛾, ¯
+𝛾] ⊂ (0, 1 − 𝛼 − 𝛽). Multi-dimensional screening over (𝑤, 𝛾) is intractable in full generality.
+However, when the seller offers a finite menu of hardware tiers G = {𝑔1, . . . , 𝑔𝐾 }—as in practice—the
+problem admits a clean characterization through tier-induced partitioning of the 𝛾 space.
+
+Ian McDougall and Karthikeyan Sankaralingam
+
+10
+
+The key economic insight is that discrete hardware converts a continuous multi-dimensional
+problem into a tractable nested structure. The 𝛾 space partitions into contiguous segments, one
+per tier, and within each segment the seller solves a standard one-dimensional screening problem
+on willingness-to-pay 𝑤. We develop this insight in three steps: first establishing the partition
+structure, then addressing the cost-aggregation challenge that arises from within-tier heterogeneity
+in 𝛾, and finally characterizing the optimal partition cutoffs and the resulting complete mechanism.
+4.1
+
+Finite Hardware Tiers and Induced Partitioning
+
+In practice, cloud providers offer a finite menu of hardware tiers G = {𝑔1, 𝑔2, . . . , 𝑔𝐾 }, ordered by
+capability: 𝑔1 (economy) through 𝑔𝐾 (premium). This discrete structure fundamentally simplifies
+the problem.
+Assumption 4 (Ordered Hardware Tiers). The hardware tiers satisfy:
+(1) Cost ordering: 𝑐𝑔1 < 𝑐𝑔2 < · · · < 𝑐𝑔𝐾
+(2) Latency ordering: For all (𝐵, 𝑥, 𝑦), 𝐿𝑔1 (𝐵, 𝑥, 𝑦) > 𝐿𝑔2 (𝐵, 𝑥, 𝑦) > · · · > 𝐿𝑔𝐾 (𝐵, 𝑥, 𝑦)
+(3) Slack ordering: 𝜇𝑔1 (𝛾) < 𝜇𝑔2 (𝛾) < · · · < 𝜇𝑔𝐾 (𝛾) for all 𝛾 ∈ [𝛾, ¯
+𝛾]
+Under this ordering, higher-indexed tiers are more expensive but achieve greater latency slack.
+For the partition to respect self-selection—so that higher-𝛾 types voluntarily sort into premium
+tiers—we need the quality advantage of upgrading hardware to be increasing in time preference.
+The following assumption formalizes this single-crossing structure in the tier dimension.
+Assumption 5 (Quality-Difference Separation). For each 𝑘 ∈ {1, . . . , 𝐾 − 1}, the quality gain
+from tier 𝑔𝑘+1 over tier 𝑔𝑘 is strictly increasing in 𝛾:
+
+𝜕 
+𝑞𝑔𝑘+1 (𝛾) − 𝑞𝑔𝑘 (𝛾) > 0 for all 𝛾 ∈ [𝛾, ¯
+𝛾],
+(21)
+𝜕𝛾
+where 𝑞𝑔 (𝛾) = (𝑥𝑔∗ (𝛾)) 𝛼 (𝑦𝑔∗ (𝛾)) 𝛽 𝜇𝑔 (𝛾)𝛾 is the quality achieved by type 𝛾 on tier 𝑔 at the costminimizing allocation.
+This assumption generalizes the binary separation condition (9) to adjacent tier pairs. The
+same economic forces that justify the binary condition—log-supermodularity of preferences and
+diminishing speedup—apply here: high-𝛾 types value slack disproportionately (the 𝜇𝛾 term), and
+premium hardware’s advantage is largest at the small batch sizes these types optimally choose.
+The separation condition guarantees that, for any set of tier prices, higher-𝛾 types prefer higherindexed tiers. This generates a natural partition of the 𝛾 space into contiguous segments, formalized
+as follows.
+Definition 4.1 (Tier-Induced Partition). A partition {Γ1, Γ2, . . . , Γ𝐾 } of [𝛾, ¯
+𝛾] is tier-induced if there
+exist cutoffs 𝛾 = 𝛾 0 < 𝛾 1 < 𝛾 2 < · · · < 𝛾𝐾 −1 < 𝛾𝐾 = 𝛾¯ such that:
+Γ𝑘 = [𝛾𝑘 −1, 𝛾𝑘 )
+
+for 𝑘 = 1, . . . , 𝐾 − 1,
+
+Γ𝐾 = [𝛾𝐾 −1, ¯
+𝛾],
+
+(22)
+
+and all types 𝛾 ∈ Γ𝑘 optimally select tier 𝑔𝑘 .
+Proposition 4.2 (Existence of Tier-Induced Partition). Under Assumptions 4 and 5, there
+exists a tier-induced partition of [𝛾, ¯
+𝛾] such that:
+(1) Types in Γ𝑘 weakly prefer tier 𝑔𝑘 to all other tiers;
+(2) The partition is monotone: higher-𝛾 types select higher-indexed (premium) tiers;
+(3) Boundary types 𝛾𝑘 are indifferent between tiers 𝑔𝑘 and 𝑔𝑘+1 .
+
+Ian McDougall and Karthikeyan Sankaralingam
+
+11
+
+Proof. Monotone selection follows directly from Assumption 5: if type 𝛾 ′ prefers 𝑔𝑘+1 over
+𝑔𝑘 , then the strictly increasing quality gap ensures that all types 𝛾 ′′ > 𝛾 ′ do as well. Given fixed
+tier prices, the indifference function Φ𝑘 (𝛾) ≡ 𝑤 · Δ𝑞𝑘 (𝛾) − (𝑇𝑔𝑘+1 − 𝑇𝑔𝑘 ) is strictly increasing and
+continuous, so the intermediate value theorem yields a unique cutoff 𝛾𝑘∗ at which the buyer is
+indifferent. Iterating across adjacent tier pairs produces the full partition. See Appendix G for the
+complete argument.
+□
+4.2
+
+Within-Tier Cost Aggregation
+
+The partition reduces the multi-dimensional screening problem to 𝐾 one-dimensional problems—
+one per tier. However, a subtlety arises that distinguishes the continuous case from the binary
+model of Section 3.2: within tier 𝑔𝑘 , buyers with different 𝛾 values incur different per-task costs for
+the same quality level. As established in Appendix D, the marginal cost 𝜕𝑐˜∗ /𝜕𝑞 = 𝑐𝑔 𝐷𝜇𝐹 /(𝛾𝑞𝑁 2 )
+depends explicitly on 𝛾 through both the denominator and the optimal input mix. In the binary
+case, each tier serves a single 𝛾 type, so no such heterogeneity arises.
+Since the seller cannot condition the quality-transfer schedule on 𝛾 within a tier, the relevant
+object for mechanism design is the expected cost, averaged over the 𝛾 types assigned to each
+segment:
+∫ 𝛾𝑘
+1
+𝑐˜∗ (𝑞; 𝑔𝑘 , 𝛾) 𝑓𝛾 (𝛾) 𝑑𝛾,
+(23)
+𝑐˜avg (𝑞; 𝑔𝑘 , 𝜸 𝑘 ) ≡
+Pr(Γ𝑘 ) 𝛾𝑘 −1
+where 𝜸 𝑘 ≡ (𝛾𝑘 −1, 𝛾𝑘 ) denotes the cutoffs defining segment Γ𝑘 , and Pr(Γ𝑘 ) = 𝐹𝛾 (𝛾𝑘 ) − 𝐹𝛾 (𝛾𝑘 −1 ).
+Assumption 6 (Tier-Uniform Pricing). In the direct mechanism, the seller uses each buyer’s
+reported 𝛾 to configure cost-minimizing inputs (𝑥 ∗, 𝑦 ∗, 𝐵 ∗ ) for the assigned tier, but offers a uniform
+quality-transfer schedule (𝑞𝑘 (𝑤),𝑇𝑘 (𝑤)) within each tier that does not condition on 𝛾.
+This assumption is economically natural: the seller can optimize production for each buyer’s
+reported type—choosing the best input mix for their time preference—but offers a common menu of
+quality-price pairs within each tier. The consequence is that no buyer can misrepresent 𝛾 to obtain
+a different quality-transfer schedule, though cross-subsidization across 𝛾 types within a tier will
+arise in equilibrium.
+The averaged cost function inherits the regularity properties needed for standard screening
+theory.
+Lemma 4.3 (Properties of 𝑐˜avg ). The averaged cost function satisfies:
+(1) Strict convexity: 𝑐˜avg (𝑞; 𝑔𝑘 , 𝜸 𝑘 ) is strictly convex in 𝑞.
+′ (0; 𝑔 , 𝜸 ) = 0 and 𝑐˜′ (𝑞; 𝑔 , 𝜸 ) → ∞ as 𝑞 approaches the feasibility
+(2) Boundary behavior: 𝑐˜avg
+𝑘 𝑘
+𝑘 𝑘
+avg
+bound.
+(3) Continuity in cutoffs: 𝑐˜avg (𝑞; 𝑔𝑘 , 𝜸 𝑘 ) is continuous in (𝛾𝑘 −1, 𝛾𝑘 ) for each 𝑞 in the interior of
+the feasible domain.
+Proof. Each property follows from the corresponding property of the individual cost functions
+𝑐˜∗ (𝑞; 𝑔𝑘 , 𝛾) established in Theorem 3.3. Strict convexity is preserved under (weighted) averaging,
+boundary behavior carries through by dominated convergence, and continuity in cutoffs follows
+from standard results on parameter-dependent integrals. See Appendix H for the details.
+□
+Property 3 is especially important: it ensures that the seller’s optimization problem over cutoffs
+is well-behaved, which is essential for the fixed-point argument in the next subsection.
+
+Ian McDougall and Karthikeyan Sankaralingam
+
+4.3
+
+12
+
+Optimal Cutoff Characterization
+
+The seller jointly optimizes the partition cutoffs 𝜸 = (𝛾 1, . . . , 𝛾𝐾 −1 ) and the within-tier mechanisms.
+These two decisions are coupled: the cutoffs determine which 𝛾 types enter each segment, which
+determines the averaged cost 𝑐˜avg , which shapes the optimal quality schedule, which in turn
+determines the profit from each type assignment. The seller seeks cutoffs at which the marginal
+type—the buyer on the boundary between two segments—generates equal expected profit under
+either tier assignment. This “equal-profit-at-the-boundary” condition is the natural analog of the
+indifference conditions in standard partitioning problems.
+Theorem 4.4 (Optimal Cutoffs). Under Assumptions 4, 5, and 6:
+(a) (Necessary condition) Any interior optimal cutoffs 𝜸 ∗ = (𝛾 1∗, . . . , 𝛾𝐾∗ −1 ) satisfy the marginaltype indifference conditions: for each 𝑘 = 1, . . . , 𝐾 − 1,
+E𝑤 [Π𝑔𝑘+1 (𝑤, 𝛾𝑘∗ )] = E𝑤 [Π𝑔𝑘 (𝑤, 𝛾𝑘∗ )],
+
+(24)
+
+where Π𝑔 (𝑤, 𝛾) ≡ 𝑇 ∗ (𝑤; 𝑔) − 𝑐˜∗ (𝑞 ∗ (𝑤; 𝑔); 𝑔, 𝛾) is the profit from serving type (𝑤, 𝛾) on tier 𝑔.
+𝛾] 𝐾 −1 to the system (24).
+(b) (Existence) There exists at least one solution 𝜸 ∗ ∈ [𝛾, ¯
+(c) (Sufficient condition for local optimality) A solution 𝜸 ∗ to (24) is a local maximum if the
+profit-difference monotonicity condition holds:
+𝜕
+(25)
+E𝑤 [Π𝑔𝑘+1 (𝑤, 𝛾) − Π𝑔𝑘 (𝑤, 𝛾)] ≥ 0 at 𝛾 = 𝛾𝑘∗ for all 𝑘.
+𝜕𝛾
+Proof. Part (a) demonstrates the necessary marginal-type indifference condition and is derived
+in Appendix I. Part (b) constructs a best-response mapping T on the compact convex cutoff space
+¯ 𝐾 −1 and applies Brouwer’s fixed point theorem. Part (c) evaluates the Hessian at the FOC,
+C ⊂ [𝛾, 𝛾]
+where the first term vanishes, yielding condition (25) as the relevant second-order requirement.
+See Appendix J for the derivations of Parts (b) and (c).
+Economic interpretation of condition (25): The profit-difference monotonicity condition requires
+that the profit advantage of premium hardware—evaluated at the mechanism’s quality schedule—is
+increasing in time preference. This is economically natural: higher-𝛾 types require more slack to
+achieve the same quality, and premium hardware’s latency advantage translates into larger cost
+savings for these types. We verify this condition numerically in Section 5.
+Global optimality: The fixed-point characterization guarantees existence of a critical point. To
+verify global optimality, one must compare interior solutions satisfying (24) with boundary solutions
+(some 𝛾𝑘∗ ∈ {𝛾, 𝛾¯ }). In our numerical analysis, interior solutions dominate boundary solutions for
+empirically calibrated parameters.
+□
+4.4
+
+Within-Segment Screening
+
+Conditional on the partition, each segment Γ𝑘 contains a continuum of 𝛾 types who all select tier
+𝑔𝑘 . Within each tier, the seller screens on 𝑤 using the standard Mussa-Rosen framework, but with
+the averaged cost function 𝑐˜avg (·; 𝑔𝑘 ) replacing the single-type cost.
+Proposition 4.5 (Within-Segment Optimality). For each segment Γ𝑘 , the optimal within-tier
+mechanism is characterized by:
+′ (𝑞; 𝑔 );
+(1) Quality schedule: 𝑞 ∗ (𝑤; 𝑔𝑘 ) solves 𝜑 (𝑤) = 𝑐˜avg
+∫ 𝑤𝑘
+∗
+∗
+(2) Transfer schedule: 𝑇 (𝑤; 𝑔𝑘 ) = 𝑤 · 𝑞 (𝑤; 𝑔𝑘 ) − 𝑤 𝑞 ∗ (𝑡; 𝑔𝑘 ) 𝑑𝑡;
+(3) Exclusion: Types with 𝑤 < 𝑤 are excluded.
+The quality and transfer schedules do not depend on 𝛾 within each segment, though the seller’s realized
+cost 𝑐˜∗ (𝑞; 𝑔𝑘 , 𝛾) varies across 𝛾 types.
+
+Ian McDougall and Karthikeyan Sankaralingam
+
+13
+
+Proof. Within tier 𝑔𝑘 , the seller chooses schedules (𝑞𝑘 (𝑤),𝑇𝑘 (𝑤)) to maximize expected profit
+over all types in the segment:
+∫ 𝑤¯
+
+
+max
+𝑇𝑘 (𝑤) − 𝑐˜avg (𝑞𝑘 (𝑤); 𝑔𝑘 ) 𝑓𝑤 (𝑤) 𝑑𝑤
+(26)
+𝑞𝑘 (·),𝑇𝑘 (·)
+
+𝑤
+
+subject to the standard IC and IR constraints on 𝑤:
+𝑤 · 𝑞𝑘 (𝑤) − 𝑇𝑘 (𝑤) ≥ 𝑤 · 𝑞𝑘 (𝑤 ′ ) − 𝑇𝑘 (𝑤 ′ )
+
+∀𝑤, 𝑤 ′ .
+
+(27)
+
+The averaged cost 𝑐˜avg arises because the menu does not condition on 𝛾: for a buyer receiving
+quality 𝑞 on tier 𝑔𝑘 , the seller’s cost is 𝑐˜∗ (𝑞; 𝑔𝑘 , 𝛾), which varies with the buyer’s 𝛾. Averaging over
+the 𝛾 distribution within Γ𝑘 yields 𝑐˜avg as the expected per-task cost.
+Since 𝑐˜avg is strictly convex with the requisite boundary behavior (Lemma 4.3), this is a standard
+one-dimensional screening problem with solution given by Propositions 3.4 and 3.5, replacing 𝑐˜∗
+with 𝑐˜avg .
+Cross-subsidization. Because 𝑐˜∗ (𝑞; 𝑔𝑘 , 𝛾) varies with 𝛾, the uniform pricing schedule induces
+cross-subsidization across 𝛾 types within each tier: types with 𝑐˜∗ (𝑞; 𝑔𝑘 , 𝛾) > 𝑐˜avg (𝑞; 𝑔𝑘 ) are subsidized by types with 𝑐˜∗ (𝑞; 𝑔𝑘 , 𝛾) < 𝑐˜avg (𝑞; 𝑔𝑘 ).
+□
+4.5
+
+The Complete Mechanism
+
+Combining the partition, cost aggregation, and within-tier screening results, we now state the full
+characterization.
+Theorem 4.6 (Optimal Menu with Continuous Time Preference). Under Assumptions 4, 5, 6,
+and 2 (monotone hazard rate on 𝐹 𝑤 ), the optimal mechanism with 𝐾 hardware tiers is:
+M∗ =
+
+𝐾
+Ø
+
+
+
+(𝑔𝑘 , 𝑞 ∗ (𝑤; 𝑔𝑘 ),𝑇 ∗ (𝑤; 𝑔𝑘 )) : 𝑤 ≥ 𝑤, 𝛾 ∈ Γ𝑘∗ ,
+
+(28)
+
+𝑘=1
+
+where:
+(1) The partition {Γ1∗, . . . , Γ𝐾∗ } is defined by optimal cutoffs {𝛾 1∗, . . . , 𝛾𝐾∗ −1 } from Theorem 4.4;
+′ (𝑞 ∗ (𝑤; 𝑔 ); 𝑔 );
+(2) Within each tier, quality schedules satisfy 𝜑 (𝑤) = 𝑐˜avg
+𝑘
+𝑘
+∫𝑤
+∗
+∗
+∗
+(3) Transfers are 𝑇 (𝑤; 𝑔𝑘 ) = 𝑤 · 𝑞 (𝑤; 𝑔𝑘 ) − 𝑤 𝑞 (𝑡; 𝑔𝑘 ) 𝑑𝑡;
+(4) Buyers with 𝑤 < 𝑤 are excluded regardless of 𝛾.
+Proof. Existence. The mechanism exists by construction: Proposition 4.2 guarantees existence of a tier-induced partition for any valid cutoffs, Theorem 4.4(b) establishes existence of
+optimal cutoffs via Brouwer’s fixed point theorem, and Proposition 4.5 provides optimal within-tier
+mechanisms for any given partition.
+Incentive compatibility. We verify IC in two parts:
+Cross-tier IC: By construction of the partition, boundary types are indifferent between adjacent
+tiers, and Assumption 5 ensures strict preference away from boundaries (Proposition 4.2). Thus, no
+type 𝛾 ∈ Γ𝑘 strictly prefers tier 𝑔𝑘 ′ ≠ 𝑔𝑘 . Non-adjacent tier deviations follow by transitivity of the
+separation condition.
+Within-tier IC: By Proposition 4.5, the quality schedule is increasing in 𝑤 and transfers satisfy
+the envelope condition. Standard arguments establish IC.
+Optimality. The mechanism maximizes:
+𝐾 ∫ 𝛾 ∗ ∫ 𝑤¯
+∑︁
+𝑘
+[𝑇 ∗ (𝑤; 𝑔𝑘 ) − 𝑐˜∗ (𝑞 ∗ (𝑤; 𝑔𝑘 ); 𝑔𝑘 , 𝛾)] 𝑑𝐹 𝑤 (𝑤) 𝑑𝐹𝛾 (𝛾).
+Π=
+(29)
+𝑘=1
+
+𝛾𝑘∗ −1
+
+𝑤
+
+Ian McDougall and Karthikeyan Sankaralingam
+
+14
+
+The optimization has a nested structure: for any fixed cutoffs, the within-tier mechanisms are
+determined by solving 𝐾 independent Mussa-Rosen problems with cost 𝑐˜avg (·; 𝑔𝑘 ) (Proposition 4.5);
+the cutoffs are then chosen to satisfy the fixed-point conditions of Theorem 4.4. Joint optimality
+follows from the envelope theorem: at the within-tier optimum, the cutoff FOC correctly captures the
+marginal effect of shifting types between tiers, and at the optimal cutoffs, no marginal reallocation
+improves total profit.
+□
+Remark 1 (Continuous Gamma with Few Tiers). In practice, cloud providers offer only 2–4
+hardware tiers (e.g., economy, standard, premium). Our numerical results in Section 5 confirm that
+even 𝐾 = 2 tiers yield profit gains of 26–66% over the best single-tier alternative in favorable parameter
+regimes.
+5
+
+Numerical Analysis
+
+We evaluate the mechanism of Sections 3.2–4 through two exercises: (i) a parameter sweep verifying
+the separation condition (Assumption 5) across 105 configurations, and (ii) a profit comparison
+quantifying gains from two-tier pricing (Theorem 4.6).
+5.1
+
+Methodology
+
+All computations use the latency model calibrated to Llama3-70B—representative of attention-based,
+autoregressive LLMs—on two GPU tiers: H100 (economy) and B200 (premium), at 8-GPU cluster
+rates ($18.32/hr for 8× H100, $30.32/hr for 8× B200; price ratio 1.66×), matching the multi-GPU
+configuration from which our measurements derive.4 Quality follows 𝑞 = 𝑥 𝛼 𝑦 𝛽 𝜇𝛾 where 𝜇 = 𝐿max −𝐿
+𝛾] with 𝛾 = 0.10 and 𝛾¯ = min(1 − 𝛼 − 𝛽 − 0.01, 0.45).
+is latency slack, and 𝛾 ∼ Uniform[𝛾, ¯
+We sweep over 7 production-function configurations ((𝛼, 𝛽) ∈ {0.15, 0.30, 0.45} × {0.20, 0.40} ∪
+{(0.15, 0.60)}), 5 latency budgets (𝐿max ∈ {10, 30, 50, 80, 100} seconds), and 3 WTP ranges ([𝑤, ¯
+𝑤] ∈
+{[5, 10], [50, 100], [500, 1000]} u$). For separation, we maximize surplus over (𝑥, 𝑦, 𝐵) at each 𝛾
+via Nelder-Mead with multiple restarts and verify strict monotonicity of Δ𝑞(𝛾). For profits, we
+build averaged cost functions 𝑐˜avg (𝑞; 𝑔𝑘 ) via numerical integration over 𝛾, solve the within-tier
+′ (𝑞) with virtual values 𝜑 (𝑤) = 2𝑤 − 𝑤
+¯ (Proposition 4.5), and
+Mussa-Rosen condition 𝜑 (𝑤) = 𝑐˜avg
+∗
+determine 𝛾 by marginal-type indifference (Theorem 4.6).
+5.2
+
+Quality-Difference Separation
+
+We test whether the quality gap Δ𝑞(𝛾) ≡ 𝑞 ∗ (𝑤; 𝑔𝐵200, 𝛾) − 𝑞 ∗ (𝑤; 𝑔𝐻 100, 𝛾) is strictly increasing in
+𝛾—the condition required for incentive-compatible tier assignment (Assumption 5). Table 1 reports
+the fraction of WTP ranges satisfying this condition for each (𝛼, 𝛽, 𝐿max ) configuration.
+Overall, 87 of 105 configurations (82.9%) satisfy the separation condition. The 18 failures are
+concentrated in two regimes: (i) the 𝑤 ∼ 𝑈 [5, 10] range accounts for 15 failures across four (𝛼, 𝛽)
+pairs, and (ii) (𝛼, 𝛽) = (0.15, 0.20) at 𝑤 ∼ 𝑈 [50, 100] accounts for the remaining 3. The 𝑤 ∼ 𝑈 [5, 10]
+failures reflect extreme cost constraint: at cluster-level rates ($18.32/hr), buyers with WTP of $5–10
+per unit retain insufficient surplus for meaningful quality differentiation between tiers. Excluding
+this cost-constrained range, the separation condition holds in 67 of 70 configurations (95.7%) at
+𝑤 ≥ 𝑈 [50, 100]—the economically relevant regime where buyers can sustain positive margins on
+either tier.
+The condition’s sensitivity to the cost-to-WTP ratio, rather than production-function weights
+alone, is confirmed by a comparison at single-GPU rates. At $2.29/hr (H100) and $3.79/hr (B200)—
+preserving the 1.66× cost ratio but reducing absolute costs by 8×—separation extends to 102 of
+4 Costs from Lambda’s cloud pricing as of 2/9/2026 [Lambda.ai, 2026].
+
+15
+
+Ian McDougall and Karthikeyan Sankaralingam
+
+Table 1. Verification of separation condition (Assumption 5) at cluster-level rates. Each cell reports the fraction
+of WTP ranges ([𝑤, ¯
+𝑤] ∈ {[5, 10], [50, 100], [500, 1000]}) for which the condition holds. ✓ denotes 3/3.
+
+𝐿max = 10 𝐿max = 30 𝐿max = 50 𝐿max = 80 𝐿max = 100
+
+Total
+
+𝛼
+
+𝛽
+
+0.15
+0.15
+0.15
+0.30
+0.30
+0.45
+0.45
+
+0.20
+0.40
+0.60
+0.20
+0.40
+0.20
+0.40
+
+2/3
+✓
+✓
+✓
+✓
+✓
+✓
+
+2/3
+2/3
+✓
+✓
+✓
+✓
+✓
+
+1/3
+2/3
+✓
+2/3
+2/3
+✓
+✓
+
+1/3
+2/3
+✓
+2/3
+2/3
+✓
+✓
+
+1/3
+2/3
+✓
+2/3
+2/3
+✓
+✓
+
+7/15
+11/15
+15/15
+12/15
+12/15
+15/15
+15/15
+
+Overall
+
+20/21
+
+19/21
+
+16/21
+
+16/21
+
+16/21
+
+87/105
+
+Table 2. Two-tier vs. single-tier mechanism profit (𝛼 = 0.30, 𝛽 = 0.20, 𝑤 ∼ 𝑈 [50, 100] u$, cluster rates).
+
+𝐿max (s)
+
+𝛾∗
+
+H100-only
+
+B200-only
+
+Two-tier
+
+Best single
+
+Gain
+
+10
+30
+50
+80
+100
+
+0.147
+0.246
+0.249
+0.279
+0.262
+
+4,978.3
+4,908.5
+5,826.6
+7,388.8
+7,557.3
+
+3,876.6
+5,539.5
+6,521.3
+7,502.6
+7,729.1
+
+3,985.8
+6,985.6
+8,921.9
+11,426.6
+12,816.5
+
+H100
+B200
+B200
+B200
+B200
+
+−19.9%
++26.1%
++36.8%
++52.3%
++65.8%
+
+105 configurations (97.1%), with the five remaining failures confined to (𝛼, 𝛽) = (0.15, 0.20) at high
+𝐿max . The lower hardware costs give buyers more surplus headroom, allowing quality differences
+between tiers to emerge even at low WTP.
+The B200 thus acts as a premium technology in the sense of Section 2: its advantage concentrates
+in the decode phase (𝑑𝐵200 /𝑑𝐻 100 = 0.68), which governs per-token latency. High-𝛾 buyers operate
+at lower batch sizes to preserve responsiveness—precisely where the B200’s decode advantage is
+most pronounced—yielding quality-gap monotonicity (𝜕Δ𝑞/𝜕𝛾 > 0): the single-crossing condition
+that enables incentive-compatible self-selection into tiers.
+5.3
+
+Mechanism Profit Comparison
+
+We quantify the profit gains from two-tier mechanism design relative to the best single-tier alternative. Table 2 reports expected mechanism profits at (𝛼, 𝛽) = (0.30, 0.20) with 𝑤 ∼ 𝑈 [50, 100] u$,
+a configuration where hardware costs are a meaningful fraction of per-request value. Separation
+holds at all five latency budgets for this parameter pair (Table 1).
+At 𝐿max = 10 seconds, the tight latency budget compresses the feasible quality region, and
+the H100’s lower hourly rate outweighs the B200’s decode advantage; the mechanism correctly
+identifies single-tier pricing as optimal. As the latency budget relaxes beyond 30 seconds, the
+B200’s latency advantage compounds nonlinearly through the slack term 𝜇𝛾 , and two-tier gains
+grow monotonically from +26.1% to +65.8%. The optimal cutoff 𝛾 ∗ ≈ 0.25 assigns roughly half of
+time-preference types to each tier, reflecting the near-even market split visible in the single-tier
+profit columns where the best single tier transitions from H100 to B200 between 𝐿max = 10 and
+𝐿max = 30.
+
+Ian McDougall and Karthikeyan Sankaralingam
+
+16
+
+The result extends beyond a single parameter point. At (𝛼, 𝛽) = (0.15, 0.40) with the same WTP
+range, the mechanism also yields positive gains up to +30.6% at 𝐿max = 100, confirming that the
+qualitative finding is robust across production-function specifications where separation holds. At
+higher quality weights (𝛼 ≥ 0.45, or 𝛽 ≥ 0.40 with 𝛼 ≥ 0.30), the B200 dominates all buyer types and
+single-tier pricing is optimal—the mechanism correctly identifies that tiering provides no additional
+value when the premium tier’s superiority is so comprehensive that the economy tier serves no
+profitable segment.
+Sensitivity to buyer valuations. Table 2 reports results at 𝑤 ∼ 𝑈 [50, 100] u$, where hardware
+costs are a meaningful fraction of per-request value. We additionally sweep over 𝑤 ∼ 𝑈 [500, 1000]
+and 𝑤 ∼ 𝑈 [5, 10]. At higher WTP (𝑤 ∼ 𝑈 [500, 1000]), gains turn negative at most latency budgets:
+the premium tier dominates all buyer types, and within-tier 𝑤-screening alone captures most
+available surplus, leaving little incremental value from cross-tier allocation. Marginal positive gains
+(+0.8–1.5%) emerge only at 𝐿max ≥ 80, where sufficient slack accumulates for the economy tier to
+serve a profitable segment. At lower WTP (𝑤 ∼ 𝑈 [5, 10]), hardware costs dwarf buyer valuations,
+and the separation condition fails at 𝐿max ≥ 50 for several (𝛼, 𝛽) configurations—the extreme cost
+constraint leaves insufficient surplus for meaningful quality differentiation between tiers.
+The mechanism’s profitability is governed by the cost-to-WTP ratio rather than absolute scales.
+At single-GPU rates ($2.29/hr for H100, $3.79/hr for B200)—preserving the 1.66× cost ratio but
+reducing absolute costs by 8×—the 𝑤 ∼ 𝑈 [5, 10] range yields gains of 29–64%, nearly matching
+the 𝑤 ∼ 𝑈 [50, 100] gains at cluster rates because the cost-to-WTP ratio is comparable. This
+scale invariance implies that further scaling to larger clusters would shift the profitable region to
+proportionally higher per-request values, making tiered pricing increasingly relevant as inference
+infrastructure grows.
+These results identify a design-relevant regime for GPU tiering: workloads with moderate compute intensity and meaningful latency sensitivity, where the premium tier’s decode advantage
+creates differentiation without rendering the economy tier obsolete. More broadly, the numerical
+analysis validates the core theoretical prediction: hardware heterogeneity in latency-critical dimensions generates the quality differentiation necessary for profitable market segmentation through
+the screening mechanism of Section 4.
+Sensitivity to Price Fluctuations. To test robustness to price fluctuations, we additionally ran
+separation and profit experiments at single-GPU price points where each tier’s hourly rate was
+independently scaled by 0.25×–2.00× its baseline, yielding 38 valid configurations at (𝛼, 𝛽) =
+(0.30, 0.20) with 𝑤 ∼ 𝑈 [5, 10]. The separation condition holds in 135 of 185 checks (73.0%), with
+failures concentrated at high price ratios (≳ 3×) and high latency budgets (𝐿max ≥ 80), though
+elevated absolute cost levels also erode separation even at moderate ratios. Two-tier profit gains
+are positive across all 38 configurations at 𝐿max ≥ 30, with maximum gains of 24–67% depending
+on the price pair; at 𝐿max = 10, the tight latency constraint favors single-tier pricing regardless of
+the price configuration.
+6
+
+Conclusion
+
+Our central finding is that hardware heterogeneity has economic value beyond engineering efficiency.
+Discrete hardware tiers enable screening on time preferences that would be impossible with homogeneous infrastructure: the quality-difference separation condition—driven by log-supermodularity
+of preferences and diminishing speedup in hardware performance—induces self-selection across
+tiers, reducing an intractable three-dimensional screening problem to standard one-dimensional
+screening within each tier (Theorem 3.1). Numerically, the separation condition holds in 83% of
+tested parameter configurations (96% at economically relevant WTP scales). When hardware costs
+
+Ian McDougall and Karthikeyan Sankaralingam
+
+17
+
+are a significant fraction of per-request value, the optimal two-tier mechanism yields profit gains of
+26–66% over the best single-tier alternative; at higher valuations, generational hardware improvements leave single-tier pricing optimal (Section 5). These results provide theoretical grounding for
+the tiered “Provisioned Throughput” offerings observed across cloud inference markets.
+Limitations and Extensions. Several assumptions merit scrutiny. Our independence assumption
+(Assumption 1) rules out plausible correlations between willingness-to-pay and time sensitivity;
+correlated multi-dimensional screening would yield richer predictions about cross-subsidization.
+The monopolist assumption abstracts from competition, though the separation result derives from
+buyer preferences (single-crossing in 𝛾) rather than market power and would constrain prices but
+not menu structure under competition. We also abstract from queueing dynamics and capacity
+constraints; incorporating stochastic demand would connect the framework to dynamic pricing
+and congestion externalities. Finally, our discrete-tier approximation with 𝐾 = 2 tiers yields
+substantial profit gains in favorable regimes (Remark 1), but characterizing optimal mechanisms
+with continuous tier choices remains open.
+Our empirical calibration is limited to a single hardware pair (H100 and B200) with a modest
+decode-latency differential (𝑑𝐵200 /𝑑𝐻 100 = 0.68). As discussed in Section 5.3, tiering gains are largest
+when hardware costs constitute a significant fraction of per-request value and vanish when the
+premium tier uniformly dominates. Because generational GPU upgrades tend to improve all latency
+dimensions simultaneously, they compress the cost-performance tradeoff that sustains profitable
+tiering. Extending the mechanism to higher-WTP markets may require large GPU clusters or
+architecturally specialized hardware pairings which specifically optimize for inference latency, a
+prediction testable as inference-specific accelerators (e.g., memory-bandwidth-optimized decode
+chips) enter the market.
+Three extensions are natural: (i) learning models where buyers discover time preferences through
+usage, explaining observed tier-switching behavior; (ii) including specialized inference hardware
+as the ’premium’ hardware; and (iii) updated latency functions for evolving architectures (speculative decoding, diffusion-based generation), which alter the cost function’s form but preserve the
+throughput–latency tradeoff the separation theorem exploits.
+References
+Daron Acemoglu and Pascual Restrepo. 2024. Learning to Teach: The Value of Human Expertise in Hybrid AI Systems.
+American Economic Review: Papers & Proceedings 114 (2024), 427–432.
+Ajay Agrawal, Joshua Gans, and Avi Goldfarb. 2022. Power and Prediction: The Disruptive Economics of Artificial Intelligence.
+Harvard Business Press.
+Anthropic PBC. 2026. Speed up responses with fast mode. https://code.claude.com/docs/en/fast-mode
+Mark Armstrong. 1996. Multiproduct Nonlinear Pricing. Econometrica 64, 1 (1996), 51–75.
+Mark Armstrong and Jean-Charles Rochet. 1999. Multi-dimensional screening: A user’s guide. European Economic Review
+43, 4-6 (1999), 959–979.
+Dirk Bergemann, Alessandro Bonatti, and Alex Smolin. 2025. The economics of large language models: Token allocation,
+fine-tuning, and optimal pricing. arXiv preprint arXiv:2502.07736 (2025).
+Kimbo Chen, Dylan Patel, Daniel Nishball, Cam Quilici, and Cheang Kang Wen. 2025. InferenceMAXTM: Open source
+inference benchmarking. SemiAnalysis (Oct 2025). https://newsletter.semianalysis.com/p/inferencemax-open-sourceinference
+Michael Davies, Neal Crago, Karthikeyan Sankaralingam, and Christos Kozyrakis. 2025. LIMINAL: Exploring The Frontiers
+of LLM Decode Performance. arXiv preprint arXiv:2507.14397 (2025).
+Laurens Debo, Christine Parlour, and Uday Rajan. 2012. Signalling Quality via Queues. Management Science 58, 5 (2012),
+876–891.
+Paul Duetting, Vahab Mirrokni, Renato Paes Leme, Haifeng Xu, and Song Zuo. 2024. Mechanism design for large language
+models. In Proceedings of the ACM Web Conference 2024. 144–155.
+Amos Fiat, Kira Goldner, Anna R Karlin, and Elias Koutsoupias. 2016. The fedex problem. In Proceedings of the 2016 ACM
+Conference on Economics and Computation. 21–22.
+
+Ian McDougall and Karthikeyan Sankaralingam
+
+18
+
+Groq, Inc. 2024.
+Inference Speed Is the Key to Unleashing AI’s Potential.
+https://cdn.sanity.io/files/
+chol0sk5/production/85f04a42fb0711b6009a024da43689667efadd9a.pdf. https://cdn.sanity.io/files/chol0sk5/production/
+85f04a42fb0711b6009a024da43689667efadd9a.pdf White paper; Groq AI inference technology.
+Arpan Gujarati, Reza Karimi, Safya Alzayat, Wei Hao, Antoine Kaufmann, Ymir Vigfusson, and Jonathan Mace. 2020. Serving
+DNNs like clockwork: Performance predictability from the bottom up. In 14th USENIX Symposium on Operating Systems
+Design and Implementation (OSDI 20). 443–462.
+Refael Hassin and Moshe Haviv. 2003. To Queue or Not to Queue: Equilibrium Behavior in Queueing Systems. Springer Science
+& Business Media.
+Norman P Jouppi, Cliff Young, Nishant Patil, David Patterson, Gaurav Agrawal, Raminder Bajwa, Sarah Bates, Suresh Bhatia,
+Nan Boden, Al Borchers, et al. 2017. In-datacenter performance analysis of a tensor processing unit. In Proceedings of the
+44th Annual International Symposium on Computer Architecture (ISCA). 1–12.
+Anton Korinek. 2024. Scenarios for the Transition to AGI. NBER Working Paper 32255 (2024).
+Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph Gonzalez, Hao Zhang, and
+Ion Stoica. 2023. Efficient memory management for large language model serving with pagedattention. In Proceedings of
+the 29th symposium on operating systems principles. 611–626.
+Lambda.ai. 2026. https://lambda.ai/pricing
+Xiaoyu Ma and David Patterson. 2026. Challenges and Research Directions for Large Language Model Inference Hardware.
+arXiv preprint arXiv:2601.05047 (2026). arXiv:2601.05047 [cs.AR] https://arxiv.org/abs/2601.05047 Accepted for publication
+by IEEE Computer.
+Eric Maskin and John Riley. 1984. Monopoly with Incomplete Information. RAND Journal of Economics 15, 2 (1984), 171–196.
+Haim Mendelson and Seungjin Whang. 1990. Optimal Incentive-Compatible Priority Pricing for the M/M/1 Queue. Operations
+Research 38, 5 (1990), 870–883.
+Paul Milgrom and Ilya Segal. 2002. Envelope Theorems for Arbitrary Choice Sets. Econometrica 70, 2 (2002), 583–601.
+Michael Mussa and Sherwin Rosen. 1978. Monopoly and product quality. Journal of Economic theory 18, 2 (1978), 301–317.
+Roger B Myerson. 1981. Optimal Auction Design. Mathematics of Operations Research 6, 1 (1981), 58–73.
+Stephen Nellis. 2025. Nvidia, joining Big Tech deal spree, to license Groq technology, hire executives. Reuters (Dec 2025).
+https://www.reuters.com/business/nvidia-buy-ai-chip-startup-groq-about-20-billion-cnbc-reports-2025-12-24/
+Andrew Odlyzko. 1999. Paris Metro Pricing for the Internet. Proceedings of the 1st ACM conference on Electronic commerce
+(1999), 140–147.
+Pratyush Patel, Esha Choukse, Chaojie Zhang, Aashaka Shah, Íñigo Goiri, Saeed Maleki, and Ricardo Bianchini. 2024.
+Splitwise: Efficient generative llm inference using phase splitting. In 2024 ACM/IEEE 51st Annual International Symposium
+on Computer Architecture (ISCA). IEEE, 118–132.
+Jean-Charles Rochet and Philippe Choné. 1998. Ironing, Sweeping, and Multidimensional Screening. Econometrica 66, 4
+(1998), 783–826.
+Hal R Varian. 2000. Versioning information goods. Internet publishing and beyond: The economics of digital information and
+intellectual property (2000), 190–202.
+Gyeong-In Yu, Joo Seong Jeong, Geon-Woo Kim, Soojeong Kim, and Byung-Gon Chun. 2022. Orca: A Distributed Serving
+System for OPT Models. In 16th USENIX Symposium on Operating Systems Design and Implementation (OSDI 22). 521–538.
+Hong Zhang, Yupeng Tang, Anurag Khandelwal, and Ion Stoica. 2023. Shepherd: Serving DNNs in the wild. In 20th USENIX
+Symposium on Networked Systems Design and Implementation (NSDI 23). 787–808.
+
+A
+
+Latency Function Estimation
+
+This appendix provides details on the estimation of the latency function (3) used throughout the
+analysis.
+A.1 Computational Phases of LLM Inference
+LLM inference decomposes into two distinct computational phases with different resource constraints:
+Prefill phase (compute-bound). This phase processes the input context and generates the first
+output token. The primary computational burden is the self-attention mechanism, which requires
+𝑂 (𝑛 2 ) operations in the input sequence length 𝑛. For transformer architectures, attention computation dominates prefill time, particularly for long contexts. In continuous-batching inference
+
+19
+
+Ian McDougall and Karthikeyan Sankaralingam
+
+systems (e.g., vLLM, TensorRT-LLM), prefill requests are processed individually to avoid interference between compute-bound operations. Consequently, prefill latency depends only on input
+token count 𝑥, not on batch size: 𝐿prefill = 𝑃 (𝑥) = 𝑎𝑥 2 +𝑏𝑥 +𝑐. The quadratic term captures attention
+computation, the linear term captures FFN and projection layers, and the constant captures fixed
+overhead (kernel launch, synchronization).
+Decode phase (memory-bandwidth-bound). This phase generates all subsequent tokens autoregressively. Each token generation requires loading model parameters from HBM—the dominant
+cost—plus accessing the KV-cache for attention. The base decode cost 𝑑 per output token reflects
+weight loading and is largely independent of batch size until compute saturation. The batchdependent terms 𝑒𝐵 and 𝑓 𝐵𝑥 capture per-batch scheduling overhead and KV-cache attention costs
+that scale with both batch size and context length. Total decode time scales linearly in output
+tokens: 𝐿decode = 𝑦 · (𝑑 + 𝑒𝐵 + 𝑓 𝐵𝑥).
+The combined latency is:
+𝐿 = 𝑃 (𝑥) + 𝑦 · 𝐺 (𝐵, 𝑥) = (𝑎𝑥 2 + 𝑏𝑥 + 𝑐) + 𝑦 (𝑑 + 𝑒𝐵 + 𝑓 𝐵𝑥).
+
+(30)
+
+A.2 Simulation Methodology
+Hardware configurations. We run Llama3-70B on two GPU generations:
+• H100 (economy tier): 80GB HBM3, 3.35 TB/s memory bandwidth, 989 TFLOPS FP16
+• B200 (premium tier): 180GB HBM3e, 8 TB/s memory bandwidth, 2250 TFLOPS FP16
+Parameter ranges. We vary:
+• Batch size 𝐵 ∈ {1, 2, 4, 8, 16, 32, 64}
+• Input context 𝑥 ∈ {1024, 2048, 4096, 8192} tokens
+A.3 Regression Specification
+We fit the parametric form:
+𝐿(𝐵, 𝑥, 𝑦, 𝑔) = 𝑎𝑔 𝑥 2 + 𝑏𝑔 𝑥 + 𝑐𝑔 + 𝑦 (𝑑𝑔 + 𝑒𝑔 𝐵 + 𝑓𝑔 𝐵𝑥)
+via nonlinear least squares, minimizing:
+∑︁
+(𝐿simulated (𝐵, 𝑥, 𝑦) − 𝐿model (𝐵, 𝑥, 𝑦)) 2
+(𝐵,𝑥,𝑦) ∈ D
+
+where D is the grid of simulated configurations.
+A.4
+
+Estimated Parameters
+Parameter
+
+H100 (𝑔𝐿 )
+
+B200 (𝑔𝐻 )
+
+1.077 × 10−9
+
+3.530 × 10−10
+1.243 × 10−5
+5.210 × 10−2
+8.147 × 10−2
+3.843 × 10−5
+6.848 × 10−9
+
+0.9951
+
+0.9967
+
+𝑎𝑔 (prefill quadratic)
+𝑏𝑔 (prefill linear)
+2.815 × 10−5
+𝑐𝑔 (prefill constant)
+3.344 × 10−2
+𝑑𝑔 (decode base)
+1.191 × 10−2
+𝑒𝑔 (decode batch overhead)
+3.398 × 10−5
+𝑓𝑔 (decode KV-cache attention) 5.551 × 10−9
+𝑅2
+
+Table 3. Estimated latency function parameters. All coefficients are in seconds.
+
+(31)
+
+(32)
+
+Ian McDougall and Karthikeyan Sankaralingam
+
+20
+
+Both fits achieve 𝑅 2 > 0.99, indicating the parametric form captures the essential structure of
+inference latency across the operational range.
+B
+
+Proof of Theorem 3.1
+Proof. Step 1: Incentive constraints. Fix 𝑤 > 0. For type 𝛾𝐻 to prefer 𝑔𝐻 :
+𝑤 · 𝑞𝑔𝐻 (𝛾𝐻 ) − 𝑇𝑔𝐻 ≥ 𝑤 · 𝑞𝑔𝐿 (𝛾𝐻 ) − 𝑇𝑔𝐿 .
+
+(33)
+
+𝑤 · 𝑞𝑔𝐿 (𝛾𝐿 ) − 𝑇𝑔𝐿 ≥ 𝑤 · 𝑞𝑔𝐻 (𝛾𝐿 ) − 𝑇𝑔𝐻 .
+
+(34)
+
+For type 𝛾𝐿 to prefer 𝑔𝐿 :
+
+Step 2: Existence of separating prices. Combining these constraints, prices satisfying both IC
+conditions exist if and only if:
+𝑤 [𝑞𝑔𝐻 (𝛾𝐿 ) − 𝑞𝑔𝐿 (𝛾𝐿 )] ≤ 𝑇𝑔𝐻 − 𝑇𝑔𝐿 ≤ 𝑤 [𝑞𝑔𝐻 (𝛾𝐻 ) − 𝑞𝑔𝐿 (𝛾𝐻 )].
+
+(35)
+
+This interval is non-empty precisely when condition (9) holds, which is independent of 𝑤. For any
+given 𝑤, any price gap 𝑇𝑔𝐻 − 𝑇𝑔𝐿 in this interval achieves separation; in the optimal mechanism
+(Theorem 3.7), the within-tier Mussa-Rosen schedules supply the requisite 𝑤-dependent transfers.
+□
+C Scale-Up Domain Architecture as Tier Differentiation
+Hardware tier differentiation extends beyond GPU generation (e.g., H100 vs. B200) to include
+scale-up domain architecture—the manner in which multiple GPUs are interconnected within a
+single inference unit. Modern LLM inference employs tensor parallelism: decomposing a single
+model’s computation across multiple tightly-coupled GPUs that operate synchronously on different
+portions of the model’s parameters. This enables strong scaling for individual inference tasks,
+distinct from the weak scaling achieved by replicating entire models across independent GPU
+clusters or pipeline parallelism (which spreads layers across devices but does not reduce latency
+for a single request).
+The economic significance lies in the cost-performance tradeoff of interconnect technology.
+Consider 8 GPUs of identical specification: connected via standard PCIe buses (bandwidth ∼32
+GB/s per link), cross-GPU communication creates severe bottlenecks that preclude effective tensor
+parallelism, forcing each GPU to operate independently on separate inference requests. Connected
+via high-bandwidth interconnects such as NVLink switches (bandwidth ∼900 GB/s bidirectional
+per link in NVLink 4.0), the same 8 GPUs can act as a coherent computational unit, partitioning
+the model’s attention matrices and linear transformations across devices. For the computationally
+expensive attention phase—which dominates prefill latency and scales quadratically in input length—
+this parallelization delivers near-linear speedup: an 8-GPU tensor-parallel configuration can achieve
+approximately 5× faster time-to-first-token compared to a single GPU processing the same request
+[Davies et al., 2025].
+This scale-up capability comes at substantial capital cost: NVLink switches, high-speed interconnect fabrics (NVSwitch, InfiniBand), and the engineering integration required to maintain
+coherence across dozens of devices represent significant incremental investment beyond the GPUs
+themselves. Modern scale-up domains range from 8-GPU nodes (common in cloud offerings like
+AWS p5.48xlarge instances with 8× H100) to 72-GPU superblocks (Nvidia’s DGX SuperPOD NVL72
+architecture). Each additional tier of scale-up—8-GPU vs. 16-GPU vs. 72-GPU configurations—
+yields progressively lower per-request latency but at higher per-unit-time cost 𝑐𝑔 , creating a natural
+hierarchy of hardware tiers differentiated by scale-up capacity rather than solely by GPU generation.
+
+Ian McDougall and Karthikeyan Sankaralingam
+
+21
+
+From a pricing perspective, these scale-up tiers provide an additional source of cost-latency
+tradeoff consistent with the model’s structure: sellers invest in expensive interconnect infrastructure
+to offer low-latency inference that would be uneconomical with weak scaling alone. Buyers with
+high time preference 𝛾 value these scale-up-enabled tiers disproportionately, since the latency
+reduction afforded by tensor parallelism compounds with their 𝛾 exponent in the production
+function. Scale-up domain architecture thus exemplifies the architectural specialization discussed
+in Section 5: tiers differentiated by infrastructure topology rather than GPU generation, creating
+complementary operating regimes that the separation theorem can exploit.
+D
+
+Derivation of Cost Function Derivatives
+
+This appendix provides the detailed derivation of the first and second derivatives of the per-task
+cost function 𝑐˜∗ (𝑞) used in the proof of Theorem 3.3.
+D.1 Setup and Notation
+Recall the key definitions:
+• Latency function: 𝐿 = 𝐵 · 𝐷 (𝑥, 𝑦) + 𝐹 (𝑥, 𝑦) where
+𝐷 (𝑥, 𝑦) = 𝑦 (𝑒 + 𝑓 𝑥)
+2
+
+𝐹 (𝑥, 𝑦) = 𝑎𝑥 + 𝑏𝑥 + 𝑐 + 𝑦𝑑
+• Latency slack: 𝜇 ≡ 𝐿𝑚𝑎𝑥 − 𝐿
+• Production constraint: 𝑥 𝛼 𝑦 𝛽 𝜇𝛾 = 𝑞
+• Numerator function: 𝑁 ≡ 𝐿𝑚𝑎𝑥 − 𝐹 (𝑥, 𝑦) − 𝜇
+From the production constraint, the required slack to achieve quality 𝑞 is:
+
+
+𝑞 1/𝛾
+𝜇= 𝛼 𝛽
+= 𝑞 1/𝛾 𝑥 −𝛼/𝛾 𝑦 −𝛽/𝛾
+𝑥 𝑦
+
+(36)
+(37)
+
+(38)
+
+From 𝐿 = 𝐵𝐷 + 𝐹 and 𝜇 = 𝐿𝑚𝑎𝑥 − 𝐿, the batch size is determined by:
+𝐵=
+
+𝐿𝑚𝑎𝑥 − 𝜇 − 𝐹 (𝑥, 𝑦) 𝑁
+=
+𝐷 (𝑥, 𝑦)
+𝐷
+
+(39)
+
+𝑐˜ =
+
+𝑐𝑔 𝐿 𝑐𝑔 𝐿 · 𝐷
+=
+𝐵
+𝑁
+
+(40)
+
+𝑐˜ =
+
+𝑐𝑔 (𝐿𝑚𝑎𝑥 − 𝜇)𝐷
+𝑁
+
+(41)
+
+The per-task cost is:
+
+Since 𝐿 = 𝐿𝑚𝑎𝑥 − 𝜇:
+
+D.2
+
+First Derivative (Marginal Cost)
+
+We apply the envelope theorem [Milgrom and Segal, 2002]: at the optimum (𝑥 ∗, 𝑦 ∗ ), the derivative
+of the minimized cost with respect to 𝑞 equals the partial derivative of the cost function with respect
+to 𝑞, holding (𝑥, 𝑦) fixed at their optimal values.
+Step 1: Compute 𝜕𝜇/𝜕𝑞.
+From equation (38):
+𝜕𝜇 1 1/𝛾 −1 −𝛼/𝛾 −𝛽/𝛾
+𝜇
+1
+= 𝑞
+𝑥
+𝑦
+=
+· 𝑞 1/𝛾 𝑥 −𝛼/𝛾 𝑦 −𝛽/𝛾 =
+𝜕𝑞 𝛾
+𝛾𝑞
+𝛾𝑞
+Step 2: Compute 𝜕𝑁 /𝜕𝑞.
+
+(42)
+
+Ian McDougall and Karthikeyan Sankaralingam
+
+22
+
+Since 𝑁 = 𝐿𝑚𝑎𝑥 − 𝐹 (𝑥, 𝑦) − 𝜇 and 𝐹 (𝑥, 𝑦) does not depend on 𝑞 (holding (𝑥, 𝑦) fixed):
+𝜕𝜇
+𝜇
+𝜕𝑁
+=−
+=−
+𝜕𝑞
+𝜕𝑞
+𝛾𝑞
+
+(43)
+
+Step 3: Apply the quotient rule to ˜𝑐.
+From equation (41), with 𝐷 and 𝐹 treated as constants (holding (𝑥, 𝑦) fixed):
+
+
+𝜕𝑐˜
+𝜕 𝐿𝑚𝑎𝑥 − 𝜇
+= 𝑐𝑔 𝐷 ·
+𝜕𝑞
+𝜕𝑞
+𝑁
+ − 𝜕𝜇 · 𝑁 − (𝐿
+𝜕𝑁 
+ 𝜕𝑞
+𝑚𝑎𝑥 − 𝜇) · 𝜕𝑞 
+
+= 𝑐𝑔 𝐷 
+
+𝑁2
+
+
+
+
+Substituting equations (42) and (43):
+
+
+ 𝜇
+𝜇 
+
+
+−
+·
+𝑁
+−
+(𝐿
+−
+𝜇)
+·
+−
+𝑚𝑎𝑥
+𝛾𝑞 
+𝜕𝑐˜
+ 𝛾𝑞
+= 𝑐𝑔 𝐷 
+
+
+
+𝜕𝑞
+𝑁2
+
+
+
+
+ − 𝜇𝑁 + (𝐿𝑚𝑎𝑥 −𝜇 )𝜇 
+ 𝛾𝑞
+
+𝛾𝑞
+
+= 𝑐𝑔 𝐷 
+
+2
+𝑁
+
+
+
+
+𝑐𝑔 𝐷𝜇
+[−𝑁 + (𝐿𝑚𝑎𝑥 − 𝜇)]
+=
+𝛾𝑞𝑁 2
+
+(44)
+
+(45)
+
+(46)
+
+(47)
+
+(48)
+
+Step 4: Simplify using the definition of 𝑁 .
+Since 𝑁 = 𝐿𝑚𝑎𝑥 − 𝐹 (𝑥, 𝑦) − 𝜇:
+(𝐿𝑚𝑎𝑥 − 𝜇) − 𝑁 = (𝐿𝑚𝑎𝑥 − 𝜇) − (𝐿𝑚𝑎𝑥 − 𝐹 (𝑥, 𝑦) − 𝜇) = 𝐹 (𝑥, 𝑦)
+
+(49)
+
+𝜕𝑐˜ 𝑐𝑔 𝐷𝜇𝐹
+=
+𝜕𝑞
+𝛾𝑞𝑁 2
+
+(50)
+
+Therefore:
+
+Since 𝑐𝑔 > 0, 𝐷 = 𝑦 (𝑒 + 𝑓 𝑥) > 0 for 𝑦 > 0 and 𝑒 + 𝑓 > 0, 𝜇 > 0, 𝐹 = 𝑎𝑥 2 + 𝑏𝑥 + 𝑐 + 𝑦𝑑 > 0 for
+𝑥, 𝑦 > 0, 𝛾 > 0, 𝑞 > 0, and 𝑁 > 0 on the feasible region, we have 𝜕 ˜𝑐/𝜕𝑞 > 0.
+□
+D.3
+
+Second Derivative (Convexity)
+
+We differentiate equation (50) with respect to 𝑞.
+Step 1: Rewrite the first derivative.
+𝜇
+𝜕𝑐˜ 𝑐𝑔 𝐷𝐹
+=
+·
+𝜕𝑞
+𝛾
+𝑞𝑁 2
+Since 𝐷 and 𝐹 are held constant (functions of (𝑥, 𝑦) only), we need:
+
+
+𝜇
+𝜕 2𝑐˜ 𝑐𝑔 𝐷𝐹 𝜕
+=
+·
+𝜕𝑞 2
+𝛾
+𝜕𝑞 𝑞𝑁 2
+
+(51)
+
+(52)
+
+Step 2: Apply the quotient rule.
+Let 𝑢 = 𝜇 and 𝑣 = 𝑞𝑁 2 . Then:
+𝜕𝑢
+
+𝜕𝑣
+
+𝜕 h𝑢 i
+𝜕𝑞 · 𝑣 − 𝑢 · 𝜕𝑞
+=
+𝜕𝑞 𝑣
+𝑣2
+
+(53)
+
+Ian McDougall and Karthikeyan Sankaralingam
+
+23
+
+We have:
+𝜇
+𝜕𝑢 𝜕𝜇
+=
+=
+𝜕𝑞 𝜕𝑞 𝛾𝑞
+
+
+2𝜇𝑁
+𝜇
+𝜕𝑣
+𝜕
+𝜕𝑁
+2
+2
+2
+= 𝑁2 −
+= [𝑞𝑁 ] = 𝑁 + 𝑞 · 2𝑁 ·
+= 𝑁 + 2𝑞𝑁 · −
+𝜕𝑞 𝜕𝑞
+𝜕𝑞
+𝛾𝑞
+𝛾
+
+(54)
+(55)
+
+Step 3: Compute the numerator.
+
+
+𝜇
+2𝜇𝑁
+𝜕𝑣
+𝜕𝑢
+2
+2
+·𝑣 −𝑢 ·
+=
+· 𝑞𝑁 − 𝜇 · 𝑁 −
+𝜕𝑞
+𝜕𝑞 𝛾𝑞
+𝛾
+2𝑁
+𝜇𝑁 2
+2𝜇
+=
+− 𝜇𝑁 2 +
+𝛾
+𝛾
+
+
+2𝑁
+2𝜇
+1
+= 𝜇𝑁 2
+−1 +
+𝛾
+𝛾
+𝜇𝑁 2 (1 − 𝛾) 2𝜇 2 𝑁
+=
++
+𝛾
+𝛾
+𝜇𝑁
+[(1 − 𝛾)𝑁 + 2𝜇]
+=
+𝛾
+
+(56)
+(57)
+(58)
+(59)
+(60)
+
+Step 4: Assemble the second derivative.
+
+ 𝜇𝑁 [(1 − 𝛾)𝑁 + 2𝜇]
+𝜇
+𝜕
+𝛾
+=
+2
+𝜕𝑞 𝑞𝑁
+𝑞2 𝑁 4
+𝜇 [(1 − 𝛾)𝑁 + 2𝜇]
+=
+𝛾𝑞 2 𝑁 3
+
+(61)
+(62)
+
+Therefore:
+𝜕 2𝑐˜ 𝑐𝑔 𝐷𝐹 𝜇 [(1 − 𝛾)𝑁 + 2𝜇]
+=
+𝜕𝑞 2
+𝛾 2𝑞 2 𝑁 3
+Step 5: Verify positivity.
+All factors in the numerator and denominator are positive on the feasible region:
+• 𝑐𝑔 > 0 (GPU cost rate)
+• 𝐷 = 𝑦 (𝑒 + 𝑓 𝑥) > 0 for 𝑥, 𝑦 > 0 (since 𝑒 + 𝑓 > 0)
+• 𝐹 = 𝑎𝑥 2 + 𝑏𝑥 + 𝑐 + 𝑦𝑑 > 0 for 𝑥, 𝑦 > 0 (since 𝑐, 𝑑 > 0)
+• 𝜇 > 0 (positive latency slack required for positive quality)
+• (1 − 𝛾) > 0 since 𝛾 < 1 (by the constraint 𝛼 + 𝛽 + 𝛾 < 1)
+• 𝑁 > 0 (required for positive batch size; see equation (39))
+• 𝛾 > 0, 𝑞 > 0
+Therefore 𝜕 2 ˜𝑐/𝜕𝑞 2 > 0, establishing strict convexity of 𝑐˜∗ (𝑞).
+E
+
+(63)
+
+□
+
+Proof of Proposition 3.5
+Proof. By the envelope theorem, for IC to hold with equality at adjacent types:
+
+𝑑𝑈 ∗ (𝑤)
+= 𝑞 ∗ (𝑤)
+𝑑𝑤
+where 𝑈 ∗ (𝑤) = 𝑤 · 𝑞 ∗ (𝑤) − 𝑇 ∗ (𝑤) is the equilibrium utility.
+
+(64)
+
+24
+
+Ian McDougall and Karthikeyan Sankaralingam
+
+Integrating from the exclusion threshold where 𝑈 ∗ (𝑤) = 0:
+∫ 𝑤
+𝑞 ∗ (𝑘) 𝑑𝑘
+𝑈 ∗ (𝑤) =
+
+(65)
+
+𝑤
+
+Solving for transfers:
+∗
+
+∗
+
+∗
+
+∗
+
+∫ 𝑤
+
+𝑇 (𝑤) = 𝑤 · 𝑞 (𝑤) − 𝑈 (𝑤) = 𝑤 · 𝑞 (𝑤) −
+
+𝑞 ∗ (𝑘) 𝑑𝑘
+
+(66)
+
+𝑤
+
+□
+F
+
+Proof of Proposition 3.6
+
+Proof. Downward deviations. Type (𝑤, 𝑠) reporting 𝑠˜ < 𝑠 receives utility 𝑠˜ · 𝑢˜ ∗ (𝑤) < 𝑠 · 𝑢˜ ∗ (𝑤)
+since 𝑢˜ ∗ (𝑤) ≥ 0.
+Upward deviations. Type (𝑤, 𝑠) reporting ( ˜
+𝑤, ˜𝑠) with 𝑠˜ > 𝑠 receives 𝑠˜ allocations but values
+∗ = 𝑤𝑠/˜
+˜
+only 𝑠 tasks. The optimal deviation
+sets
+𝑤
+𝑠 (from the envelope condition), yielding payoff
+∫𝑤
+𝑠˜ · 𝑢˜ ∗ (𝑤𝑠/˜𝑠). Since 𝑢˜ (𝑤) = 𝑤 𝑞(𝑘), 𝑑𝑘 is convex with 𝑢˜ (𝑤) = 0 (extending by zero below 𝑤),
+convexity gives 𝑢˜ (𝑤𝑠/˜𝑠) ≤ (𝑠/˜𝑠) · 𝑢˜ ∗ (𝑤). Hence the deviation payoff is at most 𝑠 · 𝑢˜ ∗ (𝑤), the truthful
+utility.
+□
+G
+
+Proof of Proposition 4.2
+Proof. Step 1: Monotone selection. By Assumption 5, the quality gain Δ𝑞𝑘 (𝛾) ≡ 𝑞𝑔𝑘+1 (𝛾) −
+𝑞𝑔𝑘 (𝛾) is strictly increasing in 𝛾. Consider type 𝛾 ′ who prefers 𝑔𝑘+1 over 𝑔𝑘 , i.e., the quality gain
+justifies the price premium:
+𝑤 · Δ𝑞𝑘 (𝛾 ′ ) ≥ 𝑇𝑔𝑘+1 − 𝑇𝑔𝑘 .
+
+(67)
+
+For any 𝛾 ′′ > 𝛾 ′ , we have Δ𝑞𝑘 (𝛾 ′′ ) > Δ𝑞𝑘 (𝛾 ′ ) by Assumption 5, so:
+𝑤 · Δ𝑞𝑘 (𝛾 ′′ ) > 𝑤 · Δ𝑞𝑘 (𝛾 ′ ) ≥ 𝑇𝑔𝑘+1 − 𝑇𝑔𝑘 .
+
+(68)
+
+Hence 𝛾 ′′ also strictly prefers 𝑔𝑘+1 over 𝑔𝑘 . This establishes monotone selection: if any type prefers
+the higher tier, all higher types do as well.
+Step 2: Existence of cutoffs. Fix tier prices (𝑇𝑔1 , . . . ,𝑇𝑔𝐾 ) with 𝑇𝑔1 < 𝑇𝑔2 < · · · < 𝑇𝑔𝐾 . Define
+the indifference function for adjacent tiers:
+Φ𝑘 (𝛾) ≡ 𝑤 · Δ𝑞𝑘 (𝛾) − (𝑇𝑔𝑘+1 − 𝑇𝑔𝑘 ).
+
+(69)
+
+By Assumption 5, Φ𝑘 (𝛾) is strictly increasing in 𝛾. At 𝛾 = 𝛾, Φ𝑘 (𝛾) may be negative (low-𝛾 types
+prefer economy tier). At 𝛾 = ¯
+𝛾, Φ𝑘 ( ¯
+𝛾) may be positive (high-𝛾 types prefer premium tier). By the
+intermediate value theorem, there exists a unique 𝛾𝑘∗ ∈ [𝛾, ¯
+𝛾] such that Φ𝑘 (𝛾𝑘∗ ) = 0, with:
+• Types 𝛾 < 𝛾𝑘∗ have Φ𝑘 (𝛾) < 0: prefer 𝑔𝑘 ;
+• Types 𝛾 > 𝛾𝑘∗ have Φ𝑘 (𝛾) > 0: prefer 𝑔𝑘+1 ;
+• Type 𝛾𝑘∗ is indifferent.
+Step 3: Partition structure. Applying Step 2 iteratively for 𝑘 = 1, . . . , 𝐾 − 1 yields cutoffs
+∗ , then types
+𝛾 1∗ < 𝛾 2∗ < · · · < 𝛾𝐾∗ −1 . The ordering follows from monotone selection: if 𝛾𝑘∗ ≥ 𝛾𝑘+1
+∗
+∗
+in [𝛾𝑘+1, 𝛾𝑘 ] would simultaneously prefer 𝑔𝑘 over 𝑔𝑘 −1 and 𝑔𝑘+1 over 𝑔𝑘 , but also prefer 𝑔𝑘+2 over
+∗
+𝑔𝑘+1 —contradicting the definition of 𝛾𝑘+1
+as the indifference point between 𝑔𝑘+1 and 𝑔𝑘+2 .
+□
+
+Ian McDougall and Karthikeyan Sankaralingam
+
+H
+
+25
+
+Proof of Lemma 4.3
+
+Proof. Property 1 (Strict convexity): A convex combination (expectation) of strictly convex
+functions is strictly convex. For any 𝑞 1 ≠ 𝑞 2 and 𝜆 ∈ (0, 1):
+𝑐˜∗ (𝜆𝑞 1 + (1 − 𝜆)𝑞 2 ; 𝑔𝑘 , 𝛾) < 𝜆𝑐˜∗ (𝑞 1 ; 𝑔𝑘 , 𝛾) + (1 − 𝜆)𝑐˜∗ (𝑞 2 ; 𝑔𝑘 , 𝛾)
+
+(70)
+
+holds for each 𝛾 by Theorem 3.3. Integrating over 𝛾 ∈ Γ𝑘 preserves the strict inequality since the
+integrand is strictly negative on a set of positive measure.
+Property 2 (Boundary behavior): For each 𝛾, we have 𝑐˜∗′ (0; 𝑔𝑘 , 𝛾) = 0 and 𝑐˜∗′ (𝑞; 𝑔𝑘 , 𝛾) → ∞
+as 𝑞 → ¯
+𝑞(𝑔𝑘 , 𝛾) by Theorem 3.3. Taking expectations:
+∫ 𝛾𝑘
+1
+′
+𝑐˜avg
+(0; 𝑔𝑘 , 𝜸 𝑘 ) =
+𝑐˜∗′ (0; 𝑔𝑘 , 𝛾) 𝑓𝛾 (𝛾) 𝑑𝛾 = 0.
+(71)
+Pr(Γ𝑘 ) 𝛾𝑘 −1
+For the upper bound, as 𝑞 approaches the minimum feasibility bound across 𝛾 ∈ Γ𝑘 , at least some
+types have 𝑐˜∗′ (𝑞; 𝑔𝑘 , 𝛾) → ∞, so the average diverges.
+Property 3 (Continuity in cutoffs): Fix 𝑞 in the interior of the feasible domain. The function
+𝑐˜∗ (𝑞; 𝑔𝑘 , 𝛾) is continuous in 𝛾 (by continuity of the cost-minimization problem in parameters). The
+averaged cost is:
+∫ 𝛾𝑘
+𝑐˜∗ (𝑞; 𝑔𝑘 , 𝛾) 𝑓𝛾 (𝛾) 𝑑𝛾
+𝛾𝑘 −1
+𝑐˜avg (𝑞; 𝑔𝑘 , 𝜸 𝑘 ) =
+.
+(72)
+𝐹𝛾 (𝛾𝑘 ) − 𝐹𝛾 (𝛾𝑘 −1 )
+Both numerator and denominator are continuous in (𝛾𝑘 −1, 𝛾𝑘 ) by standard results on parameterdependent integrals. The denominator is bounded away from zero for 𝛾𝑘 > 𝛾𝑘 −1 (and we consider
+only valid partitions). Hence 𝑐˜avg is continuous in the cutoffs.
+□
+I
+
+Proof of Theorem 4.4: Necessary Condition
+Proof. The seller’s total expected profit is:
+𝐾
+∑︁ ∫ 𝛾𝑘 ∫ 𝑤¯ 
+
+Π(𝜸 ) =
+𝑇𝑘∗ (𝑤; 𝜸 ) − 𝑐˜∗ (𝑞𝑘∗ (𝑤; 𝜸 ); 𝑔𝑘 , 𝛾) 𝑓𝑤 (𝑤) 𝑓𝛾 (𝛾) 𝑑𝑤 𝑑𝛾,
+𝑘=1
+
+𝛾𝑘 −1
+
+(73)
+
+𝑤
+
+where the within-tier mechanisms (𝑞𝑘∗ ,𝑇𝑘∗ ) are optimal for the Mussa-Rosen problem with cost
+𝑐˜avg (·; 𝑔𝑘 , 𝜸 𝑘 ), and hence depend on the cutoffs 𝜸 .
+For segment 𝑘, write the contribution as:
+∫ 𝛾𝑘 ∫ 𝑤¯
+ ∗
+
+𝑉𝑘 (𝜸 ) =
+𝑇𝑘 (𝑤) − 𝑐˜∗ (𝑞𝑘∗ (𝑤); 𝑔𝑘 , 𝛾) 𝑓𝑤 (𝑤) 𝑓𝛾 (𝛾) 𝑑𝑤 𝑑𝛾 .
+(74)
+𝛾𝑘 −1
+
+𝑤
+
+A marginal increase 𝑑𝛾𝑘 > 0 has two effects:
+(i) Boundary effect. By Leibniz’s rule:
+∫ 𝑤¯
+ ∗
+
+𝜕𝑉𝑘
+= 𝑓𝛾 (𝛾𝑘 )
+𝑇𝑘 (𝑤) − 𝑐˜∗ (𝑞𝑘∗ (𝑤); 𝑔𝑘 , 𝛾𝑘 ) 𝑓𝑤 (𝑤) 𝑑𝑤 = 𝑓𝛾 (𝛾𝑘 ) · E𝑤 [Π𝑔𝑘 (𝑤, 𝛾𝑘 )]. (75)
+𝜕𝛾𝑘 boundary
+𝑤
+(ii) Cost-averaging effect. Changing 𝛾𝑘 alters 𝑐˜avg , which shifts the within-tier mechanism. By the
+envelope theorem applied to the within-tier optimization, the response of (𝑞𝑘∗ ,𝑇𝑘∗ ) to changes in
+the cost function does not contribute at the margin (they are at the optimum). However, the direct
+change in 𝑐˜avg affects the profit integrand. We have:
+
+𝜕𝑐˜avg (𝑞; 𝑔𝑘 , 𝜸 𝑘 )
+𝑓𝛾 (𝛾𝑘 )  ∗
+=
+𝑐˜ (𝑞; 𝑔𝑘 , 𝛾𝑘 ) − 𝑐˜avg (𝑞; 𝑔𝑘 , 𝜸 𝑘 ) .
+𝜕𝛾𝑘
+Pr(Γ𝑘 )
+
+(76)
+
+Ian McDougall and Karthikeyan Sankaralingam
+
+The cost-averaging effect contributes:
+∫ 𝛾𝑘 ∫ 𝑤¯
+
+𝑓𝛾 (𝛾𝑘 )  ∗ ∗
+𝜕𝑉𝑘
+=−
+𝑐˜ (𝑞𝑘 ; 𝑔𝑘 , 𝛾𝑘 ) − 𝑐˜avg (𝑞𝑘∗ ; 𝑔𝑘 ) 𝑓𝑤 (𝑤) 𝑓𝛾 (𝛾) 𝑑𝑤 𝑑𝛾 .
+𝜕𝛾𝑘 avg
+𝛾𝑘 −1 𝑤 Pr(Γ𝑘 )
+
+26
+
+(77)
+
+Combining (i) and (ii), the 𝑐˜avg terms cancel, yielding:
+𝜕𝑉𝑘
+= 𝑓𝛾 (𝛾𝑘 ) · E𝑤 [Π𝑔𝑘 (𝑤, 𝛾𝑘 )].
+𝜕𝛾𝑘
+
+(78)
+
+An analogous calculation for segment 𝑘 + 1 (whose lower bound is 𝛾𝑘 ) gives:
+𝜕𝑉𝑘+1
+= −𝑓𝛾 (𝛾𝑘 ) · E𝑤 [Π𝑔𝑘+1 (𝑤, 𝛾𝑘 )].
+𝜕𝛾𝑘
+
+(79)
+
+𝜕Π
+= 𝑓𝛾 (𝛾𝑘 ) · E𝑤 [Π𝑔𝑘 (𝑤, 𝛾𝑘 ) − Π𝑔𝑘+1 (𝑤, 𝛾𝑘 )].
+𝜕𝛾𝑘
+
+(80)
+
+The total derivative is:
+
+Setting 𝜕Π/𝜕𝛾𝑘 = 0 yields the indifference condition (24).
+J
+
+□
+
+Proof of Theorem 4.4: Existence and Sufficiency
+
+Proof. Part (b): Existence via Brouwer’s fixed point theorem.
+Define the cutoff space C = [𝛾, ¯
+𝛾] 𝐾 −1 , which is compact and convex. For degenerate cutoff vectors
+with 𝛾𝑘 −1 = 𝛾𝑘 , the averaged cost is extended continuously via 𝑐˜avg (𝑞; 𝑔𝑘 , (𝛾𝑘 , 𝛾𝑘 )) ≡ 𝑐˜∗ (𝑞; 𝑔𝑘 , 𝛾𝑘 ),
+ensuring the within-tier Mussa-Rosen problem remains well-defined.
+For any 𝜸 ∈ C, the within-tier mechanisms (𝑞𝑘∗ ,𝑇𝑘∗ ) are uniquely determined by the Mussa-Rosen
+solution with cost 𝑐˜avg (·; 𝑔𝑘 , 𝜸 𝑘 ). Define the profit-difference function:
+Δ𝑘 (𝛾; 𝜸 ) ≡ E𝑤 [Π𝑔𝑘+1 (𝑤, 𝛾; 𝜸 ) − Π𝑔𝑘 (𝑤, 𝛾; 𝜸 )],
+
+(81)
+
+where we make explicit the dependence on the full cutoff vector 𝜸 through the within-tier mechanisms.
+For each 𝑘, define the best-response cutoff:
+
+
+𝛾
+if Δ𝑘 (𝛾; 𝜸 ) ≥ 0,
+
+
+
+𝛾ˆ𝑘 (𝜸 ) = 𝛾¯
+if Δ𝑘 ( ¯
+𝛾; 𝜸 ) ≤ 0,
+
+
+𝛾 s.t. Δ𝑘 (𝛾; 𝜸 ) = 0 otherwise.
+
+
+(82)
+
+By Assumption 5 and the argument in Proposition 4.2, Δ𝑘 (𝛾; 𝜸 ) is strictly increasing in 𝛾 for
+fixed 𝜸 , so the root (if interior) is unique. Since each 𝛾ˆ𝑘 (𝜸 ) ∈ [𝛾, ¯
+𝛾] by construction, the mapping
+T : C → C defined by T (𝜸 ) = (𝛾ˆ1 (𝜸 ), . . . , 𝛾ˆ𝐾 −1 (𝜸 )) maps C to itself.
+Continuity of T : By Lemma 4.3 (Property 3), 𝑐˜avg is continuous in the cutoffs. The Mussa-Rosen
+solution (𝑞𝑘∗ ,𝑇𝑘∗ ) depends continuously on the cost function (by standard results on parametric
+optimization), so the profit functions Π𝑔 (𝑤, 𝛾; 𝜸 ) are continuous in 𝜸 . The expectation Δ𝑘 (𝛾; 𝜸 )
+inherits this continuity. The root of a strictly monotone continuous function varies continuously
+with parameters, so 𝛾ˆ𝑘 (𝜸 ) is continuous. Hence T is continuous.
+By Brouwer’s fixed point theorem, T has a fixed point 𝜸 ∗ = T (𝜸 ∗ ). At this fixed point, either
+∗
+𝛾𝑘 is at a boundary (and the FOC need not hold) or Δ𝑘 (𝛾𝑘∗ ; 𝜸 ∗ ) = 0, which is the indifference
+condition (24).
+Ordering at the fixed point. For 𝐾 = 2, the ordering constraint is vacuous (C = [𝛾, ¯
+𝛾]). For 𝐾 ≥ 3, a
+∗
+∗
+∗
+fixed point 𝜸 may have 𝛾𝑘 ≥ 𝛾𝑘+1 for some 𝑘, corresponding to a degenerate partition in which tier
+𝑔𝑘+1 serves an empty segment and is effectively inactive. Such solutions reduce to partitions with
+
+Ian McDougall and Karthikeyan Sankaralingam
+
+27
+
+fewer than 𝐾 active tiers. Non-degenerate fixed points with all tiers active satisfy 𝛾 1∗ < · · · < 𝛾𝐾∗ −1
+and the indifference conditions (24) hold at each boundary.
+Part (c): Second-order condition.
+The Hessian of Π with respect to 𝜸 at an interior solution has diagonal entries:
+𝜕2 Π
+𝜕
+= 𝑓𝛾′ (𝛾𝑘 ) · E𝑤 [Π𝑔𝑘 − Π𝑔𝑘+1 ] + 𝑓𝛾 (𝛾𝑘 ) ·
+E𝑤 [Π𝑔𝑘 − Π𝑔𝑘+1 ].
+2
+𝜕𝛾
+𝜕𝛾𝑘
+𝑘
+
+(83)
+
+At the FOC where E𝑤 [Π𝑔𝑘 − Π𝑔𝑘+1 ] = 0, this simplifies to:
+𝜕
+𝜕2 Π
+= 𝑓𝛾 (𝛾𝑘 ) ·
+E𝑤 [Π𝑔𝑘 (𝑤, 𝛾𝑘 ) − Π𝑔𝑘+1 (𝑤, 𝛾𝑘 )].
+𝜕𝛾𝑘
+𝜕𝛾𝑘2
+
+(84)
+
+Since the within-tier mechanisms (𝑞𝑘∗ ,𝑇𝑘∗ ) do not depend on 𝛾 (only on the cutoffs through 𝑐˜avg ),
+this derivative reduces to:
+
+ ∗ ∗
+𝜕𝑐˜ (𝑞𝑘+1 ; 𝑔𝑘+1, 𝛾) 𝜕𝑐˜∗ (𝑞𝑘∗ ; 𝑔𝑘 , 𝛾)
+𝜕
+E𝑤 [Π𝑔𝑘 − Π𝑔𝑘+1 ] = E𝑤
+−
+.
+(85)
+𝜕𝛾
+𝜕𝛾
+𝜕𝛾
+For local concavity (SOC for a maximum), we require 𝜕 2 Π/𝜕𝛾𝑘2 ≤ 0, which holds when condition (25) is satisfied.
+□
+K
+
+AI Use Disclosure
+
+We utilized Large Language Models (Gemini 3 Pro/Claude Opus 4.6) to act as an adversarial critic
+during the drafting process, specifically to stress-test the economic logic of the separation theorem
+and to identify potential gaps in the related work. The tools were also used for proof-verification
+assistance and stylistic refinement. All final text, mathematical derivations, and citations were
+verified and authored by us.

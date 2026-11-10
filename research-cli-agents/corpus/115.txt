@@ -1,0 +1,146 @@
+TITLE: Codex CLI usage rate limits
+URL: https://inventivehq.com/blog/codex-cli-usage-rate-limits
+ORG: Inventive HQ  TYPE: blog  DATE: 
+
+Codex CLI Usage & Rate Limits: 5-Hour vs Weekly Windows and What to Do at the Cap
+
+Developer Tools
+Codex CLI Usage & Rate Limits: 5-Hour vs Weekly Windows and What to Do at the Cap
+A practical guide to Codex CLI rate limits — how the stacked 5-hour and weekly windows work, how to check status, what happens at the cap, and your options for buying credits or stretching usage.
+By Sean·2026-05-26
+
+You're three files deep into a refactor, the agent is reasoning well, and then it stops cold: "You've hit your usage limit. Try again in 4 days 2 hours 46 minutes." If you've used the Codex CLI for any serious workload, you've seen some version of this. The frustrating part isn't that limits exist — it's that they're invisible until you trip over them, and the rules aren't obvious. There are actually two limits running at once, they're measured in credits rather than messages, and the number Codex shows you can be wrong.
+
+This is a practical guide to how Codex CLI rate limits actually work, how to check where you stand, and what your real options are when you hit the wall.
+
+Two limits, always stacked
+
+Every Codex plan enforces two usage limits simultaneously:
+
+A rolling 5-hour window — the short-term throttle. It limits how much you can do in any given five-hour stretch and resets continuously.
+
+A weekly window — a cumulative cap measured across a 7-day cycle. This is the sustained-workload ceiling.
+
+You can hit either one independently. A burst of heavy multi-file work can drain the 5-hour budget while your weekly cap still has plenty left. Conversely, steady use across a whole week can exhaust the weekly window even if no single 5-hour stretch felt heavy.
+
+The single most useful thing to internalize: limits are credit/token-based, not a fixed message count. The longer the agent reasons before answering, the more budget it burns. A one-line question and a sprawling cross-repo refactor are not the same "message" — so message count alone can never predict when you'll be locked out.
+
+Another detail that catches people out: the 5-hour window is shared across everything Codex does for you. Local CLI messages, requests from the IDE extension, and tasks you delegate to the Codex cloud all draw from the same pool. If your cloud agent is grinding through a big task in the background, it's spending the same budget your CLI session needs.
+
+What you actually get per plan
+
+Codex (and the CLI) is included with paid ChatGPT plans — Plus, Pro, Business, and Enterprise/Edu. The cheaper Go tier also has access per the pricing page, and Free is listed at $0.
+
+The headline difference between tiers is rate-limit headroom. Pro plans offer 5x or 20x higher rate limits than Plus. Pro starts from $100/month with a 20x tier commonly priced at $200/month.
+
+OpenAI's pricing page publishes approximate 5-hour-window message ranges per plan. These are ranges, not guarantees, because message size varies enormously:
+
+PlanTop modelMid modelMini model
+Plus~15–80~20–100~60–350
+Pro 5x~80–400~100–500~300–1,750
+Pro 20x~300–1,600~400–2,000~1,200–7,000
+
+Treat these as rough planning numbers, not contracts. Because billing is credit-based, a session full of deep-reasoning turns will land at the low end of these ranges, while quick edits will push toward the high end.
+
+One important recent change: a promotional Pro 2x capacity boost expired on May 31, 2026, returning $100 Pro subscribers from their effective elevated capacity back to standard Pro 5x limits. If your limits suddenly feel tighter than they did in early May, that's almost certainly why — nothing's broken on your end.
+
+How to check where you stand
+
+Inside an active Codex CLI session, run:
+
+/status
+
+This shows the remaining usage for both windows plus your current model and plan tier. A typical display looks like:
+
+Rate Limits Remaining: 5h 96%, Weekly 94%
+
+Note the percentages are the amount remaining, not consumed. Two caveats worth knowing:
+
+/status only works while Codex is open and active, and you have to run it manually — there's no passive HUD.
+
+The numbers can be slightly stale on the first invocation of a session.
+
+For monitoring outside the CLI, you have two more surfaces:
+
+Codex Settings > Usage in the Codex web/app — a live usage panel.
+
+platform.openai.com/usage — historical token and cost data. This dashboard lags by a few minutes and, critically, does not show your live position in the 5-hour window. Use it for trends, not for "can I run this right now."
+
+A reality check on all of these: there's a known bug class where /status, the warning banner, and the actual error state disagree on remaining quota. Some Business and Pro seats have reported "usage limit reached" errors despite the dashboard showing available quota. If the numbers look contradictory, they might be — cross-check the Usage dashboard and don't fully trust any single readout.
+
+Advertisement
+What happens at the cap
+
+When you exhaust a window, Codex blocks new turns and shows something like "You've hit your usage limit" with a reset time. The exact wording varies — individual users see a countdown like "try again in 4 days 2 hours 46 minutes," while Business seats may see "send a request to your admin."
+
+The good news: if you hit the limit during an active turn, Codex can generally finish that turn (subject to fair-use limits). So it won't typically abandon work mid-thought — it just won't start anything new.
+
+Reset timing differs by window. The 5-hour window is rolling and clears continuously. The weekly limit is a 7-day rolling cycle, with some user reports describing Sunday resets. As for how fast people actually deplete the weekly cap: user reports (not official figures) describe Plus and Business users hitting weekly caps after roughly 1.5–2 days of heavy active coding — on the order of ~2M tokens — with Pro lasting considerably longer. Your mileage will vary with how much the agent reasons.
+
+If your weekly percentage drops overnight without you touching Codex, the likeliest culprit is a background cloud task drawing from the shared budget, or simply the rolling 7-day window shedding older usage and recomputing.
+
+Your options when you hit the wall
+
+You have several levers, roughly in order of effort:
+
+1. Switch to the mini model. This is the highest-leverage move. The mini model has far higher message allowances and lower credit cost per token — sources cite mini input as roughly 3.3x cheaper than the mid model and about 6.7x cheaper than the top model. For routine edits, tests, and boilerplate, drop to mini and save the top model for genuinely hard reasoning.
+
+2. Buy credits. Plus and Pro users can purchase additional credits from Codex Settings > Usage > Credits to keep working without upgrading. The published credit rate-card figures (credits per 1M tokens) are roughly:
+
+ModelInputOutput
+Top~125~750
+Mid~62.5~375
+Mini~18.75~113
+
+Two patterns to note: output tokens cost roughly 6–10x more than input across models, and cached input costs about 10% of uncached input. Keeping prompts tight and reusing context pays off directly. Note that after you exhaust included usage, image generation also starts drawing from credits.
+
+3. Enable Auto Top-up. Eligible Plus and Pro users can turn this on from the Codex Usage Dashboard. When your credit balance drops below a chosen minimum, Codex automatically buys just enough to return to your target balance using the default payment method — no mid-task interruption.
+
+4. Save a rate-limit reset. As of June 12, 2026, OpenAI added the ability to save rate-limit resets to spend later — a saved reset instantly clears your usage counter when spent. Eligible subscribers (Go/Plus/Pro/Business) get one free reset. Resets expire 30 days after being credited and can't be stockpiled indefinitely. Whether a saved reset clears the weekly window or only the 5-hour window isn't specified by OpenAI; the prudent assumption is 5-hour only.
+
+5. Consider an API key. If you'd rather not deal with rolling caps at all, API-key billing is pure pay-per-token with no rolling cap. Some sources also mention Amazon Bedrock availability for AWS-consolidated billing without 5-hour windows. The tradeoff is obvious — costs scale directly with usage instead of being bounded by a subscription. If you have local hardware sitting idle, another option is to point Codex's base URL at a local-first AI gateway that serves requests from your own machines first and fails over to the cloud only when they're unavailable — local requests carry zero per-token cost and don't touch any rolling cap.
+
+For Business and Team seats, credits are managed at the workspace level through billing settings and spend controls, not by individual users. If you're a seat-holder hitting limits, the buy-credits path runs through your admin.
+
+Bottom line
+
+Codex CLI limits aren't one number — they're two stacked windows (rolling 5-hour and cumulative weekly), measured in credits rather than messages, and shared across the CLI, IDE, and cloud. Run /status to see both percentages, but treat the readout with a grain of salt given the known reporting bugs. When you hit the cap, your fastest fixes are dropping to the mini model and buying credits (or enabling Auto Top-up so it never stops you mid-flow). Heavy daily users on Pro 20x or an API key will feel the walls far less than Plus users — and if the limits genuinely don't fit your workload, that's a signal to move up a tier or switch to pay-per-token billing rather than fighting the countdown every few days. These are fast-moving products, so verify the current numbers against OpenAI's pricing page before making a billing decision.
+Frequently Asked Questions
+How do I check how much Codex usage I have left?
+
+Run /status inside an active Codex CLI session. It shows the remaining percentage for both the rolling 5-hour window and the weekly window, plus your current model and plan tier. You can also check Codex Settings > Usage in the web app, and historical token/cost data at platform.openai.com/usage — though the dashboard lags by a few minutes and does not show your live position in the 5-hour window.What's the difference between the 5-hour limit and the weekly limit?
+
+Every Codex plan enforces two stacked limits. The 5-hour window is a rolling short-term throttle that resets continuously. The weekly window is a cumulative cap across a 7-day cycle that acts as a sustained-workload ceiling. You can hit either one independently — a burst of heavy work can exhaust the 5-hour budget, while steady all-week usage can drain the weekly cap.What happens when I hit my Codex usage limit — does it stop mid-task?
+
+At the cap, Codex blocks new turns and shows a message like "You've hit your usage limit" along with a reset time. If you hit the limit during an active turn, Codex can usually finish that turn (subject to fair-use limits), so it generally won't abandon work it has already started.Can I buy credits to keep working after the cap?
+
+Yes. Plus and Pro users can purchase additional credits from Codex Settings > Usage > Credits to keep working without upgrading their plan. Eligible users can also enable Auto Top-up, which automatically buys just enough credit to return to a target balance when you drop below a chosen minimum. ChatGPT Business credits are handled at the workspace level, not per individual user.Does switching to the mini model make my limits last longer?
+
+Yes. The smaller mini model has much higher message allowances and a lower credit cost per token. Sources cite mini input as roughly 3.3x cheaper than the mid model and around 6.7x cheaper than the top model, so switching to mini for routine work is one of the most effective ways to stretch a budget.Do the CLI, IDE extension, and cloud tasks share the same limit?
+
+Yes. The 5-hour window is shared across everything Codex does for you — local messages in the CLI, requests from the IDE extension, and tasks delegated to the Codex cloud all draw from the same budget.Why does Codex say I've hit my limit when /status shows I have quota left?
+
+This is a known bug class as of 2026. /status, the limit warning banner, and the error state sometimes disagree on remaining quota, and some Business and Pro seats report "usage limit reached" errors despite available quota. Treat displayed numbers with caution and cross-check the Usage dashboard.Did the Pro capacity boost get removed?
+
+Yes. A promotional Pro 2x capacity boost expired on May 31, 2026, returning $100 Pro subscribers from their effective elevated capacity back to standard Pro 5x limits. If your limits feel smaller than before, that expiry is the likely cause.Should I use an API key instead to avoid the rolling caps?
+
+If predictable pay-per-token billing matters more than a flat subscription, API-key billing has no rolling cap — you pay purely for what you use. Some sources also mention Amazon Bedrock availability for AWS-consolidated billing without 5-hour windows. The tradeoff is that costs scale directly with usage rather than being capped by a subscription.
+Codex CLIOpenAIRate LimitsAI Coding
+
+Advertisement
+
+Related articles
+
+OpenAI Codex CLI Pricing Explained (2026): Free Tier, ChatGPT Plans, API Key & Credits
+There's no standalone Codex subscription — it's bundled with every ChatGPT plan. Here's exactly how Codex CLI pricing works across Free, Go, Plus, Pro, and Business, plus when to use an API key and what real-world usage actually costs.Read more →
+
+Claude Code Rate Limits: 5-Hour & Weekly Caps, Reset Times, and How to Avoid Them
+A practical guide to Claude Code's 5-hour rolling window and weekly cap: how Pro, Max 5x, and Max 20x differ, when limits actually reset, and concrete ways to stop hitting them.Read more →
+
+Best Practices for AI Coding CLIs in Production
+Essential best practices for using Claude Code, Gemini CLI, and Codex CLI in professional environments. Learn safety, security, efficiency, and team workflow patterns for AI-assisted coding.Read more →
+
+From the Inventive HQ family
+Wide Area Intelligence
+Your GPU is an OpenAI-compatible endpoint now.
+Route API calls to GPUs you already own over a secure tunnel, cache repeats at the edge, and fall back to the cloud only when you burst.Take a look→

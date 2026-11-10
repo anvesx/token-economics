@@ -1,0 +1,114 @@
+TITLE: The Hidden Cost Driver in Agentic Coding: Not the Per-Token Price
+URL: https://vantage.sh/blog/agentic-coding-costs
+ORG: Vantage  TYPE: blog  DATE: 
+
+The Hidden Cost Driver in Agentic Coding Sessions in 2026 | Vantage
+
+Your team's AI coding bill probably isn't distributed the way you think. Most interactions are cheap - autocomplete suggestions, quick inline edits, short questions about a function. But the sessions that actually move the needle on developer productivity are also the ones that move the needle on cost. A single agentic task where the AI reads through a codebase, implements a feature across multiple files, runs tests, and iterates through failures can consume more tokens than a week of casual usage from the same developer.
+
+If your engineering org is leaning into agentic workflows - and Cursor's pricing trajectory suggests more teams are every month - the structure of your AI spend is changing in ways that per-token pricing tables don't capture.
+
+How Token Costs Compound in Agentic AI Sessions
+
+When a developer instructs Cursor or Claude Code to "refactor the auth module and make sure tests pass," the AI doesn't fire off a single request. It enters a multi-turn loop: read relevant files, plan the changes, edit code, run tests, read the error output, try a fix, run tests again. Each of those turns is a separate API call with its own input and output tokens.
+
+The expensive part isn't any individual turn. It's the accumulation. Every API call sends the model its full context as input tokens - and that context includes far more than just the developer's messages. It's the system prompt that defines the agent's behavior, every file the agent has read or retrieved, every edit it's made, every error message it's encountered, and the full conversation history up to that point. All of that is re-sent as input on every single turn.
+
+Turn 1 might send 5,000 input tokens. By turn 30, the model is carrying 25,000-35,000 input tokens of accumulated context on every request - the system prompt, dozens of retrieved files, and the full transcript of prior turns. By turn 50, it's likely hitting the context window limit and compacting.
+
+Here's an illustrative breakdown of a typical 50-turn agentic session - say, implementing a feature that touches several files and requires a few rounds of debugging. These are approximate figures based on representative usage patterns:
+
+Session phaseTurnsAvg input tokens/turnAvg output tokens/turn
+Exploration1-10~5,000~600
+Implementation11-30~20,000~1,000
+Testing and iteration31-50~35,000~800
+
+Illustrative token consumption across a 50-turn agentic coding session. Actual volumes vary by tool and task, but the pattern is consistent: input grows as context accumulates; output stays relatively flat.
+
+Add those up and the session consumes roughly 1 million input tokens and 40,000 output tokens. The ratio is about 25:1, input to output. That ratio is the thing that makes agentic sessions different from everything else your team does in an AI coding tool.
+
+Why Input Tokens Drive Agentic Coding Costs
+
+Most conversations about AI model pricing focus on the output side - that's where the sticker prices look most dramatic ($25 per million tokens for Opus 4.6 output vs $2.50 for Composer 2 Standard). But in agentic workloads, input tokens outnumber output by 20-25x. The input price is the number that actually drives your bill.
+
+Using the token volumes from the session above - roughly 1 million input tokens and 40,000 output tokens - here's what a single 50-turn session costs across current models:
+
+ModelInput cost (1M tokens)Output cost (40K tokens)Session total
+Claude Opus 4.6$5.00$1.00$6.00
+GPT-5.4$2.50$0.60$3.10
+Composer 2 Fast$1.50$0.30$1.80
+Composer 2 Standard$0.50$0.10$0.60
+
+Estimated cost of a single 50-turn agentic session across models. Input costs dominate at ~85% of the total.
+
+$6.00 per session on Opus versus $0.60 on Composer 2 Standard. Not dramatic for a single task. But scale that to a 25-person engineering team averaging two significant agentic sessions per developer per working day - roughly 1,000 sessions per month - and the gap gets real:
+
+ModelMonthlyAnnual
+Claude Opus 4.6~$6,000~$72,000
+GPT-5.4~$3,100~$37,200
+Composer 2 Fast~$1,800~$21,600
+Composer 2 Standard~$600~$7,200
+
+Estimated monthly and annual agentic session costs for a 25-person engineering team (~1,000 sessions/month). Excludes subscription fees.
+
+Model choice is where the cost differences become impossible to ignore. That's $72,000/year on Opus versus $7,200 on Composer 2 Standard - a 10x gap, driven almost entirely by the input token volume that agentic sessions generate. And this is usage-based spend on top of Cursor's subscription fees, which run $40/user/month on Teams plans.
+
+For comparison: the same team's non-agentic usage - autocomplete, inline edits, quick chat questions - might generate 10,000 interactions per month at a few hundred tokens each. Total cost on Opus? Maybe $30/month. The agentic sessions are 200x more expensive despite being a tenth the count. The spend distribution is wildly skewed.
+
+Agentic AI Cost Variance: Retries, Context Bloat, and Model Choice
+
+Not all agentic sessions are created equal. Two engineers on the same team, using the same tool, can generate a 10x difference in token costs depending on how they work. A few things drive that variance.
+
+Session length is the biggest lever. A 20-turn session that solves a straightforward bug costs a fraction of an 80-turn session where the agent is working through a complex refactoring with multiple test failures. The relationship isn't linear either - the later turns are more expensive per turn because context has accumulated. A session that runs 2x as many turns might cost 3-4x as much. The practical recommendation: start a fresh session once a task is done rather than continuing in the same context. Stale context from a completed task inflates every subsequent turn for no benefit.
+
+Retry loops compound fast. When the agent hits a test failure, tries a fix, fails again, and tries another approach, each retry cycle is a full round-trip at the current (inflated) context size. Three failed attempts at turn 40 don't just cost 3x a single turn - they cost 3x a turn that's already carrying 30,000+ input tokens of context. The fix might take 30 seconds; the token cost of getting there can be surprisingly high.
+
+Model choice multiplies everything above. All of these cost dynamics - session length, retry loops, context accumulation - apply at whatever per-token rate the model charges. A retry loop at turn 40 on Opus costs 10x what the same loop costs on Composer 2 Standard. Teams that default to premium models for every task are paying the premium rate on wasted work, not just productive work.
+
+Context compaction creates hidden waste. Context compaction is what happens when the accumulated conversation history exceeds the model's context window - the tool has to summarize or drop earlier parts of the conversation to make room for new turns. When something important gets lost during that process - a file it read earlier, an error message it needs to reference - it ends up re-reading files or redoing work, paying for the same tokens twice. This is why Cursor's self-summarization technique matters from a cost perspective: better compaction means less wasted re-work. Models and tools that handle long context poorly will quietly inflate your bill through redundant operations.
+
+What to Look for in Your Agentic AI Spend
+
+Standard cost tracking that groups by "model" and "total tokens" misses the dynamics that make agentic spend interesting. A few dimensions are more useful.
+
+Model distribution across usage types. Agentic sessions and simple completions have very different cost profiles. If your heaviest agentic users are routing to Opus while lighter users are on cheaper models, the average cost per token across the org doesn't tell you much. You want to see which models are backing the expensive work.
+
+Per-user cost patterns. This isn't about creating a leaderboard - it's about spotting the distribution. If 20% of your engineers are driving 80% of the agentic token volume, that might mean they've found genuinely productive workflows worth spreading. Or it might mean they're running expensive models on tasks where a cheaper option would work fine. You can't tell without the data.
+
+The Fast vs Standard split. For teams on Cursor, the Fast variant of Composer 2 is the default at $1.50/$7.50 per million tokens, but the Standard variant at $0.50/$2.50 does the same work with higher latency. For interactive pairing sessions, Fast makes sense. For longer background tasks where the developer isn't waiting on each turn? Standard could cut that particular cost by two-thirds, and nobody would notice the difference.
+
+Max mode usage. Cursor's max mode lets developers route requests to premium models like Opus or GPT-5.4 on a pay-per-token basis, outside the included request allowance. It's the feature that unlocks the most capable models for agentic work - and it's also where usage-based costs can spike without much visibility. A developer toggling max mode on for a long agentic session on Opus might not realize they've just committed to $5+ per million input tokens for every turn. Tracking which users have max mode enabled, and on which models, is one of the fastest ways to explain unexpected cost variance.
+
+The Cursor integration in Vantage surfaces all of this - model, token type, user, and whether max mode is enabled. If your team also uses Anthropic or OpenAI APIs directly for agentic workflows (through Claude Code or custom tooling), those costs show up alongside Cursor in the same reports. For setup details, see our Cursor cost tracking guide.
+
+Where the Money Actually Goes
+
+Agentic coding is where AI development tool spend is headed. The per-token price matters, but the number of tokens per task matters more - and that's driven by session length, context accumulation, and how gracefully the model handles its own memory. A team that tracks total Cursor spend without understanding the agentic cost structure is like a team that tracks total AWS spend without knowing which services are behind it.
+
+The gap between the cheapest and most expensive models is 10x per token. In agentic workloads, that 10x applies on every turn, at an accumulating context size. It compounds.
+
+Sign up for a free trial.
+Get started with tracking your cloud costs.Sign up
+Read more
+
+Author:
+
+Author:
+
+Author:
+
+Author:
+
+On this page
+How Token Costs Compound in Agentic AI Sessions
+Why Input Tokens Drive Agentic Coding Costs
+Agentic AI Cost Variance: Retries, Context Bloat, and Model Choice
+What to Look for in Your Agentic AI Spend
+Where the Money Actually Goes
+
+Request a Vantage Demo
+Learn how you can observe and optimize your cloud spend.Schedule Now
+
+TakeCtrlof YourCloud Costs
+Talk to an expertSign up for free
+You've probably burned $0 just thinking about it. Time to act.You've probably burned $0 just thinking about it. Time to act.

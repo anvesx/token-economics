@@ -1,0 +1,519 @@
+TITLE: Total Cost of Agency: Exact Attribution of Memory Injection Cost in Multi-Agent Workflows
+URL: https://arxiv.org/abs/2609.23790
+ORG: arXiv  TYPE: paper  DATE: 2026-09
+
+                                         Total Cost of Agency: Exact Attribution of Memory
+                                           Injection Cost in Multi-Agent LLM Workflows
+                                                       Vivek Kumar Singh                              Preeti Priyam                         Gautam Bhowmick
+                                                      Independent Researcher                    Independent Researcher                    Independent Researcher
+                                                       McKinney, TX, USA                         McKinney, TX, USA                           Chicago, IL, USA
+                                                  vivekksingh.nov12@gmail.com                 preetipriyam12@gmail.com                 bhowmick.gautam@gmail.com
+                                                  ORCID 0009-0002-9350-3207                  ORCID 0009-0000-9423-741X                 ORCID 0009-0001-9424-7826
+
+
+
+                                            Abstract—Every node in a multi-agent large language model              Consider a four-node enterprise billing reconciliation work-
+
+
+
+
+arXiv:2609.23790v1 [cs.AI] 20 Sep 2026
+                                         (LLM) workflow retrieves context from memory and injects it            flow. A planner decomposes a discrepancy analysis query
+                                         into its prompt, where those injected tokens are billed as input       into extraction, query generation, reconciliation and policy
+                                         tokens at the same per-token price as the system prompt and
+                                         the user query. Production observability tools report total token      check subtasks, each issuing one or more model calls. Teams
+                                         cost but do not separate the tokens a node generates from the          optimizing this workflow focus on model tier selection: they
+                                         tokens it is handed, so this component of the bill is invisible        use a small model where possible and escalate to a larger
+                                         to the teams paying it. We introduce the Total Cost of Agency          one when needed. This is correct but incomplete. Every agent
+                                         (TCA), a decomposition of multi-agent workflow cost into base          node also retrieves context from memory before inference and
+                                         prompt, inference, memory injection, miss penalty and context-
+                                         accumulation components, and an exact attribution method: a            injects it into its prompt. Those injected tokens are billed as
+                                         two-pass, non-billable token count that measures injected tokens       input tokens, at the same per-token price as the system prompt
+                                         directly rather than estimating them from word-count proxies.          and the user query. In a workflow that carries the outputs of
+                                         On a 200-task enterprise benchmark executed against real model         all prior nodes, the final node injects the accumulated context
+                                         application programming interfaces (APIs), memory injection            of the entire chain before generating any output of its own;
+                                         accounts for 13.6 percent of the variable cost a compile-time
+                                         optimizer can act on, approximately 12 percent of the full billed      Fig. 1 traces this accumulation and the accounting that follows
+                                         cost, and its share rises from a structural zero at workflow depth     from it.
+                                         one to 27.6 percent at depth six. Injected tokens grow linearly           The measurement problem. Production observability tools
+                                         with depth over the measured range (R2 = 0.9974, depths two            for LLM applications — LangSmith [23], Arize Phoenix [24]
+                                         through six); a quadratic fit yields a negative leading coefficient,   and Weights & Biases Weave [25] among them — trace agent
+                                         so the data do not exhibit convex growth at these depths. We
+                                         show the component is controllable at fixed model tier: reducing       runs and report token counts and cost per call, but they report
+                                         the retrieval window capacity from 32 to 2 entries lowers injected     a call’s input tokens as one quantity. They do not expose the
+                                         tokens by 28.7 percent with an accuracy change within seed-level       split between tokens a node generated and tokens a node was
+                                         variation. We report in full that our graph-rewriting transforms       handed. A team optimizing tier selection cannot reason about
+                                         are approximately cost-neutral in isolation, that two of the five      the second quantity, because in their instrumentation it does
+                                         decomposition terms are zero by construction in this harness, and
+                                         that total workflow cost is dominated by model tier assignment,        not exist as a separate number. The obstacle is not that the
+                                         which we hold fixed and treat as orthogonal prior work. Prompt         cost is hard to compute; it is that nothing in the standard stack
+                                         caching is not evaluated; all figures are for the uncached case.       computes it.
+                                            Index Terms—memory injection, agent memory, prompt                     Contributions. This article makes three contributions. First,
+                                         caching, token accounting, LLM agents, multi-agent systems,            we formalize the Total Cost of Agency (TCA), a decomposi-
+                                         workflow cost, LangGraph
+                                                                                                                tion of multi-agent workflow cost into base prompt, inference,
+                                                                                                                memory injection, miss penalty and context-accumulation
+                                                                I. I NTRODUCTION                                components, and we state explicitly which components accrue
+                                                                                                                billable cost under which deployment conditions. Second, we
+                                            Running large language model (LLM) agents in production             present an exact attribution method: a two-pass, non-billable
+                                         is expensive, and the expense is concentrated in places current        token count that measures injected tokens directly using the
+                                         tooling does not look. A frontier model is accurate but can            provider’s own tokenizer rather than estimating them from
+                                         cost twenty to twenty-five times what a small model costs per          word-count or character-count proxies. The method costs noth-
+                                         token, and real agent workflows rarely make a single call. They        ing to run, adds roughly ten milliseconds per node against in-
+                                         string several model invocations together in a dependency              ference latencies of eighty to three thousand milliseconds, and
+                                         chain, and the cost of a multi-step workflow is dominated not          yields the base-prompt cost as a by-product. Third, we report
+                                         only by which model each step uses, but by how much context            an empirical characterization across five workflow categories
+                                         each step must carry. This article describes a component of that       and five depths on a 200-task enterprise benchmark executed
+                                         cost that no production observability tool reports separately.         against real model application programming interfaces (APIs).
+   What this article does not claim. Total workflow cost in          key-value cache compression such as SnapKV [19] reduces
+our experiments is dominated by model tier assignment, not by        the memory and latency footprint of long contexts at serving
+memory management. Routing work such as FrugalGPT [1],               time, building on paged key-value cache management at the
+RouteLLM [2] and MasRouter [6] owns that result, and we              serving layer [22]. These techniques operate on a given prompt
+hold tier assignment fixed and treat it as orthogonal prior work     or cache; they are orthogonal to measuring what an injection
+throughout. We also report, in Section VII, that the graph-          costs, and compose with the accounting we describe.
+rewriting transforms we implemented are approximately cost-             Agent frameworks including LangGraph [14] and Auto-
+neutral in isolation. Our claim is confined to what we mea-          Gen [13] provide infrastructure for multi-agent workflows but
+sured: that memory injection is a real, separately attributable      leave model selection to external configuration and make the
+and exactly measurable component of the bill, that it grows          injection cost invisible. Reasoning patterns such as ReAct [15]
+with workflow depth, and that it responds to a retrieval-            and Reflexion [16] shape how much intermediate context
+capacity lever at fixed tier. Prompt caching, the most plausible     accumulates, which is the quantity our benchmark prices.
+mitigation, is not evaluated; Section VIII explains why the          Execution-grounded and agent benchmarks [8]–[12] evaluate
+component is an unfavorable caching candidate here and states        task success but do not decompose cost.
+plainly that we did not measure it.                                     Finally, providers discount cached input tokens substan-
+                                                                     tially: a cache read is billed at 0.1× the base input price,
+                     II. R ELATED W ORK                              against 1.25× for a five-minute write and 2× for a one-hour
+A. Cost-Aware Routing and Cascades                                   write [20]. Caching is the most plausible mitigation for the
+   The cascade idea originates with FrugalGPT [1], which             cost we measure. We do not evaluate it; Section VIII gives the
+demonstrated real savings on single-call natural language            structural reasons injected memory is an unfavorable caching
+processing benchmarks by trying cheap models first and               candidate here, and the fact that we have not measured hit
+escalating when confidence is low. FrugalGPT models the cost         rates.
+of a request as a function of output tokens and per-token price;                  III. T HE T OTAL C OST OF AGENCY
+in its single-call setting there is no accumulating context to
+inject. RouteLLM [2] and Hybrid LLM [3] are query-level              A. Preliminaries
+routers that dispatch an entire query to either a small or a large      We consider an agentic system that answers a query by
+model based on predicted difficulty, without a notion of per-        executing a workflow W = (V, E), a directed acyclic graph
+node memory operations. RouterBench [4] standardizes the             in which each node v is a subtask paired with a specialist role
+evaluation of such systems, and AutoMix [5] escalates on self-       and served by a language model drawn from a discrete set of
+verification failure. MasRouter [6] learns routing policies for      tiers T . We write pin (t) and pout (t) for the input and output
+multi-agent systems and achieves substantial cost reductions         per-token prices of tier t. A directed edge (u, v) indicates
+on coding benchmarks, routing at the agent level with a learned      that v consumes the output of u, so execution proceeds in
+policy. Cost-aware automation has also been explored at the          topological order. The depth of a node is the length of the
+pipeline level for machine learning workflows [17].                  longest path from a source to that node, and the depth of a
+   This body of work owns the model-selection lever, and             workflow is its maximum node depth. Before inference, each
+in our experiments that lever moves total cost far more              node retrieves context from memory under a memory strategy
+than anything in the memory subsystem does. What these               m, which determines how many prior outputs are injected
+approaches share is that cost is treated as a function of the        into its prompt: a capacity-bounded strategy retains at most K
+model invoked, never of the context carried into it. We hold         entries, while an unbounded strategy retains all prior history.
+tier assignment fixed throughout and make no routing claim.
+                                                                     B. The Decomposition
+B. Agent Memory, Context Compression and Prompt Caching                We define the Total Cost of Agency of a workflow as the
+   MemGPT [7] introduced a two-tier memory hierarchy for             sum over nodes of five components:
+multi-session agents, paging information between a fast work-                        X
+                                                                        TCA(W ) =          Cbase (v) + Cinf (v) + Cinject (v)
+ing context and a slower archival store to manage limited                                                                     (1)
+                                                                                     v∈V
+context windows. Its objective is memory accuracy and context                                                        
+                                                                                           + Cmiss (v) + Caccum (v)
+freshness under a fixed window budget; it does not measure
+or minimize the token cost incurred when retrieved memory               Cbase (v) is the cost of the tokens a node’s prompt carries
+is injected into a prompt. Vector retrieval backends and the         independently of memory — its specialist system prompt,
+broader retrieval-augmented generation literature similarly op-      its tool definitions and the user query — billed at pin (tier).
+timize what is retrieved for relevance, not what the retrieval       Cinf (v) is the inference cost, equal to the tokens the node
+costs once billed as input tokens.                                   generates times pout (tier). Cinject (v) is the memory injection
+   A complementary line of work reduces the cost of carried          cost, equal to the number of memory tokens retrieved and
+context by compressing it. Task-agnostic prompt compression          injected into the node’s prompt times pin (tier). Cmiss (v) is
+such as LLMLingua-2 [18] distills prompts to a fraction of           the penalty incurred when a warm-tier lookup misses and the
+their original token count while preserving task fidelity, and       system falls back to the durable store. Caccum (v) is the cost
+attributable to upstream context that a node inherits and carries   counts or character counts. Such proxies are systematically
+forward.                                                            wrong by a variable margin, because subword tokenizers split
+   We distinguish these terms by when they are non-zero,            text at boundaries that do not align with words, and the error
+because a decomposition whose terms are unexercised is not          depends on the content — identifiers, numeric literals and
+informative. Three components are billed on every node in           structured output tokenize very differently from prose, and
+every configuration: Cbase , Cinf and Cinject . Two are con-        enterprise agent outputs consist largely of the former.
+ditional. Cmiss is non-zero only when the durable tier is a            We measure it exactly instead, as the middle stage of Fig. 1
+billed remote service; in a deployment whose durable tier is        shows. For each node, the prompt is assembled twice: once
+a local store, a warm-tier miss costs latency but no tokens,        from the base components alone, and once with the retrieved
+and the term evaluates to zero. Caccum is a conceptual rather       memory included. Both are tokenized, and the difference is
+than a separately measurable quantity: inherited context and        attributed to injection:
+retrieved context arrive in the prompt as the same tokens, and                                                                   
+the attribution method of Section IV counts them together             inject(v) = count base(v) ⊕ mem(v) − count base(v)
+within Cinject . We define both terms because a deployment                                                                        (2)
+with a billed durable tier will exercise the first, but we             The method has four properties that make it usable in a
+report throughout that neither accrues billable cost in the         production deployment rather than only in a study. First, it is
+configuration we measure.                                           exact by construction: it counts the tokens the provider will
+   The component prior work omits entirely is Cinject . The         bill, using the provider’s own tokenizer, rather than approxi-
+coupling that makes the accounting non-trivial is that Cinject      mating them. Second, it is free. The count operation is a non-
+scales with the input price of the tier a node executes on: the     billable API call that performs no inference and is charged as
+same injected context costs more at a more capable tier than        neither input nor output tokens. Third, it is cheap in latency:
+at a cheaper one. A cost figure for injected context is therefore   the two counts add roughly ten milliseconds per node against
+meaningful only alongside the tier that produced it, which is       inference latencies of eighty to three thousand milliseconds,
+why Section VI reports injected volume in tokens as well as         between roughly a third of one percent and an eighth of the
+in currency.                                                        call they instrument. Fourth, it yields Cbase at the same time
+                                                                    and at no additional cost, since count(base) is computed as
+C. Expected Growth with Depth                                       the first pass; a single instrumentation point therefore produces
+   The following is analysis that motivates the measurements        both the injected volume and the denominator against which
+in Section VI; it is not offered as an empirical result. Consider   it should be reported.
+a linear-chain workflow of depth d in which each node injects          It is worth being precise about what this measures. The
+the outputs of all prior nodes. Under an unbounded history          method attributes; it does not predict. It runs after a node’s
+strategy, node i injects the outputs of nodes 1 through i − 1,      prompt is assembled and before the call is issued, so it reports
+contributing (i − 1)τ tokens for an average per-node output         what will actually be billed rather than what a cost model
+length τ . Summing over i from 1 to d gives τ d(d−1)/2, which       expects, which distinguishes it from estimators whose accu-
+is O(d2 ). Under a capacity-bounded strategy with window K,         racy depends on their priors. It says nothing counterfactual: it
+per-node injection is bounded by K entries and total injection      reports how many tokens the memory contributed, not what
+grows as O(min(K, d) · d), which is linear in d whenever d          the node would have answered without them. Accuracy effects
+exceeds K. For general directed acyclic graphs, d is replaced       of removing context must be measured by execution, as in
+by the maximum fan-in along the critical path.                      Section VI.
+   Two statements about scope follow, and we make them                 Integration requires no change to workflow structure: the
+explicit because the distinction governs how Section VI should      two passes are performed by a decorator around the prompt-
+be read. First, the quadratic expression describes the un-          assembly step, which records the per-node counts alongside
+bounded regime, which our experiments do not measure;               the tier and memory strategy in use. Because the measurement
+we report the bounded regime only. Second, the capacity             is external to the model call, it applies to any framework
+that bounds our baseline and the capacity we vary as an             that assembles the prompt explicitly before dispatch and any
+optimization lever in Section VI are the same mechanism at          provider exposing a tokenizer.
+different settings, and we name them separately — Kdefault
+                                                                           V. B ENCHMARK AND E XPERIMENTAL S ETUP
+for the harness configuration under which all conditions run,
+and Kopt for the setting varied in the capacity experiment —           We evaluate on a benchmark of 200 enterprise workflow
+so that no reduction attributable to lowering Kopt is mistaken      tasks spanning five categories — billing reconciliation, soft-
+for a property of the baseline.                                     ware asset management (SAM), identity and access manage-
+                                                                    ment (IAM), cross-domain reconciliation and policy checking
+            IV. E XACT I NJECTION ACCOUNTING                        — and five workflow depths, from two to six. The design
+   Measuring Cinject requires knowing precisely how many            is fully balanced: 40 tasks per category and 40 per depth,
+tokens memory contributed to a prompt. Prior work that              with eight tasks in every (category, depth) cell, so that per-
+reasons about carried context estimates this quantity from word     category and per-depth comparisons are never confounded by
+    1. Compile once, before execution      2. Execute each node v         in topological order, for every node                                              3. Account
+
+           user query
+
+                                             warm tier
+             planner                                                                                                                                             cost profiler
+                                                   miss               mem(v)                                           count
+                                                              top-K
+
+         extract d=1                          durable
+                                                                                        base(v)⊕mem(v)                               −      inject(v)          Cbase billed
+                                                                                                                                                               Cinf    billed
+        SQL-gen d=2                                                                                                                                            Cinject billed
+                                           prompt, tools,
+        reconcile d=3                                                 base(v)                                          count
+                                              query                                                                                                         Cmiss  zero here
+                                                                                                                                                            Caccum zero here
+          policy d=4                                                                                             two non-billable counts,
+                                                                                                                       ∼10 ms per node                    per-node, per-depth and per-
+    DAG W =(V, E); each                                                             LLM, tier t              output(v)                                  category cost, exactly attributed
+   node tagged with tier t and
+    strategy m. Blocks show
+   entries injected at that node
+                                         output written back to the warm tier — it becomes the next node’s injection
+
+Fig. 1. End-to-end flow of a multi-agent workflow, and where memory injection cost enters it. 1. Compile: a planner decomposes the user query into a
+directed acyclic graph (DAG) W = (V, E), and each node is tagged with a model tier t and a memory strategy m before execution begins. The blocks beside
+each node are the entries that node will inject: a source node injects nothing, and the count grows with depth, bounded by the retrieval window Kdefault .
+2. Execute: for every node in topological order, memory is retrieved from a warm tier of capacity Kdefault , falling back to a durable store on a miss, and
+combined with the base prompt. The prompt is assembled twice — once without memory and once with — and both are tokenized with the provider’s own
+tokenizer. Neither count is billed; together they add roughly ten milliseconds per node against inference latencies of eighty to three thousand milliseconds.
+Their difference is the exact injected token count of Eq. (2); the first count also yields Cbase . The node’s output is written back to the warm tier, where it
+becomes part of the next node’s injection — the mechanism that makes carried context accumulate with depth. 3. Account: per-node counts flow to the cost
+profiler alongside the tier and strategy in use. The miss penalty and accumulation terms are zero in this harness for the reasons given in Section III, and are
+shown greyed.
+
+
+
+composition (Table I). Distributing tasks across depths two                          (Tables V and VI) we give no confidence interval and treat
+through six lets us measure the depth dependence of injection                        the values as directional; the three-seed headline conditions
+cost directly rather than inferring it from a single workflow                        give 95% intervals of 0.535–0.629 and 0.583–0.670, which
+shape.                                                                               indicates the width to expect at this benchmark size. Keyword
+   Workflows are composed from six specialist node classes                           recall is coarser than full result matching: it can credit an
+— extraction, present in all 200 tasks, query generation,                            answer that mentions the right terms without being correct, and
+policy checking, billing reconciliation, IAM audit and cross-                        penalize a correct answer phrased unexpectedly. We return to
+domain reconciliation — and execute against three real                               this in Section VIII, and it is the reason we treat the accuracy
+SQLite databases seeded with synthetic but realistic enterprise                      axis of this study as a guard rather than as a result.
+data: two hundred invoices, several hundred purchase orders                             Models, tiers and protocol. All experiments use models
+and payments, and thousands of entitlement and access-log                            across a small and a mid tier, with the frontier tier disabled
+records. Token attribution is exact via the two-pass count of                        by budget configuration so that the memory injection effect is
+Section IV.                                                                          isolated from frontier escalation. The profiler records a single
+   The five categories exercise different cost profiles: billing                     frontier-tier invocation across all runs, which we report for
+and cross-domain reconciliation are deep and dependency-                             completeness; it is one call among several thousand and affects
+heavy, SAM and IAM are query-heavy at moderate depth, and                            no reported figure. Per-token prices are given in Table II. The
+policy checking is shallow and structured. We include the last                       cost profiler is reset before each run so that routing reflects a
+to confirm the accounting does not mistake a category needing                        consistent starting point, and all conditions share identical spe-
+no optimization for one that does.                                                   cialist prompts and retry semantics so that differences reflect
+   Grading. Grading is execution-grounded and deterministic                          the configuration under test rather than incidental execution
+rather than delegated to a model-based rubric, because a rubric                      differences. Headline conditions are run across three random
+grader is itself a model with its own errors and biases. A                           seeds (42, 7 and 99); the ablation conditions are run at seed
+query-generation node is graded correct only if its generated                        42.
+query executes successfully against the task’s database, returns
+                                                                                                             VI. R ESULTS
+a non-empty error-free result, and the combined query-plus-
+answer text attains a recall of at least 0.6 over the task’s                         A. Injection Cost and Its Share of the Bill
+annotated required topics. Every other node class is graded                            Table III decomposes per-task cost into the components of
+by the same required-topic recall criterion alone. End-to-                           Eq. (1) for the unoptimized baseline at the mid tier. Inference
+end task accuracy is the verdict of the deepest node in                              accounts for $0.020408 per task and memory injection for
+the workflow. Where accuracy is reported at a single seed                            $0.003220; injection is therefore 13.6 percent of the variable
+                            TABLE I                                                                        TABLE III
+B ENCHMARK COMPOSITION . E IGHT TASKS IN EACH ( CATEGORY, DEPTH )            TCA DECOMPOSITION PER TASK FOR THE UNOPTIMIZED BASELINE , MID
+                             CELL .                                          TIER , SEED 42. I NFERENCE AND INJECTION ARE MEASURED DIRECTLY.
+                                                                                 T HE BASE - PROMPT ROW IS DERIVED RATHER THAN MEASURED
+     Category           d=2     d=3   d=4     d=5         d=6       Total    PER - CONDITION : IT IS THE COST PROFILER ’ S OBSERVATION - WEIGHTED
+                                                                             MEAN OF 304.4 BASE TOKENS PER NODE AT THIS TIER , MULTIPLIED BY
+     Billing             8       8      8         8        8         40     THE MEAN NODES PER TASK , AND PRICED AT pin . S EE S ECTION VI A FOR
+     CrossDomain         8       8      8         8        8         40                       THE DERIVATION AND ITS LIMITATIONS .
+     IAM                 8       8      8         8        8         40
+     Policy              8       8      8         8        8         40                   Component          Cost per task   Share
+     SAM                 8       8      8         8        8         40
+                                                                                          Base prompt           $0.003699    13.5%
+     Total              40      40     40         40       40       200                   Inference             $0.020408    74.7%
+                                                                                          Memory injection      $0.003220    11.8%
+                                                                                          Miss penalty          $0.000000     0.0%
+                               TABLE II                                                   Accumulation          $0.000000     0.0%
+ P ER - TOKEN PRICES USED THROUGHOUT, IN USD PER MILLION TOKENS
+      (MT OK ) [21]. T HE FRONTIER TIER WAS DISABLED BY BUDGET                            Total                 $0.027327    100%
+                  CONFIGURATION AND IS NOT PRICED .
+
+
+     Tier       Model            Input ($/MTok)        Output ($/MTok)      to why the apparent saving belongs to tier routing rather than
+     Small      Claude Haiku          1.00                   5.00           to memory management.
+     Mid        Claude Sonnet         3.00                  15.00
+                                                                            B. Growth with Depth
+                                                                               Fig. 2 reports injection behavior across workflow depth for
+cost that a compile-time optimizer can act on. Our per-                     the baseline. The upper panel gives the absolute injected token
+condition instrumentation recorded inference and injection but              count per task: 143 tokens at depth two, rising through 324,
+not base-prompt volume, so we recover it from the cost pro-                 466 and 602 to 754 at depth six. A linear fit over these five
+filer, whose observation-weighted mean is 304.4 base tokens                 depths explains the data with R2 = 0.9974 and a slope of 150
+per node at this tier over 1,896 observations; multiplying by               tokens per additional level of depth. A quadratic fit over the
+the benchmark’s mean of four nodes per task gives 1,233                     same points reaches R2 = 0.9987 with a leading coefficient of
+tokens, or $0.003699, and injection falls to 11.8 percent of                −4.57: the fitted curve is concave, so the data do not merely
+the full billed cost. This is a derivation, not a measurement:              fail to require a quadratic term, they are inconsistent with
+the profiler aggregates across conditions and seeds, and the                convex growth over this range.
+node count is the benchmark’s design mean rather than a                        The depth-one point requires comment because the bench-
+per-task observation. The 13.6 percent figure rests on direct               mark contains no depth-one tasks (Table I). A source node
+measurement; the 11.8 percent figure is an estimate accurate                has no upstream output to inject, so its injection is zero by
+to roughly a point. We report both figures because they answer              the structure of the graph rather than by measurement. The
+different questions: the first is the fraction of controllable cost         instrumentation bears this out: across 1,112 observations of
+that the memory subsystem governs, and the second is the                    the extraction node class at the two active tiers, the recorded
+fraction of an invoice a practitioner would recognize.                      injected-token count is exactly zero in every case. We plot
+   On this benchmark the base prompt contributes slightly                   the point for completeness, label it as a structural zero, and
+more billed input than injection does, 1,233 tokens against                 exclude it from every fit reported here; the R2 above is
+1,073.                                                                      computed over depths two through six only. Including it
+   Injection is not the largest line in the decomposition and we            changes the linear fit to R2 = 0.9984, so the conclusion does
+do not present it as one; inference dominates at every depth                not rest on it.
+we measure, and the base prompt is comparable in size. What                    The lower panel gives injection as a share of cost at each
+makes injection worth attributing separately is that it is the              depth. The share rises monotonically from 8.4 percent at depth
+only line that grows with the structure of the workflow rather              two to 27.6 percent at depth six on the mid tier, and tracks the
+than with the work the workflow performs.                                   same curve on the small tier, reaching 28.0 percent. The near-
+   A caution about Condition H, reported in Table V. The                    coincidence of the two curves is itself informative: because
+full system (Condition H of Table V) reduces the injection                  the providers in our study price input and output tokens in
+line from $0.003220 to $0.001492, but we do not read that                   the same ratio at both tiers, the injection share is close to
+as a reduction in injected volume. Condition H reassigns the                tier-independent, while the absolute dollar cost of the same
+majority of nodes to the small tier, and injected tokens are                injected context differs by the ratio of the two input prices.
+billed at the input price of the tier a node lands on, so a                 The hidden cost is therefore a structural property of workflow
+dollar-level change in that row conflates a change in price                 depth rather than of any one tier, and its dollar impact scales
+with a change in volume. The two are separable only at token                with the price of the tier it lands on.
+level and at fixed tier assignment, which is the comparison                    The two panels are consistent despite one showing a rising
+Section VI C reports. We show the column for completeness                   fraction and the other a linear count: injected tokens accumu-
+and make no optimization claim from it; Section VII returns                 late with depth while per-node output does not, so the fraction
+                                                                                                                 TABLE IV
+                                                                                      R ETRIEVAL CAPACITY SENSITIVITY. C ONDITION B ( MEMORY ONLY ),
+                                                                                     SMALL TIER , SEED 42. T OKEN COUNTS ARE PER TASK , SUMMED OVER
+                                                                                   THE NODES OF THE WORKFLOW. T HIS CONDITION AND TIER DIFFER FROM
+                                                                                    THOSE OF F IG . 2, WHICH REPORTS THE UNOPTIMIZED BASELINE AT THE
+                                                                                            MID TIER ; THE TWO ARE NOT DIRECTLY COMPARABLE .
+
+
+                                                                                      Capacity Kopt     Inj. tokens per task   Cost per task   Accuracy
+                                                                                            32                 1,074            $0.007436       0.600
+                                                                                            2                   766             $0.006939       0.570
+
+
+
+                                                                                   on, which can shorten its output, and we did not instrument
+                                                                                   output length against capacity. The token-level reduction is
+                                                                                   what this experiment establishes.
+                                                                                      End-to-end accuracy falls from 0.600 to 0.570 across the
+                                                                                   same change. We do not read this as a measured accuracy
+                                                                                   cost. A 0.030 difference sits well inside the 0.575–0.645 band
+                                                                                   that the ablation conditions span at a single seed (Table V),
+                                                                                   which we attribute to stochastic variation rather than to any
+                                                                                   systematic effect. What two settings can establish is the sign
+                                                                                   and the order of magnitude of the tension: tightening the
+                                                                                   window reduces injected volume materially, and it eventually
+                                                                                   evicts an entry a later node needed. What they cannot establish
+                                                                                   is where the trade turns unfavorable. We therefore claim only
+                                                                                   that the lever exists and acts in the expected direction, and
+Fig. 2. Injection behavior across workflow depth. Top: injected tokens per
+task, with a linear fit over depths two through six; the depth-one point is a      we specify the measurement that would locate the knee in
+structural zero (a source node has no upstream output to inject) and is excluded   Section VIII.
+from the regression. A quadratic fit over the same points yields a negative
+leading coefficient. Bottom: injection as a share of billed cost at both tiers;
+the curves nearly coincide because both tiers share the same input-to-output                          VII. W HAT D ID N OT W ORK
+price ratio.
+                                                                                      We report the following results because omitting them
+                                                                                   would misrepresent the system, and because two of them bear
+climbs, and the retrieval window bounds per-node injection,                        directly on how the measurements in Section VI should be
+so the count grows linearly rather than quadratically.                             read.
+                                                                                      The graph-rewriting transforms are approximately cost-
+C. Sensitivity to Retrieval Capacity                                               neutral in isolation. Table V and Fig. 3 report per-task cost
+   This experiment varies one parameter at fixed tier assign-                      for the eight conditions at the small tier. Conditions A through
+ment and a single seed; it shows that the retrieval window                         G lie within one percent of each other, spanning $0.00740 to
+is a live lever on injected volume, and is not a sensitivity                       $0.00744 per task. Condition F, shared namespace promotion
+analysis. Table IV reports the result. Reducing the warm-                          alone, is the only condition below the unoptimized baseline,
+window capacity Kopt from its default of 32 entries to 2,                          and by $0.00002; condition G, all three transforms combined,
+holding everything else fixed, lowers mean injected tokens per                     is the most expensive of the rewrite conditions rather than
+task from 1,074 to 766, a reduction of 28.7 percent, and lowers                    the cheapest. We draw the direct conclusion: at the small tier
+cost per task from $0.007436 to $0.006939, a reduction of 6.7                      the transforms neither help nor harm cost appreciably. We do
+percent.                                                                           not interpret the ordering within that one-percent band. These
+   The token-level figure is the one that matters. Because                         are single-seed runs, the spread between the cheapest and most
+tier assignment is unchanged between the two rows, injected                        expensive of conditions A through G is $0.00004 per task, and
+tokens are billed at the same input price in both, so the 28.7                     we have no variance estimate at this granularity; differences
+percent reduction is attributable to the memory mechanism                          of that size should be read as indistinguishable rather than
+and to nothing else. This is the only comparison in our                            as a ranking. They change where context is carried without
+experiments with that property, and it is the reason we treat                      changing how much work the workflow performs.
+it rather than the ablation of Section VII as the evidence                            The full system is more expensive than the baseline at
+that injection cost is controllable. Cutting 28.7 percent of                       the cheapest tier. Condition H costs $0.00998 against the
+injected tokens removes $0.000308 per task, or 4.1 percent                         baseline’s $0.00742. This is expected rather than defective.
+of the total; the measured reduction is 6.7 percent. We do                         The small tier is the price floor; there is no cheaper tier to
+not claim the remaining $0.000189 as an injection effect: a                        route toward, so the tier assigner can only escalate, and it
+smaller window also shortens the prompt each node conditions                       escalates the minority of accuracy-sensitive nodes to the mid
+                                                                                                              TABLE VI
+                                                                                      P ER - CATEGORY COST AND ACCURACY, SEED 42, 40 TASKS PER
+                                                                                                              CATEGORY.
+
+
+                                                                                         Category        A cost   A acc.    H cost   H acc.
+                                                                                         Billing        $0.0234    0.375   $0.0111    0.600
+                                                                                         CrossDomain    $0.0239    0.775   $0.0101    0.825
+                                                                                         IAM            $0.0233    0.425   $0.0084    0.525
+                                                                                         Policy         $0.0241    0.750   $0.0096    0.625
+                                                                                         SAM            $0.0235    0.625   $0.0108    0.550
+
+
+
+                                                                                                       VIII. L IMITATIONS
+                                                                                    Prompt caching is not evaluated, and this is the most
+Fig. 3. Per-task cost by ablation condition at the small tier, 200 tasks per     important open question. Providers discount cached input
+condition, seed 42. Conditions A through G lie within one percent of each
+other: at the price floor the memory and graph-rewrite transforms redistribute   tokens by roughly an order of magnitude [20], so a natural
+where context is carried without materially lowering cost. Condition H is more   objection is that repeated injections would be served from
+expensive than the baseline because its tier assigner escalates a minority of    cache and the cost we measure would largely disappear. Four
+accuracy-sensitive nodes to the mid tier.
+                                                                                 structural properties work against caching injected memory
+                                                                                 here. First, a cache hit requires a byte-identical prefix up to the
+                              TABLE V                                            cache breakpoint, and injected memory consists of upstream
+  A BLATION CONDITIONS , SMALL TIER , SEED 42, 200 TASKS EACH . T1
+( NODE FUSION ), T2 ( NODE REORDERING ) AND T3 ( SHARED NAMESPACE                node outputs generated within the current task instance; the
+    PROMOTION ) ARE THE THREE GRAPH - REWRITING TRANSFORMS ;                     first injection of such content is necessarily a write, never
+                  CONDITION G APPLIES ALL THREE .
+                                                                                 a read. Second, a change at the system level invalidates
+                                                                                 the message level beneath it, so in a graph whose nodes
+       Cond.    Description             TCA/task     Mem %       Acc.
+                                                                                 carry different specialist system prompts, memory injected
+         A      No optimization         $0.00742       14.4      0.635
+         B      Memory only             $0.00744       14.4      0.600
+                                                                                 at one node cannot be read from cache at another unless
+         C      Tier only               $0.00742       14.5      0.645           prompts are restructured so shared memory precedes node-
+         D      T1 fusion only          $0.00744       14.5      0.630           specific instruction. Third, minimum cacheable prefix lengths
+         E      T2 reorder only         $0.00743       14.5      0.600
+         F      T3 namespace only       $0.00740       14.5      0.575
+                                                                                 can exceed the per-task injected context at the small tier.
+         G      Rewrite (all)           $0.00744       14.5      0.610           Fourth, content written to cache and read zero times costs
+         H      Full system             $0.00998       14.8      0.590           more than not caching it at all, so in a fan-out graph where
+                                                                                 each node carries distinct context, naive caching raises cost.
+                                                                                 This is an argument, not a measurement: we did not instrument
+tier. We record it because it makes the boundary explicit:                       cache hit rates, and every figure here is for the uncached case.
+any cost benefit from tier reassignment is available only to a                   Measuring the hit rate on injected memory, and the residual
+deployment that starts from a more expensive tier and routes                     after caching, is the first thing we would run next.
+downward, which is a property of the routing prior art rather                       Static DAGs. Our benchmark comprises fixed-topology
+than of this article’s accounting.                                               workflows; we do not evaluate ReAct-style reasoning
+   Two of the five decomposition terms are zero throughout.                      loops [15] or dynamically branched workflows. The accumu-
+As stated in Section III, the miss penalty and accumulation                      lation mechanism is not specific to static structure: a loop at
+terms do not accrue billable cost here, by construction rather                   step t injects the observations of steps 1 through t−1, which is
+than by omission of measurement. Warm-tier lookups do miss                       the accumulation of Section III with graph depth d replaced by
+— the instrumentation records a fallback on every depth-one                      iteration count t. Because agent loops routinely run to iteration
+node, and on more nodes once the window is small — but                           counts exceeding the depth of our deepest workflow, we would
+our durable store is an in-process key-value store with no                       expect injection to be a larger fraction of cost in that setting.
+per-token billing, so a fallback costs latency and no dollars.                   We state this as an expectation derived from the same analysis,
+A deployment whose durable tier is a billed remote service                       not as a measurement.
+would populate the term. We instrument and report all five for                      Tier-independence depends on a price-ratio assumption.
+completeness and to make explicit which two were exercised.                      The near-coincidence of the two curves in Fig. 2 follows from
+   Total cost is dominated by tier assignment, not by                            our provider pricing input and output in the same ratio at both
+memory management. Across our experiments the lever that                         tiers; that is a property of one price list, not a law. Under
+moves total cost is which model each node runs on — the                          a cheaper tier with a relatively higher input-to-output ratio
+finding of the routing literature [1], [2], [6], not of this                     the curves would separate, and under the opposite skew they
+work. We note it because memory injection is by comparison                       would cross. Token counts are unaffected, but any share-of-
+a second-order lever, and because it is why we hold tier                         cost figure must be recomputed per provider.
+assignment fixed in Section VI.                                                     Single provider, single framework. All results use one
+model provider and one agent framework. The billing of input                   [7] C. Packer, S. Wooders, K. Lin, V. Fang, S. G. Patil, I. Stoica et al.,
+tokens is universal, and the attribution method requires only                      “MemGPT: Towards LLMs as operating systems,” arXiv:2310.08560,
+                                                                                   2024.
+that prompts be assembled explicitly before dispatch, so we                    [8] J. Li, B. Hui, G. Qu, J. Yang, B. Li et al., “Can LLM already serve as a
+expect the accounting to transfer; whether the magnitudes do                       database interface? A big bench for large-scale database grounded text-
+is untested.                                                                       to-SQLs (BIRD),” in Proc. Adv. Neural Inf. Process. Syst. (NeurIPS),
+                                                                                   2023.
+   Grading is coarse and the accuracy axis is narrow. End-                     [9] T. Yu, R. Zhang, K. Yang, M. Yasunaga, D. Wang et al., “Spider: A
+to-end accuracy falls in a moderate band across seeds, and                         large-scale human-labeled dataset for complex and cross-domain seman-
+grading combines execution success with keyword recall over                        tic parsing and text-to-SQL task,” in Proc. Conf. Empirical Methods
+                                                                                   Natural Lang. Process. (EMNLP), 2018.
+required topics at a 0.6 threshold. With 40 tasks per category,               [10] X. Liu, H. Yu, H. Zhang, Y. Xu, X. Lei et al., “AgentBench: Evaluating
+per-category differences carry wide uncertainty and should                         LLMs as agents,” in Proc. Int. Conf. Learn. Represent. (ICLR), 2024.
+be read as directional. We use accuracy as a guard against                    [11] G. Mialon, C. Fourrier, C. Swift, T. Wolf, Y. LeCun, and T. Scialom,
+                                                                                   “GAIA: A benchmark for general AI assistants,” in Proc. Int. Conf.
+silent degradation, not as a measured outcome, and claim no                        Learn. Represent. (ICLR), 2024.
+accuracy improvement anywhere in this article.                                [12] S. Yao, N. Shinn, P. Razavi, and K. Narasimhan, “τ -bench: A
+   Seed counts, and the measurement we did not make.                               benchmark for tool-agent-user interaction in real-world domains,”
+                                                                                   arXiv:2406.12045, 2024.
+Headline conditions are run across three seeds; the ablation                  [13] Q. Wu, G. Bansal, J. Zhang, Y. Wu, B. Li et al., “AutoGen: Enabling
+and the capacity experiment are run at a single seed. The                          next-gen LLM applications via multi-agent conversation,” in Proc. Conf.
+capacity experiment reports two settings, which is enough                          Lang. Model. (COLM), 2024.
+                                                                              [14] LangChain, “LangGraph: Building stateful, multi-actor applications
+to establish that the lever acts and in which direction, and                       with LLMs,” 2024. [Online]. Available: https://github.com/langchain-
+not enough to trace the cost–accuracy curve. The specific                          ai/langgraph [Accessed: Sep. 20, 2026]
+measurement that would close this is a sweep over Kopt ∈                      [15] S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. Narasimhan et al., “ReAct:
+                                                                                   Synergizing reasoning and acting in language models,” in Proc. Int.
+{1, 2, 4, 8, 16, 32, 64} at three seeds on the small tier under                    Conf. Learn. Represent. (ICLR), 2023.
+the memory-only condition, reporting injected tokens, cost and                [16] N. Shinn, F. Cassano, E. Berman, A. Gopinath, K. Narasimhan, and S.
+accuracy as mean and standard deviation at each setting; on our                    Yao, “Reflexion: Language agents with verbal reinforcement learning,”
+                                                                                   in Proc. Adv. Neural Inf. Process. Syst. (NeurIPS), 2023.
+benchmark that is 21 runs of 200 tasks. We name it precisely                  [17] A. Sindhu and S. Arumugam, “Agent-based generative AI model for
+because it is the first thing a reader should ask for, and the                     cost-aware automation in machine learning pipelines,” IEEE Access,
+first thing we would run.                                                          vol. 13, pp. 192189–192209, 2025.
+                                                                              [18] Z. Pan, Q. Wu, H. Jiang, M. Xia, X. Luo, J. Zhang et al., “LLMLingua-2:
+                        IX. C ONCLUSION                                            Data distillation for efficient and faithful task-agnostic prompt compres-
+                                                                                   sion,” in Findings Assoc. Comput. Linguistics (ACL), 2024, pp. 963–981.
+   Memory injection is a real, separately attributable and                    [19] Y. Li, Y. Huang, B. Yang, B. Venkitesh, A. Locatelli, H. Ye et al.,
+exactly measurable component of multi-agent LLM workflow                           “SnapKV: LLM knows what you are looking for before generation,” in
+                                                                                   Proc. Adv. Neural Inf. Process. Syst. (NeurIPS), 2024.
+cost that production observability tooling does not report. We                [20] Anthropic, “Prompt caching,” Claude Platform Documentation, 2026.
+formalized it within the Total Cost of Agency decomposition,                       [Online]. Available: https://platform.claude.com/docs/en/build-with-
+gave a two-pass token accounting method that measures it                           claude/prompt-caching [Accessed: Sep. 20, 2026]
+                                                                              [21] Anthropic, “Pricing,” Claude Platform Documentation, 2026. [Online].
+exactly at no billing cost, and characterized its behavior across                  Available:      https://platform.claude.com/docs/en/about-claude/pricing
+workflow depth and retrieval capacity on a 200-task bench-                         [Accessed: Sep. 20, 2026]
+mark executed against real model APIs. We report equally                      [22] W. Kwon, Z. Li, S. Zhuang, Y. Sheng, L. Zheng, C. H. Yu et
+                                                                                   al., “Efficient memory management for large language model serving
+that our graph transforms are approximately cost-neutral in                        with PagedAttention,” in Proc. ACM Symp. Operating Syst. Principles
+isolation, that total cost is dominated by model tier assignment                   (SOSP), 2023.
+which we hold fixed, and that prompt caching — the most                       [23] LangChain, “LangSmith documentation: tracing, token counts and cost,”
+                                                                                   2026. [Online]. Available: https://docs.smith.langchain.com [Accessed:
+plausible mitigation — remains unmeasured and is the open                          Sep. 20, 2026]
+question we would address first.                                              [24] Arize AI, “Phoenix documentation: LLM tracing,” 2026. [Online].
+                                                                                   Available: https://docs.arize.com/phoenix [Accessed: Sep. 20, 2026]
+                             R EFERENCES                                      [25] Weights & Biases, “Weave documentation: tracing LLM applications,”
+ [1] L. Chen, M. Zaharia, and J. Zou, “FrugalGPT: How to use large                 2026. [Online]. Available: https://weave-docs.wandb.ai [Accessed: Sep.
+     language models while reducing cost and improving performance,”               20, 2026]
+     arXiv:2305.05176, 2023.
+ [2] I. Ong, A. Almahairi, V. Wu, W.-L. Chiang, T. Wu, J. E. Gonzalez et
+     al., “RouteLLM: Learning to route LLMs with preference data,” in Proc.
+     Int. Conf. Learn. Represent. (ICLR), 2025.
+ [3] D. Ding, A. Mallick, C. Wang, R. Sim, S. Mukherjee, V. Rühle et al.,
+     “Hybrid LLM: Cost-efficient and quality-aware query routing,” in Proc.
+     Int. Conf. Learn. Represent. (ICLR), 2024.
+ [4] Q. J. Hu, J. Bieker, X. Li, N. Jiang, B. Keigwin, G. Ranganath
+     et al., “RouterBench: A benchmark for multi-LLM routing system,”
+     arXiv:2403.12031, 2024.
+ [5] A. Madaan, P. Aggarwal, A. Anand, S. P. Potharaju, S. Mishra, P. Zhou
+     et al., “AutoMix: Automatically mixing language models,” in Proc. Adv.
+     Neural Inf. Process. Syst. (NeurIPS), 2024.
+ [6] Y. Yue, G. Zhang, B. Liu, G. Wan, K. Wang, D. Cheng et al.,
+     “MasRouter: Learning to route LLMs for multi-agent systems,” in Proc.
+     Annu. Meeting Assoc. Comput. Linguistics (ACL), 2025.
+

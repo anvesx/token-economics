@@ -1,0 +1,91 @@
+TITLE: Codex Context Management: Auto-Compact and /context
+URL: https://getunblocked.com/blog/codex-context-window-tools
+ORG: Unblocked  TYPE: blog  DATE: 2026-11
+
+Codex Context Management: Auto-Compact and /context | Unblocked 
+
+All Articles
+
+Codex Context Management: Auto-Compact Threshold and /context
+Only ~245K of Codex's 400K window is usable. Six tools, compared with pricing, that cut MCP overhead, compact sessions, and stop context loss.
+
+Dennis PilarinosAug 4, 2026ComparisonsContext Engine
+
+Key Takeaways
+• The best tool for managing the Codex context window in 2026 is Unblocked, a context engine that answers over MCP so Codex spends tokens on code instead of exploration; Webflow reports it saves tokens on their bill and time for their engineers
+• Codex's real budget is about about 245,000 usable tokens of the advertised 400,000, because 128,000 are reserved for output and auto-compaction is clamped at 90%
+• Free levers come first: running /compact early, keeping AGENTS.md under the 32 KiB cap, and filtering enabled_tools in config.toml
+• Loading several MCP servers can consume tens of thousands of tokens before your first prompt; tool filtering and output sandboxing recover most of it
+• A full management stack costs anywhere from $0 (all open source) to $29 per user per month
+The best tool for managing the Codex context window in 2026 is Unblocked, the context engine Codex queries first: it answers from your PRs, Slack, Jira, and Confluence over MCP, so the roughly 245,000 tokens your session can actually use go toward writing code instead of repo archaeology. If you landed here after an auto-compact loop, or after OpenAI's coding agent told you it "ran out of room in the model's context window" and abandoned the thread, you are in the right place. This roundup covers six tools that cut what enters the window and recover what compaction destroys.
+Why Does the Codex Context Window Need Managing?#
+Because the window degrades long before it fills. Zylos Research's January 2026 long-context benchmark found that models typically break down 30 to 40 percent before their claimed limits, and about two thirds of tested models failed simple retrieval tasks in contexts as small as 2,000 tokens. Size is not safety.
+Codex compounds this with quiet arithmetic. The advertised 400,000-token window reserves 128,000 tokens for output, leaving 272,000 for input, and auto-compaction is clamped at 90% of that since v0.100.0, per the OpenAI Codex issue that landed the change in February 2026:
+Expand
+
+Budget lineTokens
+Advertised window400,000
+Reserved for output128,000
+Effective input272,000
+Usable before auto-compact (90%)~244,800
+For the mechanics behind these numbers, our Codex context window explainer walks the full budget line by line. This post stays on the practical question: which tools give you those tokens back. With Codex passing 5 million weekly users in June 2026 and 10 million combined with ChatGPT Work by July, the answer now matters to a lot of teams.
+Which Tools Actually Cut Codex Context Usage?#
+Ranked by how much of the window they protect, with verified pricing further down.
+1. Unblocked: stop spending the window on archaeology#
+The largest consumer of a Codex session is rarely the code being written. It is the searching: reading file after file to find a convention, or fetching tickets and threads to reconstruct why something works the way it does. Unblocked replaces that spend. Codex asks one question over MCP and gets decision-grade context back, a single reconciled answer drawn from PRs, Slack, Jira, Notion, Confluence, and the code itself, already weighed against conflicts so the model never has to sort raw results inside the window.
+
+It saves a ton of tokens on our bill, but it also saves people a lot of time getting to what they actually want to deliver.
+Russ Nealis — Staff Technical Product Manager, Webflow
+Because answers arrive synthesized, the tokens that would have carried whole files and full thread histories never enter the session. Best for teams whose agents keep re-learning things somebody already wrote down.
+2. Codex CLI built-ins: the free levers most teams never pull#
+Codex ships its own context management, documented in the official slash-command reference. /compact summarizes the visible chat to free tokens, and recent releases let you queue an instruction alongside it, which community documentation of the compaction architecture reports is passed into the summarization, so you can flag what should survive. /status shows session token usage, and /new starts clean. The config reference adds model_auto_compact_token_limit to move the compaction threshold and enabled_tools / disabled_tools to stop unused MCP tool schemas from loading at all.
+The quietest lever is AGENTS.md: Codex reads a three-tier chain of instruction files but truncates at 32 KiB by default, so a bloated file silently loses its tail. Budget it like the context it is. Best for everyone; do this before installing anything.
+3. context-mode: sandbox tool output before it floods the session#
+MCP tool calls return whatever the server sends, and a single verbose response can wipe out more budget than an hour of conversation. context-mode, an open source MCP server with explicit Codex support via config.toml, intercepts tool output and stores it outside the session, returning a compact reference instead. Its README documents a representative case where 315 KB of output becomes 5.4 KB in the window, a 98% reduction, with full-text retrieval available when the agent actually needs a detail. It also keeps session notes in SQLite so knowledge survives compaction. At 19,400 GitHub stars it is the most adopted context sandbox in the Codex ecosystem. Best for teams running data-heavy MCP servers they cannot simply disable.
+4. Repomix: pack the repo deliberately instead of letting Codex wander#
+Repomix inverts the exploration problem: rather than letting the agent read files one by one, you pack a curated slice of the repository into a single AI-ready file with per-file token counts, so you know the cost before anything enters the Codex context window. Its Tree-sitter compression mode, which keeps signatures and structure while dropping implementation bodies, claims roughly 70% token reduction on typical codebases. It respects .gitignore and runs Secretlint so credentials stay out of the payload. MIT licensed and free. Best for point-in-time tasks like reviews, audits, and onboarding prompts where you can name the relevant directories up front.
+5. Mem0: memory that outlives the session#
+Codex writes native memories to ~/.codex/memories/, but they are summaries, consolidated after idle time and truncated to a budget, as Mem0's July 2026 teardown of Codex memory documents. Mem0 upgrades this with a semantic memory layer over MCP: facts about your codebase, preferences, and past decisions are stored outside the window and recalled by relevance, so a new session starts informed without replaying history into context. OpenMemory, its self-hosted variant, keeps everything local. Best for solo developers and small teams who restart sessions often and are tired of re-teaching the agent.
+6. tiktoken: know the cost before you paste#
+The bluntest failures are self-inflicted: pasting a 40,000-token log file into a session that had 30,000 tokens left. tiktoken, OpenAI's official tokenizer library with o200k support, lets you count before you commit, in a script or a one-liner. Wire it into a pre-commit hook or a wrapper that warns when an attachment will consume more than a set share of the remaining window. Free, MIT licensed, and effectively zero cost to adopt. Best as seatbelt infrastructure for any team automating Codex runs.
+What is Codex's auto-compact threshold, and can you change it?#
+Yes. model_auto_compact_token_limit in config.toml sets the token count at which Codex compacts history; OpenAI's configuration reference lists it as unset by default, deferring to the model's limit (OpenAI, 2026). Since v0.100.0, Codex clamps any value to 90% of the context window, so you can lower the threshold but not raise it past that ceiling (issue #11805, 2026).
+Two companion keys matter. model_context_window sets the token count Codex assumes for the model, which the clamp is computed against, and model_auto_compact_token_limit_scope decides whether the threshold counts the whole active context (total, the default) or only growth after the carried compaction prefix (body_after_prefix). The same reference lists a features.context_management.experimental_mode flag marked not currently available, so a search for a Codex "context management mode" lands on a switch that does nothing yet. On a large monorepo, drop the limit well below the ceiling and run /compact with an instruction before the automatic pass, which keeps the handoff summary focused on the work you still need (Daniel Vaughan, 2026).
+Does Codex have a /context command?#
+Not yet. OpenAI's slash command reference lists /compact ("Compact the current chat's context") and /status ("Show the chat ID, context usage, and rate limits"), but no /context (OpenAI, 2026). A native /context usage card is an open feature request on the Codex repository, issue #27898 (2026).
+The request describes what people searching for the command actually want: a read-only breakdown of the window across system prompt, system tools, MCP tool schemas, skills, messages, and free space, with a compact /context view and a fuller /context full. Until it ships, /status is the closest built-in. It reports total context usage, but not which category is consuming it. To get the breakdown today, disable MCP servers one at a time and watch the /status baseline move, or filter enabled_tools in config.toml and compare the two readings. The third-party tools above fill the same gap from different angles: context-mode keeps verbose tool output out of the window entirely, and tiktoken counts what you are about to paste before it lands.
+FAQ: Codex Context Window Tools#
+Does ChatGPT Plus vs Pro change the Codex context window? No. Plans change usage and rate limits, not per-thread window size, as clarified in a community discussion on the OpenAI Codex repo.
+Does Codex auto-compact on its own? Yes, at the 90% ceiling unless you lower it with model_auto_compact_token_limit. Running /compact yourself before that point gives a better result than waiting for the automatic pass, because you can queue an instruction telling Codex what to keep.
+Why does /status show my context 90% full when I just started? Usually indicator interpretation rather than real exhaustion; issue #18136 tracks the confusion. Check whether MCP tool schemas and instruction files are eating the baseline.
+What happens when Codex truly runs out of context? The thread can enter an unrecoverable state (issues #7808 and #28920). Start a new thread and use codex resume --last to carry work forward, then compact earlier next time.
+Is a bigger context window the fix? No. The degradation research above shows accuracy drops well before limits, and the same pattern holds across agents; see our Claude Code context window guide for the cross-agent view. Curation beats capacity.
+What Does Each Tool Cost?#
+Pricing verified against vendor pages in July 2026. Most of this stack is free; the paid entries price per user, with no contract minimums.
+Expand
+
+ToolStarting PriceFree TierContract Minimum
+Unblocked$29/user/mo (annual)21-day free trialNone
+Codex CLI built-insIncluded with CodexYesNone
+context-modeFree (ELv2)YesNone
+RepomixFree (MIT)YesNone
+Mem0$19/mo StarterHobby tierNone
+tiktokenFree (MIT)YesNone
+How Do You Combine These Tools Without Overloading MCP?#
+Adding tools to fix context bloat can cause context bloat. Every MCP server you connect loads its tool schemas up front, and Codex has no deferred tool loading; our line-item autopsy of MCP token costs measured a seven-server preload consuming roughly 71,000 tokens before the first prompt. So the recipe is subtraction first.
+Start with the built-ins: trim AGENTS.md, set the compaction threshold, filter enabled_tools. Then pick one storage layer, either context-mode for output sandboxing or Mem0 for cross-session memory, rather than stacking both. Finally, consolidate connectors: one Unblocked connection answers across every system your team uses, replacing the ticket, wiki, and chat servers you would otherwise wire in separately, which is the trade our guide to MCP tool overload quantifies. Teams still tuning budgets after that should see the token cost reduction techniques that apply across agents, and the context maturity model for deciding how much of this infrastructure your team actually needs.
+Which Tool Should You Install First?#
+Match the tool to the symptom. Auto-compact loops and truncated instructions: spend an afternoon on the free built-ins. Sessions flooded by tool output: context-mode. Re-teaching the agent every morning: Mem0. Big one-off analysis jobs: Repomix and tiktoken. And if the recurring cost is your agent excavating tribal knowledge from four systems every session, that is the problem Unblocked removes; an engineer at UserTesting puts the cost of losing that full picture at 20 to 30 percent of their productivity. Stack Overflow's May 2026 pulse survey found agentic AI use jumped to 59% of developers, nearly double the prior year, while 63% still rarely or never run agents unsupervised. The teams that close that trust gap will be the ones whose agents stop wasting the window. If you want to know where your team sits on that curve, the readiness assessment maps it in a few minutes.
+
+Stay in the loop
+Emerging techniques for building with AI at scale and how software development is changing from the Unblocked team.
+
+Read More
+
+Context Engineering Across Hundreds of Repos: A Practical Ladder for Platform Teams
+What breaks when coding agents work across hundreds of repositories, and five approaches platform teams use to fix it, from shared AGENTS.md files to a central context layer over MCP. What each costs and when to move up.
+Nov 6, 2026•Context Engineering
+
+Agentic Engineering: What Agents Need Besides the Model
+An agent in a large codebase runs on five layers: the model, the harness, permissions and identity, evaluation, and context. Most teams build the first four and skip the one that holds why, who and what happened before. Here is what each layer owns and what breaks without it.
+Nov 5, 2026•Context Engine

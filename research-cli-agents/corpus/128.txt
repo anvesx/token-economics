@@ -1,0 +1,159 @@
+TITLE: How to Measure AI Agent Token Usage
+URL: https://tokenade.net/en/articles/measure-agent-token-usage
+ORG: Tokenade  TYPE: blog  DATE: 
+
+How to Measure AI Agent Token Usage | Tokenade
+
+How to Measure AI Agent Token Usage
+You can't cut what you don't measure. Here's how to actually quantify your AI coding agent's token usage — per call, per session, per dollar — instead of guessing.
+
+By Paul Irolla
+Founder · AI & developer tools · Tokenade
+Ph.D. in AI · builds token-optimization tooling for AI agentsView author page
+June 29, 2026·Updated October 16, 2026·9 min read
+
+Summarize with AI
+
+Share on
+
+Add to Preferred Sources
+Cite this pageCopy URLCopy AttributionCopy APA
+
+How do you measure your AI coding agent's token usage?
+
+You measure your AI coding agent's token usage by reading the input/output token counts that every model API already returns, attributing them to the four things that drive them — file reads, tool output, MCP tools, and transcript replay — and then converting tokens to dollars using the model's published per-million-token price. Everything else is decoration. If you can produce those numbers per session, you can find your waste in an afternoon.
+
+I spent years doing AI research before I started building token tooling, and the single most common mistake I see is people optimising a number they've never actually looked at. They feel the bill is too high, they "trim some context," and they have no idea whether it worked. So before any optimisation talk, let's get you a real meter. This is the measurement companion to How to reduce AI coding agent token usage — read that next once you can see your numbers.
+
+What exactly are you measuring?
+
+You're measuring four distinct quantities, and conflating them is the first error: input tokens, output tokens, cached (cache-read) tokens, and the dollar cost that those map to. They are not interchangeable, because they're priced very differently.
+
+A token is the unit a model bills in — roughly 3–4 characters of English, produced by the model's tokenizer. For coding agents, three things matter:
+
+Input tokens are everything you send the model on a given turn: the system prompt, the tool definitions, the whole conversation history, and any file or command output already in it. This is almost always the dominant cost for agents.
+
+Output tokens are what the model generates back. They're priced higher per token — sometimes 5x — but there are usually far fewer of them.
+
+Cache-read tokens are input tokens served from prompt caching. They bill at roughly 10% of the normal input rate, which is why a high cache-hit rate quietly changes your whole economics.
+
+Input dominates because of how agentic loops work: on every step, the agent re-sends the entire transcript so far. A 6,000-token file you read on turn 2 is re-billed as input on turns 3, 4, 5, and so on. That re-billing is invisible if you only look at "how big was that one file" — and obvious the moment you look at per-turn input totals climbing across a session.
+
+Where do the numbers actually come from?
+
+The numbers come from the API response itself — you do not need to estimate. Every major provider returns a usage object on each completion. Anthropic's Messages API returns usage with input_tokens, output_tokens, cache_creation_input_tokens and cache_read_input_tokens (API reference). OpenAI's API returns a usage object with prompt_tokens, completion_tokens and total_tokens (API reference). These are the ground truth — the same counts you're billed on.
+
+There are three places to read them, in increasing order of effort and accuracy:
+
+The vendor dashboard. Anthropic Console and the OpenAI usage page both show token and dollar totals by day and by API key. Zero setup, but coarse: you get a daily aggregate, not "which session, which file, which tool."
+
+The agent's own counter. Claude Code shows a running token/cost figure per session; Cursor exposes usage in its settings. Good for a gut check, weak for attribution — they rarely tell you what spent the tokens. Some agents do not even expose a live rate: opencode still has no built-in tokens-per-second readout, and the number would not answer a cost question anyway.
+
+The usage field, logged per call. This is the real meter. If you can intercept each model call and append its usage to a log with a label (which session, which step), you can answer every question that matters. This is exactly what a savings dashboard does for you.
+
+If you want a quick offline estimate before any call goes out — for example to size a prompt — a token counter will tokenize text locally so you can see the count without spending anything.
+
+How do you turn tokens into dollars?
+
+You turn tokens into dollars by multiplying each token class by its per-million-token (MTok) price and summing. The formula is boring and exact:
+
+Copy
+
+cost = (input_tokens × input_price_per_MTok / 1_000_000)
+ + (cache_read_tokens × input_price_per_MTok × 0.10 / 1_000_000)
+ + (output_tokens × output_price_per_MTok / 1_000_000)
+
+Here are current published prices for the models most coding agents run on, as input / output per MTok:
+
+ModelInputOutput
+Claude Opus 5$5$25
+Claude Opus 4.8$5$25
+Claude Sonnet 5$2$10
+Claude Haiku 4.5$1$5
+GPT-5.5$5$30
+
+Cache reads bill at ≈10% of the input rate, which is the single biggest reason measured cost and "tokens sent" diverge. Two sessions that send the same number of input tokens can differ 9x in cost depending on cache-hit rate. If you're doing the arithmetic by hand across a day's sessions, an LLM token cost calculator will do the per-model multiplication for you; for the broader pricing picture see our breakdown of AI coding agent token costs and LLM API token pricing.
+
+A worked example. Say a single agentic task ran 18 turns on Sonnet 5, and your logs sum to 2.4M input tokens, 1.6M of which were cache reads, plus 40K output tokens:
+
+Non-cached input: 0.8M × $2 = $1.60
+
+Cached input: 1.6M × $2 × 0.10 = $0.32
+
+Output: 0.04M × $10 = $0.40
+
+Total: $2.32 for one task.
+
+That 2.4M input figure is the tell. Forty thousand output tokens means the model wrote maybe 300 lines of code — but it read the equivalent of a small novel, most of it the same files re-sent every turn. Now you know exactly where to look.
+
+How do you attribute usage to the four cost drivers?
+
+You attribute usage by labelling each logged call with what it did, then grouping. Tokens in aggregate tell you that you have a problem; tokens by category tell you which one. The four buckets, and how to spot each in your logs:
+
+File reads. Look at the input-token jump on turns where the agent called a read/file tool. A 500-line source file is roughly 5,000–7,000 tokens; if you see a dozen of those early in a session, that's your retrieval bill — and it gets re-billed on every later turn. The fix is to read less by searching first; see semantic code search.
+
+Tool output. Watch input growth right after shell commands. A failed npm test can dump 15,000 tokens of stack traces when the agent needed about 50 — the failing test name and the assertion. That delta is pure waste and the textbook case for output filtering.
+
+MCP tools. Two costs, measured differently. The output is the big one: every MCP result stays in history, so measure the jump in input tokens after a GitHub listing or a browser snapshot, and watch it carry over to every later turn. The manifest is sneakier because it has no trigger turn: count input tokens on a turn where the agent did nothing but think. With deferred tool loading (the default in Claude Code since tool search) that floor should hold only tool names; if it holds full schemas, your setup loads tools upfront.
+
+Transcript replay. Plot input tokens per turn across a session. If the line climbs steadily while the work doesn't, you're paying context window tax — re-billing old reads forever. This is also why context engineering and disciplined context compression matter more than any single trimmed prompt.
+
+Once each turn carries a label, a five-line group-by gives you the percentage split. In practice it's lopsided: for most agents I've profiled, file reads plus unfiltered tool output dwarf everything else.
+
+How to set up a real meter today
+
+Pick the lightest option that answers your actual question, then escalate only if you need attribution:
+
+Daily gut check (5 minutes). Open your vendor dashboard, note today's spend and token total. Do this for a week to learn your baseline. If the number doesn't bother you, stop here — premature optimisation is real.
+
+Per-session totals (30 minutes). Wrap your agent's API client and log the usage object after every call with a session ID. Sum by session. You'll immediately see which kinds of tasks are expensive.
+
+Per-category attribution (an afternoon). Add the tool name / turn type to each log line and group by it. This is where you find the surprise — almost always either eager reads or unfiltered output. The head-to-head that maps onto this split most directly is caveman vs tokensave: one tool attacks what the model says, the other what it has to read, and the attribution you just built is what tells you which of the two you were ever going to benefit from.
+
+Convert to dollars. Apply the formula above so you're reasoning in money, not abstract tokens. Money makes the trade-offs obvious to you and to anyone you report to.
+
+If you'd rather not build and maintain this, that's literally why I built Tokenade. It sits in front of Claude Code, Cursor, Codex, Copilot, Windsurf and the rest, logs every call's usage, attributes it to the four drivers, and opens a local, graphical report of the dollar figure with tokenade dashboard — while also cutting the waste via semantic code search, output filtering, skeleton compression and MCP output compaction. It's free and open source (MIT/Apache-2.0), runs entirely on your machine — install it in two commands. The meter's arithmetic is spelled out in the docs, per model and per call — I'd rather you trust the arithmetic than my marketing.
+
+What goes wrong when people measure tokens
+
+The most common failure is measuring totals without attribution and then "optimising" blind. Here are the traps, and how to avoid each:
+
+Counting output, ignoring input. Output is the visible, satisfying number — the code the agent wrote. It's usually a rounding error next to input. If your dashboard leads with output tokens, it's measuring the wrong thing.
+
+Ignoring the cache entirely. Two identical-looking sessions can cost 9x apart on cache-hit rate alone. Any meter that doesn't break out cache_read_input_tokens will mislead you about where the money goes. Understand prompt caching before you trust a total.
+
+Estimating with the wrong tokenizer. Character-count heuristics ("÷4") are fine for a ballpark but drift on code, JSON and non-English text. When the number has to be right, read the API's usage, don't estimate from a different tokenizer.
+
+Measuring one call instead of the session. The expensive thing about agents is replay across turns, not any single call. A per-call view hides the compounding. Always sum the session.
+
+Confusing tokens with rate limits. Hitting a throttle is a throughput problem, not a cost problem. They feel similar in the moment and need completely different fixes.
+
+Measure honestly and the optimisation work practically schedules itself: you'll see one fat bar in the attribution chart, and you'll know precisely which lever to pull first.
+
+See also:
+
+How to reduce AI coding agent token usage
+
+How to reduce Claude Code token usage
+
+AI Coding Token Usage by Task Type — what a measured baseline looks like, task by task.
+
+Context engineering for coding agents
+
+AI coding agent token costs
+
+Cut your AI agent's token bill.
+Ranked #1 on the Token-Harness Optimizer Leaderboard. Zero config.
+Tokenade cuts the token bill of AI agents: one install, zero config, and it trims what your agent sends to the model.
+Try it
+
+Related reads
+How to Reduce AI Coding Agent Token Usage
+AI Coding Agent Token Budget: How to Set One
+AI Agent Hooks That Fail Open: Detect and Fix Them
+Stop an Overnight AI Agent Burning Your Budget
+ccusage vs tokensave: measure it or index it?
+
+Cut your AI agent's token bill.
+Ranked #1 on the Token-Harness Optimizer Leaderboard. Zero config.
+Tokenade cuts the token bill of AI agents: one install, zero config, and it trims what your agent sends to the model.Try it

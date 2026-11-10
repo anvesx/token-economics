@@ -1,0 +1,297 @@
+TITLE: NVIDIA Dynamo, A Low-Latency Distributed Inference Framework for Scaling Reasoning AI Models
+URL: https://developer.nvidia.com/blog/?p=95274
+ORG: NVIDIA  TYPE: blog  DATE: 2025-03
+
+NVIDIA Dynamo, A Low-Latency Distributed Inference Framework for Scaling Reasoning AI Models | NVIDIA Technical Blog
+
+ Technical Blog
+
+ Subscribe
+
+ Related Resources 
+
+ Developer Tools & Techniques
+
+English中文
+
+NVIDIA Dynamo, A Low-Latency Distributed Inference Framework for Scaling Reasoning AI Models
+
+ Mar 18, 2025
+
+ By Amr Elmeleegy, Harry Kim, David Zier, Kyle Kranen, Neelay Shah, Ryan Olson and Omri Kahalon 
+
+ Like
+
+ Discuss (2)
+
+L
+
+T
+
+F
+
+R
+
+E
+
+AI-Generated Summary
+
+NVIDIA Dynamo is an open-source inference serving framework that coordinates disaggregated prefill and decode stages to boost throughput for generative AI and reasoning models in large-scale distributed environments.
+When running the open-source DeepSeek-R1 models on NVIDIA GB200 NVL72, the framework increases requests served by up to 30x and more than doubles throughput for Llama 70B on NVIDIA Hopper GPUs.
+The architecture integrates four core components: the Dynamo Planner for dynamic GPU allocation, the Smart Router for KV cache-aware request routing, the Distributed KV Cache Manager for offloading cache to cost-effective memory hierarchies, and the NVIDIA Inference Transfer Library (NIXL) for low-latency, hardware-agnostic data movement.
+NVIDIA Dynamo supports major LLM frameworks including NVIDIA TensorRT-LLM, vLLM, SGLang, and PyTorch, enabling developers to apply disaggregated serving optimizations without changing their inference backend.
+Next Steps
+Explore the ai-dynamo/dynamo GitHub repository to start developing with the framework.
+Join the NVIDIA Dynamo Discord server to connect with the developer community.
+Review NVIDIA NIM microservices for enterprise-grade deployment with NVIDIA AI Enterprise support. 
+
+Powered by NVIDIA Nemotron. AI-generated content may summarize information incompletely. Verify important information. Learn more
+
+NVIDIA announced the release of NVIDIA Dynamo at GTC 2025. NVIDIA Dynamo is a high-throughput, low-latency open-source inference serving framework for deploying generative AI and reasoning models in large-scale distributed environments. The framework boosts the number of requests served by up to 30x, when running the open-source DeepSeek-R1 models on NVIDIA Blackwell. NVIDIA Dynamo is compatible with open-source tools, including PyTorch, SGLang, NVIDIA TensorRT-LLM, and vLLM, joining the expanding community of inference tools that empower developers and AI researchers  to accelerate AI. 
+
+NVIDIA Dynamo introduces several key innovations, including: 
+
+Disaggregated prefill and decode inference stages to increase throughput per GPU
+
+Dynamic scheduling of GPUs based on fluctuating demand to optimize performance 
+
+LLM-aware request routing to avoid KV cache recomputation costs
+
+Accelerated asynchronous data transfer between GPUs to reduce inference response time
+
+KV cache offloading across different memory hierarchies to increase system throughput
+
+Starting today, NVIDIA Dynamo is available for developers on the ai-dynamo/dynamo GitHub repo. For enterprises looking for faster time to production and enterprise-grade security, support, and stability, NVIDIA Dynamo will be included with NVIDIA NIM microservices, part of NVIDIA AI Enterprise. 
+
+This post explains the architecture and key components of NVIDIA Dynamo, highlighting how they facilitate cost-effective disaggregated serving and scaling of generative AI models, from a single GPU to thousands of GPUs. 
+
+Video 1. Learn how NVIDIA Dynamo can increase AI model throughout by up to 30x 
+
+Accelerating AI inference in multinode deployments
+
+AI inference will help developers create new groundbreaking applications by integrating reasoning models into their workflows, allowing apps to understand and interact with users in more intuitive ways. However, it also represents a significant recurring cost, posing considerable challenges for those looking to scale their models cost efficiently to meet the insatiable demand for AI. 
+
+When NVIDIA first introduced NVIDIA Triton Inference Server in 2018, the goal was to accelerate AI innovation and drive down inference costs. Triton was the first open-source AI inference server that consolidated bespoke framework-specific inference serving, including TensorFlow, PyTorch, ONNX, OpenVINO and more, into a single unified platform—significantly reducing inference costs and accelerating time to market (TTM) for new AI models. 
+
+Triton has been downloaded over 1 million times from NVIDIA NGC and is today used by some of the world’s leading organizations to deploy AI models in production, including Amazon, Microsoft, Oracle Cloud, DocuSign, Perplexity, Snap, and many others. 
+
+Since the launch of Triton, open-source model sizes have grown dramatically—by almost 2,000x—and are now increasingly integrated into agentic AI workflows that require interaction with multiple other models. Deploying these models and workflows in production environments involves distributing them across multiple nodes, which demands careful orchestration and coordination across large fleets of GPUs. The complexity intensifies with the introduction of new distributed inference optimization methods, such as disaggregated serving, that split the response to a single user request across different GPUs. This makes collaboration and efficient data transfer between them even more challenging. 
+
+To tackle the challenges of distributed generative AI inference serving, we are releasing NVIDIA Dynamo. Dynamo builds on the successes of Triton with  a new modular architecture designed to serve generative AI models in multinode distributed environments.
+
+NVIDIA Dynamo enables seamless scaling of inference workloads across GPU nodes and dynamic GPU worker allocation to efficiently respond to fluctuating user demand and handle traffic bottlenecks in multimodel AI pipelines. NVIDIA Dynamo supports all major LLM frameworks including NVIDIA TensorRT-LLM, vLLM, and SGLang. It incorporates state-of-the-art LLM inference serving optimization techniques such as disaggregated serving, which separates the different phases of inference onto distinct GPU devices to boost inference performance. 
+
+Boosting inference performance on NVIDIA GB200 NVL72 by 30x
+
+Traditional LLM deployments placed both the prefill and decode phases of inference on a single GPU or node, despite each phase having different resource requirements. This approach hindered performance optimization and prevented developers from fully utilizing GPU resources. 
+
+The prefill phase processes user input to generate the first output token and is compute-bound, while the decode phase generates subsequent tokens and is memory-bound. Co-locating these phases on the same GPU or GPU node leads to inefficient resource use, especially for long input sequences. Additionally, the distinct hardware needs of each phase limit model parallelism flexibility, causing missed performance opportunities.
+
+To address these issues, disaggregated serving separates the prefill and decode phases onto different GPUs or nodes. This enables developers to optimize each phase independently, applying different model parallelism strategies and assigning different GPU devices to each phase (Figure 1).
+
+ Figure 1. Disaggregated serving separates prefill and decode on different GPUs to optimize performance
+
+For instance, low tensor parallelism can be used in the prefill phase to reduce communication overhead, while high tensor parallelism can improve memory operations in the decode phase. This approach enables more efficient resource allocation, reduces inference-serving costs, and provides better control over service-level objectives (SLOs) such as TTFT and inter-token latency (ITL). 
+
+When serving the open-source DeepSeek-R1 model on NVIDIA GB200 NVL72, NVIDIA Dynamo, using disaggregated serving, increased the number of requests served by up to 30x. NVIDIA Dynamo more than doubled the throughput performance when serving the Llama 70B model on NVIDIA Hopper.
+
+ Figure 2. NVIDIA Dynamo delivers exceptional throughput performance when running DeepSeek-R1 671B model on NVIDIA GB200 NVL72 boosting performance by 30x. It more than doubles performance on the Llama 70B model running on NVIDIA Hopper GPUs
+
+Left: TensorRT-LLM, FP4, ISL/OSL: 32K/8K. Without Dynamo: Inflight Batching, TEP16PP4DP4. With Dynamo: Disaggregated Serving, Context: EP4DP16, Generation: EP64DP3. Projected performance subject to change. Right: vLLM, FP8, ISL/OSL: 3K/50 . Without Dynamo: Inflight Batching, TP8DP2. With Dynamo: Disaggregated Serving, Context: TP2DP4, Generation: TP8. 
+
+To enable large-scale distributed and disaggregated inference serving, NVIDIA Dynamo includes four key innovations:
+
+NVIDIA Dynamo Planner
+
+NVIDIA Dynamo Smart Router
+
+NVIDIA Dynamo Distributed KV Cache Manager
+
+NVIDIA Inference Transfer Library (NIXL)
+
+ Figure 3. NVIDIA Dynamo architecture 
+
+NVIDIA Dynamo Planner: Optimizing GPU resources for distributed inference 
+
+In large-scale distributed and disaggregated-serving inference systems, efficiently managing GPU resources is essential to maximize throughput and minimize latency. While disaggregated serving can significantly enhance inference throughput and efficiency, it might not always be the most effective solution for every incoming request. 
+
+Imagine a scenario where a surge of summarization requests with long input sequence lengths (ISLs) but short output sequence lengths (OSLs) overwhelms the prefill GPUs. While the decode GPUs remain underutilized, the prefill GPUs become a bottleneck. In this case, allowing decode GPUs to perform both prefill and decode tasks in a traditional aggregated manner, or shifting decode GPUs to perform prefill tasks, might be more efficient. This approach can help balance the load, alleviate pressure on the prefill GPUs, and ultimately improve overall throughput.
+
+Deciding between disaggregated and aggregated serving or how many GPUs should be assigned to each phase requires careful consideration of several factors. These factors include the time needed to transfer the KV cache between the prefill and decode GPUs, the GPUs’ queue wait times for incoming requests, and the estimated processing times for both disaggregated and aggregated configurations. In large-scale environments with hundreds of GPUs, these decisions can quickly become very complex.
+
+This is where NVIDIA Dynamo Planner comes into play. It continuously monitors key GPU capacity metrics in distributed inference environments, and combines them with application SLOs such as TTFT and ITL to make informed decisions on whether to serve incoming requests with or without disaggregation or if additional GPUs should be added to either phase. NVIDIA Dynamo Planner ensures that GPU resources are allocated efficiently across prefill and decode, adapting to fluctuating workloads while maintaining peak system performance. 
+
+ Figure 4. GPU Planner analyzes GPU capacity metrics to make the optimal decision on how to serve incoming requests or allocate GPU workers
+
+NVIDIA Dynamo Smart Router: Reducing costly recomputation of KV cache 
+
+Before responding to a user’s prompt, LLMs must build a contextual understanding of the input request known as the KV cache. This process is compute intensive and scales quadratically with the size of the input request. Reusing KV cache avoids the need to recompute it from scratch, reducing inference time and compute resources. This is particularly advantageous in use cases where the same request is frequently executed, such as system prompts, single-user multiturn chatbot interactions, and agentic workflows. An efficient data management mechanism is required to check when and where the KV cache can be reused.
+
+The NVIDIA Dynamo Smart Router tracks KV cache across large fleets of GPUs in multinode and disaggregated deployments, and efficiently routes incoming requests, minimizing the need for their costly recomputation. It hashes incoming requests and stores them in a Radix Tree, which allows the tracking of KV locations in large scale distributed inference environments. It also utilizes specialized algorithms for KV cache insertion and eviction ensuring that the most relevant blocks are retained. 
+
+ Figure 5. NVIDIA Dynamo Smart Router avoids KV cache recomputations accelerating model response time and enhancing user experience 
+
+2x HGX-H100 nodes. 8x DeepSeek-R1- Distill-Llama-70B. vLLM, FP8, Tensor Parallel: 2
+Data Source: 100K real R1 requests, Avg ISL/OSL: 4K/800
+
+When new inference requests arrive, the NVIDIA Dynamo Smart Router computes an overlap score between incoming requests and the KV cache blocks already active across all the memory of all GPUs in the distributed cluster. By factoring in the overlap score and the distribution of workload across the GPU fleet, it intelligently routes requests to the most suitable workers, minimizing KV cache recomputation while ensuring a balanced load across the cluster. 
+
+Unlike round-robin or load-based routing, this approach optimizes overall system performance by factoring in cache hit rate, workload balance, and GPU capacity, ensuring efficient request handling and eliminating resource bottlenecks. By reducing unnecessary re-computation of KV cache, NVIDIA Dynamo Smart Router frees up GPU resources. This enables AI service providers to respond to more user requests, maximizing returns on their accelerated compute investments.
+
+NVIDIA Dynamo Distributed KV Cache Manager: Offloading KV cache to cost-effective storage
+
+Calculating KV cache for user requests is resource-intensive and thus expensive. Reusing KV cache to minimize the need for its recomputation is common practice. However, as AI demand increases, the volume of KV cache that must be stored in GPU memory for reuse can quickly become prohibitively costly. This creates a significant challenge for AI inference teams trying to efficiently manage KV cache reuse without exceeding their budget.
+
+The NVIDIA Dynamo KV Cache Manager feature addresses this challenge by enabling the offloading of older or less frequently accessed KV cache blocks to more cost-effective memory and storage solutions, such as CPU host memory, local storage or networked object storage. This capability enables organizations to store up to petabytes of KV cache data at a fraction of the cost of keeping it in GPU memory. By offloading KV cache to alternative memory hierarchies, developers can free up valuable GPU resources while still retaining and reusing historical KV cache to reduce inference computation costs.
+
+ Figure 6. NVIDIA Dynamo Distributed KV Cache Manager offloads less frequently accessed KV cache to more economical memory hierarchies
+
+The NVIDIA Dynamo KV Cache Manager uses advanced caching policies that prioritize placing frequently accessed data in GPU memory, while less accessed data is moved to shared CPU host memory, SSDs, or networked object storage. It incorporates intelligent eviction policies that strike a balance between over-caching (which can introduce lookup latencies) and under-caching (which leads to missed lookups and KV cache recomputation). 
+
+Additionally, this feature can manage KV cache across multiple GPU nodes, supporting both distributed and disaggregated inference serving, and offers hierarchical caching capabilities, creating offloading strategies at the GPU, node, and cluster levels.
+
+The NVIDIA Dynamo KV Cache Manager is designed to be framework-agnostic to support various backends, including PyTorch, SGLang, TensorRT-LLM, and vLLM, and to facilitate the scaling of KV cache storage across large, distributed clusters using NVIDIA NVLink, NVIDIA Quantum switches, and NVIDIA Spectrum switches.
+
+NVIDIA Inference Transfer Library (NIXL): Low-latency, hardware-agnostic communication 
+
+Large-scale distributed inference leverages model parallelism techniques such as Tensor, pipeline, and expert parallelism, which rely on internode and intranode, low-latency, high-throughput communication leveraging GPUDirect RDMA. These systems also require rapid KV cache transfer between prefill and decode GPU workers in disaggregated serving environments. 
+
+Additionally, they must support accelerated communication libraries that are both hardware- and network-agnostic, capable of efficiently moving data across GPUs and memory hierarchies including storage—like CPU memory, and block, file, and object storage—and compatible with a range of networking protocols.
+
+ Figure 7. NVIDIA Inference Transfer Library (NIXL) abstracts the complexity of data movement across heterogeneous memory and storage devices
+
+NVIDIA Inference Transfer Library (NIXL) is a high-throughput, low-latency point-to-point communication library that provides a consistent data movement API to move data rapidly and asynchronously across different tiers of memory and storage using the same semantics. It is specifically optimized for inference data movement, supporting nonblocking and noncontiguous data transfers between various types of memory and storage. 
+
+NIXL supports heterogeneous data paths as well as different types of memory and local SSDs, plus networked storage from key NVIDIA storage partners.  
+
+NIXL enables NVIDIA Dynamo to interface with other communications libraries such as GPUDirect Storage, UCX, and S3 with a common API regardless of whether the transfer is over  NVLink (C2C or NVSwitch), InfiniBand, RoCE, or Ethernet. NIXL, in conjunction with the NVIDIA Dynamo policy engine, automatically chooses the best backend connection and abstracts away the differences between multiple types of memory and storage. This is accomplished through generalized “memory sections” which can be HBM, DRAM, local SSD, or networked storage (Block, Object, or File). 
+
+Get started with NVIDIA Dynamo
+
+Modern LLMs have expanded in parameter size, incorporated reasoning capabilities, and are increasingly embedded in agentic AI workflows. As a result, they generate a far greater number of tokens during inference and require deployment in distributed environments driving up costs. Therefore, optimizing inference-serving strategies to lower costs and support seamless scaling in distributed environments is crucial. 
+
+NVIDIA Dynamo builds on the successes NVIDIA Triton, with a new modular architecture, distributed inference capabilities, and support for disaggregated serving, enabling it to deliver outstanding scaling performance in large scale multinode deployments.
+
+AI Inference developers and researchers are invited to contribute to NVIDIA Dynamo on GitHub at ai-dynamo/dynamo and join the new NVIDIA Dynamo Discord Server, the official NVIDIA server for developers and users of NVIDIA Dynamo. NVIDIA Dynamo is planned to be supported by NVIDIA AI Enterprise and available with NVIDIA NIM microservices for quick and easy deployment. NVIDIA AI Enterprise customers using Triton will continue to receive production branch support for their existing Triton deployments.
+
+ Discuss (2)
+
+ Like
+
+Tags
+
+ Agentic AI / Generative AI | Data Center / Cloud | Developer Tools & Techniques | General | AI Enterprise | Dynamo | GB200 | HGX | NIM | Intermediate Technical | News | GTC March 2025 | AI Agent | AI Inference | featured | GTC 25 | Inference Performance | LLMs 
+
+ About the Authors
+
+ About Amr Elmeleegy
+
+ Amr Elmeleegy is a principal product marketing manager for accelerated computing in the data center, focused on the NVIDIA AI inference platform. Previously, he held business development and product marketing roles at AWS and SAP. He holds an MBA from the UC Berkeley Haas School of Business and a bachelor’s degree in electrical engineering from Cairo University.
+
+ View all posts by Amr Elmeleegy
+
+ About Harry Kim
+
+ Harry Kim is a Principal Product Manager at NVIDIA enabling performant and scalable AI/ML inference with Triton. He has experience working on recommendation systems at Meta, AI infrastructure at Intel AI, and Ads ranking and recommendation at Google. He holds a PhD in Statistics from UC Berkeley.
+
+ View all posts by Harry Kim
+
+ About David Zier
+
+ David Zier is the director of Deep Learning System Software at NVIDIA. His organization is responsible for creating state-of-the-art AI inference serving software and tools, including Triton Inference Server, GenAI-Perf, and now NVIDIA Dynamo. David holds a PhD in Computer Engineering from Oregon State University with over 20 years of experience.
+
+ View all posts by David Zier
+
+ About Kyle Kranen
+
+ Kyle Kranen is a deep learning software engineer at NVIDIA. He received a BS in electrical engineering and computer sciences from the University of California, Berkeley. At NVIDIA, his research is currently concentrated on recommender systems and time-series modeling.
+
+ View all posts by Kyle Kranen
+
+ About Neelay Shah
+
+ Neelay Shah is the principal software architect for NVIDIA Triton Inference Server and an AI solutions engineer. His focus is on enabling developers with a smooth transition from prototyping to high-performance production deployments at scale. Before joining NVIDIA, Neelay was a principal engineer at Intel leading open source projects for computer vision pipelines. He has a bachelor’s degree in computer science from Williams College and a master’s degree in computer science from UIUC.
+
+ View all posts by Neelay Shah
+
+ About Ryan Olson
+
+ Ryan Olson is a Solutions Architect in the Worldwide Field Organization at NVIDIA. His primary responsibilities involve supporting deep learning and high performance computing applications.
+
+ View all posts by Ryan Olson
+
+ About Omri Kahalon
+
+ Omri Kahalon is a senior manager in NVIDIA Network Software Architecture. Omri has extensive experience in developing and integrating accelerated networking technologies used in hyperscale cloud. His focus is on software-hardware co-design and large-scale distributed systems. Omri holds a bachelor’s degree in Electrical Engineering from the Technion - Israel Institute of Technology and a master’s degree in Electrical Engineering from Tel Aviv University.
+
+ View all posts by Omri Kahalon
+
+Comments
+
+Related posts
+
+ How NVIDIA Dynamo 1.0 Powers Multi-Node Inference at Production Scale
+
+ How NVIDIA Dynamo 1.0 Powers Multi-Node Inference at Production Scale
+
+ Smart Multi-Node Scheduling for Fast and Efficient LLM Inference with NVIDIA Run:ai and NVIDIA Dynamo
+
+ Smart Multi-Node Scheduling for Fast and Efficient LLM Inference with NVIDIA Run:ai and NVIDIA Dynamo
+
+ NVIDIA Dynamo Adds Support for AWS Services to Deliver Cost-Efficient Inference at Scale
+
+ NVIDIA Dynamo Adds Support for AWS Services to Deliver Cost-Efficient Inference at Scale
+
+ NVIDIA Dynamo Adds GPU Autoscaling, Kubernetes Automation, and Networking Optimizations
+
+ NVIDIA Dynamo Adds GPU Autoscaling, Kubernetes Automation, and Networking Optimizations
+
+ Optimize AI Inference Performance with NVIDIA Full-Stack Solutions
+
+ Optimize AI Inference Performance with NVIDIA Full-Stack Solutions
+
+Related posts
+
+ Manage Kubernetes Node Fleets with NodeWright
+
+ Manage Kubernetes Node Fleets with NodeWright
+
+ Enabling Private High-Performance Production AI Inference with NVIDIA Confidential Computing
+
+ Enabling Private High-Performance Production AI Inference with NVIDIA Confidential Computing
+
+ Giga-Scale AI and the Ethernet Evolution: How Spectrum-X Ethernet Rewrites the Rules
+
+ Giga-Scale AI and the Ethernet Evolution: How Spectrum-X Ethernet Rewrites the Rules
+
+ NVIDIA BlueField-4 Powers New Scale-In Network Infrastructure for Agentic AI Factories
+
+ NVIDIA BlueField-4 Powers New Scale-In Network Infrastructure for Agentic AI Factories
+
+ How to Choose Full-Stack Observability for NVIDIA AI Factories
+
+ How to Choose Full-Stack Observability for NVIDIA AI Factories
+
+ Theme
+
+ Light
+
+ System
+
+ Dark
+
+ Close
+
+ Previous
+
+ Next
+
+L
+
+T
+
+F
+
+R
+
+E

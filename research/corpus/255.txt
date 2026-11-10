@@ -1,0 +1,304 @@
+TITLE: Batch inference (Fireworks)
+URL: https://docs.fireworks.ai/guides/batch-inference
+ORG: Fireworks  TYPE: doc  DATE: 2026-11
+
+Batch API - Fireworks AI Docs
+
+Documentation Index
+Fetch the complete documentation index at: /llms.txt
+Use this file to discover all available pages before exploring further.
+Skip to main content
+
+Process large volumes of requests asynchronously at 50% off Serverless per-token prices. Batch API is ideal for:
+
+Data labeling and synthetic data generation
+
+Training smaller models with larger ones (distillation guide)
+
+Large-scale evaluations and benchmarking
+
+Document processing and more
+
+Batch jobs automatically use prompt caching for additional 50% cost savings on cached tokens. Maximize cache hits by placing static content first in your prompts.
+
+​
+Model compatibility
+Not all models support the Batch API. Before submitting a batch job, verify your target model is batch-compatible.
+
+Base Models – Any model that supports On-Demand Deployments in the Model Library
+
+Custom Models – Your uploaded or trained models built on a batch-compatible base model
+
+Note: Newly added models may have a delay before being supported. See Quantization for precision info.
+
+If a model does not support batch inference, submitting a job may not produce an immediate error — the job can remain in a pending state and never schedule. Always verify compatibility before submitting.
+If your batch job is not running:
+
+If validation failed, check your JSONL input — each line must be a complete, valid JSON object matching the request schema.
+
+Batch jobs wait to be scheduled in a “pending” state during the selected time window, so it may not run immediately.
+
+If the job has been “creating” a deployment for more than 30 minutes, contact support with your job ID.
+
+Confirm the model supports batch inference (see above).
+
+Check that your account has sufficient quota for batch jobs.
+
+Progress may pause while waiting on capacity. The job will resume automatically.
+
+​
+Getting Started
+
+1. Prepare Your Dataset
+Datasets must be in JSONL format (one JSON object per line):Requirements:
+
+File format: JSONL (each line is a valid JSON object)
+
+Size limit: Up to 80 GiB
+
+Required fields: custom_id (unique) and body (request parameters)
+
+Input mode: body.messages (standard) or body.prompt_token_ids (pre-tokenized) — mutually exclusive
+Example dataset (messages):
+
+{"custom_id": "request-1", "body": {"messages": [{"role": "system", "content": "You are a helpful assistant."}, {"role": "user", "content": "What is the capital of France?"}], "max_tokens": 100}}
+{"custom_id": "request-2", "body": {"messages": [{"role": "user", "content": "Explain quantum computing"}], "temperature": 0.7}}
+{"custom_id": "request-3", "body": {"messages": [{"role": "user", "content": "Tell me a joke"}]}}
+
+If every row shares the same system message, you can omit it from the dataset and set it once at the job level with --system-prompt instead — see Job-level system prompt. This shrinks your upload and keeps prompt-caching intact.Example dataset (pre-tokenized):When you need byte-identical inputs (e.g. a custom tokenizer or renderer), use prompt_token_ids instead of messages. The server skips chat-template rendering and feeds your token IDs directly to generation. Mutually exclusive with messages — do not include both.
+
+{"custom_id": "request-1", "body": {"prompt_token_ids": [163587, 2482, 163601, 71079, 17522, 13], "max_tokens": 100}}
+
+Token IDs must be valid for the vocabulary of the specific model the job targets. An out-of-vocabulary ID fails that row with a terminal 400 (no retry), so re-tokenize when you change models.
+
+A job-level system_prompt cannot be combined with prompt_token_ids — the prompt is already tokenized, so there is nowhere to prepend a system message. Set system_prompt only for messages-based jobs.
+
+Set user or prompt_cache_key in the body. Without message text, the gateway has nothing to hash for content-based cache affinity, so each row routes independently and prompt-cache hit rates drop.Save as batch_input_data.jsonl locally.
+
+2. Upload Your Dataset
+
+ UI
+
+ firectl
+
+ HTTP API
+
+You can simply navigate to the dataset tab, click Create Dataset and follow the wizard.
+
+firectl dataset create batch-input-dataset ./batch_input_data.jsonl
+
+You need to make two separate HTTP requests. One for creating the dataset entry and one for uploading the dataset. Full reference here: Create dataset.
+
+# Create Dataset Entry
+curl -X POST "https://api.fireworks.ai/v1/accounts/${ACCOUNT_ID}/datasets" \
+ -H "Authorization: Bearer ${API_KEY}" \
+ -H "Content-Type: application/json" \
+ -d '{
+ "datasetId": "batch-input-dataset",
+ "dataset": { "userUploaded": {} }
+ }'
+
+# Upload JSONL file
+curl -X POST "https://api.fireworks.ai/v1/accounts/${ACCOUNT_ID}/datasets/batch-input-dataset:upload" \
+ -H "Authorization: Bearer ${API_KEY}" \
+ -F "file=@./batch_input_data.jsonl"
+
+3. Create a Batch Job
+
+ UI
+
+ firectl
+
+ HTTP API
+
+Navigate to the Batch Inference tab and click “Create Batch Inference Job”. Choose your batch-eligible model from the dropdown selector:Select your dataset:Configure optional settings:
+
+firectl batch-inference-job create \
+ --model accounts/fireworks/models/llama-v3p1-8b-instruct \
+ --input-dataset-id batch-input-dataset
+
+With additional parameters:
+
+firectl batch-inference-job create \
+ --job-id my-batch-job \
+ --model accounts/fireworks/models/llama-v3p1-8b-instruct \
+ --input-dataset-id batch-input-dataset \
+ --output-dataset-id batch-output-dataset \
+ --system-prompt "You are a helpful assistant." \
+ --max-tokens 1024 \
+ --temperature 0.7 \
+ --top-p 0.9
+
+curl -X POST "https://api.fireworks.ai/v1/accounts/${ACCOUNT_ID}/batchInferenceJobs?batchInferenceJobId=my-batch-job" \
+ -H "Authorization: Bearer ${API_KEY}" \
+ -H "Content-Type: application/json" \
+ -d '{
+ "model": "accounts/fireworks/models/llama-v3p1-8b-instruct",
+ "inputDatasetId": "accounts/'${ACCOUNT_ID}'/datasets/batch-input-dataset",
+ "outputDatasetId": "accounts/'${ACCOUNT_ID}'/datasets/batch-output-dataset",
+ "systemPrompt": "You are a helpful assistant.",
+ "inferenceParameters": {
+ "maxTokens": 1024,
+ "temperature": 0.7,
+ "topP": 0.9
+ }
+ }'
+
+4. Monitor Your Job
+
+ UI
+
+ firectl
+
+ HTTP API
+
+View all your batch inference jobs in the dashboard:
+
+# Get job status
+firectl batch-inference-job get my-batch-job
+
+# List all batch jobs
+firectl batch-inference-job list
+
+# Get specific job
+curl -X GET "https://api.fireworks.ai/v1/accounts/${ACCOUNT_ID}/batchInferenceJobs/my-batch-job" \
+ -H "Authorization: Bearer ${API_KEY}"
+
+# List all jobs
+curl -X GET "https://api.fireworks.ai/v1/accounts/${ACCOUNT_ID}/batchInferenceJobs" \
+ -H "Authorization: Bearer ${API_KEY}"
+
+5. Download Results
+
+ UI
+
+ firectl
+
+ HTTP API
+
+Navigate to the output dataset and download the results:
+
+firectl dataset download batch-output-dataset
+
+# Get download endpoint and save response
+curl -s -X GET "https://api.fireworks.ai/v1/accounts/${ACCOUNT_ID}/datasets/batch-output-dataset:getDownloadEndpoint" \
+ -H "Authorization: Bearer ${API_KEY}" \
+ -d '{}' > download.json
+
+# Extract and download all files
+jq -r '.filenameToSignedUrls | to_entries[] | "\(.key) \(.value)"' download.json | \
+while read -r object_path signed_url; do
+ fname=$(basename "$object_path")
+ echo "Downloading → $fname"
+ curl -L -o "$fname" "$signed_url"
+done
+
+The output dataset contains two files: a results file (successful responses in JSONL format) and an error file (failed requests with debugging info).
+
+​
+Job-level system prompt
+Set one static system message for the entire job instead of repeating it on every dataset row. When provided, the batch runner injects it as a leading system message into every input row that does not already begin with a system message — a row’s own leading system message always takes precedence, so you can override the job-level prompt per-row when needed.
+This is useful when all rows share a large, fixed system prompt (e.g. a rubric or output-schema spec). Removing it from every row shrinks the input dataset (less upload, stays under the 80 GiB limit), and because the injected prefix is byte-identical across rows, prompt caching still applies.
+
+firectl batch-inference-job create \
+ --model accounts/fireworks/models/llama-v3p1-8b-instruct \
+ --input-dataset-id batch-input-dataset \
+ --system-prompt "You are a helpful assistant that responds in JSON."
+
+For a long or multi-line prompt, pass it from a file to preserve newlines and avoid shell-escaping:
+
+firectl batch-inference-job create \
+ --model accounts/fireworks/models/llama-v3p1-8b-instruct \
+ --input-dataset-id batch-input-dataset \
+ --system-prompt "$(cat ./system_prompt.txt)"
+
+The equivalent HTTP field is systemPrompt:
+
+{
+ "model": "accounts/fireworks/models/llama-v3p1-8b-instruct",
+ "inputDatasetId": "accounts/${ACCOUNT_ID}/datasets/batch-input-dataset",
+ "systemPrompt": "You are a helpful assistant that responds in JSON."
+}
+
+The injected system message counts toward the model’s context window. If your system prompt is very large and your rows also include long content (e.g. media), the combined prompt may exceed the model’s context length — the job will run but produce no completions. Keep the system prompt + per-row content within the model’s context limit, or trim the prompt.
+
+​
+Reference
+
+Job states
+Batch jobs progress through several states:
+
+StateDescription
+VALIDATINGDataset is being validated for format requirements
+PENDINGJob is queued and waiting for resources
+RUNNINGActively processing requests
+COMPLETEDAll requests successfully processed
+FAILEDUnrecoverable error occurred (check status message)
+EXPIREDReached its job expiration time (24 hours by default). Completed requests are saved.
+
+Supported models
+
+Base Models – Any model that supports On-Demand Deployments in the Model Library
+
+Custom Models – Your uploaded or trained models built on a batch-compatible base model
+Note: Newly added models may have a delay before being supported. See Quantization for precision info.
+
+Limits and constraints
+
+Per-request limits: Same as Chat Completion API limits
+
+Input dataset: Up to 80 GiB
+
+Output dataset: Max 8GB (job may expire early if limit is reached)
+
+Job expiration: 12 to 72 hours after creation, 24 hours by default. In the console, choose 12, 24, 36, 48, or 72 hours in Optional Settings. With firectl, pass --max-job-duration (for example, --max-job-duration 48h). In the API, set maxJobDuration as a duration in seconds (for example, "172800s" for 48 hours). Positive values outside 12 to 72 hours are clamped to the nearest limit.
+
+Handling expired jobs
+Jobs expire when they reach their job expiration time (24 hours by default). Completed rows are billed and saved to the output dataset.Resume processing:
+
+firectl batch-inference-job create \
+ --continue-from original-job-id \
+ --model accounts/fireworks/models/llama-v3p1-8b-instruct \
+ --output-dataset-id new-output-dataset
+
+This processes only unfinished/failed requests from the original job. The new job doesn’t inherit the original job’s expiration time: it gets the 24-hour default unless you pass --max-job-duration again.Download complete lineage:
+
+firectl dataset download output-dataset-id --download-lineage
+
+Downloads all datasets in the continuation chain.
+
+Best practices
+
+Validate thoroughly: Check dataset format before uploading
+
+Descriptive IDs: Use meaningful custom_id values for tracking
+
+Optimize tokens: Set reasonable max_tokens limits
+
+Monitor progress: Track long-running jobs regularly
+
+Cache optimization: Place static content first in prompts
+
+Shared system prompt: If every row uses the same system message, set it once with --system-prompt instead of repeating it per row — smaller upload and cache-friendly (see Job-level system prompt)
+
+​
+Next Steps
+
+Prompt Caching
+Maximize cost savings with automatic prompt caching
+
+Training
+Create custom models for your batch workloads
+
+API Reference
+Full API documentation for Batch API
+
+Was this page helpful?
+
+YesNo
+
+⌘I
+
+Assistant
+
+Responses are generated using AI and may contain mistakes.

@@ -1,0 +1,103 @@
+TITLE: Claude Code Cost Optimization: A Benchmark-Backed Playbook for Cutting Token Spend
+URL: https://blog.traversaal.ai/claude-code-cost-optimization-benchmark-playbook
+ORG: Traversaal  TYPE: blog  DATE: 2026-04
+
+Claude Code Cost Optimization: A Benchmark-Backed Playbook for Cutting Token Spend
+
+ TL;DR: Claude Code cost optimization works by combining prompt caching, model routing, and context hygiene to cut API spend by 50-80% without sacrificing output quality. Cache frequently reused instructions, route simple tasks to Haiku instead of Sonnet, and audit CLAUDE.md and .claudeignore to eliminate wasteful token bloat. Measure baseline spend first so every change maps to a real dollar impact.
+Key Takeaways
+Prompt caching is your biggest lever: Structuring system prompts so repeated content hits Claude's cache cuts input token costs by up to 90% on long-running or agentic sessions.
+Model routing by task type saves real money: Sending simple subtasks to Haiku instead of Sonnet or Opus reduces per-task costs by 10-20x without sacrificing output quality.
+CLAUDE.md bloat inflates every call: Auditing your file to remove outdated rules and redundant context directly lowers the token floor on every request.
+.claudeignore is a free cut most teams skip: Excluding build artifacts and dependency folders stops irrelevant content from entering context with zero tradeoff.
+CI pipelines are where runaway spend hides: Agentic workflows in automated pipelines have no human to stop a long session, hard output token budgets eliminate surprise bills.
+Spend visibility must be tied to specific tasks: Attribute costs to individual pipeline stages to find and fix the expensive ones.
+This playbook cuts Claude Code token usage by 50–70% in two weeks by combining prompt caching, per-task model routing, system-prompt diet, smarter file scoping, and strict output budgets in CI. Cache the stable 80%, route cheap models to cheap tasks, starve context of junk, and cap outputs before they spiral.
+How does Claude Code prompt caching work and how do I maximize cache hit rates?
+Claude Code caches repeated prompt segments server-side and charges only cache-lookup costs on hits, so you maximize savings by making your stable system context immutable, chunked, and consistently ordered across calls.
+Cache hits are charged at ~10% of standard input cost. Auto-compaction can break cacheable spans if it reorders the stable prefix, anchor the stable block before the compaction boundary.
+Structure for maximum cache hits: 1. Extract all invariant policy into a versioned system block: SYSTEM_v14. 2. Parameterize only the task delta, pass it as a separate user-turn JSON payload. 3. Anchor file references by git blob SHA, not path, so the prefix stays stable across renames. 4. Never shuffle section order between calls.
+SYSTEM_BLOCK = load_versioned_block("SYSTEM_v14") # stable, ~8k tokens
+TASK_DELTA = {"task": "lint_fix", "file": "src/auth.py", "sha": "a3f9c1"}
+
+response = anthropic.messages.create(
+ model="claude-haiku-4-5",
+ system=SYSTEM_BLOCK,
+ messages=[{"role": "user", "content": json.dumps(TASK_DELTA)}],
+ max_tokens=512
+)
+cache_hit = response.usage.cache_read_input_tokens > 0
+
+Instrument via cache_read_input_tokens on every response and treat anything below 80% hit rate as a signal your stable block is shifting between calls.
+Which Claude model should I route each coding subtask to for the biggest savings without losing quality?
+Route deterministic subtasks to Haiku, reasoning-heavy synthesis to Sonnet, and reserve Opus only for multi-constraint architecture work.
+Most teams default to Sonnet everywhere, paying Sonnet prices for tasks Haiku solves at equivalent quality for ~1/12th the cost. Build in auto-escalation: if Haiku returns low-confidence output, escalate to Sonnet automatically.
+For multi-file refactor, Sonnet's 91% vs. Haiku's 63% pass rate justifies the ~4x cost increase, fewer failed runs means fewer re-runs, which compounds the savings. The real win is building a router keyed by task taxonomy rather than defaulting by user or session; that's where the 60–70% reduction actually comes from.
+What should I change in CLAUDE.md and .claudeignore to stop silent token bloat?
+Trim CLAUDE.md to the minimum enforceable rules and configure .claudeignore to exclude build artifacts and generated files so they never enter context.
+Every token in CLAUDE.md adds to the floor cost of every request. A 3,200-token file trimmed to 600 tokens cuts every call's minimum input cost by ~80%. Audit checklist: delete duplicated policies; collapse philosophy paragraphs into single bullet rules; move long style guides to a URL; keep only repo-specific, actively enforced constraints. Target under 800 tokens for most repos.
+.claudeignore patterns to exclude:
+node_modules/ build/ dist/ .venv/ .terraform/
+coverage/ *.log *.lock generated/ vendor/ *.min.js __pycache__/
+
+Excluding vendor and generated files reduces context retrieval by ~60% on code navigation tasks and lowers auto-compaction pressure. Neither change requires touching application code, they're configuration edits that pay back on the next run.
+How do I set hard output token budgets and measure Claude Code spend per task and pipeline stage?
+Enforce per-task max_tokens limits in CI and tag every call with repo, task_type, and pipeline_stage so you can attribute and clamp runaway loops.
+TASK_CONFIG = {
+ "lint_fix": {"model": "claude-haiku-4.5", "max_tokens": 512, "slo_usd": 0.05},
+ "unit_test_stub": {"model": "claude-haiku-4.5", "max_tokens": 800, "slo_usd": 0.10},
+ "multi_file_refactor": {"model": "claude-sonnet-5", "max_tokens": 3000, "slo_usd": 0.40},
+ "architecture_rfc": {"model": "claude-opus-5", "max_tokens": 5000, "slo_usd": 1.00},
+}
+
+def route(task_type, payload, repo, stage):
+ cfg = TASK_CONFIG[task_type]
+ response = anthropic.messages.create(
+ model=cfg["model"], system=SYSTEM_BLOCK,
+ messages=[{"role": "user", "content": payload}],
+ max_tokens=cfg["max_tokens"],
+ )
+ cost = estimate_cost(response.usage, cfg["model"])
+ emit_span(task_type=task_type, repo=repo, stage=stage,
+ cost=cost, cache_hit=response.usage.cache_read_input_tokens > 0)
+ if cost > cfg["slo_usd"]:
+ alert(f"{stage}:{task_type} exceeded SLO: ${cost:.4f}")
+ return response
+
+A merge-checks:linter stage burning ~$2,400/month dropped to ~$190/month after routing to Haiku and capping output at 512 tokens (illustrative; scales with call volume). Use Anthropic's usage API for baseline data, then layer LangFuse or Helicone for per-tag dashboards. Without spend broken out by task_type and stage, you're optimizing blind, the tagging is what creates the feedback loop that makes everything else actionable.
+Frequently Asked Questions
+How does Claude Code prompt caching work and how do I maximize cache hit rates? Cache hits are charged at ~10% of standard input cost; version your system block, keep section ordering identical across calls, and anchor file references by content hash. Target 80%+ hit rates on agentic loops via cache_read_input_tokens 
+Which Claude model should I route simple coding tasks to in order to save money? Use Haiku for deterministic tasks (file listing, symbol search, lint fixes) where pass rates match Sonnet at 1/10th to 1/20th the cost; use Sonnet for multi-file refactors; reserve Opus for architectural RFCs on an explicit allowlist.
+What should I include and exclude in my CLAUDE.md to minimize token usage? Include only enforceable, repo-specific rules and replace philosophy essays with URLs. Aim for under 800 tokens, a 3,200-token file cut to 600 tokens reduces per-call input cost by ~80%.
+How can I track and measure my Claude Code token spend across a team? Tag every API call with repo, task_type, and pipeline_stage; collect token counts, model, and derived cost per response. Export to Helicone, LangFuse, or Datadog and set per-task SLO alerts so a runaway CI stage triggers a notification before it compounds.
+Build the system, not the habit
+Cache the stable 80% of your prompt, route each task to the cheapest model that achieves acceptable pass rates, and cap output tokens in CI. A single poorly-scoped CI task running 200 times per day at Sonnet prices is a silent $2,000/month problem no individual developer will notice.
+Your two-week plan: 
+- Week 1: Ship a CLAUDE.md diet under 800 tokens. Configure .claudeignore. Enable prompt caching with a versioned system block. Confirm you're hitting 80%+ cache-hit rate before moving on. 
+- Week 2: Deploy a per-task router (Haiku default, Sonnet on reasoning tags, Opus on explicit allowlist). Set max_tokens per task type. Roll out cost dashboards tagged by repo and stage with SLO alerts. 
+- Validation: A/B your pipelines for one week; expect 50–70% cost-per-task reduction if routing is truly task-type aware.
+The $18k bill at the top of this article wasn't a Claude problem, it was a missing attribution problem. Fix the observability first and the cuts become obvious.
+Learn from me
+Claude Code in Practice, my Maven cohort. Master Claude Code from fundamentals to advanced orchestration: skills, subagents, hooks, MCP, and production automation. Join the next cohort →
+Hire us
+Traversaal.ai. We're a team of forward deployed engineers solving the toughest AI problems for Fortune 100 companies: document intelligence, agentic data platforms, and real-time web intelligence, deployed in production. Work with our team to deploy your next agentic ecosystem. Talk to Traversaal.ai →
+Join us
+Want to solve these problems with us? We're always looking for forward deployed engineers who want to ship production AI. jobs@traversaal.ai
+
+Read more
+
+AGENTS.md Prompt Injection: How Instruction File Location Hijacks Coding Agents
+
+AGENTS.md prompt injection hijacks coding agents by exploiting file trust. Learn how attackers plant malicious directives—and how to defend your AI pipelines.
+
+AI Banking Loan Automation at Customers Bancorp: 95% Cycle Time Cut, 90%+ Faster Onboarding, and Why the 76,000 Saved Hours Deserve Scrutiny
+
+AI banking loan automation cut underwriting cycle time 95% at Customers Bancorp. Get the real numbers, compliance risks, and what banks should question first.
+
+OpenAI GPT-4o & GPT-4.1 Deprecation Migration Guide: The Step-by-Step Runbook for Engineering Teams Before January 14, 2027
+
+OpenAI GPT-4o deprecation migration made simple: follow our 10-week runbook to hit the January 6 fine-tuning deadline and avoid costly API outages.
+
+Claude Code blockWritesOutsideWorkingDirectories: What the New Permission Setting Prevents and Why sed -i Changes Are Beyond /rewind's Reach
+
+Claude Code blockWritesOutsideWorkingDirectories blocks Write and Edit tools—but sed -i bypasses it completely. Learn what /rewind misses and how to close the gap.

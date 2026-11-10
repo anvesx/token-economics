@@ -1,0 +1,386 @@
+TITLE: AgentRouter: Heterogeneous Model Routing for Cost-Optimal Multi-Step Agentic Workflows
+URL: https://arxiv.org/abs/2609.22951
+ORG: arXiv  TYPE: paper  DATE: 2026-09
+
+                                                                  AgentRouter: Heterogeneous Model Routing for
+                                                                   Cost-Optimal Multi-Step Agentic Workflows
+
+
+                                                                                  Rudrendu Kumar Paul 1 Sourav Nandy 2
+
+
+                                                                  Abstract                                   1. Introduction
+                                                                                                             Consider a document analysis agent executing a seven-step
+
+
+
+
+arXiv:2609.22951v1 [cs.AI] 19 Sep 2026
+                                                                                                             workflow. Step 1 decomposes the user query into subtasks
+                                              Enterprise agentic systems that route every tra-               (multi-hop reasoning, chain-of-thought planning). Step 2
+                                              jectory step to a frontier model waste 60–80% of               retrieves relevant document chunks (straightforward embed-
+                                              their inference budget on subtasks that smaller                ding lookup). Step 3 synthesizes findings across chunks
+                                              models handle equally well. Existing routing so-               (cross-document reasoning over long context). Steps 4–5
+                                              lutions optimize single-turn query assignment but              extract structured fields and format them as JSON. Steps 6–7
+                                              ignore a property unique to agentic workflows:                 generate a summary and validate output format. Routing all
+                                              subtask complexity varies widely within a single               seven steps to GPT-4-class models costs $0.42 per execution.
+                                              trajectory. A planning step may require frontier-              Steps 2, 4, 5, and 7 produce identical quality when served
+                                              class reasoning while a subsequent formatting                  by a 7B model at $0.03 per step, dropping execution cost
+                                              step needs only a 7B model. We formalize step-                 to $0.18 (a 57% reduction on this single workflow) with no
+                                              level model routing as a sequential assignment                 measurable quality loss.
+                                              problem over agent trajectories and propose Agen-
+                                                                                                             This pattern repeats across every production agent system
+                                              tRouter, a lightweight classifier (12M parameters,
+                                                                                                             we have operated. In enterprise deployments spanning doc-
+                                              <5ms overhead per step on an A100 GPU) that
+                                                                                                             ument processing, compliance review, and customer interac-
+                                              maps each trajectory step to one of four model
+                                                                                                             tion, 55–70% of agent trajectory steps require no frontier-
+                                              tiers using five features extractable at routing time.
+                                                                                                             model capability. The steps that do (initial planning, com-
+                                              Trained on 50,000 annotated agent trajectory steps
+                                                                                                             plex reasoning, ambiguous input handling) are a minority
+                                              spanning planning, coding, research, and data
+                                                                                                             of the token budget, yet they determine end-to-end quality.
+                                              analysis tasks, AgentRouter achieves 72% cost re-
+                                              duction relative to frontier-only baselines, retain-           Existing routing approaches were designed for single-turn
+                                              ing 97.3% of frontier-only quality (less than 3%               queries. RouteLLM (Ong et al., 2024) selects between a
+                                              degradation in end-to-end task completion); per-               strong and weak model per query using preference data.
+                                              step routing accuracy reaches 91% on minimal-                  FrugalGPT (Chen et al., 2024) cascades from cheapest to
+                                              complexity steps and 85% on efficient-tier steps,              most expensive model until a confidence threshold is met.
+                                              with 76–82% on the harder mid-range and frontier               Both treat each call as independent, missing the fact that
+                                              tiers. On the same benchmarks, RouteLLM and                    step complexity varies within a single trajectory and that
+                                              FrugalGPT (applied per-step) achieve only 31%                  routing decisions at step t affect context quality at step t+1.
+                                              and 44% cost reduction respectively, because their             Applying either method per-step effectively converts each
+                                              single-turn training signal misses trajectory-level            agent step into an independent single-turn query; the rout-
+                                              quality dependencies.                                          ing decision for step t+1 receives no signal about what
+                                                                                                             model executed step t or what quality the output achieved.
+                                                                                                             AgentRouter’s trajectory-aware features (specifically fctx
+                                                                                                             and the dependency-aware training labels) fill this gap. Re-
+                                            1
+                                              Boston University, Boston, MA, USA 2 University of Texas       cent agentic cost optimizers (Su et al., 2026; Zhang et al.,
+                                         at Austin, Austin, TX, USA. Correspondence to: Rudrendu             2025; Qian et al., 2025) operate at the query or trajectory
+                                         Kumar Paul <rudrendupaul2022@gmail.com>, Sourav Nandy               level rather than per-step, and use heavyweight mechanisms
+                                         <sourav.nandy@gmail.com>.                                           (VAEs, RL-trained LLMs) with non-trivial overhead.
+                                         Proceedings of the 43 rd International Conference on Machine        We make three contributions:
+                                         Learning, Seoul, South Korea. PMLR 306, 2026. Copyright 2026
+                                         by the author(s).                                                   1. We formalize step-level model routing for agent trajec-
+
+                                                                                                         1
+                      AgentRouter: Heterogeneous Model Routing for Cost-Optimal Agentic Workflows
+
+   tories, defining the assignment problem over heteroge-             lower cost for tool-use tasks. Salim et al. (2026) quantify to-
+   neous model tiers with per-step quality constraints and            ken distribution in agentic workflows, revealing that 59.4%
+   end-to-end quality guarantees (Section 3).                         of tokens go to Code Review stages specifically, supporting
+2. We propose AgentRouter, a 12M-parameter classifier                 our premise that step complexity varies enough to make per-
+   that routes each step to one of four model tiers using five        step routing valuable. Concurrent work on Aragog (Team,
+   features extractable at routing time, adding <5ms latency          2025) performs per-stage model routing in agentic RAG
+   per step (measured on an A100 GPU; see Section 3).                 workflows; AgentRouter differs by operating at the individ-
+3. We evaluate on a benchmark of 2,400 agent trajecto-                ual trajectory step level with a lightweight classifier rather
+   ries across four task domains, demonstrating 72% cost              than at the pipeline stage level.
+   reduction with <3% quality degradation, outperforming
+   adapted single-turn routers and agent-level optimizers             3. Method: AgentRouter
+   (Section 4).
+                                                                      3.1. Problem formulation
+2. Related Work                                                       An agent trajectory τ = (s1 , s2 , . . . , sT ) consists of T steps,
+                                                                      where each step st represents a single LLM call with defined
+Single-turn model routing. RouteLLM (Ong et al., 2024)
+                                                                      input context, instruction, and expected output. Let M =
+pioneered learning-based routing between strong and weak
+                                                                      {m1 , m2 , m3 , m4 } be a set of four model tiers ordered by
+LLMs using preference data. FrugalGPT (Chen et al., 2024)
+                                                                      capability and cost:
+introduced LLM cascades that try cheaper models first.
+PILOT (Panda et al., 2025) frames routing as a contex-                • Tier 1 (Frontier): GPT-4-class, Claude Opus-class. $15–
+tual bandit with budget modeled as a multi-choice knap-                 30 per million output tokens.
+sack. Pulishetty et al. (2025) use cross-attention to jointly         • Tier 2 (Mid-range): GPT-4o-mini-class, Claude Sonnet-
+model query and model embeddings. Two recent surveys                    class. $3–8 per million output tokens.
+(Moslem & Kelleher, 2025; Varangot-Reille et al., 2025)               • Tier 3 (Efficient): Llama-3-70B-class, Mixtral-class.
+provide taxonomies of routing paradigms, distinguishing                 $0.50–2 per million output tokens.
+pre-generation and post-generation approaches. All of these           • Tier 4 (Minimal): 7B–13B models. $0.05–0.20 per mil-
+operate on independent queries. When applied to agent                   lion output tokens.
+trajectories by routing each step independently, they miss
+inter-step quality dependencies: a cheap model producing a            For each step st , let q(st , m) denote the quality of output
+subtly wrong intermediate result forces the frontier model            when step st is served by model m, and let c(st , m) denote
+at the next step to reason over corrupted context, degrading          the cost. The step-level routing problem is:
+end-to-end quality.
+                                                                                    T
+Agent-level cost optimization. DAAO (Su et al., 2026) uses
+                                                                                    X
+                                                                              min         c(st , π(st ))   s.t.   Q(τ, π) ≥ Qmin      (1)
+a VAE to estimate query difficulty and allocates operators                     π
+                                                                                    t=1
+and LLMs accordingly, surpassing prior systems by 11.21%
+in accuracy while using only 64% of their inference cost.             where π : st → M is the routing policy and Q(τ, π) is the
+Budget-Aware Agentic Routing (Zhang et al., 2025) selects             end-to-end trajectory quality under policy π. The constraint
+between a cheap and expensive model at each agent step                Qmin is a user-specified minimum quality threshold (we use
+using boundary-guided policy optimization. xRouter (Qian              97% of the frontier-only baseline throughout experiments).
+et al., 2025) trains an RL-based tool-calling router with cost-
+                                                                      The difficulty is that Q(τ, π) is not decomposable into per-
+aware rewards. CoRL (Jin et al., 2025) uses a centralized
+                                                                      step terms. Routing step t to a weaker model can degrade the
+controller LLM to coordinate expert models under budget
+                                                                      context available at step t+1, creating cascading quality loss.
+constraints. These methods reduce cost but use heavyweight
+                                                                      We handle this through a step-dependency-aware training
+routing mechanisms: DAAO adds a VAE forward pass per
+                                                                      procedure described below.
+query, xRouter and CoRL use LLMs as routers (adding
+the very cost they aim to reduce), and Zhang et al. (2025)
+                                                                      3.2. Feature extraction
+are limited to binary model choice rather than multi-tier
+assignment.                                                           At routing time (before the LLM call), AgentRouter extracts
+Model selection for compound systems. Chen et al. (2025)              five features from the step specification:
+optimize per-module model assignment in compound AI                   1. Inferred task type ftype ∈ {PLAN , REASON , RETRIEVE ,
+systems, achieving 5–70% accuracy gains. Sharma & Mehta                  GENERATE , FORMAT, VERIFY}: classified from the step
+(2025) find that small language models with guided decod-                instruction using keyword matching and a small BERT-
+ing close the capability gap with frontier models at 10–100×             based tagger (2M parameters).
+
+                                                                  2
+                          AgentRouter: Heterogeneous Model Routing for Cost-Optimal Agentic Workflows
+
+2. Reasoning depth fdepth ∈ [0, 1]: estimated from instruc-                where klabel and kpred are the tier indices (1–4) and λ = 0.3.
+   tion complexity (number of conditional clauses, pres-                   This asymmetric penalty ensures AgentRouter errs toward
+   ence of multi-hop indicators like “compare,” “synthesize                more capable models when uncertain, preserving quality at
+   across,” “evaluate whether”).                                           the expense of slightly higher cost.
+3. Tool-use requirements ftool ∈ {0, 1, 2+}: number of
+   tool calls specified or implied in the step.                            Algorithm 1 AgentRouter Step-Level Routing
+4. Output format constraints fformat ∈ {FREE , STRUC -
+                                                                           Require: Agent trajectory specification τ = (s1 , . . . , sT ),
+   TURED , CODE , JSON }: derived from output schema if
+                                                                               model pool M, quality threshold Qmin
+   specified, otherwise from instruction keywords.
+                                                                           Ensure: Model assignment π(st ) for each step
+5. Context window utilization fctx ∈ [0, 1]: ratio of input
+                                                                            1: for t = 1 to T do
+   tokens to the target model’s context limit, computed from
+                                                                            2:    Extract features (ftype , fdepth , ftool , fformat , fctx ) from
+   the accumulated trajectory context.
+                                                                                  st
+                                                                            3:    k̂t ← AgentRouter(ftype , fdepth , ftool , fformat , fctx )
+Features 1–4 are extractable from the step specification
+                                                                            4:    π(st ) ← mk̂t
+alone. Feature 5 requires knowing the accumulated context
+                                                                            5:    Execute step st with model π(st )
+size, available from the orchestrator at routing time.
+                                                                            6:    Update trajectory context with output of st
+                                                                            7: end for
+3.3. Classifier architecture and training                                   8: Qactual ← EvaluateTrajectory(τ, π)
+AgentRouter is a feedforward classifier with two hidden                     9: if Qactual < Qmin then
+layers (256 and 128 units), ReLU activations, and a 4-class                10:    Re-execute failed steps with m1 (frontier fallback)
+softmax output corresponding to the four model tiers. The                  11: end if
+predicted tier is k̂t = arg maxk∈{1,2,3,4} p̂k , where p̂k is
+                                                                           The trajectory context update (line 6) incorporates the actual out-
+the softmax probability for tier k. Input features are embed-
+                                                                           put length, quality score, and accumulated content from step t
+ded: categorical features (ftype , ftool , fformat ) through learned
+                                                                           into the feature vector for step t+1 (specifically, fctx and any
+embeddings, continuous features (fdepth , fctx ) through linear
+                                                                           trajectory-level signals). This distinguishes AgentRouter from in-
+projection. Total parameter count: 12M (dominated by the
+                                                                           dependent query routing: each routing decision uses evidence from
+task-type tagger).
+                                                                           prior steps, so the classifier operates on trajectory-aware context,
+Training data. We construct a dataset of 50,000 step-level                 with each routing decision informed by the accumulated outputs
+annotations from 6,250 agent trajectories across four do-                  preceding it. The fallback mechanism (lines 8–10) re-executes
+mains: document analysis (1,800 trajectories), code genera-                quality-critical steps with frontier models when end-to-end qual-
+tion (1,600), research synthesis (1,500), and data analysis                ity falls below Qmin . In evaluation, Qactual is computed using
+(1,350). For each trajectory, we execute all steps with all                the held-out ground-truth labels (F1, pass@1, factual accuracy).
+four model tiers and record per-step quality scores (task-                 In production deployment, a lightweight LLM-as-a-judge proxy
+specific automated metrics: F1 for document extraction,                    replaces the ground-truth evaluator; the judge’s token cost and
+pass@1 for code, factual accuracy for research, numeric cor-               latency are included in the overhead reported in Section 4. In
+rectness for data analysis). Each step receives a minimum                  practice, fallback triggers on fewer than 4% of trajectories.
+adequate tier label: the cheapest tier whose quality on that
+step is within 2% of the frontier tier’s quality.
+Dependency-aware labeling. To account for inter-step de-                   4. Experiments
+pendencies, we do not label steps in isolation. Instead, we                4.1. Setup
+label step t assuming steps 1 through t−1 were routed to
+their minimum adequate tiers. This captures the realistic set-             Benchmark. We evaluate on 2,400 held-out trajectories
+ting where a downstream step receives context generated by                 (600 per domain) distinct from the training set. Each trajec-
+a mix of model tiers, not uniformly frontier-quality context.              tory contains 4–12 steps. Total: 18,720 individual step-level
+                                                                           routing decisions.
+Training procedure. We train with cross-entropy loss on
+the 4-class tier labels. We add a cost-sensitive regularization            Model pool. Tier 1: GPT-4o ($15/M output tokens). Tier 2:
+term that penalizes over-provisioning (routing to a higher                 GPT-4o-mini ($2.40/M output tokens). Tier 3: Llama-3-
+tier than needed) less heavily than under-provisioning (rout-              70B-Instruct via together.ai ($0.88/M output tokens). Tier 4:
+ing to a tier that degrades quality):                                      Llama-3-8B-Instruct via together.ai ($0.18/M output to-
+                                                                           kens). Prices as of February 2026.
+                                                                           Baselines. (1) Frontier-only: all steps routed to GPT-4o.
+                    X
+    L = LCE + λ           max(0, kpred (st ) − klabel (st ))2   (2)
+                      t
+                                                                           (2) RouteLLM (Ong et al., 2024): applied per-step with
+
+                                                                       3
+                        AgentRouter: Heterogeneous Model Routing for Cost-Optimal Agentic Workflows
+
+Table 1. Cost and quality comparison across baselines. Quality is          Table 2. Routing accuracy and cost contribution by tier. Ground
+end-to-end task completion relative to frontier-only (100%). Cost          truth is the minimum adequate tier determined by exhaustive eval-
+reduction is relative to frontier-only. Overhead is per-step routing       uation.
+latency.
+                                                                            Tier                  Steps (%)     Accuracy     Cost share
+ Method                    Quality     Cost Red.     Overhead
+                                                                            Tier 1 (Frontier)       14.2%         82.1%        48.3%
+ Frontier-only             100.0%           –           0 ms                Tier 2 (Mid-range)      21.6%         76.4%        24.1%
+ RouteLLM (per-step)        94.2%        31.4%          3 ms                Tier 3 (Efficient)      28.9%         84.7%        16.8%
+ FrugalGPT cascade         96.8%         44.1%         48 ms                Tier 4 (Minimal)        35.3%         91.2%        10.8%
+ DAAO                       98.1%        36.2%         22 ms
+                                                                            Overall                 100%          84.6%         100%
+ Budget-Aware              95.6%         52.7%          8 ms
+ AgentRouter               97.3%         71.8%         4.7 ms
+
+                                                                           easiest to classify, with 91.2% accuracy. Tier 2 steps are
+                                                                           hardest (76.4%), because the boundary between “needs mid-
+its matrix factorization router, trained on Chatbot Arena
+                                                                           range reasoning” and “could be handled by a 70B model”
+preferences, selecting between GPT-4o and Llama-3-8B.
+                                                                           is often ambiguous. The asymmetric loss (Equation (2))
+(3) FrugalGPT cascade (Chen et al., 2024): adapted to
+                                                                           causes most Tier 2 errors to be over-provisions to Tier 1
+four tiers, querying from cheapest to most expensive un-
+                                                                           rather than under-provisions to Tier 3, protecting quality at
+til a confidence threshold is met. (4) DAAO (Su et al.,
+                                                                           modest cost increase.
+2026): difficulty-aware orchestration applied at the trajec-
+tory level. (5) Budget-Aware Routing (Zhang et al., 2025):
+binary routing (GPT-4o vs. Llama-3-8B) at each step with                   4.4. Ablation and domain analysis
+boundary-guided training.                                                  Feature ablation (replacing each feature with its marginal
+Metrics. End-to-end task completion rate (domain-specific:                 distribution) reveals task type as the dominant signal (−12.3
+F1, pass@1, factual accuracy, numeric correctness, aver-                   accuracy points when removed, cost reduction drops to
+aged). Cost per trajectory in USD. Cost reduction percent-                 54.2%), followed by reasoning depth (−7.1), context utiliza-
+age relative to frontier-only. Routing overhead (milliseconds              tion (−4.8), tool use (−3.2), and output format (−2.1). Cost
+per step).1                                                                reduction varies by domain: document analysis (76.4%),
+                                                                           data analysis (74.1%), research synthesis (69.2%), code
+4.2. Main results                                                          generation (63.8%). Code generation benefits least because
+                                                                           26.3% of its steps require Tier 1 reasoning vs. 8.7% for
+Table 1 presents the main comparison. AgentRouter                          document analysis.
+achieves 71.8% cost reduction while maintaining 97.3% of
+frontier-only quality. Budget-Aware Routing reaches 52.7%
+                                                                           5. Discussion and Limitations
+cost reduction but drops quality to 95.6% because its binary
+choice (frontier vs. 8B) cannot exploit mid-range tiers. Fru-              Distributional shift. AgentRouter trains on trajectories
+galGPT preserves quality (96.8%) but achieves only 44.1%                   from LangGraph and CrewAI. Testing on AutoGen (unseen
+cost reduction, with 48ms routing overhead from sequential                 framework) shows 6–9% accuracy degradation, though cost
+model probing. RouteLLM performs worst in cost reduc-                      reduction still reaches 58%. Cross-framework generaliza-
+tion (31.4%) because its preference-based router, trained on               tion remains an open problem.
+single-turn conversations, misroutes agent steps whose com-
+plexity depends on accumulated trajectory context. DAAO                    Model tier evolution. The four-tier structure reflects pricing
+preserves the highest quality (98.1%) but achieves only                    and capability gaps as of early 2026. Retraining is needed
+36.2% cost reduction: its VAE assigns a single difficulty                  when the model pool changes, though the lightweight archi-
+score to the entire trajectory, provisioning all steps for the             tecture keeps this inexpensive (<2 GPU-hours on a single
+hardest one.                                                               A100).
+                                                                           Trajectory scope. AgentRouter assumes the step sequence
+4.3. Per-tier routing accuracy                                             is known or estimable at routing time: either specified up-
+                                                                           front in a trajectory template or inferred from a planner
+Table 2 breaks down routing accuracy by tier. The distribu-
+                                                                           before execution begins. Fully online agentic scenarios
+tion confirms our premise: only 14.2% of steps genuinely
+                                                                           where future steps are generated dynamically based on prior
+require frontier models, yet those steps consume 48.3% of
+                                                                           outputs, with no advance visibility into remaining steps, fall
+the remaining cost. Tier 4 steps (35.3% of all steps) are the
+                                                                           outside the current scope. Extending AgentRouter to such
+   1
+     Implementation details and routing configurations are pro-            settings would require online re-planning and incremental
+vided in supplementary materials.                                          trajectory estimation.
+
+                                                                       4
+                      AgentRouter: Heterogeneous Model Routing for Cost-Optimal Agentic Workflows
+
+Routing overhead and tier transitions. Beyond per-step               References
+latency, practitioners should account for tier-switching fre-
+                                                                     Chen, L., Zaharia, M., and Zou, J. FrugalGPT: How to
+quency. Across our benchmark trajectories, the median
+                                                                       use large language models while reducing cost and im-
+number of model-tier transitions per trajectory is 3.2 (95th
+                                                                       proving performance. Transactions on Machine Learning
+percentile: 7 transitions for 8-step trajectories). Inference
+                                                                       Research, 2024. URL https://arxiv.org/abs/
+providers that charge per-call initialization overhead beyond
+                                                                       2305.05176.
+per-token cost may see this switching contribute meaning-
+fully to total latency.                                              Chen, L., Davis, J. Q., Hanin, B., Bailis, P., Zaharia,
+Cold start and latency. The task-type tagger requires step             M., Zou, J., and Stoica, I. Optimizing model se-
+instructions to be available before routing. For dynamically           lection for compound AI systems. arXiv preprint
+generated instructions, we route the instruction-generation            arXiv:2502.14815, 2025. URL https://arxiv.
+call to Tier 2 by default. The post-hoc fallback (Algorithm 1,         org/abs/2502.14815.
+lines 8–10) catches quality violations but adds latency; mid-
+                                                                     Jin, B., Collins, T., Yu, D., Cemri, M., Zhang, S., Li,
+trajectory quality prediction is the subject of ongoing work.
+                                                                        M., Tang, J., Qin, T., Xu, Z., Lu, J., Yin, G., Han, J.,
+                                                                        and Wang, Z. Controlling performance and budget of a
+6. Conclusion                                                           centralized multi-agent LLM system with reinforcement
+                                                                        learning. arXiv preprint arXiv:2511.02755, 2025. URL
+We formalized step-level model routing for agent trajectories
+                                                                        https://arxiv.org/abs/2511.02755.
+and proposed AgentRouter, a lightweight 12M-parameter
+classifier that assigns each step in a multi-step agent work-        Moslem, Y. and Kelleher, J. D. Dynamic model routing
+flow to the cheapest adequate model tier. On a benchmark              and cascading for efficient LLM inference: A survey.
+spanning four task domains, AgentRouter achieves 72%                  arXiv preprint arXiv:2512.04445, 2025. URL https:
+cost reduction with less than 3% quality degradation, outper-         //arxiv.org/abs/2512.04445.
+forming both single-turn routers adapted to agentic settings
+and agent-level cost optimizers. The central finding is that         Ong, I., Almahairi, A., Wu, V., Chiang, W.-L., Wu, T., Gon-
+step complexity within a single trajectory varies enough to            zalez, J. E., Kadous, M. W., and Stoica, I. RouteLLM:
+make fine-grained routing viable, and that a small classi-             Learning to route LLMs with preference data. arXiv
+fier trained on dependency-aware step labels captures this             preprint arXiv:2406.18665, 2024. URL https://
+variation with negligible overhead. More broadly, Agen-                arxiv.org/abs/2406.18665.
+tRouter implements resource-adaptive inference at the tra-
+jectory level, dynamically matching computational cost to            Panda, P., Magazine, R., Devaguptapu, C., Takemori, S.,
+task complexity at each agent step rather than applying uni-           and Sharma, V. Adaptive LLM routing under budget
+form model selection across the workflow.                              constraints. In Findings of the Association for Computa-
+                                                                       tional Linguistics: EMNLP 2025, 2025. URL https:
+                                                                       //arxiv.org/abs/2508.21141.
+Impact Statement
+                                                                     Pulishetty, R., Ghantasala, M. K., Dasoju, K. K., Mangwani,
+Reducing the cost of frontier AI by 72% through intelligent            N., Garimella, V., Mate, A., Chatterjee, S., Kang, Y.,
+per-step routing makes capable agent systems accessible to             Nosakhare, E., Hasan, S., and Srinivasan, S. One head,
+organizations and researchers who cannot sustain frontier-             many models: Cross-attention routing for cost-aware
+only inference budgets. The four-tier model preserves qual-            LLM selection. arXiv preprint arXiv:2509.09782, 2025.
+ity guarantees through a per-trajectory quality threshold and          URL https://arxiv.org/abs/2509.09782.
+a fallback mechanism, so cost reduction does not degrade
+correctness for quality-sensitive downstream uses. We iden-          Qian, C., Liu, Z., Kokane, S., Prabhakar, A., Qiu, J., Chen,
+tify one concern: routing to smaller models on ostensibly              H., Liu, Z., Ji, H., Yao, W., Heinecke, S., Savarese, S.,
+simple steps could amplify bias or reduce robustness in                Xiong, C., and Wang, H. xRouter: Training cost-aware
+domains where smaller models underperform in ways the                  LLMs orchestration system via reinforcement learning.
+minimum-adequate-tier label does not capture. Practitioners            arXiv preprint arXiv:2510.08439, 2025. URL https:
+should validate routing decisions on their specific domain             //arxiv.org/abs/2510.08439.
+before deploying AgentRouter in high-stakes contexts.
+                                                                     Salim, M., Latendresse, J., Khatoonabadi, S., and Shi-
+                                                                       hab, E. Tokenomics: Quantifying where tokens are
+                                                                       used in agentic software engineering. arXiv preprint
+                                                                       arXiv:2601.14470, 2026. URL https://arxiv.
+                                                                       org/abs/2601.14470.
+
+                                                                 5
+                     AgentRouter: Heterogeneous Model Routing for Cost-Optimal Agentic Workflows
+
+Sharma, R. and Mehta, M. Small language models
+  for agentic systems: A survey of architectures, capa-
+  bilities, and deployment trade offs. arXiv preprint
+  arXiv:2510.03847, 2025. URL https://arxiv.
+  org/abs/2510.03847.
+Su, J., Lan, Q., Xia, Y., Sun, L., Tian, W., Shi, T., Song,
+  X., He, L., and Jingsong, Y. Difficulty-aware agentic
+  orchestration for query-specific multi-agent workflows. In
+  Proceedings of the ACM Web Conference (WWW), 2026.
+  URL https://arxiv.org/abs/2509.11079.
+Team, A. Aragog: Agentic rag orchestration with llm-driven
+  model selection. arXiv preprint arXiv:2511.20975, 2025.
+  URL https://arxiv.org/abs/2511.20975.
+Varangot-Reille, C., Bouvard, C., Gourru, A., Ciancone,
+  M., Schaeffer, M., and Jacquenet, F. Doing more with
+  less: A survey on routing strategies for resource optimi-
+  sation in large language model-based systems. arXiv
+  preprint arXiv:2502.00409, 2025. URL https://
+  arxiv.org/abs/2502.00409.
+Zhang, C., Xia, M., Zhang, X., Madrigal, D., Mallick, A.,
+  Kessler, S., Ruehle, V., and Rajmohan, S. Budget-aware
+  agentic routing via boundary-guided training. arXiv
+  preprint arXiv:2512.21227, 2025. URL https://
+  arxiv.org/abs/2512.21227.
+
+
+
+
+                                                               6
+

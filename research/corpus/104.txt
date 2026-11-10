@@ -1,0 +1,994 @@
+TITLE: The Benefits of a Concise Chain of Thought on Problem-Solving in Large Language Models
+URL: https://arxiv.org/abs/2401.05618
+ORG: arXiv  TYPE: paper  DATE: 2024-01
+
+arXiv:2401.05618v3 [cs.CL] 19 Oct 2024
+
+The Benefits of a Concise Chain of Thought on
+Problem-Solving in Large Language Models
+1st Matthew Renze
+
+2nd Erhan Guven
+
+Johns Hopkins University
+Baltimore, MD, USA
+mrenze1@jhu.edu
+
+Johns Hopkins University
+Baltimore, MD, USA
+eguven2@jhu.edu
+
+Abstract—In this paper, we introduce Concise Chain-of-Thought
+(CCoT) prompting. We compared standard CoT and CCoT
+prompts to see how conciseness impacts response length and
+correct-answer accuracy. We evaluated this using GPT-3.5 and
+GPT-4 with a multiple-choice question-and-answer (MCQA)
+benchmark. CCoT reduced average response length by 48.70%
+for both GPT-3.5 and GPT-4 while having a negligible impact
+on problem-solving performance. However, on math problems,
+GPT-3.5 with CCoT incurred a performance penalty of 27.69%.
+Overall, CCoT leads to an average per-token cost reduction of
+22.67%. All code, data, and supplemental materials are available
+on GitHub at https://github.com/matthewrenze/jhu-concise-cot
+Index Terms—large language model, LLM, chain-of-thought,
+CoT, concise
+
+the cost of using the LLM with CoT grows in proportion to
+response length.
+
+B. Chain-of-Thought (CoT) Prompting
+
+D. Concise Chain-of-Thought (CCoT)
+
+C. Concise Prompting
+
+Concise prompting is a prompt-engineering technique used
+to reduce LLM response verbosity. The main benefit is that it
+decreases the per-token cost of using the LLM. In addition, it
+can reduce the LLM’s energy consumption, minimize response
+time, and improve communication efficiency with the end user.
+There are two main implementations of concise prompting.
+Zero-shot prompting instructs the LLM to “be concise” in
+its response [6], [7]. Few-shot prompting requires the prompt
+engineer to create a series of problem-solution example pairs
+I. I NTRODUCTION
+with concisely written text in each example solution.
+A. Background
+While concise prompting is beneficial for reducing resource
+In recent years, Large Language Models (LLMs) have costs, it may negatively impact the performance of the LLM
+transformed the field of artificial intelligence by offering on some problem-solving tasks [6]. This is because the LLM
+unprecedented new capabilities for AI systems. As a result, requires additional verbosity to fully elaborate the steps in its
+LLMs have become a standard component in many AI systems thought process to produce a correct solution.
+that automate solutions to real-world problems.
+As a result, prompt engineers often provide LLMs with
+However, to create effective LLM solutions, prompt engineer- instructions and examples designed to ensure higher verbosity
+ing is often necessary. So, AI systems engineers have developed so that all steps in the LLM’s thought process are explicitly
+various techniques to improve the performance of LLMs for stated. However, the adoption of verbose CoT conventions
+specific use cases and problem domains. These techniques appears to be based on anecdotal rather than empirical evidence.
+include Chain of Thought (CoT) prompting [1], [2].
+It is still an open question how conciseness impacts the
+CoT is a prompt engineering technique that instructs the
+problem-solving
+capabilities and response length of an LLM
+LLM to reason through a problem in a step-by-step manner.
+with
+CoT.
+To
+answer
+this question, we combined concise
+Reasoning step-by-step increases the likelihood of the LLM
+prompting
+and
+CoT
+to
+create Concise Chain-of-Thought
+producing a correct solution to the problem. As a result, CoT
+(CCoT)
+prompting.
+improves LLM performance on many problem-solving tasks
+CCoT prompting is a novel prompt engineering technique
+[3]–[5].
+that
+combines the effectiveness of CoT prompting with the
+There are multiple versions of CoT prompting with various
+efficiency
+of concise prompting. It attempts to produce a chain
+pros and cons. Zero-shot CoT instructs the LLM to “think
+of
+thought
+that leads to a correct solution with the shortest
+step-by-step” through the problem in the system prompt [3],
+possible
+response
+length.
+[5]. Few-shot CoT provides a series of examples as problemCCoT is achieved by instructing the LLM to both "think stepsolution pairs with the CoT explicitly stated in each example
+by-step" and "be concise". In addition, the LLM is provided
+solution [4].
+CoT prompting has been shown to improve LLM perfor- with few-shot examples that include a sample problem and a
+mance by up to 80% for certain problem tasks and problem concise solution rather than a standard (i.e., verbose) solution.
+domains [3]. However, this performance increase comes at
+For an example of the CCoT prompt and few-shot examples,
+the expense of increased LLM response length. As a result, please see Figure 12 in the appendix.
+
+For a complete list of the source problem sets used to create
+the MCQA test set, see Table II in the appendix. For a sample
+MCQA problem, see Figure 9 in the appendix.
+
+E. Contribution
+
+Our research builds upon prior literature by determining
+how concise prompting impacts CoT prompting. These results
+have practical implications for AI engineers building software
+B. Models
+solutions with LLMs.
+First, if CCoT reduces response length, then AI systems
+We used two popular LLMs in our experiment – namely
+engineers can use CCoT to reduce LLM costs. Third-party GPT-3.5 and GPT-4.
+LLM APIs are typically priced per token [8], [9]. So, reducing
+GPT-3.5 is a Generative Pre-trained Transformer (GPT)
+response length will reduce total costs. Reducing response created by OpenAI and publicly released as “ChatGPT” in
+length also reduces energy consumption and response times.
+November 2022 [18], [19]. GPT-4 is a more powerful GPT
+Second, if CCoT does not decrease performance, then there with more advanced capabilities [20], [21]. However, GPT-4
+is no performance penalty for implementing CCoT. As a result, costs roughly 30x more per output token than GPT-3.5 [9].
+AI systems engineers should prefer CCoT over standard CoT.
+GPT-3.5 and GPT-4 can be accessed via an application
+Finally, these results have theoretical implications for AI programming interface (API) hosted by OpenAI or Microsoft.
+researchers studying CoT reasoning in LLMs. If we can reduce We used Microsoft Azure OpenAI Service for our experiments
+the length of a CoT without impacting performance, then only – though our results should hold for either platform – since they
+some aspects of a CoT are relevant to the LLM’s problem- both use the same underlying foundational models [22]–[24].
+solving performance. This discovery raises new questions about
+which specific tokens or aspects of an LLM’s CoT are necessary
+C. Prompts
+vs. which are superfluous.
+We used three prompt-engineering techniques in our experiF. Prior Literature
+ment. These prompts consisted of an answer-only prompt, a
+Few-shot CoT prompting was introduced by Wei et al. in standard (i.e., verbose) CoT prompt, and a concise CoT prompt.
+The answer-only prompt instructed the LLM to respond
+January 2022 [4]. Zero-shot CoT was introduced four months
+with
+only the answer to the question. The prompt included a
+later by Kojima et al. [3]. The zero-shot CoT method was
+single
+(i.e., one-shot) example to demonstrate how to complete
+then further refined by Zhou et al. using the Automatic Prompt
+the
+task.
+This prompt provided a baseline for evaluating the
+Engineer (APE) method in October 2022 [5].
+minimum
+response length and task performance.
+In September 2022, Madaan and Yazdanbakhsh attempted
+The standard CoT prompt instructed the LLM to think stepto separate symbols, patterns, and text to determine their
+individual effects on CoT and develop their own concise CoT by-step through its thought process before answering. The
+prompt technique [10]. However, as of January 2023, their one-shot example included a verbose CoT for each reasoning
+paper was withdrawn from publication due to technical issues step in the solution. This prompt provided an upper bound for
+response length and task performance.
+[11].
+The CCoT prompt included the standard CoT prompt but
+Concise prompting, in general, has not been studied to the
+same extent as CoT prompting. It has been used in scientific also had a final instruction to “Be concise.” The one-shot
+research papers for practical reasons but has not been studied example also included a more concise CoT in its solution. This
+directly. Most guidance on concise prompting comes from best prompt allowed us to compare CCoT to both the answer-only
+and standard CoT prompts.
+practices in the prompt-engineering community.
+After an extensive literature search, we found no research
+For samples of all three prompts, see Figures 10, 11, and
+papers specifically studying concise prompting. In addition, we 12 in the appendix.
+could not find any other publications exploring concise CoT
+prompting.
+D. Metrics
+To compare the performance of our prompts, we measured
+the LLM’s response length and correct-answer accuracy.
+A. Data
+Response length was measured as the number of output
+Our test dataset consists of Multiple-Choice Question-and- tokens produced by the LLM in its response. A token is the
+Answer (MCQA) problems from standard LLM benchmarks. smallest unit of information an LLM can process. Both GPT-3.5
+We reviewed existing literature to identify a set of candidate and GPT-4 work with sub-word tokens. There are approximately
+benchmarks that spanned multiple problem domains and 1.3 tokens per word on average [25].
+difficulty levels. The ten source benchmarks were selected
+Performance was measured as the number of correctly
+from ARC, AGIEval, HellaSwag, and MedMCQA [12]–[17]. answered questions divided by the total number of questions
+We preprocessed the data into a standard data format asked. This performance metric allowed us to directly compare
+and randomly selected 100 questions from each of the ten the LLM’s ability to correctly solve a problem presented in
+benchmarks to create an exam with 1,000 MCQA problems.
+the MCQA format.
+II. M ETHODS
+
+E. Analysis
+
+   
+
+ 5 H V S R Q V H  / H Q J W K  E \  3 U R P S W  7 \ S H  I R U  * 3 7    
+
+   
+ 5 H V S R Q V H  / H Q J W K   W R N H Q V 
+
+To determine the statistical significance of our results, we
+performed a set of Mann-Whitney U (MWU) tests [26], [27].
+For the response-length results, we performed an MWU test
+on the distributions of the CoT and CCoT response lengths.
+For the performance results, we performed an MWU test on
+the distributions of the correct-answer accuracy for standard
+CoT and CCoT.
+We used an MWU test instead of a t-test due to the nonnormal distribution of the data. A Shapiro-Wilk normality test
+indicated that the response-length data and accuracy data were
+not normally distributed. This condition violates the normality
+assumption of the t-test, so an MWU test was used instead.
+
+   
+   
+   
+   
+
+III. R ESULTS
+
+  
+
+A. Response Length
+
+B. Performance
+Our analysis revealed that CCoT did not reduce problemsolving performance in any statistically meaningful way
+compared to standard CoT.
+For GPT-3.5, we saw a 2.95% decrease in average accuracy
+when comparing CCoT to CoT. The MWU test yielded (U =
+507, 648.50, p = 0.55), indicating the difference between the
+distributions was not statistically significant.
+For GPT-4, we saw an increase in average accuracy of
+0.25% when comparing CCoT to CoT prompting. The MWU
+test yielded (U = 485, 396.00, p = 0.21), also indicating a
+non-significant difference between the distributions.
+A visual analysis of these data supports these findings (see
+Figures 3 and 4).
+A more in-depth analysis of accuracy by exam revealed that
+GPT-3.5 with CCoT produced a statistically significant decrease
+in performance only for math problems (i.e., AQUA-RAT and
+SAT Math) compared to CoT. Other problem domains saw no
+decrease in accuracy (see Figure 7 in the appendix).
+For these two math exams, GPT-3.5 with CCoT resulted in an
+average reduction in accuracy of 27.69%. An MWU test on the
+distributions of CoT and CCoT yielded (U = 26, 546.00, p <
+
+ 
+
+ & R Q F L V H  & R 7
+
+ 3 U R P S W  7 \ S H
+
+ 9 H U E R V H  & R 7
+
+Fig. 1: GPT-3.5 with CCoT reduces response length by an
+average of 47.62% compared to verbose CoT.
+
+   
+
+ 5 H V S R Q V H  / H Q J W K  E \  3 U R P S W  7 \ S H  I R U  * 3 7  
+
+   
+ 5 H V S R Q V H  / H Q J W K   W R N H Q V 
+
+Our analysis revealed that CCoT reduced average response
+length by 48.70% compared to CoT.
+For GPT-3.5, we saw a 47.62% decrease in average response
+length when comparing CCoT to CoT. The MWU test yielded
+(U = 873, 046.00, p < 0.001), indicating a significant difference between the two distributions.
+For GPT-4, we saw a 49.77% decrease in average response
+length between CCoT and CoT. The MWU test yielded (U =
+807, 523.50, p < 0.001), also indicating a significant difference
+between the distributions.
+A visual analysis of the data supports these findings (see
+Figures 1 and 2).
+A further analysis of response length by exam shows this
+decrease in response length holds across all problem domains.
+This pattern can be observed for both GPT-3.5 and GPT-4 (see
+Figures 5 and 6 in the appendix).
+
+   
+   
+   
+   
+  
+ 
+
+ & R Q F L V H  & R 7
+
+ 3 U R P S W  7 \ S H
+
+ 9 H U E R V H  & R 7
+
+Fig. 2: GPT-4 with CCoT reduces response length by an average
+of 49.77% compared to verbose CoT.
+
+0.001). Thus, for GPT-3.5 only, math problems appear to be a
+special case where conciseness negatively impacts performance.
+On the other hand, GPT-4 with CCoT did not result in
+a statistically significant decrease in performance on math
+problems compared to CoT. Both CCoT and CoT had roughly
+equivalent performance on all problem domains. CCoT also
+significantly outperformed the answer-only prompt on math
+
+   
+
+ $ F F X U D F \  E \  3 U R P S W  7 \ S H  I R U  * 3 7    
+
+ $ F F X U D F \
+
+   
+   
+
+Input Cost ($)
+Output Cost ($)
+Total Cost ($)
+Cost Savings (%)
+
+   
+
+   
+
+GPT-3.5
+CCoT
+
+GPT-4
+CoT
+
+GPT-4
+CCoT
+
+0.55
+0.33
+0.88
+
+0.51
+0.17
+0.69
+21.85
+
+16.37
+10.53
+26.90
+
+15.29
+5.29
+20.58
+23.49
+
+IV. D ISCUSSION
+
+ & R Q F L V H  & R 7
+
+ 3 U R P S W  7 \ S H
+
+ 9 H U E R V H  & R 7
+
+Fig. 3: GPT-3.5 with CCoT has similar accuracy compared to
+verbose CoT.
+
+   
+
+GPT-3.5
+CoT
+
+TABLE I: CCoT significantly reduces total costs per 1,000
+problems for both GPT-3.5 and GPT-4.
+
+   
+
+ $ F F X U D F \  E \  3 U R P S W  7 \ S H  I R U  * 3 7  
+
+   
+
+ $ F F X U D F \
+
+current per-token pricing model for GPT-3.5 and GPT-4. 1
+Currently, GPT-3.5 is priced at $0.001 per 1,000 input tokens
+and $0.002 per 1,000 output tokens. 2 GPT-4 is priced at $0.03
+per 1,000 input tokens and $0.06 per 1,000 output tokens [9].
+As a result, CCoT produced a total cost savings of 21.85%
+for GPT-3.5 and 23.49% for GPT-4 (see Table I). These cost
+savings should scale linearly.
+
+   
+   
+
+A. Limitations
+There are several limitations in this research study:
+First, our study involved only two LLMs – both of which
+are versions of OpenAI’s GPT. As a result, these findings may
+not generalize to other proprietary and open-source LLMs like
+Llama 2, PaLM, and Claude.
+Second, our study only tested a single type of CoT and
+CCoT prompt. As a result, other variations of CoT and CCoT
+prompts may produce different results.
+Third, our study was limited to ten problem domains. As a
+result, these findings may not hold for other problem domains
+or sub-domains within each problem domain.
+Finally, in the case of GPT-4, the median accuracy was 1.0.
+As a result, the data were compressed at the ceiling of accuracy.
+This compression may have caused issues with our statistical
+analysis of performance due to a ceiling effect.
+B. Implications
+
+   
+   
+
+ & R Q F L V H  & R 7
+
+ 3 U R P S W  7 \ S H
+
+ 9 H U E R V H  & R 7
+
+Fig. 4: GPT-4 with CCoT has similar accuracy compared to
+verbose CoT. (Note: the median value for both prompts is 1.0,
+making the box plot more difficult to interpret visually.)
+
+problems (see Figure 8 in the appendix).
+C. Cost Analysis
+To understand the practical implications of these results, we
+computed the cost of solving all 1,000 problems using the
+
+These results have practical implications for AI engineers
+building LLM-based software solutions.
+Since most proprietary LLM APIs charge on a per-token
+pricing model, reducing the number of output tokens in an
+LLM’s response yields direct cost savings [8], [9]. In addition,
+obtaining more concise responses without sacrificing accuracy
+leads to direct savings in energy consumption and response
+times.
+These results also have theoretical implications for AI
+researchers studying how LLMs perform step-by-step reasoning
+using CoT.
+CCoT can reduce the number of output tokens by roughly
+half while maintaining the same level of accuracy. As a result,
+only a subset of the CoT tokens contribute to the performance
+of the LLM. This opens new questions about which aspects of
+a CoT lead to a correct solution, and which are superfluous.
+1 For our study, we solved each MCQA problem 10 times. So, our total cost
+was roughly 10x the values we are reporting.
+2 All prices are in US Dollars (USD).
+
+C. Future Research
+To improve upon this research, we suggest additional followup experiments:
+First, we recommend performing additional experiments with
+other proprietary and open-source LLMs. It would be beneficial
+to know if these results hold for all LLMs or only GPT-3.5
+and GPT-4.
+Second, we recommend testing more CCoT prompt variations. Instructing the LLM to be even more concise in
+the system prompt may further decrease response length.
+In addition, more concisely written few-shot examples may
+produce even more succinct responses without sacrificing
+accuracy.
+Third, we recommend testing more task types and problem
+domains beyond those tested in our MCQA test set. These
+results may not generalize to non-MCQA task types. In addition,
+they may not generalize to other problem domains. Other math
+sub-domains may also exhibit behaviors different from what
+we observed.
+Finally, we recommend performing a more in-depth error
+analysis to improve our understanding of the nature of CCoT
+errors. The LLMs may be making specific types of errors in
+their CoT that impact their performance. Understanding these
+errors may provide additional insight into how to mitigate
+them.
+V. C ONCLUSION
+In this research study, we introduced the CCoT promptengineering technique.
+We demonstrated that CCoT prompting reduced response token length for GPTs by 48.70% while maintaining comparable
+performance to standard CoT. GPT-4 incurred no performance
+penalty in any problem domain. However, for math problems,
+GPT-3.5 incurred a 27.69% reduction in accuracy.
+In practice, CCoT can reduce the per-token cost of solving
+multi-step problems by 22.67%. These cost savings also extend
+to reduced energy consumption and shorter LLM response
+times.
+R EFERENCES
+[1] G. Mialon, R. Dessì, M. Lomeli, C. Nalmpantis, R. Pasunuru, R. Raileanu,
+B. Rozière, T. Schick, J. Dwivedi-Yu, A. Celikyilmaz, E. Grave,
+Y. LeCun, and T. Scialom, “Augmented language models: a survey,”
+arXiv, 2 2023. [Online]. Available: https://arxiv.org/abs/2302.07842v1
+[2] J. White, Q. Fu, S. Hays, M. Sandborn, C. Olea, H. Gilbert, A. Elnashar,
+J. Spencer-Smith, and D. C. Schmidt, “A prompt pattern catalog to
+enhance prompt engineering with chatgpt,” arXiv, 2 2023. [Online].
+Available: https://arxiv.org/abs/2302.11382
+[3] T. Kojima, S. S. Gu, M. Reid, Y. Matsuo, and Y. Iwasawa, “Large
+language models are zero-shot reasoners,” in Advances in Neural
+Information Processing Systems, vol. 35, 5 2022, pp. 22 199–22 213.
+[Online]. Available: https://arxiv.org/abs/2205.11916
+[4] J. Wei, X. Wang, D. Schuurmans, M. Bosma, B. Ichter, F. Xia,
+E. Chi, Q. Le, and D. Zhou, “Chain-of-thought prompting elicits
+reasoning in large language models,” arXiv, 1 2022. [Online]. Available:
+https://arxiv.org/abs/2201.11903
+[5] Y. Zhou, A. I. Muresanu, Z. Han, K. Paster, S. Pitis, H. Chan, and
+J. Ba, “Large language models are human-level prompt engineers,”
+The Eleventh International Conference on Learning Representations,
+11 2023. [Online]. Available: https://arxiv.org/abs/2211.01910https:
+//openreview.net/forum?id=92gvk82DE-
+
+[6] N. Crispino, K. Montgomery, F. Zeng, D. Song, and C. Wang, “Agent
+instructs large language models to be general zero-shot reasoners,”
+arXiv, 10 2023. [Online]. Available: https://arxiv.org/abs/2310.03710
+[7] W. Kadous, “Numbers every llm developer should know,” 5 2023,
+accessed: 2023-12-07. [Online]. Available: https://www.anyscale.com/
+blog/num-every-llm-developer-should-know
+[8] Anyscale, “Pricing,” 2023, accessed: 2023-12-07. [Online]. Available:
+https://docs.endpoints.anyscale.com/pricing/
+[9] OpenAI, “Pricing,” 2023, accessed: 2023-12-07. [Online]. Available:
+https://openai.com/pricing
+[10] A. Madaan and A. Yazdanbakhsh, “Text and patterns: For effective
+chain of thought, it takes two to tango,” arXiv, 9 2022. [Online].
+Available: https://arxiv.org/abs/2209.07686
+[11] ——, “Text and patterns: For effective chain of thought it takes
+two to tango,” 2022, accessed: 2023-12-07. [Online]. Available:
+https://openreview.net/forum?id=z9fXRC5XdT
+[12] P. Clark, I. Cowhey, O. Etzioni, T. Khot, A. Sabharwal, C. Schoenick,
+and O. Tafjord, “Think you have solved question answering? try
+arc, the ai2 reasoning challenge,” ArXiv, 3 2018. [Online]. Available:
+https://arxiv.org/abs/1803.05457
+[13] R. Zellers, A. Holtzman, Y. Bisk, A. Farhadi, and Y. Choi, “Hellaswag:
+Can a machine really finish your sentence?” in Proceedings of the 57th
+Annual Meeting of the Association for Computational Linguistics, 2019.
+[Online]. Available: https://arxiv.org/abs/1905.07830
+[14] A. Pal, L. K. Umapathi, and M. Sankarasubbu, “Medmcqa: A
+large-scale multi-subject multi-choice dataset for medical domain
+question answering,” in Proceedings of the Conference on Health,
+Inference, and Learning. PMLR, 2022, pp. 248–260. [Online].
+Available: https://proceedings.mlr.press/v174/pal22a.html
+[15] W. Zhong, R. Cui, Y. Guo, Y. Liang, S. Lu, Y. Wang, A. Saied,
+W. Chen, and N. Duan, “Agieval: A human-centric benchmark for
+evaluating foundation models,” ArXiv, 4 2023. [Online]. Available:
+https://arxiv.org/abs/2304.06364
+[16] J. Liu, L. Cui, H. Liu, D. Huang, Y. Wang, and Y. Zhang, “Logiqa:
+A challenge dataset for machine reading comprehension with logical
+reasoning,” in International Joint Conference on Artificial Intelligence,
+2020. [Online]. Available: https://arxiv.org/abs/2007.08124
+[17] S. Wang, Z. Liu, W. Zhong, M. Zhou, Z. Wei, Z. Chen, and
+N. Duan, “From lsat: The progress and challenges of complex
+reasoning,” IEEE/ACM Transactions on Audio, Speech and Language
+Processing, vol. 30, pp. 2201–2216, 8 2021. [Online]. Available:
+https://doi.org/10.1109/TASLP.2022.3164218
+[18] T. Brown et al., “Language models are few-shot learners,”
+in Advances in Neural Information Processing Systems,
+vol. 33.
+Curran Associates, Inc., 2020, pp. 1877–1901.
+[Online]. Available: https://proceedings.neurips.cc/paper_files/paper/
+2020/file/1457c0d6bfcb4967418bfb8ac142f64a-Paper.pdf
+[19] OpenAI, “Introducing chatgpt,” 11 2022, accessed: 2023-04-29. [Online].
+Available: https://openai.com/blog/chatgpt
+[20] ——, “Gpt-4 technical report,” arXiv, 3 2023, accessed: 2023-04-29.
+[Online]. Available: https://arxiv.org/abs/2303.08774
+[21] ——, “Gpt-4,” 3 2023, accessed: 2023-04-29. [Online]. Available:
+https://openai.com/research/gpt-4
+[22] Microsoft, “Azure openai service,” 2023, accessed: 2023-1207. [Online]. Available: https://azure.microsoft.com/en-us/products/
+ai-services/openai-service/
+[23] OpenAI, “Models,” 2023, accessed: 2023-12-07. [Online]. Available:
+https://openai.com/product#models
+[24] ——, “Openai - api reference,” 2023, accessed: 2023-11-26. [Online].
+Available: https://platform.openai.com/docs/api-reference/chat/create
+[25] ——, “Tokens,” 2023, accessed: 2023-12-07. [Online]. Available:
+https://platform.openai.com/docs/introduction/tokens
+[26] H. B. Mann and D. R. Whitney, “On a test of whether one of two
+random variables is stochastically larger than the other,” The Annals of
+Mathematical Statistics, vol. 18, pp. 50–60, 3 1947. [Online]. Available:
+https://www.jstor.org/stable/2236101
+[27] The
+SciPy
+Community,
+“Scipy
+v1.11.4
+manual
+scipy.stats.mannwhitneyu,” 2023, accessed: 2023-12-07. [Online].
+Available: https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.
+mannwhitneyu.html
+
+A PPENDIX
+A. Response Length for GPT-3.5
+
+ 5 H V S R Q V H  / H Q J W K  E \  3 U R P S W  7 \ S H  D Q G  ( [ D P  I R U  * 3 7    
+ D T X D  U D W    
+
+ D U F  F K D O O H Q J H  W H V W    
+
+ K H O O D V Z D J B Y D O    
+
+ O R J L T D  H Q    
+
+ O V D W  D U    
+
+ O V D W  O U    
+
+ O V D W  U F    
+
+ P H G P F T D  G H Y    
+
+ V D W  H Q    
+
+ V D W  P D W K    
+
+ 5 H V S R Q V H  / H Q J W K   W R N H Q V 
+
+   
+   
+ 
+   
+   
+
+ 
+ U  2 Q R O \ Q F L V H  & H R U 7 E R V H  & R 7
+ H
+ Z
+ V
+ Q
+ 9
+ &
+ $
+
+ U  2 Q O \  H  & R 7  H  & R 7
+ $ Q V Z H  & R Q F L V  9 H U E R V
+
+ U  2 Q O \  H  & R 7  H  & R 7
+ $ Q V Z H  & R Q F L V  9 H U E R V
+ 3 U R P S W  7 \ S H
+
+ U  2 Q O \  H  & R 7  H  & R 7
+ $ Q V Z H  & R Q F L V  9 H U E R V
+
+ U  2 Q O \  H  & R 7  H  & R 7
+ $ Q V Z H  & R Q F L V  9 H U E R V
+
+Fig. 5: GPT-3.5 with CCoT decreases response length significantly across all problem domains compared to CoT.
+B. Response Length for GPT-4
+
+ 5 H V S R Q V H  / H Q J W K   W R N H Q V 
+
+ 5 H V S R Q V H  / H Q J W K  E \  3 U R P S W  7 \ S H  D Q G  ( [ D P  I R U  * 3 7  
+ D T X D  U D W    
+
+ D U F  F K D O O H Q J H  W H V W    
+
+ K H O O D V Z D J B Y D O    
+
+ O R J L T D  H Q    
+
+ O V D W  D U    
+
+ O V D W  O U    
+
+ O V D W  U F    
+
+ P H G P F T D  G H Y    
+
+ V D W  H Q    
+
+ V D W  P D W K    
+
+   
+ 
+
+   
+
+ 
+ U  2 Q R O \ Q F L V H  & H R U 7 E R V H  & R 7
+ H
+ Z
+ V
+ Q
+ 9
+ &
+ $
+
+ U  2 Q O \  H  & R 7  H  & R 7
+ $ Q V Z H  & R Q F L V  9 H U E R V
+
+ U  2 Q O \  H  & R 7  H  & R 7
+ $ Q V Z H  & R Q F L V  9 H U E R V
+ 3 U R P S W  7 \ S H
+
+ U  2 Q O \  H  & R 7  H  & R 7
+ $ Q V Z H  & R Q F L V  9 H U E R V
+
+ U  2 Q O \  H  & R 7  H  & R 7
+ $ Q V Z H  & R Q F L V  9 H U E R V
+
+Fig. 6: GPT-4 with CCoT decreases response length significantly across all problem domains compared to CoT.
+C. Performance for GPT-3.5
+
+ $ F F X U D F \  R I  * 3 7      E \  3 U R P S W  7 \ S H  D Q G  ( [ D P
+   
+
+ D T X D  U D W    
+
+ D U F  F K D O O H Q J H  W H V W    
+
+ K H O O D V Z D J B Y D O    
+
+ O R J L T D  H Q    
+
+ O V D W  D U    
+
+ O V D W  O U    
+
+ O V D W  U F    
+
+ P H G P F T D  G H Y    
+
+ V D W  H Q    
+
+ V D W  P D W K    
+
+ $ F F X U D F \
+
+   
+   
+   
+   
+   
+ 7
+ 7
+ O \
+ H U  2 Q  L V H  & R  R V H  & R
+ $ Q V Z  & R Q F  9 H U E
+
+ 7
+ 7
+ O \
+ H U  2 Q  L V H  & R  R V H  & R
+ $ Q V Z  & R Q F  9 H U E
+
+ 7
+ 7
+ O \
+ H U  2 Q  L V H  & R  R V H  & R
+ $ Q V Z  & R Q F  9 H U E
+ 3 U R P S W  7 \ S H
+
+ 7
+ 7
+ O \
+ H U  2 Q  L V H  & R  R V H  & R
+ $ Q V Z  & R Q F  9 H U E
+
+ 7
+ 7
+ O \
+ H U  2 Q  L V H  & R  R V H  & R
+ $ Q V Z  & R Q F  9 H U E
+
+Fig. 7: Verbose CoT prompting with GPT-3.5 significantly improved performance on math problems (i.e., AQUA-RAT and SAT
+Math) compared to CCoT but had minimal impact on other problem domains.
+
+D. Performance for GPT-4
+
+ $ F F X U D F \  R I  * 3 7    E \  3 U R P S W  7 \ S H  D Q G  ( [ D P
+   
+
+ D T X D  U D W    
+
+ D U F  F K D O O H Q J H  W H V W    
+
+ K H O O D V Z D J B Y D O    
+
+ O R J L T D  H Q    
+
+ O V D W  D U    
+
+ O V D W  O U    
+
+ O V D W  U F    
+
+ P H G P F T D  G H Y    
+
+ V D W  H Q    
+
+ V D W  P D W K    
+
+ $ F F X U D F \
+
+   
+   
+   
+   
+   
+ 7
+ 7
+ O \
+ H U  2 Q  L V H  & R  R V H  & R
+ $ Q V Z  & R Q F  9 H U E
+
+ 7
+ 7
+ O \
+ H U  2 Q  L V H  & R  R V H  & R
+ $ Q V Z  & R Q F  9 H U E
+
+ 7
+ 7
+ O \
+ H U  2 Q  L V H  & R  R V H  & R
+ $ Q V Z  & R Q F  9 H U E
+ 3 U R P S W  7 \ S H
+
+ 7
+ 7
+ O \
+ H U  2 Q  L V H  & R  R V H  & R
+ $ Q V Z  & R Q F  9 H U E
+
+ 7
+ 7
+ O \
+ H U  2 Q  L V H  & R  R V H  & R
+ $ Q V Z  & R Q F  9 H U E
+
+Fig. 8: Verbose CoT and CCoT prompting with GPT-4 significantly improved accuracy for math problems (i.e., AQUA-RAT
+and SAT Math) but had minimal impact on other problem domains.
+E. Problem Sets
+TABLE II: Problem sets used to create the 1,000-question multi-domain MCQA exam.
+Problem Set
+
+Benchmark
+
+Domain
+
+Questions
+
+ARC Challenge Test
+AQUA-RAT
+Hellaswag Val
+LogiQA (English)
+LSAT-AR
+LSAT-LR
+LSAT-RC
+MedMCQA Valid
+SAT-English
+SAT-Math
+
+ARC
+AGI Eval
+Hellaswag
+AGI Eval
+AGI Eval
+AGI Eval
+AGI Eval
+MedMCQA
+AGI Eval
+AGI Eval
+
+Science
+Math
+Common Sense Reasoning
+Logic
+Law (Analytic Reasoning)
+Law (Logical Reasoning)
+Law (Reading Comprehension)
+Medicine
+English
+Math
+
+1,173
+254
+10,042
+651
+230
+510
+260
+6,150
+206
+220
+
+License
+CC BY-SA
+Apache v2.0
+MIT
+GitHub
+MIT
+MIT
+MIT
+MIT
+MIT
+MIT
+
+Source
+[12]
+[15]
+[13]
+[15], [16]
+[15], [17]
+[15], [17]
+[15], [17]
+[14]
+[15]
+[15]
+
+Note: The GitHub repository for LogiQA does not include a license file. However, the paper and readme.md file states that "The dataset is freely available."
+
+F. Sample MCQA Problem
+{
+"id": 3,
+"source": "agi-eval/aqua-rat",
+"source_id": 35,
+"topic": "Math",
+"context": "",
+"question": "A rectangular solid, 3 x 4 x 15, is inscribed in a sphere,
+so that all eight of its vertices are on the sphere.
+What is the diameter of the sphere?",
+"choices": {
+"A": " 13.3542",
+"B": " 15.8113",
+"C": " 18.3451",
+"D": " 19.5667",
+"E": " 20.8888"},
+"answer": "B",
+"solution": "In an inscribed rectangle in a sphere, we will have a line joining
+the opposite vertices as the diameter. According to the Pythagoras theorem,
+sides 3, 4 give diagonal as 5 ==> with 5 and 15, we get 5sqrt(10).
+5sqrt(10) or 15.8113 is the diameter of the sphere.\nanswer = B"
+}
+
+Fig. 9: Sample of a multiple-choice question in standardized data format – with whitespace added for readability.
+
+G. Answer-Only Prompt
+[System Prompt]
+You are an intelligent assistant.
+Your task is to answer the following multiple-choice questions.
+You MUST answer the question using the following format ’Action: Answer("[choice]")’
+The parameter [choice] is the letter or number of the answer you want to select (e.g. "A", "B", "C", or "D").
+For example, ’Answer("C")’ will select choice "C" as the best answer.
+You MUST select one of the available choices; the answer CANNOT be "None of the Above".
+[Example Problem]
+Question: What is the capital of the state where Johns Hopkins University is located?
+Choices:
+A: Baltimore
+B: Annapolis
+C: Des Moines
+D: Las Vegas
+[Example Solution]
+Action: Answer("B")
+
+Fig. 10: Sample of the answer-only system prompt and one-shot example
+H. Verbose CoT Prompt
+[System Prompt]
+You are an intelligent assistant.
+Your task is to answer the following multiple-choice questions.
+Think step-by-step through the problem to ensure you have the correct answer.
+Then, answer the question using the following format ’Action: Answer("[choice]")’
+The parameter [choice] is the letter or number of the answer you want to select (e.g. "A", "B", "C", or "D").
+For example, ’Answer("C")’ will select choice "C" as the best answer.
+You MUST select one of the available choices; the answer CANNOT be "None of the Above".
+[Example Problem]
+Question: What is the capital of the state where Johns Hopkins University is located?
+Choices:
+A: Baltimore
+B: Annapolis
+C: Des Moines
+D: Las Vegas
+[Example Solution]
+Thought:
+Johns Hopkins University is located in Baltimore.
+Baltimore is a city located in the State of Maryland.
+The capital of Maryland is Annapolis.
+Therefore, the capital of the state where Johns Hopkins University is located is Annapolis.
+The answer is B:
+
+Fig. 11: Sample of standard (i.e., verbose) CoT system prompt and one-shot example
+I. Concise CoT Prompt
+[System Prompt]
+You are an intelligent assistant.
+Your task is to answer the following multiple-choice questions.
+Think step-by-step through the problem to ensure you have the correct answer.
+Then, answer the question using the following format ’Action: Answer("[choice]")’
+The parameter [choice] is the letter or number of the answer you want to select (e.g. "A", "B", "C", or "D").
+For example, ’Answer("C")’ will select choice "C" as the best answer.
+You MUST select one of the available choices; the answer CANNOT be "None of the Above".
+Be concise.
+[Example Problem]
+Question: What is the capital of the state where Johns Hopkins University is located?
+Choices:
+A: Baltimore
+B: Annapolis
+C: Des Moines
+D: Las Vegas
+[Example Solution]
+Thought:
+Johns Hopkins University is located in Baltimore, Maryland.
+The capital of Maryland is Annapolis.
+Action: Answer("B")
+
+Fig. 12: Sample of CCoT system prompt and one-shot example

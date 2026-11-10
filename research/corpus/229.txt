@@ -1,0 +1,155 @@
+TITLE: How OpenRouter rebuilt provider routing for better, faster inference
+URL: https://openrouter.ai/blog/announcements/how-we-rebuilt-provider-routing
+ORG: OpenRouter  TYPE: blog  DATE: 2026-10
+
+How OpenRouter rebuilt provider routing for better, faster inference
+
+How we rebuilt provider routing for better, faster inference
+Scott Morse ·10/28/2026
+
+Where we were: the limitations of Price-Only Routing
+Where we were: the limitations of Price-Only RoutingThe New Algorithm: optimizing for what a good answer “costs”What one try costs: price plus waitingHow often it works: reliability and qualityClose gets close: how traffic is sharedWhat stays the sameHow we measured itResultsFrequently asked questions
+
+Today we’re announcing the biggest improvement to our provider routing algorithm since the founding of OpenRouter.
+
+Until now, our default router mostly rewarded providers for one thing: a low price. The new router rewards the inference that is actually best for you: cheap, but also fast, high-throughput, and reliable. Providers that deliver more value automatically win more traffic, so every provider has a reason to keep improving. That means the inference you get through OpenRouter keeps getting faster, more reliable, and more cost-effective, and you don’t have to change a line of code.
+
+It’s already working. The new algorithm has unlocked significant improvements in TTFT (16.9%), throughput (16.3%) and capacity errors (a remarkable 46% reduction!), with only minor increases in cost (6.0%). That’s before providers have had any time to optimize for the new algorithm. See our full experimental results for more details.
+
+How it works:
+
+It measures what you actually get. For every model, it tracks each endpoint’s realized price, latency, throughput, and error rate, and picks the best blend of cost and performance for each request.
+
+It reacts in real time. When an endpoint has trouble, traffic moves away from it until it recovers.
+
+It rewards better inference. Providers that innovate are automatically rewarded with more traffic.
+
+For a full breakdown of how routing scores each provider, see How OpenRouter routes traffic between providers.
+
+Routing is still cache-aware, so once we’ve sent you to a provider, your session stays put as long as the cache is warm.
+
+Want price-only routing? You can still have it. See pinning and sorting providers in What stays the same.
+
+Where we were: the limitations of Price-Only Routing
+
+Most traffic (~77% of requests) on OpenRouter goes to models served by more than one provider. When a request doesn’t include an explicit sort or provider list, we need to pick a provider to send it to. Until now, we made that choice based almost entirely on input token price. The less expensive a provider was, the greater percentage of traffic it would receive, and any failed request was re-routed to the next cheapest option.
+
+This price-only approach got users the lowest prices in the ecosystem, but it created some unintended consequences:
+
+Cheap won even when it was bad. Fallbacks caught failures, but users waited through them, and speed improvements weren’t rewarded.
+
+Static rankings. The algorithm was blind to real-time performance variations, so a provider had to degrade to the point of being de-ranked entirely before it was reflected in traffic distribution.
+
+Vanishing margins. The only way for providers to win traffic was to cut price, putting pressure on them to reduce their investments in the very infrastructure that ensures reliability and quality.
+
+Pricing games. The price we ranked by was almost all prompt input price, so a provider could keep traffic share with weird pricing cocktails like listing an artificially low input price and then making back the difference with overpriced cached or completion tokens.
+
+We wanted to ensure a marketplace where competing providers won traffic by serving better inference, not just cheaper inference.
+
+The New Algorithm: optimizing for what a good answer “costs”
+
+The new routing algorithm constantly monitors the performance of each provider to calculate a real-time Routing Cost that captures what a user pays for a good answer. The Routing Cost encompasses the price in actual dollars and cents, the cost of time spent waiting for a response, and the cost of retries when a provider fails or provides an unusable response.
+
+To put it simply: what does one try cost, and how often does it work?
+
+What one try costs: price plus waiting
+
+For each request, the router estimates how many input and output tokens it will use from the model’s recent traffic. That one estimate sets both parts of a try: the price you would pay and the time you would wait.
+
+Effective price
+
+Effective price is the price that the provider would actually charge you, calculated from recent measured traffic. It reflects the provider’s real cache hit rate and the model’s average mix of input and output tokens, so it can differ a lot from the list price. This ensures that a provider can’t win traffic by hiding expensive cached or output tokens behind a low input price.
+
+The router prices your request at each provider’s effective price, and prioritizes the cheapest options.
+
+Throughput
+
+Throughput is what trades off against price: a faster provider can charge more and still win your request. It’s measured as output tokens per second end-to-end, so it includes the time to first token plus the time it takes the provider to stream the entire output response. The router adds that wait to the Routing Cost using a conversion rate set per model, based on what its providers typically charge and how fast they are.
+
+Time to first token
+
+Time to first token (TTFT) is how long you would wait before the response started streaming. It adds to the Routing Cost on its own, even though it already counts toward throughput, because interactive use depends on it most. In an agent session, the model may make many tool calls in a row, and each one waits for a first token.
+
+Rate limits
+
+A rate limit (HTTP 429) means the provider is out of capacity and turned your request away. You would have to wait for the rejection, then your full request would go to another provider. The router adds that wait plus a penalty to the provider’s Routing Cost, weighted by how often it rate limits requests, so the effect is usually small. Repeated rate limits matter more through the traffic caps and backoff described below.
+
+How often it works: reliability and quality
+
+A failed try still costs its price and its wait, so the Routing Cost calculates the expected cost of having to retry until one works. If 1 in 5 tries fails, you pay for 1.25 tries per good answer.
+
+Reliability
+
+A reliability error is a request that fails because of the provider. You would lose the attempt and have to retry, so each error carries a heavy penalty in the Routing Cost.
+
+If a provider’s error rate climbs far above the other providers for the same model, the router stops sending it requests until it recovers.
+
+Quality
+
+Quality measures whether a provider’s responses are usable. Today the main check is whether tool calls come back well formed, and we’re adding more. Each bad response raises the provider’s Routing Cost, because a cheap wrong answer is expensive.
+
+A provider flagged for broken tool calls, or for benchmark accuracy well below what the model should score, drops far behind and only gets a small amount of test traffic until the flag clears.
+
+Close gets close: how traffic is shared
+
+Sending every request to the single best provider would overload it, so traffic is shared. Faster providers can carry a higher Routing Cost and stay competitive. Everything inside the competitive edge shares most of the traffic, and being a little behind the best costs a little. Past the edge, traffic share drops off fast.
+
+Three guardrails sit on top:
+
+Floor: every provider keeps a trickle of traffic, so we can notice when struggling endpoints improve. New endpoints start from the model’s typical numbers, so they don’t need a traffic history.
+
+Back off: a provider that starts failing or rate limiting gets less until it recovers.
+
+Cap: the router learns how much load each provider can take before it returns 429s, and spills the rest to others. Add capacity and the cap rises on its own.
+
+What stays the same
+
+Requests that set provider.order bypass the new routing logic, with providers ordered as specified (default is price-based as before). Setting provider.only or provider.ignore will use the new algorithm to select from the remaining providers if there are more than one.
+
+An explicit provider.sort (price, throughput, or latency) uses that sort instead of the new algorithm. See the provider routing guide for all the details.
+
+Only the first request in a conversation will have a provider algorithmically selected. An ongoing conversation is pinned to its original provider so that the prompt cache stays warm. If that provider becomes unavailable, the conversation will fall back to another provider automatically.
+
+If a try fails, the request is retried with the next highest ranked provider.
+
+How we measured it
+
+In order to measure the impact of the new routing algorithm, we had to go beyond a standard A/B test, because changes in routing behavior can’t easily be isolated from the control group. For example, if the new algorithm did a better job of routing traffic away from a struggling provider, the old algorithm’s requests to that provider would find more capacity available and get faster, skewing the results. Further compounding the difficulty is the enormous variability in request shape and volume patterns. A single whale user that spins up an automated flurry of high effort requests to a single provider can artificially inflate the metrics for that provider regardless of which algorithm we used to route their requests.
+
+So we ran a switchback experiment: We split each day into 3-hour blocks and flipped each matched pair of blocks between the new and old router, with a one-hour burn-in period of discarded data each changeover, and measured the per-model impact across a representative sample of open source models over one full week.
+
+Results
+
+Over the week of the experiment, we split over 24 million requests with 103 billion input tokens evenly between the old and new routing algorithms, measuring the impact on key performance metrics.
+
+MeasureLegacyNew AlgorithmNew vs legacy95% interval
+TTFT p501,007 ms837 ms16.9% lower13.9% to 19.8% lower
+TTFT p954,601 ms3,733 ms18.9% lower15.7% to 21.9% lower
+Throughput p5062.4 tok/s72.6 tok/s16.3% higher13.8% to 18.9% higher
+Cost per K requests$1.25$1.326.0% higher5.1% to 7.0% higher
+Cost per M tokens$0.301$0.3247.3% higher4.9% to 9.6% higher
+Caller TTFT p501,130 ms941 ms16.7% lower13.8% to 19.7% lower
+Caller TTFT p956,032 ms4,504 ms25.3% lower21.6% to 29.0% lower
+Whole request p50 (time to last token)4.00 s3.24 s19.0% lower14.2% to 23.6% lower
+Whole request p9541.5 s34.9 s16.0% lower12.2% to 19.7% lower
+Hit at least one 4297.1%3.8%−3.3 pt
+46% fewer-2.5 to −4.2 pt
+35% to 59% fewer
+Needed a retry10.4%6.9%−3.5 pt
+34% fewer-2.6 to -4.4 pt
+25% to 42% fewer
+Time spent in failed attempts, per req349 ms242 ms−106 ms
+30% less-35 to −181 ms
+10% to 52% less
+
+Frequently asked questions
+Do I need to change my code to use the new routing?
+No. Requests with no explicit provider sort and no provider order use the new router automatically. Your API key, request body, and model IDs stay the same.
+How do I keep price-only routing?
+Set provider.sort to price in the request body, append :floor to the model slug, or set your default provider sort to price in account settings. Any explicit sort bypasses the new router.
+Does the new routing override my provider order or only list?
+provider.order bypasses the new router and routes in the order you specify. provider.only and provider.ignore still filter the candidate set, but the new algorithm picks among the providers that remain.
+Will the new routing cost more than price-only routing?
+It can, since it will sometimes pick a faster or more reliable provider over the cheapest one. In our live experiment, cost per request increased by 6.0%, while realizing a 16.9% improvement in TTFT, a 16.3% improvement in throughput, and a 46% decrease in 429 error rate.
+How does a provider get more traffic under the new routing?
+Improve the signals the router scores: effective price, time to first token, throughput, error and rate-limit rates, and output quality.

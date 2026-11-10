@@ -1,0 +1,865 @@
+TITLE: The Hidden Cost of Maximum Context in AI Coding Agents
+URL: https://codechefvaibhavkashyap.medium.com/the-hidden-cost-of-maximum-context-in-ai-coding-agents-specs-memory-chunking-and-token-burn-d73e13e3d833
+ORG: Medium  TYPE: blog  DATE: 2026-04
+
+MediumThe Hidden Cost of “Maximum Context” in AI Coding Agents: Specs, Memory, Chunking, and Token Burn | by Vaibhav Kashyap | Medium
+Sitemap
+
+Open in app
+
+Sign up
+
+Sign in
+
+Get app
+
+Write
+
+Search
+
+Sign up
+
+Sign in
+
+Vaibhav Kashyap
+Principal Architect at Peoplestrong Technologies.
+
+Claude Code
+
+AI Agent
+
+Generative Ai Tools
+
+OpenAI
+
+AI
+
+The Hidden Cost of “Maximum Context” in AI Coding Agents: Specs, Memory, Chunking, and Token Burn
+
+Vaibhav Kashyap
+
+17 min read
+·Apr 28, 2026
+
+--
+
+1
+
+Listen
+
+Share
+Modern AI coding agents feel magical when they understand your project deeply. You give them a large product spec, architecture notes, coding standards, bug history, previous decisions, and they start behaving like a senior engineer who has been working on the system for months.
+But behind that magic is an expensive engineering trade-off:
+The more context you give the model, the smarter it becomes in the short term — but the more tokens it burns, the slower it becomes, and the more expensive every future interaction gets.
+This article explains how LLMs get context, how agents document their understanding, how memory systems like memory.md, Claude memory tools, claude-mem, and graph-based plugins work, and why “maximum context” can become a vicious cycle of token consumption.
+1. First Principle: The LLM Does Not Truly “Remember” Like a Human
+An LLM is not continuously aware of your project.
+It does not wake up with yesterday’s understanding already loaded in its brain. For every request, the runtime has to construct a context window and send it to the model.
+That context usually contains:
+System instructions
++ Developer instructions
++ User prompt
++ Chat history
++ Relevant files
++ Retrieved memory
++ Tool results
++ Current code snippets
++ Spec documents
++ Previous decisions
+The model generates the next answer based only on what is inside that current context window.
+This is why agents need context engineering. Anthropic’s memory tool documentation describes memory as a way to store and retrieve information across conversations without keeping everything permanently inside the active context window. Claude can create, read, update, and delete memory files, then retrieve relevant memories later when needed. (Claude)
+So the real intelligence of an AI coding agent is not only the model. It is the entire pipeline around the model:
+What context is selected?
+What is ignored?
+What is summarized?
+What is retrieved?
+What is stored permanently?
+What is passed again in the next session?
+That pipeline is what people now call context engineering.
+
+2. How Does the LLM Get Context?
+A coding agent typically gets context from five major sources.
+2.1 Prompt Context
+This is what you directly type:
+Refactor authentication so that sessionTokenLogin URL and sessionTokenValidate URL
+come from the environment file instead of auth token.
+This is the most explicit context, but it is usually incomplete. You rarely explain the full project architecture, existing environment strategy, test framework, deployment model, logging conventions, and backward compatibility expectations in every prompt.
+So the agent looks elsewhere.
+
+2.2 Conversation Context
+The agent may include recent chat history:
+Earlier user said:
+- Use Opus for planning.
+- Use Sonnet for code writing.
+- Do end-to-end testing before handing over.
+- Add telemetry.
+- Maintain complete documentation.
+This helps continuity inside one session.
+But long conversations become expensive because every important previous message may need to be passed again. Once the context becomes too large, the system starts summarizing, trimming, or dropping older turns.
+That is where mistakes begin.
+
+2.3 File Context
+The agent may read files such as:
+README.md
+ARCHITECTURE.md
+.env.example
+application.yml
+AuthTokenService.java
+SessionTokenValidator.java
+SessionTokenLoginClient.java
+pom.xml
+package.json
+test files
+This is powerful because source code is the real truth.
+But source code is large. A mature enterprise project may have thousands of files. The agent cannot blindly load everything.
+So it usually performs selective reading:
+Search for "sessionTokenLogin"
+Search for "sessionTokenValidate"
+Open files that contain these terms
+Read related services/controllers/config classes
+Read test files
+Read documentation
+This is why good naming, documentation, and grep-friendly architecture matter a lot for AI-assisted engineering.
+
+2.4 Spec Context
+Specs are the most underrated part of AI engineering.
+A good spec tells the model:
+What needs to change
+Why it needs to change
+What must not change
+Which files are likely involved
+What tests are required
+What telemetry is expected
+What backward compatibility means
+What acceptance criteria must pass
+For example:
+# RequirementsCurrently, sessionTokenLogin and sessionTokenValidate URLs are fetched from authToken.
+Now both URLs must be fetched from environment configuration.# Constraints- Do not break existing auth token validation.
+- Use existing configuration loading pattern.
+- Add fallback only if explicitly required.
+- Add unit tests and E2E tests.
+- Add logs and telemetry around resolved URL source.
+- Update documentation.
+This type of spec reduces ambiguity.
+But there is a problem: large specs consume many tokens.
+If your spec is 20 pages long and you attach it to every session, the model has to reprocess those tokens repeatedly.
+
+2.5 Memory Context
+Memory is the attempt to avoid repeating everything manually.
+Memory can exist in many forms:
+memory.md
+CLAUDE.md
+AGENTS.md
+.cursor/rules
+Cline memory bank
+claude-mem
+memsearch
+graph memory
+vector database
+SQLite memory
+knowledge graph
+RAG index
+Some systems use plain Markdown. Some use vector search. Some use graph-based relationships. Some use MCP tools. Some inject memory automatically at session start.
+For example, the Anthropic memory tool uses a memory directory where Claude can store files and check them before tasks. The documentation describes this as just-in-time context retrieval rather than loading all information upfront. (Claude)
+Similarly, community tools around Claude Code and AI coding agents try to solve the same problem: persistent project memory. One public agent memory project compares built-in memory files like MEMORY.md, Cursor notepads, and Cline memory banks to searchable memory systems that use BM25, vector retrieval, and graph retrieval instead of loading everything into the prompt. (GitHub)
+
+3. Where Does the Agent Document Its Understanding?
+A good AI agent does not only read context. It also writes back its understanding.
+This usually happens in one of these places.
+
+3.1 memory.md
+A simple memory.md file may contain durable project facts:
+# Project Memory## Architecture
+- Backend is Spring Boot.
+- Authentication uses AuthTokenService.
+- Session token login and validation URLs should now come from environment config.## Coding Standards
+- Use constructor injection.
+- Avoid field injection.
+- Add unit tests for service logic.
+- Add E2E tests before handoff.## Important Decisions
+- Do not fetch session service URLs from auth token anymore.
+- Environment variable should be the source of truth.
+This is transparent and easy to debug.
+The downside is that if memory.md becomes too large, loading it into every session becomes expensive.
+A 500-line memory file may be fine. A 5,000-line memory file becomes a burden.
+
+3.2 CLAUDE.md, AGENTS.md, or Tool-Specific Instruction Files
+Many coding tools use project-level instruction files.
+These are usually used for stable rules:
+# Agent Instructions- Always run tests before final response.
+- Use Java 17.
+- Follow existing package structure.
+- Do not introduce new frameworks without approval.
+- Prefer existing telemetry abstraction.
+These files are excellent for static operating rules.
+They are not ideal for storing every observation from every session.
+A common mistake is turning instruction files into a garbage dump:
+- On Monday we changed AuthService.
+- On Tuesday we discussed Redis.
+- On Wednesday we fixed Kafka.
+- On Thursday we added telemetry.
+- On Friday one test failed because of missing env var.
+After some time, the instruction file becomes large, noisy, contradictory, and expensive.
+
+3.3 claude-mem-Style Memory
+Tools like claude-mem attempt to create persistent memory across Claude Code sessions.
+A Milvus/Zilliz article describing Claude Code memory plugins explains that claude-mem uses a multi-layer architecture involving a runtime worker, SQLite metadata, optional vector storage, a web UI, and an MCP server interface that exposes search/timeline/raw observation tools. (Milvus)
+The advantage is stronger long-term recall.
+The cost is operational and token overhead.
+The same article notes that MCP tool definitions can remain loaded in the context window and that every tool call consumes request and response tokens. (Milvus)
+So memory is not free. Even retrieving memory costs tokens.
+
+3.4 Graph-Based Memory / Graphify-Style Plugins
+Graph memory tries to store knowledge as relationships:
+AuthTokenService
+ -> used by SessionTokenLoginClient
+ -> currently provides login URL
+ -> should be replaced by EnvironmentConfig
+EnvironmentConfig
+ -> owns SESSION_TOKEN_LOGIN_URL
+ -> owns SESSION_TOKEN_VALIDATE_URLSessionTokenValidator
+ -> depends on validation URL
+ -> must log URL source
+This is powerful because software is not just text. Software is a graph:
+Class depends on class
+Endpoint calls service
+Service calls repository
+Config feeds client
+Test validates behavior
+Decision affects deployment
+Graph memory can answer questions like:
+Which services depend on AuthTokenService?
+Which decisions affect session token validation?
+Which tests should change if URL source changes?
+Research on agentic memory systems also explores interconnected knowledge networks, dynamic indexing, links between memories, and memory evolution as new memories are added. (arXiv)
+But graph memory has its own cost.
+Every time the agent learns something new, it may need to:
+Extract entities
+Extract relationships
+Compare with existing graph
+Update nodes
+Update edges
+Resolve duplicates
+Summarize changes
+Store embeddings
+Retrieve relevant subgraph later
+That means more tokens, more tool calls, more latency, and more chances for stale or incorrect relationships.
+
+4. The Real Problem: Chunking and Token Consumption
+This is the core issue.
+Big files cannot always be passed directly to the model. They are broken into chunks.
+A chunk may look like this:
+Chunk 1: lines 1–200 of architecture.md
+Chunk 2: lines 201–400 of architecture.md
+Chunk 3: lines 401–600 of architecture.md
+...
+Or for code:
+Chunk 1: AuthTokenService.java imports + fields + constructor
+Chunk 2: login method
+Chunk 3: validation method
+Chunk 4: helper methods
+Chunk 5: tests
+Each chunk consumes tokens.
+But chunking is not just splitting text. It creates several hidden costs.
+
+4.1 Token Cost of Reading
+Suppose you have:
+Product spec: 12,000 tokens
+Architecture doc: 8,000 tokens
+Coding standards: 3,000 tokens
+Previous decisions: 6,000 tokens
+Relevant source files: 20,000 tokens
+Test files: 10,000 tokens
+Total:
+59,000 input tokens
+Before the model writes a single line of code, you may already have burned 59,000 input tokens.
+Now imagine the agent does five planning iterations.
+59,000 tokens × 5 = 295,000 input tokens
+And then it reads updated files again.
+And then it runs tests.
+And then it summarizes.
+And then it updates memory.
+And then it generates documentation.
+The real cost is not one prompt. The real cost is the loop.
+
+4.2 Token Cost of Summarizing
+To reduce token load, agents summarize.
+Example:
+Original spec: 12,000 tokens
+Summary: 1,500 tokens
+Looks good.
+But summarization itself costs tokens:
+Read 12,000 input tokens
+Generate 1,500 output tokens
+Possibly validate summary
+Possibly update memory
+Possibly compare with old summary
+So summarization saves future tokens but costs current tokens.
+If done too often, memory maintenance itself becomes expensive.
+
+4.3 Token Cost of Retrieval
+RAG-style retrieval sounds efficient:
+Do not load everything.
+Retrieve only relevant chunks.
+But retrieval also has cost:
+User asks question
+Agent creates search query
+Search tool retrieves top chunks
+Chunks are injected into prompt
+Model reads chunks
+Model decides if more retrieval is needed
+More chunks are fetched
+If the retrieval is poor, the model asks for more context.
+If the chunk size is too small, the model misses surrounding meaning.
+If the chunk size is too large, token cost increases.
+If top-K is too high, too much context is loaded.
+If top-K is too low, important context is missed.
+This is why chunking strategy is not a minor implementation detail. It directly controls model quality and token cost.
+
+4.4 Token Cost of Memory Updates
+At the end of a session, the agent may update memory:
+What did we learn?
+Which decisions changed?
+Which files were modified?
+What should future sessions remember?
+What facts are obsolete?
+What graph nodes need updates?
+This update may require reading:
+Previous memory
+Current conversation
+Final code diff
+Test results
+Existing graph
+Existing summaries
+Then generating:
+Updated memory.md
+Updated decision log
+Updated graph
+Updated embeddings
+Updated session summary
+This is where the vicious cycle starts.
+
+5. The Vicious Cycle: Maximum Context vs Token Consumption
+The user wants maximum context because maximum context reduces hallucination.
+The model wants relevant context because relevant context improves answer quality.
+The agent wants persistent memory because persistent memory improves continuity.
+But every improvement adds token load.
+Here is the cycle:
+1. Model makes mistake because it lacks context.
+2. User adds more spec files and documentation.
+3. Agent now understands better.
+4. But prompt becomes larger.
+5. Larger prompt increases token cost and latency.
+6. Agent summarizes context into memory.
+7. Memory grows over time.
+8. Bigger memory now consumes more tokens at session start.
+9. Agent uses retrieval to reduce memory load.
+10. Retrieval misses something important.
+11. User adds even more documentation to avoid misses.
+12. Context grows again.
+This is the unspoken engineering problem of AI coding agents.
+We want the agent to behave like a senior engineer who knows the entire system.
+But the model can only reason over what is passed into its context window or retrieved through tools.
+So we keep adding more:
+More specs
+More docs
+More memory
+More summaries
+More graph edges
+More tool calls
+More retrieval
+More validation
+Eventually, the memory system itself becomes another large system that needs maintenance.
+
+6. Why Big Spec Files Are Both Necessary and Dangerous
+Large specs are necessary because enterprise software is full of hidden constraints.
+A small prompt like this is dangerous:
+Move URL from auth token to env file.
+A better spec says:
+Move sessionTokenLogin and sessionTokenValidate URLs from authToken to env config.
+Do not change token validation semantics.
+Do not break existing login flow.
+Use existing env loader.
+Add telemetry.
+Add E2E tests.
+Update docs.
+Log resolved config source.
+Fail fast if env variable is missing in production.
+Use fallback only in local profile.
+This is much safer.
+But if every change request comes with:
+50-page architecture doc
+20-page coding standard
+10 previous decision logs
+Full API contract
+Complete deployment manual
+Historical bug list
+All previous conversations
+Then the model spends a massive number of tokens just reading.
+The irony is:
+The same context that prevents mistakes also increases cost, latency, and cognitive noise.
+Big specs are useful only when they are structured for retrieval.
+Bad large spec:
+Long narrative document with repeated sections, outdated decisions, mixed requirements,
+old meeting notes, random comments, and no clear acceptance criteria.
+Good large spec:
+1. Goal
+2. Non-goals
+3. Current behavior
+4. Required behavior
+5. Affected files/modules
+6. Config changes
+7. Telemetry changes
+8. Test cases
+9. Rollback plan
+10. Acceptance criteria
+11. Durable decisions to save in memory
+The model does not need “more text”.
+It needs more usable context.
+
+7. How Agents Use Memory Across Sessions
+At the beginning of a new session, the agent may perform a memory bootstrap.
+Example:
+Session starts
+↓
+Read global instructions
+↓
+Read project memory
+↓
+Read recent session summary
+↓
+Search memory for relevant past work
+↓
+Inject selected memories into context
+↓
+Start answering user
+This is useful because the user does not need to repeat everything.
+But if the bootstrap loads too much memory, the session starts with a large token burden before the user even asks a real question.
+For example:
+Global rules: 2,000 tokens
+Project memory: 8,000 tokens
+Recent summaries: 5,000 tokens
+Architecture notes: 10,000 tokens
+Tool definitions: 4,000 tokens
+Retrieved memories: 6,000 tokens
+Total startup cost:
+35,000 tokens
+Now every user prompt starts expensive.
+This is why memory systems should not blindly inject everything.
+The better pattern is:
+Small always-loaded memory
++ On-demand retrieval
++ Task-specific context
++ Aggressive pruning
++ Durable decision logs
+LangChain’s context engineering guidance describes agent workflows where each step can fetch state and long-term memory selectively, giving finer control over what context is presented to the LLM at each step. (LangChain)
+That is the right direction: not maximum context everywhere, but correct context at the correct step.
+
+8. Types of Memory in AI Agents
+A mature AI coding agent should not have one giant memory bucket.
+It should have different memory types.
+
+8.1 Static Instruction Memory
+This contains durable rules.
+- Use Java 17.
+- Use constructor injection.
+- Follow existing package structure.
+- Do not introduce Lombok unless project already uses it.
+- Always add tests for changed behavior.
+This can be loaded every time because it is small and stable.
+
+8.2 Project Architecture Memory
+This contains architectural facts.
+- Auth module owns login and token validation.
+- EnvironmentConfig is the source for runtime URLs.
+- Telemetry is emitted through AppTelemetryService.
+- Integration tests run through Docker Compose.
+This should be medium-sized and carefully maintained.
+
+8.3 Decision Memory
+This contains “why” decisions.
+# Decision: session URLs must come from environment configReason:
+Auth token should not be responsible for infrastructure endpoint discovery.Impact:
+- AuthTokenService no longer owns session endpoint URL resolution.
+- Environment config becomes source of truth.
+- Tests must verify missing env behavior.
+Decision memory is extremely valuable because future agents often need the reason, not just the code.
+
+8.4 Episodic Session Memory
+This records what happened in a session.
+# Session Summary: 2026-04-22Task:
+Moved sessionTokenLogin/sessionTokenValidate URLs from authToken to env config.Files changed:
+- AuthTokenService.java
+- SessionClientConfig.java
+- application.yml
+- AuthTokenServiceTest.javaTests:
+- Unit tests passed.
+- E2E auth flow passed.Follow-up:
+- Confirm production env variables are configured.
+This should not always be loaded. It should be searchable.
+
+8.5 Graph Memory
+This stores relationships.
+SessionClientConfig -> provides -> sessionTokenLoginUrl
+SessionClientConfig -> provides -> sessionTokenValidateUrl
+AuthTokenService -> no longer owns -> URL source
+AuthFlowE2ETest -> validates -> login + validation behavior
+This is useful for impact analysis.
+But it should be retrieved as a focused subgraph, not dumped entirely into the prompt.
+
+8.6 Vector Memory
+This stores embeddings for semantic search.
+Useful for queries like:
+What did we decide earlier about session token validation?
+Where did we discuss telemetry for auth?
+Which previous bug involved missing env variables?
+Vector memory helps discover relevant context even when exact keywords differ.
+But vector retrieval can return similar-but-wrong memories. So important decisions should also be stored in structured text.
+
+9. The Token Economics of Memory
+Let us make the problem concrete.
+Assume one token is roughly a piece of a word. Exact tokenization depends on the model and text, but from an engineering perspective, more text means more tokens.
+Now assume your project has:
+memory.md: 10,000 tokens
+architecture.md: 15,000 tokens
+coding-rules.md: 3,000 tokens
+recent-session-summary.md: 4,000 tokens
+tool definitions: 5,000 tokens
+retrieved files: 20,000 tokens
+Before coding:
+57,000 tokens
+Now the model creates a plan:
+Output: 3,000 tokens
+Then the agent updates memory:
+Reads old memory: 10,000 tokens
+Reads current summary: 4,000 tokens
+Reads diff: 8,000 tokens
+Writes new memory: 2,000 tokens
+Another:
+24,000 tokens
+Then the graph plugin updates relationships:
+Read old graph subset: 5,000 tokens
+Extract new entities: 3,000 tokens
+Generate updates: 2,000 tokens
+Validate graph: 3,000 tokens
+Another:
+13,000 tokens
+Total for a seemingly simple coding task:
+57,000 + 3,000 + 24,000 + 13,000 = 97,000 tokens
+And this is before multiple retries, test failures, logs, stack traces, or code review.
+This is why token burn surprises engineering teams.
+They think:
+I only asked one question.
+But the agent did:
+Read context
+Retrieve memory
+Search files
+Plan
+Edit
+Run tests
+Read errors
+Debug
+Summarize
+Update memory
+Update graph
+Generate docs
+Each step has token cost.
+
+10. Why “Just Increase Context Window” Is Not a Complete Solution
+Large context windows help, but they do not solve everything.
+A bigger context window means you can pass more text. It does not mean the model will use all text equally well.
+Problems remain:
+More irrelevant context creates noise.
+Important details can be buried.
+Latency increases.
+Cost increases.
+Memory update cost increases.
+Contradictions become harder to detect.
+Old decisions may conflict with new ones.
+The model may overfit to stale context.
+Context window is like RAM.
+More RAM helps, but bad memory management can still crash the application.
+The right question is not:
+How do I fit everything?
+The right question is:
+What is the minimum sufficient context required for this step?
+
+11. Is This Completely Solvable?
+No, not completely.
+At least not with current LLM architecture.
+The reason is simple:
+An LLM can reason only over what is available in its current context
+or what it can retrieve through tools.
+If you do not pass enough context, it may hallucinate or make wrong assumptions.
+If you pass too much context, you burn tokens and introduce noise.
+So this is not a problem that can be “fully solved”.
+It can only be managed.
+This is similar to database indexing.
+You cannot index everything without cost.
+You cannot scan everything without cost.
+You need the right access pattern.
+AI context works the same way.
+
+12. How to Reduce the Damage
+The goal is not maximum context.
+The goal is maximum relevant context with minimum token waste.
+Here are practical ways to do that.
+
+12.1 Split Specs into Layers
+Do not create one giant spec.
+Use layered specs:
+01-problem.md
+02-current-behavior.md
+03-target-behavior.md
+04-affected-components.md
+05-test-plan.md
+06-telemetry-plan.md
+07-acceptance-criteria.md
+08-decisions.md
+Then the agent can retrieve only what is needed.
+
+12.2 Create an “Always Load” File That Is Very Small
+Example:
+# AGENTS.md## Rules
+- Use Java 17.
+- Use constructor injection.
+- Follow existing package structure.
+- Run tests before final handoff.
+- Update docs when behavior changes.## Memory Policy
+- Do not load full memory unless task requires it.
+- Search memory first.
+- Save only durable decisions.
+Keep this file small.
+This file should contain rules, not history.
+
+12.3 Separate Durable Decisions from Session Logs
+Bad:
+memory.md contains every conversation summary forever.
+Good:
+decisions/
+ 2026-04-22-session-url-env-source.md
+sessions/
+ 2026-04-22-auth-refactor-summary.mdarchitecture/
+ auth-module.mdrules/
+ coding-style.md
+Durable decisions should be loaded more often.
+Session logs should be retrieved only when needed.
+
+12.4 Use Retrieval Before Loading
+Instead of this:
+Load full memory.md
+Load full architecture.md
+Load full session history
+Do this:
+Search memory for "session token URL env config"
+Load top 3 relevant results
+Load only affected files
+Load specific decision record
+Context-length management techniques commonly include retrieval, memory buffering, compression, and truncation to keep useful information inside the context window without loading everything. (Agenta)
+
+12.5 Use Token Budgets
+Define budgets.
+Example:
+Always-loaded instructions: max 2,000 tokens
+Project memory bootstrap: max 3,000 tokens
+Retrieved memory per task: max 5,000 tokens
+Spec context: max 8,000 tokens
+Code context: max 15,000 tokens
+Test/log context: max 8,000 tokens
+This forces discipline.
+Without budgets, memory grows endlessly.
+
+12.6 Summarize Hierarchically
+Use layered summaries:
+Raw conversation
+↓
+Session summary
+↓
+Decision summary
+↓
+Project memory update
+Do not store every detail in the top-level memory.
+Example:
+# Top-level memorySession token URLs are now resolved from environment config.
+See decisions/2026-04-22-session-url-env-source.md for details.
+This keeps startup memory small.
+
+12.7 Store References, Not Full Text
+Instead of copying everything:
+The complete auth architecture is...
+Use references:
+Auth architecture: see docs/architecture/auth-module.md
+Session URL decision: see decisions/2026-04-22-session-url-env-source.md
+The agent can open the referenced document only when required.
+
+12.8 Compress Memory Aggressively
+Memory should not grow forever.
+Apply lifecycle rules:
+Keep:
+- Current architecture
+- Durable decisions
+- Active TODOs
+- Known pitfalls
+- Test commands
+- Deployment constraints
+Archive:
+- Old session logs
+- Resolved debugging traces
+- Temporary assumptions
+- Duplicate summariesDelete:
+- Wrong assumptions
+- Superseded decisions
+- Repeated explanations
+Memory without pruning becomes technical debt.
+
+12.9 Prefer Structured Memory Over Narrative Memory
+Bad memory:
+Yesterday we were working on auth and there was some issue where the URL
+was coming from auth token and then we thought maybe env file would be better
+and then tests were failing...
+Good memory:
+# Decision
+Session token login and validation URLs must come from environment config.# Reason
+Auth token should not own infrastructure endpoint discovery.# Affected Components
+- AuthTokenService
+- SessionTokenClient
+- EnvironmentConfig
+- AuthFlowE2ETest# Required Tests
+- Missing env variable
+- Valid env variable
+- Backward compatibility
+- E2E login + validate flow
+Structured memory is easier to retrieve, summarize, and update.
+
+13. Recommended Architecture for AI Agent Memory
+A practical setup for engineering teams:
+/project
+ AGENTS.md
+ CLAUDE.md
+ docs/
+ architecture/
+ auth.md
+ telemetry.md
+ deployment.md
+ specs/
+ session-url-env-change.md
+ decisions/
+ 2026-04-22-session-url-source.md
+ test-plans/
+ auth-e2e-test-plan.md
+ memory/
+ project-memory.md
+ active-work.md
+ known-pitfalls.md
+ session-summaries/
+ 2026-04-22.md
+ graph/
+ code-relationships.json
+ decision-relationships.json
+Then define loading rules:
+Always load:
+- AGENTS.md
+- project-memory.md but cappedRetrieve on demand:
+- architecture docs
+- specs
+- decisions
+- session summaries
+- graph relationshipsNever blindly load:
+- all previous chats
+- full logs
+- entire codebase
+- complete graph
+- every old memory file
+
+14. Practical Spec Template for AI Coding Agents
+Use this format when giving large requirements to an AI coding agent.
+# Change Spec: <Title>## 1. Problem Statement
+Explain the current problem in 5–10 lines.## 2. Current Behavior
+Describe how the system behaves today.## 3. Required Behavior
+Describe the exact expected behavior after the change.## 4. Non-Goals
+Mention what must not be changed.## 5. Affected Components
+List likely files, services, APIs, configs, tests.## 6. Configuration Changes
+Mention env variables, config files, defaults, failure behavior.## 7. Telemetry and Logging
+Mention required logs, metrics, traces, audit events.## 8. Testing Requirements
+- Unit tests
+- Integration tests
+- E2E tests
+- Negative tests
+- Backward compatibility tests## 9. Documentation Updates
+List docs that must change.## 10. Acceptance Criteria
+Use checkboxes.## 11. Memory Update Instruction
+Tell the agent what should be saved after completion.
+The last section is important:
+## Memory Update InstructionAfter completion, save only the following durable facts:
+- Session token URLs now come from environment config.
+- Auth token is no longer the source of session service URLs.
+- Missing env variables must fail fast in production.
+- E2E tests must cover login and validation URL resolution.
+This prevents the agent from storing unnecessary noise.
+
+15. The Final Answer: Maximum Context Is Not the Goal
+The industry is moving from prompt engineering to context engineering.
+Prompt engineering asks:
+How do I phrase this question?
+Context engineering asks:
+What should the model know right now?
+What should it retrieve?
+What should it ignore?
+What should it remember later?
+What should it forget?
+The painful truth is:
+Persistent memory reduces repeated explanation, but it does not eliminate token cost. It moves the cost from manual prompting to memory retrieval, memory summarization, memory updating, and memory governance.
+So, is the context-token problem completely solvable?
+No.
+But it is manageable.
+The winning strategy is:
+Do not maximize context.
+Maximize relevant context.
+Do not store everything.
+Store durable decisions.Do not load all memory.
+Retrieve memory just in time.Do not trust summaries blindly.
+Keep references to source files.Do not let memory grow forever.
+Prune it like production data.
+AI agents become powerful when they remember enough.
+They become expensive and unreliable when they remember everything.
+The future of AI-enabled engineering will not belong to teams that write the biggest specs.
+It will belong to teams that design the best context systems.
+
+Claude Code
+
+AI Agent
+
+Generative Ai Tools
+
+OpenAI
+
+AI
+
+Written by Vaibhav Kashyap
+
+173 followers
+·8 following
+
+Principal Architect at Peoplestrong Technologies.
+
+Help
+
+Status
+
+About
+
+Careers
+
+Press
+
+Blog
+
+Store
+
+Privacy
+
+Rules
+
+Terms
+
+Text to speech

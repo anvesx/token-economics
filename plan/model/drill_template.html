@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ST Engineering Supplier Resilience - Drill-down LLD</title>
+<style>
+:root{--bg:#f6f7f9;--ink:#0f172a;--mut:#64748b;--line:#d5dae1;--card:#fff;--acc:#1f4fd8;--accbg:#e8eefc}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+header{background:#fff;border-bottom:1px solid var(--line);padding:12px 24px;position:sticky;top:0;z-index:5}
+.crumbs{font-size:13px;color:var(--mut);display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.crumbs a{color:var(--acc);text-decoration:none;cursor:pointer}
+.crumbs a:hover{text-decoration:underline}
+.crumbs b{color:var(--ink)}
+h1{margin:4px 0 0;font-size:20px}
+.lvl{display:inline-block;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--acc);background:var(--accbg);padding:2px 8px;border-radius:10px;margin-right:8px;vertical-align:middle}
+main{padding:20px 24px 60px;max-width:1500px;margin:0 auto}
+.sub{color:var(--mut);margin:0 0 16px}
+.flow{display:flex;gap:10px;align-items:stretch;flex-wrap:wrap}
+.arrow{align-self:center;color:var(--mut);font-size:22px}
+.scard{flex:1 1 220px;min-width:210px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;cursor:pointer;transition:border-color .12s,box-shadow .12s}
+.scard:hover{border-color:var(--acc);box-shadow:0 2px 10px rgba(31,79,216,.12)}
+.scard .num{display:inline-flex;width:26px;height:26px;border-radius:13px;background:var(--acc);color:#fff;font-weight:700;align-items:center;justify-content:center;font-size:12px}
+.scard.sup .num{background:#475569}
+.scard h3{margin:8px 0 4px;font-size:16px}
+.scard p{margin:0 0 10px;color:var(--mut);font-size:13px}
+.chips{display:flex;gap:4px;flex-wrap:wrap}
+.chip{font-size:11px;padding:1px 7px;border-radius:9px;border:1px solid}
+.scard .go{margin-top:10px;font-size:12px;color:var(--acc);font-weight:600}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);margin:26px 0 10px}
+.canvas{background:#fff;border:1px solid var(--line);border-radius:10px;padding:8px;overflow:auto}
+svg text{font-family:inherit}
+.node{cursor:pointer}
+.node:hover rect{stroke-width:2.5}
+.legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--mut)}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:3px;border:1.5px solid;vertical-align:-2px;margin-right:5px}
+.legend em{font-style:normal;display:inline-flex;align-items:center;gap:5px}
+.legend s{display:inline-block;width:22px;height:0;border-top:2px solid;text-decoration:none}
+.card{background:#fff;border:1px solid var(--line);border-radius:10px;max-width:900px}
+.card .hd{padding:16px 20px;border-bottom:1px solid var(--line)}
+.card .hd h2{margin:0 0 4px;font-size:20px;text-transform:none;letter-spacing:0;color:var(--ink)}
+.badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:9px;border:1px solid;margin-right:6px}
+table{border-collapse:collapse;width:100%}
+td{padding:11px 20px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:0}
+td:first-child{width:170px;color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.nb{display:grid;grid-template-columns:1fr 1fr;gap:20px;padding:16px 20px;border-top:1px solid var(--line)}
+@media(max-width:700px){.nb{grid-template-columns:1fr}}
+.nb h4{margin:0 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut)}
+.nb a{display:block;padding:5px 8px;margin:0 0 4px;border:1px solid var(--line);border-radius:6px;color:var(--ink);text-decoration:none;cursor:pointer;font-size:13px}
+.nb a:hover{border-color:var(--acc);background:var(--accbg)}
+.nb a small{color:var(--mut);display:block}
+.nb p{margin:0;color:var(--mut);font-size:13px}
+.hint{color:var(--mut);font-size:12px;margin-top:10px}
+#tip{position:fixed;z-index:50;max-width:440px;background:#0f172a;color:#f1f5f9;border-radius:10px;padding:14px 16px;font-size:13px;line-height:1.5;box-shadow:0 8px 28px rgba(15,23,42,.35);pointer-events:none;display:none}
+#tip h5{margin:0 0 6px;font-size:14px;color:#fff}#tip small{display:block;color:#93c5fd;margin-bottom:8px;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+#tip p{margin:0}#tip .tl{margin-top:8px;color:#cbd5e1;font-size:12px}
+.dsc{font-size:9px;fill:#475569;paint-order:stroke;stroke:#fff;stroke-width:3px;stroke-linejoin:round}
+.elist{margin:14px 0 0;padding:0;list-style:none;display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:8px}
+.elist li{background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12.5px}
+.elist b{display:inline-block;min-width:20px;color:var(--acc)}
+.elist .p{display:block;color:var(--mut);margin-top:3px;white-space:pre-line}
+.eh{cursor:help}
+.card.deep{max-width:1000px}
+.toc{display:flex;gap:6px;flex-wrap:wrap;padding:10px 20px;border-bottom:1px solid var(--line);background:#f8fafc;position:sticky;top:78px;z-index:3}
+.toc a{font-size:12px;color:var(--acc);text-decoration:none;padding:2px 8px;border:1px solid var(--line);border-radius:9px;background:#fff}
+.sec{padding:16px 20px;border-top:1px solid var(--line)}
+.sec h3{margin:0 0 8px;font-size:14px;text-transform:uppercase;letter-spacing:.05em;color:var(--acc)}
+.sec h4{margin:12px 0 4px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut)}
+.sec ul,.sec ol{margin:4px 0;padding-left:20px}.sec li{margin:3px 0}
+.dumbbox{background:#f0f6ff;border-left:4px solid var(--acc);padding:12px 14px;border-radius:6px;white-space:pre-line}
+code,.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px}
+.formula{background:#0f172a;color:#e2e8f0;padding:10px 12px;border-radius:6px;overflow:auto;white-space:pre-wrap}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:20px}@media(max-width:760px){.two{grid-template-columns:1fr}}
+.sec table td{padding:7px 10px;font-size:13px}.sec table td:first-child{width:auto;text-transform:none;letter-spacing:0;font-size:13px;color:var(--ink);font-weight:600}
+.sec table.t3 td:first-child{width:22%}
+.no li::marker{color:#c2410c}
+.pill{display:inline-block;font-size:11px;padding:1px 7px;border-radius:9px;background:#eef2ff;border:1px solid #c7d2fe;margin:0 4px 4px 0}
+.xgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.refs a{color:var(--acc)}
+.refs li{margin:4px 0;font-size:13px}
+.xtab{font-size:12.5px}.xtab th{text-align:left;background:#f1f5f9;padding:6px 8px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);position:sticky;top:0}
+.xtab td{padding:6px 8px;border-bottom:1px solid var(--line);width:auto;text-transform:none;letter-spacing:0;font-size:12.5px;color:var(--ink);font-weight:400}
+.xtab td:first-child{font-weight:600;width:auto;color:var(--ink);text-transform:none;font-size:12.5px;letter-spacing:0}
+</style>
+</head>
+<body>
+<div id="tip"></div>
+<header><div class="crumbs" id="crumbs"></div><div class="crumbs" style="margin-top:2px"><a href="st-eng-solution-lld-l8.html">Full single-page diagram →</a></div><h1 id="title"></h1></header>
+<main id="main"></main>
+<script>
+const D = __DATA__;
+const NW=170, NH=64, CP=420, RP=210, M=150, T=70;
+const S = Object.fromEntries(D.stages.map(s=>[s.id,s]));
+const esc = s => String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const $ = id => document.getElementById(id);
+
+function crumbs(parts){
+  $('crumbs').innerHTML = parts.map((p,i)=> p.href ? `<a href="${p.href}">${esc(p.t)}</a>` : `<b>${esc(p.t)}</b>`).join(' <span>›</span> ');
+}
+function chipsFor(stage){
+  const count={};
+  stage.nodes.filter(n=>!n.ghost).forEach(n=>{const k=D.comps[n.base].kind;count[k]=(count[k]||0)+1});
+  return Object.entries(count).map(([k,v])=>{const K=D.kinds[k];return `<span class="chip" style="background:${K.fill};border-color:${K.stroke}">${v} ${esc(K.name)}</span>`}).join('');
+}
+
+/* ---------- Level 1 ---------- */
+function overview(){
+  crumbs([{t:'Overview'}]);
+  $('title').innerHTML = '<span class="lvl">Level 1</span>One signal, from arrival to decision';
+  const main = D.stages.filter(s=>s.role==='main'), sup = D.stages.filter(s=>s.role==='support');
+  const card = s => `<div class="scard ${s.role==='support'?'sup':''}" data-go="#/s/${s.id}"><span class="num">${esc(s.n)}</span><h3>${esc(s.title)}</h3><p>${esc(s.blurb)}</p><div class="chips">${chipsFor(s)}</div><div class="go">Open stage (${s.groups.length} groups, ${s.nodes.filter(n=>!n.ghost).length} components) →</div></div>`;
+  $('main').innerHTML = `<p class="sub">Read-only and federated: models extract and explain, numbers come only from calculators and the simulator, and buyers execute in SAP. Pick a stage to go one level down.</p>
+  <div class="flow">${main.map(card).join('<span class="arrow">→</span>')}</div>
+  <h2>Supporting stages, used by the flow above</h2>
+  <div class="flow">${sup.map(card).join('')}</div>
+  <h2>Cross-cutting design</h2>
+  <div class="flow">${(D.xc||[]).map(x=>`<div class="scard sup" data-go="#/x/${x.id}"><h3>${esc(x.title)}</h3><p>${esc(x.blurb)}</p><div class="go">Open →</div></div>`).join('')}<div class="scard sup" data-go="#/x/refs"><h3>Research and references</h3><p>${D.refs.length} papers, docs and repositories behind the algorithms.</p><div class="go">Open →</div></div></div>
+  <p class="hint">Level 2 shows one stage as a few groups. Level 3 shows one group with its components and the arrows between them. Level 4 is a spec card for one component. Total: ${Object.keys(D.comps).length} components.</p>`;
+  document.querySelectorAll('[data-go]').forEach(e=>e.onclick=()=>location.hash=e.dataset.go);
+}
+
+/* ---------- Level 2 ---------- */
+function wrap(text,max){
+  const words=text.split(/\s+/), lines=[]; let cur='';
+  words.forEach(w=>{ if((cur+' '+w).trim().length>max){ if(cur) lines.push(cur); cur=w } else cur=(cur+' '+w).trim() });
+  if(cur) lines.push(cur); return lines;
+}
+function clip(s,n){return s.length>n?s.slice(0,n-1)+'…':s}
+
+function graphView(st,head){
+  crumbs(head.crumbs);
+  $('title').innerHTML = head.title;
+  const byId=Object.fromEntries(st.nodes.map(n=>[n.id,n]));
+  /* Level 3: a gap between columns grows by 30px for every line beyond 5 that crosses it */
+  const mc0=Math.max(...st.nodes.map(n=>n.c)), colX=[M]; 
+  for(let c=0;c<mc0;c++){let x=0; if(st.route) st.edges.forEach(e=>{const A=byId[e.a],B=byId[e.b]; if(A&&B&&Math.min(A.c,B.c)<=c&&Math.max(A.c,B.c)>c) x++}); colX.push(colX[c]+CP+(st.route?Math.max(0,x-5)*30:0))}
+  const cxOf=c=>colX[Math.floor(c)]+(c-Math.floor(c))*CP;
+  const P = n => ({cx:cxOf(n.c), cy:T+n.r*RP});
+  const side=(n,s)=>{const p=P(n);return s==='left'?[p.cx-NW/2,p.cy]:s==='right'?[p.cx+NW/2,p.cy]:s==='top'?[p.cx,p.cy-NH/2]:[p.cx,p.cy+NH/2]};
+  const gx=c=>cxOf(c), gy=r=>T+r*RP;
+  const maxC=Math.max(...st.nodes.map(n=>n.c)), maxR=Math.max(...st.nodes.map(n=>n.r));
+  const W=colX[colX.length-1]+M, H=T+maxR*RP+T+70;
+  let svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+  <defs>${[['n','#64748b'],['e','#1f4fd8'],['s','#c2410c'],['d','#64748b']].map(([k,c])=>`<marker id="ar-${k}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="${c}"/></marker>`).join('')}</defs>`;
+  (st.frames||[]).forEach(f=>{
+    const x=gx(f.c0)-NW/2-14,y=gy(f.r0)-NH/2-30,w=(f.c1-f.c0)*CP+NW+28,h=(f.r1-f.r0)*RP+NH+44;
+    svg+=`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="none" stroke="#94a3b8" stroke-dasharray="6 4"/><text x="${x+12}" y="${y+18}" font-size="12" font-weight="600" fill="#64748b">${esc(f.title)}</text>`;
+  });
+  const labels=[], laneUse={}, inUse={};
+  /* Level 3 only: grid router. Lines may not enter any box or description block; they bend as little as possible and keep off lanes already lanes */
+  const G=5, GW=Math.ceil(W/G)+1, GH=Math.ceil(H/G)+1, blk=new Uint8Array(GW*GH), hocc=new Uint8Array(GW*GH), vocc=new Uint8Array(GW*GH);
+  const fill=(x,y,w,h,v)=>{v=v||1;for(let j=Math.floor((y-8)/G);j<=Math.ceil((y+h+8)/G);j++)for(let i=Math.floor((x-8)/G);i<=Math.ceil((x+w+8)/G);i++)if(i>=0&&j>=0&&i<GW&&j<GH&&i*G>x-6&&i*G<x+w+6&&j*G>y-6&&j*G<y+h+6)blk[j*GW+i]=Math.max(blk[j*GW+i],v)};
+  if(st.route){st.nodes.forEach(n=>{const p=P(n); fill(p.cx-NW/2,p.cy-NH/2,NW,NH);
+    if(!n.ghost){const c=D.comps[n.base]; let rows=0,sn=0; (c.line||'').split('\n').forEach(ln=>{rows+=Math.min(2,wrap(ln,54).length);sn++}); if(rows) fill(p.cx-155,p.cy+NH/2+3,310,rows*11.5+sn*3+4,2)}})}
+  const heap=[], push=(k,v)=>{heap.push([k,v]);let i=heap.length-1;while(i>0){const q=(i-1)>>1;if(heap[q][0]<=heap[i][0])break;[heap[q],heap[i]]=[heap[i],heap[q]];i=q}},
+    pop=()=>{const t=heap[0],l=heap.pop();if(heap.length){heap[0]=l;let i=0;for(;;){let m=i,a1=2*i+1,b1=a1+1;if(a1<heap.length&&heap[a1][0]<heap[m][0])m=a1;if(b1<heap.length&&heap[b1][0]<heap[m][0])m=b1;if(m===i)break;[heap[m],heap[i]]=[heap[i],heap[m]];i=m}}return t};
+  const DX=[1,0,-1,0], DY=[0,1,0,-1], BEND=45, XCOST=8, gArr=new Float32Array(GW*GH*4), prv=new Int32Array(GW*GH*4);
+  /* route p0 (heading d0) to p1 so that it arrives heading dEnd. r = how many cells (5px each) another line running the same way must stay away; -1 ignores lines */
+  const route1=(p0,d0,p1,dEnd,r)=>{
+    const sx=Math.round(p0[0]/G), sy=Math.round(p0[1]/G), tx=Math.round(p1[0]/G), ty=Math.round(p1[1]/G);
+    gArr.fill(1e9); const key=(i,j,d)=>(j*GW+i)*4+d; heap.length=0;
+    gArr[key(sx,sy,d0)]=0; prv[key(sx,sy,d0)]=-1; push(0,[sx,sy,d0,0]);
+    let end=-1;
+    while(heap.length){const [,[i,j,d,g]]=pop(); const k=key(i,j,d); if(g>gArr[k]) continue;
+      if(i===tx&&j===ty&&d===dEnd){end=k;break}
+      for(let nd=0;nd<4;nd++){ if(nd===(d+2)%4) continue;
+        const ni=i+DX[nd], nj=j+DY[nd]; if(ni<0||nj<0||ni>=GW||nj>=GH) continue;
+        const ci=nj*GW+ni, isT=ni===tx&&nj===ty; if(blk[ci]===1&&!isT) continue;
+        let nc=g+1+(nd!==d?BEND:0);
+        if(blk[ci]===2){ if(r>=1) continue; nc+=60 }
+        if(r>=0){ const horiz=nd%2===0, same=horiz?hocc[ci]:vocc[ci], cross=horiz?vocc[ci]:hocc[ci];
+          if(same&&same-1<=r&&!isT) continue; if(cross===1) nc+=XCOST }
+        const nk=key(ni,nj,nd); if(nc<gArr[nk]){gArr[nk]=nc;prv[nk]=k;push(nc+Math.abs(ni-tx)+Math.abs(nj-ty),[ni,nj,nd,nc])}}}
+    if(end<0) return null;
+    const cells=[]; for(let k=end;k>=0;k=prv[k]){const d=k%4, ij=(k-d)/4; cells.push([ij%GW,Math.floor(ij/GW)])}
+    cells.reverse();
+    const out=[[cells[0][0]*G,cells[0][1]*G]];
+    for(let q=1;q<cells.length-1;q++){const a0=cells[q-1],b0=cells[q],c0=cells[q+1]; if((b0[0]-a0[0])!==(c0[0]-b0[0])||(b0[1]-a0[1])!==(c0[1]-b0[1])) out.push([b0[0]*G,b0[1]*G])}
+    out.push([cells[cells.length-1][0]*G,cells[cells.length-1][1]*G]); return out};
+  const mark=(arr,i,j,v)=>{if(i>=0&&j>=0&&i<GW&&j<GH){const k=j*GW+i; if(!arr[k]||arr[k]>v) arr[k]=v}};
+  const commit=pts=>{for(let q=0;q<pts.length-1;q++){const [x0,y0]=pts[q],[x1,y1]=pts[q+1], i0=Math.round(Math.min(x0,x1)/G), i1=Math.round(Math.max(x0,x1)/G), j0=Math.round(Math.min(y0,y1)/G), j1=Math.round(Math.max(y0,y1)/G);
+    if(y0===y1){for(let i=i0-4;i<=i1+4;i++)for(let k=-5;k<=5;k++)mark(hocc,i,j0+k,Math.abs(k)+1)}
+    else {for(let j=j0-4;j<=j1+4;j++)for(let k=-5;k<=5;k++)mark(vocc,i0+k,j,Math.abs(k)+1)}}};
+  const route=(p0,d0,p1,dEnd)=>{let best=null;
+    for(const r of [5,3,1,0,-1]){const o=route1(p0,d0,p1,dEnd,r); if(!o) continue;
+      if(!best||o.length<=best.length-(r>=3?2:8)) best=o; if(best.length<=4) break}
+    if(best) commit(best); return best};
+  const snap=v=>Math.round(v/G)*G;
+  /* spread the ports: edges that leave or enter the same side of a box get separate heights, 18px apart */
+  const portN={}, portI={}, pk=(id,sd)=>id+'|'+sd;
+  const sd2=(A,B)=>B.c>A.c?'r':B.c<A.c?'l':'r';
+  st.edges.forEach(e=>{const A=byId[e.a],B=byId[e.b]; if(st.route&&!e.via){const sa=sd2(A,B), sb=B.c>A.c?'l':B.c<A.c?'r':'r'; [[e.a,sa],[e.b,sb]].forEach(([id,sd])=>{portN[pk(id,sd)]=(portN[pk(id,sd)]||0)+1}); return} if(e.via||A.r===B.r||A.c===B.c) return; const d=B.c-A.c;
+    [[e.a,d>0?'r':'l'],[e.b,d>0?'l':'r']].forEach(([id,sd])=>{portN[pk(id,sd)]=(portN[pk(id,sd)]||0)+1})});
+  const portY=(id,sd)=>{const n=portN[pk(id,sd)]||1, i=(portI[pk(id,sd)]=(portI[pk(id,sd)]||0)+1)-1; const st2=n<=3?20:10; return Math.max(-20,Math.min(20,Math.round((i-(n-1)/2)*st2/10)*10))};
+  /* Level 3: give every line its own port on the box side (sorted by where the other end is, so lines never cross at the box), stagger how far each stub runs, then route the short lines first */
+  const RT={};
+  if(st.route){
+    /* sides: top is always free, bottom is free only on outside-group boxes (real boxes have their description there) */
+    const pick=(A,B)=>{const h=B.c>A.c?'r':B.c<A.c?'l':'r', hb=B.c>A.c?'l':B.c<A.c?'r':'r', dc=B.c===A.c;
+      if(B.r===A.r) return [h,hb];
+      if(B.r>A.r){ if(dc) return A.ghost&&B.ghost?['b','t']:A.ghost?['b','t']:[ 'r','r']; return [h,B.ghost?hb:'t'] }
+      if(dc) return B.ghost?['t','b']:['r','r']; return [A.ghost?h:'t',hb]};
+    const ends=[]; st.edges.forEach((e,ei)=>{const A=byId[e.a],B=byId[e.b], [sA,sB]=pick(A,B);
+      ends.push({ei,id:e.a,sd:sA,o:B,role:0}); ends.push({ei,id:e.b,sd:sB,o:A,role:1})});
+    const grp={}; ends.forEach(x=>{(grp[pk(x.id,x.sd)]=grp[pk(x.id,x.sd)]||[]).push(x)});
+    Object.values(grp).forEach(arr=>{
+      const tb=arr[0].sd==='t'||arr[0].sd==='b', n=arr.length, me=P(byId[arr[0].id]).cy;
+      if(tb) arr.sort((p,q)=>(P(p.o).cx-P(q.o).cx)||(P(p.o).cy-P(q.o).cy)||(p.ei-q.ei));
+      else arr.sort((p,q)=>(P(p.o).cy-P(q.o).cy)||(P(p.o).cx-P(q.o).cx)||(p.ei-q.ei));
+      const gap=n<=1?0:tb?(n===2?40:n===3?40:25):(n===2?30:n===3?25:Math.max(10,Math.floor(60/(n-1)/5)*5));
+      const SL={1:[0],2:[-20,20],3:[-25,0,25],4:[-30,-10,10,30],5:[-30,-15,0,15,30]};
+      arr.forEach((x,i)=>{x.dy=tb?Math.round((i-(n-1)/2)*gap/5)*5:(SL[n]?SL[n][i]:Math.round((i-(n-1)/2)*gap/5)*5); x.rank=0});
+      if(!tb){arr.filter(x=>P(x.o).cy<me-5).forEach((x,i)=>x.rank=i);
+        arr.filter(x=>P(x.o).cy>me+5).reverse().forEach((x,i)=>x.rank=i)}});
+    const by={}; ends.forEach(x=>{(by[x.ei]=by[x.ei]||[])[x.role]=x});
+    st.edges.forEach((e,ei)=>{const [xa,xb]=by[ei], A=byId[e.a], B=byId[e.b];
+      if(A.r!==B.r||xa.dy===xb.dy||'rl'.indexOf(xa.sd)<0||'rl'.indexOf(xb.sd)<0) return;
+      const free=(x,v)=>Math.abs(v)<=30&&!ends.some(o=>o!==x&&o.id===x.id&&o.sd===x.sd&&Math.abs(o.dy-v)<15);
+      const mid=(xa.dy+xb.dy)/2, cand=[xa.dy,xb.dy]; for(let k=0;k<=30;k+=5){cand.push(Math.round(mid/5)*5+k,Math.round(mid/5)*5-k)}
+      const v=cand.find(v=>free(xa,v)&&free(xb,v)); if(v!==undefined){xa.dy=v; xb.dy=v}});
+    const pt=(n,x)=>{const p=P(n), L=20+30*x.rank;
+      if(x.sd==='r') return {s:[p.cx+NW/2,p.cy+x.dy], t:[snap(p.cx+NW/2+L),p.cy+x.dy], d:0, ind:2};
+      if(x.sd==='l') return {s:[p.cx-NW/2,p.cy+x.dy], t:[snap(p.cx-NW/2-L),p.cy+x.dy], d:2, ind:0};
+      if(x.sd==='t') return {s:[p.cx+x.dy,p.cy-NH/2], t:[p.cx+x.dy,snap(p.cy-NH/2-L)], d:3, ind:1};
+      return {s:[p.cx+x.dy,p.cy+NH/2], t:[p.cx+x.dy,snap(p.cy+NH/2+L)], d:1, ind:3}};
+    st.edges.map((e,ei)=>ei).sort((i,j)=>{const m=k=>{const A=P(byId[st.edges[k].a]),B=P(byId[st.edges[k].b]); return Math.abs(A.cx-B.cx)+Math.abs(A.cy-B.cy)}; return m(i)-m(j)}).forEach(ei=>{
+      const e=st.edges[ei], [xa,xb]=by[ei], A=pt(byId[e.a],xa), B=pt(byId[e.b],xb);
+      const mid=route(A.t,A.d,B.t,B.ind);
+      RT[ei]=mid?[A.s,...mid,B.s]:[A.s,A.t,B.t,B.s]})
+  }
+  st.edges.forEach((e,ei)=>{
+    const a=byId[e.a], b=byId[e.b], pa=P(a), pb=P(b);
+    const dc=b.c-a.c, dr=b.r-a.r;
+    let sa=e.sa, sb=e.sb, pts;
+    if(e.via){
+      const s0=side(a,sa), s1=side(b,sb);
+      const vp=e.via.map(v=>[gx(v[0]),gy(v[1])]);
+      /* a bottom exit drops straight through this node's own description: leave by the side and rejoin the lane in the gap */
+      if(sa==='bottom'){const lx=pa.cx+CP/2; pts=[side(a,'right'),[lx,pa.cy],[lx,vp[0][1]],...vp,s1]; sa='right'}
+      else pts=[s0,...vp,s1];
+    } else if(st.route){
+      pts=RT[ei];
+    } else if(dr===0){
+      sa=dc>0?'right':'left'; sb=dc>0?'left':'right'; pts=[side(a,sa),side(b,sb)];
+    } else if(dc===0){
+      /* descriptions sit under every node, so a straight vertical line would run through text: leave by the side and use the gap lane */
+      const key=a.c, k=(laneUse[key]=(laneUse[key]||0)+1)-1, sgn=k%2===0?1:-1, lx=gx(a.c)+sgn*(NW/2+(CP-NW)/2-6+6*Math.floor(k/2));
+      sa=sgn>0?'right':'left'; sb=sa; pts=[side(a,sa),[lx,P(a).cy],[lx,P(b).cy],side(b,sb)];
+    } else {
+      sa=dc>0?'right':'left'; sb=dc>0?'left':'right';
+      const s0=side(a,sa), s1=side(b,sb);
+      const xm=pb.cx-(dc>0?1:-1)*(CP-NW)/2 - (dc>0?1:-1)*0;
+      const ki=(inUse[b.id]=(inUse[b.id]||0)+1)-1, xmid=Math.abs(dc)<1?(dc>0?Math.max(s0[0]+47,(s0[0]+s1[0])/2):Math.min(s0[0]-47,(s0[0]+s1[0])/2))+(ki-(portN[pk(b.id,dc>0?'l':'r')]-1)/2)*28*(dc>0?1:-1):pb.cx-(dc>0?1:-1)*(NW/2+(CP-NW)/2+Math.min(ki,4)*30);
+      const oa=portY(a.id,dc>0?'r':'l'), ob=portY(b.id,dc>0?'l':'r'); s0[1]+=oa; s1[1]+=ob;
+      pts=[s0,[xmid,s0[1]],[xmid,s1[1]],s1];
+    }
+    const d=pts.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
+    const col=e.k==='e'?'#1f4fd8':e.k==='s'?'#c2410c':'#64748b';
+    const k=e.k==='d'?'d':e.k;
+    svg+=`<path d="${d}" fill="none" stroke="${col}" stroke-width="${e.k==='e'?2.2:1.5}" ${e.k==='d'?'stroke-dasharray="6 4"':''} marker-end="url(#ar-${k})" ${e.bi?`marker-start="url(#ar-${k})"`:''} stroke-linejoin="round"/><path class="eh" data-e="${ei}" d="${d}" fill="none" stroke="transparent" stroke-width="14"/>`;
+    labels.push({t:(ei+1)+(e.l?'. '+e.l:'.'),pts,col});
+  });
+  st.nodes.forEach(n=>{
+    const p=P(n), x=p.cx-NW/2, y=p.cy-NH/2;
+    if(n.ghost){
+      const tgt=n.gk[0], ts=S[tgt], gg=ts.groups.find(q=>q.id===n.gk[1]);
+      svg+=`<g class="node" data-go="#/g/${tgt}/${gg.id}"><title>Opens group: ${esc(gg.title)}</title><rect x="${x}" y="${y}" width="${NW}" height="${NH}" rx="8" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="5 4" stroke-width="1.5"/>
+      <text x="${p.cx}" y="${p.cy-6}" text-anchor="middle" font-size="12" font-weight="600" fill="#475569">${esc(clip(gg.title,24))}</text>
+      <text x="${p.cx}" y="${p.cy+12}" text-anchor="middle" font-size="11" fill="#64748b">↗ ${esc(clip(ts.n+'. '+ts.title,26))}</text></g>`;
+    } else {
+      const c=D.comps[n.base], K=D.kinds[c.kind];
+      const ll=wrap(c.label,22).slice(0,2), sl=wrap(c.sub,28).slice(0,1);
+      const total=ll.length+sl.length; let ty=p.cy-(total*14)/2+11;
+      svg+=`<g class="node" data-id="${n.base}" data-go="#/c/${n.base}"><rect x="${x}" y="${y}" width="${NW}" height="${NH}" rx="8" fill="${K.fill}" stroke="${K.stroke}" stroke-width="1.5"/>`;
+      ll.forEach(t=>{svg+=`<text x="${p.cx}" y="${ty}" text-anchor="middle" font-size="12.5" font-weight="600" fill="#0f172a">${esc(t)}</text>`;ty+=14});
+      sl.forEach(t=>{svg+=`<text x="${p.cx}" y="${ty}" text-anchor="middle" font-size="10.5" fill="#475569">${esc(clip(c.sub,30))}</text>`;ty+=14});
+      if(c.line){
+        let dy=p.cy+NH/2+14;
+        c.line.split('\n').forEach((ln,li)=>{ wrap(ln,54).slice(0,2).forEach((r,ri,arr)=>{ svg+=`<text class="dsc" x="${p.cx}" y="${dy}" text-anchor="middle">${esc(ri===1&&wrap(ln,54).length>2?clip(r,54):r)}</text>`; dy+=11.5 }); dy+=3 });
+      }
+      svg+=`</g>`;
+    }
+  });
+  /* place each edge label where it overlaps no node, no description block, no other label: scan every segment in 8px steps, both sides */
+  const obs=[], placed=[];
+  st.nodes.forEach(n=>{const p=P(n); obs.push([p.cx-NW/2-2,p.cy-NH/2-2,NW+4,NH+4]);
+    if(!n.ghost){const c=D.comps[n.base]; let rows=0,sn=0; (c.line||'').split('\n').forEach(ln=>{rows+=Math.min(2,wrap(ln,54).length);sn++});
+      if(rows) obs.push([p.cx-132,p.cy+NH/2+3,264,rows*11.5+sn*3+4]);}});
+  labels.forEach(l=>{for(let i=0;i<l.pts.length-1;i++){const [a,b]=[l.pts[i],l.pts[i+1]]; obs.push([Math.min(a[0],b[0])-1.5,Math.min(a[1],b[1])-1.5,Math.abs(a[0]-b[0])+3,Math.abs(a[1]-b[1])+3])}});
+  const hit=(a,b)=>a[0]<b[0]+b[2]&&a[0]+a[2]>b[0]&&a[1]<b[1]+b[3]&&a[1]+a[3]>b[1];
+  labels.forEach(l=>{
+    let lines,w,h,best=null,bs=1e9;
+    for(const wd of [22,16,12]){
+    const ls=wrap(l.t,wd).slice(0,4), ww=Math.max(...ls.map(x=>x.length))*5.6+8, hh=ls.length*13+3; let b2=null,s2=1e9;
+    for(let si=0;si<l.pts.length-1;si++){
+      const [x0,y0]=l.pts[si],[x1,y1]=l.pts[si+1], len=Math.hypot(x1-x0,y1-y0), horiz=Math.abs(y1-y0)<1;
+      if(len<12) continue;
+      for(let d=len/2,k=0;k<2*Math.ceil(len/8)+2;k++){
+        d=len/2+(k%2?1:-1)*Math.ceil(k/2)*8; if(d<4||d>len-4) continue;
+        const x=x0+(x1-x0)*d/len, y=y0+(y1-y0)*d/len;
+        for(const sd of [-1,1]){
+          const r=horiz?[x-ww/2,sd<0?y-hh-2:y+3,ww,hh]:[sd<0?x-ww-4:x+4,y-hh/2,ww,hh];
+          let sc=Math.abs(d-len/2)*0.02+(si===l.pts.length-2?0:0.5);
+          obs.forEach(o=>{if(hit(r,o))sc+=1000}); placed.forEach(o=>{if(hit(r,o))sc+=1000});
+          if(sc<s2){s2=sc;b2=r}
+        }
+        if(s2<5) break;
+      }
+      if(s2<5) break;
+    }
+    if(s2<bs){bs=s2;best=b2;lines=ls;w=ww;h=hh}
+    if(bs<5) break;
+    }
+    const r=best||[l.pts[0][0],l.pts[0][1],w,h]; placed.push(r);
+    svg+=`<rect x="${r[0]}" y="${r[1]}" width="${r[2]}" height="${r[3]}" rx="3" fill="#fff" opacity=".95"/>`+lines.map((t,i)=>`<text x="${r[0]+4}" y="${r[1]+11+i*13}" font-size="10.5" fill="${l.col}">${esc(t)}</text>`).join('');
+  });
+  svg+='</svg>';
+  const used=[...new Set(st.nodes.filter(n=>!n.ghost).map(n=>D.comps[n.base].kind))];
+  const legend=used.map(k=>`<em><i style="background:${D.kinds[k].fill};border-color:${D.kinds[k].stroke}"></i>${esc(D.kinds[k].name)}</em>`).join('')
+    +`<em><s style="border-color:#1f4fd8"></s>main flow</em><em><s style="border-color:#64748b"></s>read / call</em><em><s style="border-color:#64748b;border-top-style:dashed"></s>scheduled / async</em><em><s style="border-color:#c2410c"></s>security</em><em><i style="border-style:dashed;border-color:#94a3b8"></i>outside this group (click to go)</em>`;
+  $('main').innerHTML=`<p class="sub">${esc(head.sub)}</p><div class="canvas">${svg}</div><div class="legend">${legend}</div>
+  <h2>What travels on each numbered line</h2><ol class="elist">${st.edges.map((e,i)=>`<li><b>${i+1}.</b>${esc((D.comps[e.a.replace(/\*$/,'')]||{}).label||GL[e.a]||e.a)} → ${esc((D.comps[e.b.replace(/\*$/,'')]||{}).label||GL[e.b]||e.b)}<span class="p">${esc(e.d||'')}</span></li>`).join('')}</ol>
+  <p class="hint">Hover a box for the plain-English story, hover a line for what travels on it, click a box for its full spec card. ${head.nav||''}</p>`;
+  document.querySelectorAll('.node').forEach(e=>e.onclick=()=>location.hash=e.dataset.go);
+  document.querySelectorAll('.node[data-id]').forEach(e=>{const c=D.comps[e.dataset.id]; hover(e,()=>`<small>${esc(D.kinds[c.kind].name)} · what is this?</small><h5>${esc(c.label)}</h5><p>${esc(c.dumb||c.sub).replace(/\n/g,'<br>')}</p><div class="tl">Click for the full spec: algorithm, security, tests.</div>`)});
+  document.querySelectorAll('.eh').forEach(e=>{const ed=st.edges[+e.dataset.e]; hover(e,()=>`<small>Line ${+e.dataset.e+1}</small><h5>${esc((D.comps[ed.a.replace(/\*$/,'')]||{}).label||GL[ed.a]||ed.a)} → ${esc((D.comps[ed.b.replace(/\*$/,'')]||{}).label||GL[ed.b]||ed.b)}</h5><p>${esc(ed.d||ed.l||'').replace(/\n/g,'<br>')}</p>`)});
+}
+
+/* ---------- Level 2: groups in a stage ---------- */
+function baseOf(x){return x.replace(/\*$/,'')}
+function groupOf(id){const c=D.comps[baseOf(id)]; return c?c.stage+'/'+c.group:null}
+function stageView(id){
+  const st=S[id]; if(!st){location.hash='#/';return}
+  crumbs([{t:'Overview',href:'#/'},{t:st.n+'. '+st.title}]);
+  $('title').innerHTML=`<span class="lvl">Level 2</span>${esc(st.n)}. ${esc(st.title)}`;
+  /* aggregate component edges into group-to-group links */
+  const out={},inn={},ext={};
+  D.stages.forEach(s=>ER(s).forEach(e=>{
+    const ga=groupOf(e.a), gb=groupOf(e.b); if(!ga||!gb||ga===gb) return;
+    [[ga,gb],...(e.bi?[[gb,ga]]:[])].forEach(([x,y])=>{(out[x]=out[x]||new Set()).add(y);(inn[y]=inn[y]||new Set()).add(x)});
+  }));
+  const name=k=>{const [s,g]=k.split('/'); const q=S[s].groups.find(z=>z.id===g); return {s,g,t:q.title,same:s===id}};
+  const link=k=>{const n=name(k); return `<a href="#/g/${n.s}/${n.g}" onclick="event.stopPropagation()">${esc(n.t)}${n.same?'':` <small>(${esc(S[n.s].title)})</small>`}</a>`};
+  const card=g=>{const key=id+'/'+g.id, cnt={};
+    g.members.forEach(m=>{const k=D.comps[m].kind;cnt[k]=(cnt[k]||0)+1});
+    const chips=Object.entries(cnt).map(([k,v])=>{const K=D.kinds[k];return `<span class="chip" style="background:${K.fill};border-color:${K.stroke}">${v} ${esc(K.name)}</span>`}).join('');
+    return `<div class="scard" data-go="#/g/${id}/${g.id}" data-g="${g.id}"><h3>${esc(g.title)}</h3><p style="white-space:pre-line">${esc(g.line)}</p><div class="chips">${chips}</div>
+    <p style="margin:8px 0 0;font-size:12px">${g.members.map(m=>esc(D.comps[m].label)).join(' · ')}</p>
+    ${inn[key]?`<p style="margin:6px 0 0;font-size:12px"><b>Receives from:</b> ${[...inn[key]].map(link).join(', ')}</p>`:''}
+    ${out[key]?`<p style="margin:2px 0 0;font-size:12px"><b>Hands to:</b> ${[...out[key]].map(link).join(', ')}</p>`:''}
+    <div class="go">Open group (${g.members.length} components) →</div></div>`};
+  const idx=D.stages.findIndex(s=>s.id===id), prev=D.stages[idx-1], next=D.stages[idx+1];
+  $('main').innerHTML=`<p class="sub">${esc(st.blurb)}</p><div class="flow" style="flex-wrap:wrap">${st.groups.map(card).join('')}</div>
+  <p class="hint">${st.groups.length} groups, ${st.groups.reduce((a,g)=>a+g.members.length,0)} components. Hover a group for the plain-English story; click it to see its components and the arrows between them. ${prev?`<a href="#/s/${prev.id}">← ${esc(prev.title)}</a> &nbsp; `:''}${next?`<a href="#/s/${next.id}">${esc(next.title)} →</a>`:''}</p>`;
+  document.querySelectorAll('[data-go]').forEach(e=>e.onclick=()=>location.hash=e.dataset.go);
+  document.querySelectorAll('.scard[data-g]').forEach(e=>{const g=st.groups.find(z=>z.id===e.dataset.g); hover(e,()=>`<small>Group · what is this?</small><h5>${esc(g.title)}</h5><p>${esc(g.dumb)}</p><div class="tl">Click to open its components.</div>`)});
+}
+
+/* ---------- Level 3: components of one group ---------- */
+const GL={};
+const ER=s=>s.edges.map(e=>Object.assign({},e,{a:e.ra||e.a,b:e.rb||e.b}));
+D.stages.forEach(s=>s.nodes.forEach(n=>{if(n.ghost){const t=D.stages.find(z=>z.id===n.gk[0]);GL[n.id]=t.groups.find(q=>q.id===n.gk[1]).title+' (group)'}}));
+function groupView(sid,gid){
+  const st=S[sid], g=st&&st.groups.find(z=>z.id===gid); if(!g){location.hash='#/';return}
+  const mem=new Set(g.members), edges=[], seen=new Set(), ghosts=new Set();
+  D.stages.forEach(s=>ER(s).forEach(e=>{
+    const a=baseOf(e.a), b=baseOf(e.b), ia=mem.has(a), ib=mem.has(b); if(!ia&&!ib) return;
+    const key=(ia?a:groupOf(a))+'>'+(ib?b:groupOf(b))+'>'+(e.l||''); if(seen.has(key)) return; seen.add(key);
+    const gk=x=>'g:'+groupOf(x)+'*', na=ia?a:gk(a), nb=ib?b:gk(b); if(!ia) ghosts.add(gk(a)); if(!ib) ghosts.add(gk(b));
+    edges.push({a:na,b:nb,l:e.l,k:e.k,bi:e.bi,d:e.d});
+  }));
+  /* order members left to right, treating a hop through an outside group as a link between the two members it joins */
+  const isG=x=>x.endsWith('*'), nb=new Map();
+  edges.forEach(e=>{if(isG(e.a)&&mem.has(e.b)) (nb.get(e.a)||nb.set(e.a,{i:[],o:[]}).get(e.a)).o.push(e.b); if(isG(e.b)&&mem.has(e.a)) (nb.get(e.b)||nb.set(e.b,{i:[],o:[]}).get(e.b)).i.push(e.a)});
+  const direct=edges.filter(e=>mem.has(e.a)&&mem.has(e.b)).map(e=>[e.a,e.b]);
+  const hops=x=>{const v=nb.get(x), r=[]; v.i.forEach(a=>v.o.forEach(b=>{if(a!==b) r.push([a,b])})); return r};
+  const relax=(ids,links,dep)=>{ids.forEach(m=>dep[m]=0); for(let it=0;it<ids.length;it++) links.forEach(([a,b])=>{if(dep[a]+1>dep[b]&&dep[a]+1<ids.length) dep[b]=dep[a]+1}); return dep};
+  const l0=[...direct]; nb.forEach((v,x)=>l0.push(...hops(x)));
+  const depth0=relax(g.members,l0,{});
+  /* an outside group that both receives from and feeds members becomes a real box in the chain: lower-column neighbours feed it, higher ones are fed by it */
+  const midG=[...nb.keys()].filter(x=>nb.get(x).i.length&&nb.get(x).o.length), anchor={};
+  const l1=[...direct]; nb.forEach((v,x)=>{if(!midG.includes(x)) l1.push(...hops(x))});
+  midG.forEach(x=>{const v=nb.get(x), nm=[...new Set([...v.i,...v.o])], mn=Math.min(...nm.map(m=>depth0[m])); anchor[x]=nm.find(m=>depth0[m]===mn);
+    nm.forEach(m=>l1.push(depth0[m]===mn?[m,x]:[x,m]))});
+  const depth=relax([...g.members,...midG],l1,{});
+  /* a group that only feeds members sits one column before its first target; one that only receives sits after its last source */
+  const ghostCol={}, ghostMode={};
+  nb.forEach((v,x)=>{const ins=v.o.map(m=>depth[m]), outs=v.i.map(m=>depth[m]);
+    if(v.i.length&&v.o.length){ghostMode[x]='mid'; const nm=new Set([...v.i,...v.o]); ghostCol[x]=nm.size===1?depth[[...nm][0]]+1:depth[x]}
+    else if(v.o.length){ghostMode[x]='src'; ghostCol[x]=Math.min(...ins)-1}
+    else {ghostMode[x]='dst'; ghostCol[x]=Math.max(...outs)+1}});
+  const minC=Math.min(0,...Object.values(ghostCol)), off=-minC;
+  const used={}, take=(c,pref)=>{used[c]=used[c]||new Set(); let r=pref; const clash=r=>Object.keys(used).some(k=>Math.abs(k-c)<1&&used[k].has(r)); while(used[c].has(r)||clash(r)) r++; used[c].add(r); return r};
+  const nodes=[], rowOf={};
+  [...g.members].sort((x,y)=>depth[x]-depth[y]).forEach(m=>{const c=depth[m]+off; const r=take(c,0); rowOf[m]=r; nodes.push({id:m,base:m,c,r})});
+  const gnode=(x,c,r)=>{const [gs,gg]=x.slice(2,-1).split('/'); GL[x]=S[gs].groups.find(q=>q.id===gg).title+' (group)'; nodes.push({id:x,gk:[gs,gg],ghost:true,c,r})};
+  const mainRows=Math.max(...Object.values(rowOf))+1;
+  [...nb.keys()].forEach(x=>{const c=ghostCol[x]+off, v=nb.get(x);
+    if(ghostMode[x]==='mid'){gnode(x,c,take(c,rowOf[anchor[x]]))}
+    else {const t=(ghostMode[x]==='src'?v.o:v.i)[0]; gnode(x,c,take(c,rowOf[t]+(used[c]&&used[c].has(rowOf[t])?1:0)))}});
+  /* a pair of opposite lines between the same two boxes becomes one two-way line; both texts stay in its hover and list entry */
+  for(let i=0;i<edges.length;i++){const e=edges[i]; if(e.bi) continue;
+    const j=edges.findIndex((f,k)=>k>i&&!f.bi&&f.a===e.b&&f.b===e.a);
+    if(j<0) continue; const f=edges[j];
+    e.d=(e.l?e.l+': ':'')+(e.d||'')+'  |  back: '+(f.l?f.l+': ':'')+(f.d||''); e.l=[e.l,f.l].filter(Boolean).join(' / ');
+    e.k=e.k==='e'||f.k==='e'?'e':e.k; e.bi=true; edges.splice(j,1)}
+  /* several lines between the same two boxes in the same direction become one line; every text stays in its hover and list entry */
+  for(let i=0;i<edges.length;i++){const e=edges[i];
+    for(let j=edges.length-1;j>i;j--){const f=edges[j]; if(f.a!==e.a||f.b!==e.b||!!f.bi!==!!e.bi) continue;
+      e.d=(e.l?e.l+': ':'')+(e.d||'')+'  +  '+(f.l?f.l+': ':'')+(f.d||''); e.l=[e.l,f.l].filter(Boolean).join(' + ');
+      e.k=e.k==='e'||f.k==='e'?'e':e.k; edges.splice(j,1)}}
+  /* number the lines in reading order: by source column, then target column */
+  const colOf=Object.fromEntries(nodes.map(n=>[n.id,n.c])), rw=Object.fromEntries(nodes.map(n=>[n.id,n.r]));
+  edges.sort((x,y)=>(colOf[x.a]-colOf[y.a])||(colOf[x.b]-colOf[y.b])||(rw[x.a]-rw[y.a]));
+  const ps={n:st.n,title:g.title,blurb:g.line,nodes,edges,frames:[],route:true};
+  const gi=st.groups.findIndex(z=>z.id===gid), pg=st.groups[gi-1], ng=st.groups[gi+1];
+  graphView(ps,{crumbs:[{t:'Overview',href:'#/'},{t:st.n+'. '+st.title,href:'#/s/'+sid},{t:g.title}],
+    title:`<span class="lvl">Level 3</span>${esc(g.title)} <small style="font-weight:400;color:var(--mut)">in ${esc(st.title)}</small>`,
+    sub:g.line.replace(/\n/g,' '),
+    nav:`<a href="#/s/${sid}">← All groups in ${esc(st.title)}</a>${pg?` &nbsp; <a href="#/g/${sid}/${pg.id}">← ${esc(pg.title)}</a>`:''}${ng?` &nbsp; <a href="#/g/${sid}/${ng.id}">${esc(ng.title)} →</a>`:''}`});
+}
+function hover(el,html){
+  const t=$('tip');
+  const mv=ev=>{const w=t.offsetWidth,h=t.offsetHeight;let x=ev.clientX+18,y=ev.clientY+14;if(x+w>innerWidth-8)x=ev.clientX-w-18;if(y+h>innerHeight-8)y=Math.max(8,innerHeight-h-8);t.style.left=Math.max(8,x)+'px';t.style.top=y+'px'};
+  el.addEventListener('mouseenter',ev=>{t.innerHTML=html();t.style.display='block';mv(ev)});
+  el.addEventListener('mousemove',mv);
+  el.addEventListener('mouseleave',()=>{t.style.display='none'});
+}
+
+/* ---------- Level 3 ---------- */
+function cardView(id){
+  const c=D.comps[id]; if(!c){location.hash='#/';return}
+  const st=S[c.stage], K=D.kinds[c.kind];
+  const grp=st.groups.find(z=>z.id===c.group);
+  crumbs([{t:'Overview',href:'#/'},{t:st.n+'. '+st.title,href:'#/s/'+st.id},{t:grp.title,href:'#/g/'+st.id+'/'+grp.id},{t:c.label}]);
+  $('title').innerHTML=`<span class="lvl">Level 4</span>${esc(c.label)}`;
+  const up=new Map(), down=new Map();
+  D.stages.forEach(s=>ER(s).forEach(e=>{
+    const a=e.a.replace(/\*$/,''), b=e.b.replace(/\*$/,'');
+    if(b===id&&a!==id) up.set(a,(up.get(a)?up.get(a)+', ':'')+(e.l||'link'));
+    if(a===id&&b!==id) down.set(b,(down.get(b)?down.get(b)+', ':'')+(e.l||'link'));
+    if(e.bi&&b===id&&a!==id) down.set(a,e.l||'link');
+  }));
+  const list=m=>m.size?[...m].map(([k,l])=>`<a href="#/c/${k}">${esc(D.comps[k].label)}<small>${esc(l)}</small></a>`).join(''):'<p>None in this stage view.</p>';
+  const dp=c.deep||null, ul=(a,cls)=>a&&a.length?`<ul class="${cls||''}">${a.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`:'<p>None.</p>';
+  const R=ids=>(ids||[]).map(i=>D.refs[i]).filter(Boolean);
+  let sec='';
+  if(dp){
+    const al=dp.algorithm||{}, ml=dp.ml, pf=dp.performance||{};
+    sec+=`<div class="toc">${[['plain','In plain English'],['contract','Contract'],['purpose','Purpose'],['algo','Algorithm'],dp.math?['math','Maths in full']:null,ml?['ml','The model call']:null,['sec','Security'],['perf','Performance'],['edge','Edge cases'],['tests','Tests'],['cost','Cost'],['fb','Feedback and events'],(dp.papers||[]).length?['res','Research']:null,['refs','References']].filter(Boolean).map(([k,l])=>`<a href="javascript:void(0)" onclick="document.getElementById('sx-${k}').scrollIntoView({behavior:'smooth',block:'start'})">${l}</a>`).join('')}</div>`;
+    sec+=`<div class="sec" id="sx-plain"><h3>In plain English</h3><div class="dumbbox">${esc(c.dumb||'')}</div></div>`;
+  }
+  const contract=`<div class="sec" id="sx-contract" style="padding:0"><table>
+  <tr><td>Goes in</td><td>${esc(c.inn)}</td></tr>
+  <tr><td>Comes out</td><td>${esc(c.out)}</td></tr>
+  <tr><td>Reads / writes</td><td>${esc(c.store)}</td></tr>
+  <tr><td>If it fails</td><td>${esc(c.fail)}</td></tr>
+  <tr><td>Requirement source</td><td>${esc(c.req)}</td></tr>${c.hard?`<tr><td>Hardening, still open</td><td>${esc(c.hard)}</td></tr>`:''}${c.prop?`<tr><td>Not in client docs</td><td style="background:#fff7ed"><b>DevX proposal:</b> ${esc(c.prop)}</td></tr>`:''}</table></div>`;
+  if(dp){
+    const al=dp.algorithm||{}, ml=dp.ml, pf=dp.performance||{};
+    sec+=contract;
+    sec+=`<div class="sec" id="sx-purpose"><h3>What it is for</h3><p>${esc(dp.purpose)}</p><div class="two"><div><h4>Expected</h4>${ul(dp.expected)}</div><div><h4>Not expected</h4>${ul(dp.not_expected,'no')}</div></div></div>`;
+    sec+=`<div class="sec" id="sx-algo"><h3>Algorithm and maths</h3><p><b>${esc(al.name||'')}</b></p><div class="formula mono">${esc(al.formula||'')}</div><h4>Steps</h4><ol>${(al.steps||[]).map(x=>`<li>${esc(x)}</li>`).join('')}</ol><h4>Parameters</h4><table class="t3">${Object.entries(al.params||{}).map(([k,v])=>`<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('')}</table></div>`;
+    if(dp.math){const m=dp.math; sec+=`<div class="sec" id="sx-math"><h3>The maths in full</h3><h4>Symbols</h4>${ul(m.definitions)}<h4>Formula</h4><div class="formula mono">${esc(m.formula_full)}</div><h4>Why it is right</h4><p>${esc(m.derivation)}</p><h4>Worked example</h4><div class="formula mono">${esc(m.worked_example)}</div><h4>Cost of computing it</h4><p>${esc(m.complexity)}</p><h4>How it can go wrong, and the guard</h4>${ul(m.failure_modes)}<h4>How the numbers are chosen and re-tuned</h4><p>${esc(m.calibration)}</p>${(dp.alternatives||[]).length?`<h4>Alternatives rejected</h4><table class="t3">${dp.alternatives.map(x=>`<tr><td>${esc(x.name)}</td><td>${esc(x.why_rejected)}</td></tr>`).join('')}</table>`:''}</div>`}
+    if(ml) sec+=`<div class="sec" id="sx-ml"><h3>The model call</h3><table class="t3"><tr><td>Technique</td><td>${esc(ml.technique)}</td></tr><tr><td>Model</td><td>${esc(ml.model)}</td></tr><tr><td>Input</td><td>${esc(ml.input)}</td></tr><tr><td>Output schema</td><td class="mono">${esc(ml.output_schema)}</td></tr><tr><td>Prompt sketch</td><td class="mono">${esc(ml.prompt_sketch)}</td></tr><tr><td>Guardrails</td><td>${ul(ml.guardrails)}</td></tr><tr><td>Cost estimate</td><td>${esc(ml.cost_estimate)}</td></tr></table></div>`;
+    sec+=`<div class="sec" id="sx-sec"><h3>Security</h3>${ul(dp.security)}</div>`;
+    sec+=`<div class="sec" id="sx-perf"><h3>Performance</h3><table class="t3"><tr><td>Latency and throughput</td><td>${esc(pf.slo)}</td></tr><tr><td>Complexity</td><td>${esc(pf.complexity)}</td></tr><tr><td>At 10x load</td><td>${esc(pf.scaling)}</td></tr></table></div>`;
+    sec+=`<div class="sec" id="sx-edge"><h3>Edge cases and how each is handled</h3>${ul(dp.edge_cases)}</div>`;
+    sec+=`<div class="sec" id="sx-tests"><h3>Test cases</h3><table class="xtab"><tr><th>Test</th><th>Given</th><th>Expect</th></tr>${(dp.tests||[]).map(x=>`<tr><td>${esc(x.name)}</td><td>${esc(x.given)}</td><td>${esc(x.expect)}</td></tr>`).join('')}</table></div>`;
+    sec+=`<div class="sec" id="sx-cost"><h3>Where it saves cost</h3>${ul(dp.cost_levers)}</div>`;
+    sec+=`<div class="sec" id="sx-fb"><h3>Feedback and analytics events</h3><h4>Feedback captured or used</h4>${ul(dp.feedback_events)}<h4>Events emitted</h4><table class="xtab"><tr><th>Event</th><th>Fields</th><th>When</th></tr>${(dp.analytics_events||[]).map(x=>`<tr><td class="mono">${esc(x.name)}</td><td>${(x.fields||[]).map(f=>`<span class="pill">${esc(f)}</span>`).join('')}</td><td>${esc(x.when)}</td></tr>`).join('')}</table></div>`;
+    if((dp.papers||[]).length||(dp.repos||[]).length) sec+=`<div class="sec refs" id="sx-res"><h3>Research behind it</h3>${(dp.papers||[]).map(x=>{const r=D.refs[x.ref];return `<p><a href="${esc(r.url)}" target="_blank" rel="noopener"><b>${esc(r.cite)}</b></a><br><i>Result we rely on:</i> ${esc(x.key_idea)}<br><i>Used here:</i> ${esc(x.how)}</p>`}).join('')}${(dp.repos||[]).length?`<h4>Open-source implementations studied</h4><ul>${dp.repos.map(x=>`<li><a href="${esc(D.refs[x.ref].url)}" target="_blank" rel="noopener">${esc(x.name)}</a>: ${esc(x.take)}</li>`).join('')}</ul>`:''}${dp.industry?`<h4>How others build it</h4><p>${esc(dp.industry)}</p>`:''}</div>`;
+    const rr=R(dp.refs);
+    sec+=`<div class="sec refs" id="sx-refs"><h3>References</h3>${rr.length?`<ul>${rr.map(r=>`<li><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.cite)}</a></li>`).join('')}</ul>`:'<p>None cited for this node.</p>'}</div>`;
+  } else sec+=contract;
+  $('main').innerHTML=`<div class="card deep"><div class="hd"><span class="badge" style="background:${K.fill};border-color:${K.stroke}">${esc(K.name)}</span><span class="badge" style="border-color:#cbd5e1">Stage ${esc(st.n)}: ${esc(st.title)}</span><h2>${esc(c.label)}</h2><div style="color:var(--mut)">${esc(c.sub)}</div>${c.line?`<div style="margin-top:8px;white-space:pre-line">${esc(c.line)}</div>`:''}</div>${sec}
+  <div class="nb"><div><h4>Receives from</h4>${list(up)}</div><div><h4>Hands to</h4>${list(down)}</div></div></div>
+  <p class="hint"><a href="#/g/${st.id}/${grp.id}">← Back to group: ${esc(grp.title)}</a> &nbsp; <a href="#/s/${st.id}">← Stage ${esc(st.n)}</a></p>`;
+}
+
+/* ---------- cross-cutting pages ---------- */
+function xView(id){
+  const x=(D.xc||[]).find(v=>v.id===id); 
+  if(id==='refs'){
+    crumbs([{t:'Overview',href:'#/'},{t:'References'}]);
+    $('title').innerHTML='<span class="lvl">Sources</span>Research and references';
+    const by={}; D.refs.forEach((r,i)=>{(by[r.topic||'Other']=by[r.topic||'Other']||[]).push([i,r])});
+    $('main').innerHTML=`<div class="card deep"><div class="sec refs" style="border:0">${Object.entries(by).sort().map(([k,v])=>`<h4>${esc(k)}</h4><ul>${v.map(([i,r])=>`<li><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.cite)}</a></li>`).join('')}</ul>`).join('')}</div></div>`;
+    return;
+  }
+  if(!x){location.hash='#/';return}
+  crumbs([{t:'Overview',href:'#/'},{t:x.title}]);
+  $('title').innerHTML=`<span class="lvl">Cross-cutting</span>${esc(x.title)}`;
+  $('main').innerHTML=`<p class="sub">${esc(x.intro)}</p><div class="card deep">${x.sections.map(s=>`<div class="sec"><h3>${esc(s.h)}</h3>${s.p?`<p>${esc(s.p)}</p>`:''}${s.kind==='table'?`<div style="overflow:auto"><table class="xtab"><tr>${s.cols.map(c=>`<th>${esc(c)}</th>`).join('')}</tr>${s.rows.map(r=>`<tr>${r.map(c=>`<td>${Array.isArray(c)?c.map(f=>`<span class="pill">${esc(f)}</span>`).join(''):esc(c)}</td>`).join('')}</tr>`).join('')}</table></div>`:ul(s.rows)}</div>`).join('')}</div>`;
+}
+function ul(a){return `<ul>${(a||[]).map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`}
+
+function route(){
+  $('tip').style.display='none';
+  const h=location.hash.replace(/^#\/?/,'').split('/');
+  window.scrollTo(0,0);
+  if(h[0]==='s') stageView(h[1]); else if(h[0]==='g') groupView(h[1],h[2]); else if(h[0]==='c') cardView(h[1]); else if(h[0]==='x') xView(h[1]); else overview();
+}
+addEventListener('hashchange',route);
+addEventListener('keydown',e=>{ if(e.key==='Escape'){ const h=location.hash.split('/'); if(h[1]==='c'){const q=D.comps[h[2]]; location.hash='#/g/'+q.stage+'/'+q.group} else if(h[1]==='g') location.hash='#/s/'+h[2]; else if(h[1]==='s') location.hash='#/'; }});
+route();
+</script>
+</body>
+</html>

@@ -1,0 +1,344 @@
+TITLE: How to Reduce Codex CLI Token Usage: 7 Proven Optimization Strategies
+URL: https://docs.bswen.com/blog/2026-03-02-reduce-codex-cli-token-usage
+ORG: bswen  TYPE: blog  DATE: 2026-03
+
+How to Reduce Codex CLI Token Usage: 7 Proven Optimization Strategies | BSWEN 
+ Skip to content 
+
+How to Reduce Codex CLI Token Usage: 7 Proven Optimization Strategies 
+
+ Mar 2, 2026 
+
+Cowrie 
+Dev @ Bswen 
+Problem
+
+My Codex token usage was out of control. I was burning through my weekly quota in hours.
+
+The fastest way to reduce Codex CLI token usage is configuring your ~/.claude/settings.json with model optimization, thinking token limits, and auto-compaction thresholds. A single configuration change can cut costs by 60%+ without sacrificing code quality.
+
+~/.claude/settings.json
+
+{
+
+ "model": "sonnet",
+
+ "env": {
+
+ "MAX_THINKING_TOKENS": "10000",
+
+ "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "50",
+
+ "CLAUDE_CODE_SUBAGENT_MODEL": "haiku"
+
+ }
+
+}
+
+Environment
+
+Codex CLI 0.106.0
+
+Claude Code (latest)
+
+macOS Sonoma 14.x
+
+What Happened
+
+I noticed my weekly usage bouncing between 59-62% repeatedly. Something was wrong.
+
+I analyzed my consumption patterns and found:
+
+Extended thinking reserves up to 31,999 tokens per request
+
+Large outputs repeated across threads
+
+Shell commands, logs, and file dumps filling context
+
+Auto-compaction at 95% was too late
+
+The default configuration was wasting tokens everywhere.
+
+How to Solve It
+
+I tried seven different strategies, starting with configuration changes.
+
+Strategy 1: Configure Global Settings
+
+I started with the settings file. Here’s what each option does:
+
+SettingPurposeImpact
+model: sonnetUse Sonnet for most tasks~60% cost reduction
+MAX_THINKING_TOKENS: 10000Cap extended thinking~70% hidden cost reduction
+CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: 50Compact at 50% capacityPrevents quality degradation
+CLAUDE_CODE_SUBAGENT_MODEL: haikuCheaper model for subagents~80% subagent savings
+
+This single change reduced my consumption by ~60%.
+
+Strategy 2: Use Incremental Narrowing Pattern
+
+I added an AGENTS.md file with context optimization principles:
+
+AGENTS.md
+
+# Context Optimization Principles
+
+1. Cap shell outputs unless escalated
+
+2. Prefer summaries over full dumps
+
+3. Use incremental narrowing (scan -> read -> slice)
+
+4. Avoid repeated large outputs in the same thread
+
+5. Open new threads after major phase shifts
+
+The pattern works like this:
+
+┌─────────────────┐
+
+│ Broad Scan │ <- Use lightweight tools first (file search, grep)
+
+└────────┬────────┘
+
+ │
+
+ ▼
+
+┌─────────────────┐
+
+│ Focused Read │ <- Read only relevant files or sections
+
+└────────┬────────┘
+
+ │
+
+ ▼
+
+┌─────────────────┐
+
+│ Exact Slice │ <- Get precise diffs or log segments
+
+└─────────────────┘
+
+Strategy 3: Optimize Tool Selection
+
+I reviewed my MCP server usage. Each server adds context overhead.
+
+~/.codex/config.toml
+
+[mcp_servers.filesystem]
+
+command = "npx"
+
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed"]
+
+enabled = true # Set to false if not actively needed
+
+I switched to skills over MCP servers for repeatable workflows:
+
+Use skills over MCP servers for browser automation
+
+Use chrome-devtools for inspection before screenshots
+
+Use Playwright CLI skill instead of Playwright MCP
+
+Strategy 4: Implement Budget Commands
+
+I created helper commands to enforce limits:
+
+Terminal window
+
+# Example: Log budget command
+
+view_logs() {
+
+ local lines=50
+
+ if [[ "$1" == "--full" ]]; then
+
+ lines=1000
+
+ fi
+
+ tail -n $lines logs/app.log
+
+}
+
+# Usage
+
+view_logs # Last 50 lines (default)
+
+view_logs --full # Last 1000 lines (escalated)
+
+For searches, I use targeted patterns:
+
+Terminal window
+
+# Bad: Broad search
+
+rg "import" --type ts
+
+# Good: Targeted search with limits
+
+rg "import.*AuthService" --type ts -C 2 | head -50
+
+Strategy 5: Manage Thread Lifecycle
+
+I learned to start fresh threads between phases:
+
+# Workflow Pattern
+
+## Phase 1: Investigation (Thread A)
+
+- Search codebase
+
+- Read relevant files
+
+- Identify root cause
+
+## Phase 2: Fix (Thread B - NEW)
+
+- Summarize findings from Thread A
+
+- Implement changes
+
+- Keep context clean
+
+## Phase 3: Verification (Thread C - NEW)
+
+- Run tests
+
+- Verify fix
+
+- Document solution
+
+Opening a new thread after investigation phase reduced my context bloat significantly.
+
+Strategy 6: Configure Notification Filtering
+
+I opted out of unnecessary event streams:
+
+{
+
+ "method": "initialize",
+
+ "params": {
+
+ "capabilities": {
+
+ "optOutNotificationMethods": [
+
+ "thread/tokenUsage/updated",
+
+ "item/agentMessage/delta"
+
+ ]
+
+ }
+
+ }
+
+}
+
+Strategy 7: Monitor with Observability Tools
+
+I set up Loki for log monitoring:
+
+docker-compose.yml
+
+services:
+
+ loki:
+
+ image: grafana/loki:latest
+
+ ports:
+
+ - "3100:3100"
+
+This helps catch usage spikes early.
+
+The Reason
+
+The key reasons these strategies work:
+
+Configuration changes target the biggest waste - Extended thinking and model selection
+
+Incremental narrowing prevents context bloat - Less data in context window
+
+Thread lifecycle management - Fresh starts prevent accumulation
+
+Monitoring catches issues early - Before hitting limits
+
+Quick Wins Checklist
+
+## Token Optimization Checklist
+
+- [ ] Set model to `sonnet` in settings.json
+
+- [ ] Cap MAX_THINKING_TOKENS to 10000
+
+- [ ] Set CLAUDE_AUTOCOMPACT_PCT_OVERRIDE to 50
+
+- [ ] Configure CLAUDE_CODE_SUBAGENT_MODEL to `haiku`
+
+- [ ] Add AGENTS.md with incremental narrowing principles
+
+- [ ] Disable unused MCP servers
+
+- [ ] Use skills over MCP for repeatable workflows
+
+- [ ] Start new threads between major phases
+
+- [ ] Set up log monitoring (Loki/Grafana)
+
+Troubleshooting
+
+IssueSolution
+Tokens still high after configTry relogging in to refresh session
+Quality degradationIncrease CLAUDE_AUTOCOMPACT_PCT_OVERRIDE to 60
+Subagent failuresSwitch SUBAGENT_MODEL back to sonnet temporarily
+
+Summary
+
+In this post, I showed how to reduce Codex CLI token usage by 60%+ through seven strategies. The key points are:
+
+Configure settings.json with model optimization and token limits
+
+Use incremental narrowing pattern to prevent context bloat
+
+Manage thread lifecycle between major phases
+
+Monitor usage to catch spikes early
+
+Start with the configuration changes - they provide the biggest impact with minimal effort.
+
+Final Words + More Resources 
+
+My intention with this article was to help others share my knowledge and experience.
+ If you want to contact me, you can contact by
+ email: Email me 
+Here are also the most important links from this article along with some further resources that will help you in this scope: 
+
+👨‍💻 Codex CLI Documentation 
+
+👨‍💻 Claude Code Documentation 
+
+👨‍💻 Context7 Documentation 
+
+Oh, and if you found these resources useful, don’t forget to support me by
+ starring the repo on GitHub!
+ Share this article: 
+ Copy Link 
+Comments 
+
+Tags:
+ai-coding
+performance
+ai-agents
+ai
+career 
+
+ How to Handle Async Data Fetching in React Without useEffect 
+ Why Is My Codex CLI Token Usage Suddenly So High? | Diagnosis & Fixes

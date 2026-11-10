@@ -1,0 +1,247 @@
+TITLE: Priority Tier
+URL: https://docs.mistral.ai/inference/priority-tier
+ORG: Mistral AI  TYPE: doc  DATE: 
+
+Priority Tier | Mistral Docs
+
+Home
+
+Inference
+
+Get started
+
+Quickstarts
+
+Models
+
+Generate
+
+Conversations
+
+Embeddings
+
+Prompting
+
+Sampling
+
+Optimize cost and latency
+Batch Processing
+
+Prompt caching
+
+Predicted outputs
+
+Priority Tier
+
+Platform
+Regional inference
+
+Pricing
+
+Model lifecycle policy
+
+Labs
+
+API Reference ↗
+
+Priority Tier
+
+Priority Tier gives eligible API requests priority queueing for workloads that need more predictable access to shared infrastructure. This page is for enterprise administrators who plan API capacity and developers who add Priority Tier routing to completion requests.
+
+iInformation
+Priority Tier requires account setup with Mistral. Contact your account executive or Mistral contact to configure model-specific Priority Tier rate limits for your organization.
+
+How Priority Tier worksCopy section link
+How Priority Tier works
+
+Priority Tier routes eligible API requests through a priority queue before Standard Tier traffic during periods of high load. It is intended for real-time and business-critical workloads that need predictable access to hosted Mistral models.
+
+Priority Tier availability depends on all of the following:
+
+Your organization has an active Priority Tier entitlement.
+
+The request uses a model configured for Priority Tier.
+
+The request is within your custom Priority Tier rate limits for that model.
+
+Priority Tier capacity is available for the model and deployment region.
+
+If a request is not eligible for Priority Tier, it can still run as Standard Tier traffic depending on the service_tier value you send.
+
+Compare service tiersCopy section link
+Compare service tiers
+
+FeatureBatchStandard TierPriority Tier
+Use caseAsynchronous processing for workloads that do not need real-time responsesStandard model processingReal-time and business-critical workloads
+LatencyQueued for asynchronous processingSeconds to minutesSeconds
+RoutingBatch queueBest-effort routingPriority queue
+Rate limitsBatch processing limitsUsage-based or custom standard limitsCustom Priority Tier limits by model
+BurstingRequests are queued and processed over a 24-hour periodStandard rate-limit behaviorFalls back to Standard Tier when Priority Tier limits are exceeded
+AvailabilityGlobalGlobal or regional, depending on endpoint and modelGlobal or regional, depending on account setup, model, and capacity
+Uptime SLANot availableNot available99.5%
+ReliabilityHighHigh to mediumHigh
+
+Request Priority TierCopy section link
+Request Priority Tier
+
+Set the service_tier request parameter on supported completion requests.
+
+ValueBehavior
+autoUses Priority Tier when your request is eligible. Falls back to Standard Tier when Priority Tier is not available.
+standard_onlyUses Standard Tier and does not consume Priority Tier limits.
+
+If you omit service_tier, the request defaults to standard_only.
+
+Tip
+Set service_tier to auto only for requests that should use Priority Tier when it is available. Leave it unset or use standard_only for standard traffic.
+
+Send a Priority Tier requestCopy section link
+Send a Priority Tier request
+
+curlpythontypescript
+
+import os
+from mistralai import Mistral
+
+client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
+
+response = client.chat.complete(
+ model="mistral-medium-latest",
+ service_tier="auto",
+ messages=[
+ {
+ "role": "user",
+ "content": "What is the capital of France?",
+ }
+ ],
+)
+
+print(response.choices[0].message.content)
+print(response.usage.service_tier)
+
+import os
+from mistralai import Mistral
+
+client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
+
+response = client.chat.complete(
+ model="mistral-medium-latest",
+ service_tier="auto",
+ messages=[
+ {
+ "role": "user",
+ "content": "What is the capital of France?",
+ }
+ ],
+)
+
+print(response.choices[0].message.content)
+print(response.usage.service_tier)
+
+Check which tier served a requestCopy section link
+Check which tier served a request
+
+The response usage object includes the service tier that processed the request. Use this field to confirm Priority Tier usage, detect fallback to Standard Tier, and monitor unexpected downgrades.
+
+Possible response values are:
+
+Response valueMeaning
+priorityThe request was served with Priority Tier.
+standardThe request was served with Standard Tier.
+
+Example response excerpt:
+
+{
+ "model": "mistral-medium-latest",
+ "usage": {
+ "prompt_tokens": 22,
+ "completion_tokens": 70,
+ "total_tokens": 92,
+ "service_tier": "priority"
+ }
+}
+
+{
+ "model": "mistral-medium-latest",
+ "usage": {
+ "prompt_tokens": 22,
+ "completion_tokens": 70,
+ "total_tokens": 92,
+ "service_tier": "priority"
+ }
+}
+
+Before you startCopy section link
+Before you start
+
+Before you send Priority Tier traffic, make sure you have:
+
+An API key for the organization configured for Priority Tier.
+
+An active Priority Tier agreement or account setup.
+
+Custom Priority Tier rate limits configured for each target model.
+
+A supported SDK version if you use Python or TypeScript.
+
+Confirmation that your target model is eligible for Priority Tier.
+
+Get access to Priority TierCopy section link
+Get access to Priority Tier
+
+Contact your account executive or Mistral contact.
+
+Share your target models and expected traffic profile.
+
+Wait for Mistral to configure your custom Priority Tier rate limits.
+
+Update eligible requests to set service_tier to auto.
+
+Check the served tier in the response usage object.
+
+Note
+If you need more Priority Tier capacity, coordinate with Mistral ahead of time. Capacity increases may require advance notice.
+
+Quotas and limitsCopy section link
+Quotas and limits
+
+Priority Tier limits are custom and model-specific. Your configured limits can include requests per minute, tokens per minute, or other limits agreed with Mistral.
+
+When a request with service_tier set to auto exceeds your configured Priority Tier limits, the request falls back to Standard Tier instead of failing only because Priority Tier capacity is exhausted.
+
+Billing and pricingCopy section link
+Billing and pricing
+
+Priority Tier is billed as a premium multiplier on top of Standard Tier list pricing. The multiplier is 1.75x standard list pricing, which is a 75% premium on input, output, and cached tokens.
+
+Priority requests retain full eligibility for prompt caching discounts, up to 90% savings on cached input tokens. The 1.75x multiplier applies after the prompt cache discount is applied.
+
+Requests served as Priority Tier traffic are billed according to your Priority Tier terms. Requests that fall back to Standard Tier are handled as Standard Tier traffic.
+
+FAQCopy section link
+FAQ
+
+What happens if I omit service_tier?
+
+What happens when I set service_tier to auto?
+
+Why did my request return service_tier: standard?
+
+Can I use Priority Tier on every model?
+
+Does Priority Tier work with regional inference?
+
+How do I increase my Priority Tier limits?
+
+Related resourcesCopy section link
+Related resources
+
+Regional Inference
+
+Batch Processing
+
+SDKs
+
+API reference
+
+Go to Top

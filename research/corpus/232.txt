@@ -1,0 +1,517 @@
+TITLE: Token & Cost Tracking (Langfuse)
+URL: https://langfuse.com/docs/observability/features/token-and-cost-tracking
+ORG: Langfuse  TYPE: doc  DATE: 
+
+Token & Cost Tracking - Langfuse
+
+DocsToken & Cost Tracking
+
+Overview
+Get Started withTracing
+Prompt & Skill Management
+
+Evals
+
+AI Gateway
+
+Products
+Observability
+OverviewGet StartedConceptsBest Practices
+Features
+
+EssentialSessionsUser TrackingEnvironmentsTagsMetadataTrace IDs & Distributed Tracing
+AdvancedAlertsAgent AccessCommentsCorrectionsUser FeedbackLog LevelsAgent GraphsFilter Search BarChart any tablePulseFull-Text SearchMaskingMCP TracingMulti-ModalityObservation TypesEvent queuing/batchingReleases & VersioningSamplingToken & Cost TrackingTrace URLsWeb CalloutsQuery Data ↗Metrics API ↗Custom Dashboards ↗
+SDKs
+Integrations ↗Troubleshooting & FAQ
+Prompt & Skill Management
+
+Evaluation
+
+AI GatewayBeta
+
+Platform
+Metrics
+
+API & Data Platform
+
+Administration
+Security & GuardrailsVersions & Compatibility
+MoreExample ProjectGlossaryRoadmapDocs MCP Server
+SDK & API References
+Example ProjectSecurity & Compliance ↗Support ↗
+
+DocsObservabilityFeaturesToken & Cost Tracking
+
+Copy page
+Model Usage & Cost Tracking
+
+Langfuse tracks the usage and cost of every LLM call in your application, so you can monitor spend across models, use cases, and over time.
+
+For most users, cost tracking works out of the box. Langfuse ships with prices for popular models from OpenAI, Anthropic, and Google, and most integrations capture usage and cost automatically, so in most cases you don't need to configure anything.
+
+What you can do with cost data
+
+Once usage and cost are tracked, you can put the data to work:
+
+Create dashboards: monitor cost across models, tags, or users.
+
+Set up alerts: get notified automatically when spend crosses a threshold.
+
+Query with the Metrics API: retrieve aggregated usage and cost, filtered by application type, user, or tags, for analytics, billing, and rate-limiting.
+
+How cost tracking works
+
+For every LLM generation, Langfuse records two things, each broken down by usage type (for example input and output, or more specific types like cached_tokens and audio_tokens that vary by provider):
+
+Usage details: number of units consumed per usage type
+
+Cost details: USD cost per usage type
+
+Both are captured on observations of type generation and embedding. Usage must be ingested, while cost can be either:
+
+Ingested: you send the usage and cost from the LLM response, via the API, SDKs, or an integration.
+
+Inferred: Langfuse calculates cost from submitted usage and the generation's model parameter, using a model definition that stores prices per usage type. Langfuse ships with definitions for popular OpenAI, Anthropic, and Google models, and you can add your own.
+
+When both are available, ingested costs take priority over inferred ones:
+
+Model definitions and prices
+
+When cost is not ingested directly, Langfuse infers it. The model parameter of the generation is matched to a model definition, which stores a price per usage type. Langfuse then multiplies those prices by the observation's usage to calculate cost. This is especially useful for model providers or self-hosted models that do not include cost in the response.
+
+Langfuse comes with a list of predefined popular models including OpenAI, Anthropic, Google. Check out the full list (you need to sign in).
+
+You can manage prices in Project Settings > Models, add your own custom model definitions, or request official support for new models via GitHub.
+
+When default prices update
+
+Default prices ship with each Langfuse release. A daily audit checks official provider documentation and opens a pull request when a price, pricing tier, or new major model should change. See how that audit works.
+
+Langfuse Cloud receives the updated default prices with every release.
+
+Self-hosted deployments use the default prices shipped with the version they run. Those prices update when you upgrade to a release that includes them. To price a model your version does not include, or to use your own rates, add a custom model definition or ingest the cost directly.
+
+Updated prices apply to generations ingested after the update. Generations already stored keep the cost calculated at ingestion time.
+
+Usage
+
+Usage must be submitted by your integration or ingested manually.
+
+Langfuse no longer estimates token counts from inputs and outputs. If neither usage nor cost is submitted, no cost is calculated. See the tokenization retirement announcement for the rationale and next steps.
+
+Cost
+
+Model definitions include prices per usage type. Usage types must match exactly with the keys in the usage_details object of the generation.
+
+Langfuse automatically calculates cost for ingested generations at the time of ingestion if (1) usage is ingested, (2) and a matching model definition includes prices.
+
+Adding custom model definitions
+
+You can flexibly add your own model definitions (incl. pricing tiers) to Langfuse. This is especially useful for self-hosted or fine-tuned models which are not included in the list of Langfuse maintained models.
+
+Langfuse UIAPI
+
+To add a custom model definition in the Langfuse UI, you can either click on the "+" sign next to the model name or navigate to the Project Settings > Models to add a new model definition.
+Then you can add the prices per token type and save the model definition. Now all new traces with this model and submitted usage will have cost inferred.
+
+Trace detail with a generation on model grok-4-fast that shows “no cost”. Click the model badge in the generation header to open the “Create Model” dialog, prefilled with the model name, match pattern and usage types. Enter prices per unit for input and output, review the price preview and click “Submit”. Langfuse opens the new model under Project Settings > Models.
+
+Model definitions can also be managed programmatically via the Models API:
+
+GET /api/public/models
+POST /api/public/models
+GET /api/public/models/{id}
+DELETE /api/public/models/{id}
+
+Models are matched to generations based on:
+
+Generation AttributeModel AttributeNotes
+modelmatch_patternUses regular expressions, e.g. (?i)^(gpt-4-0125-preview)$ matches gpt-4-0125-preview.
+
+User-defined models take priority over models maintained by Langfuse.
+
+Pricing Tiers
+
+Some model providers charge different rates depending on context length or request attributes. For example, Anthropic's Claude Sonnet 4.5 and Google's Gemini 2.5 Pro apply higher pricing when more than 200K input tokens are used, while OpenAI Fast mode charges a premium based on the request's service_tier.
+
+Langfuse supports pricing tiers for models, enabling accurate cost calculation across usage thresholds, model parameters, and metadata.
+
+How tier matching works
+
+Each model can have multiple pricing tiers, each with:
+
+FieldDescription
+NameA descriptive name (e.g., "Standard", "Large Context")
+PriorityEvaluation order (0 is reserved for default tier)
+ConditionsRules that determine when the tier applies
+PricesCost per usage type for this tier
+
+When calculating cost, Langfuse evaluates tiers in priority order (excluding the default tier). The first tier whose conditions are satisfied is used. If no conditional tier matches, the default tier is applied.
+
+Each condition selects one of these sources:
+
+SourceHow it matches
+Usage detailsMatch usage-detail keys with a regex, sum their values, and compare the result with gt, gte, lt, lte, eq, or neq. You can also control whether the key pattern is case-sensitive.
+Model parametersMatch a top-level model-parameter key against one or more exact values.
+MetadataMatch a top-level metadata key against one or more exact values.
+
+For model parameters and metadata, select the source in the pricing-tier editor, enter the Top-level key, and add comma-separated exact values. String, number, and boolean values are compared as strings. Nested paths and non-primitive values are not supported. When a tier has multiple conditions, all of them must match.
+
+Examples:
+
+Claude Sonnet Large context tierOpenAI Fast mode
+
+The "Large Context" tier for Claude Sonnet 4.5 has a condition: input > 200000, meaning it applies when the sum of all usage details matching the pattern "input" exceeds 200,000 tokens.
+
+OpenAI Fast mode tiers match the top-level model parameter service_tier against fast or priority. For GPT-5.6 models, this condition is combined with the input-token threshold to distinguish Standard/Fast and short/long-context prices.
+
+Frequently asked questions
+
+How does Langfuse keep default model prices up to date?
++
+Langfuse maintains its default model definitions in the open-source repository. A daily automated audit checks official provider sources for changed prices, pricing tiers, usage-key mappings, and newly released major models.
+The audit follows an evidence-first workflow:
+
+It verifies model IDs, prices, units, usage keys, and pricing tiers against official provider documentation.
+
+It makes focused changes only when the provider evidence can be represented safely in Langfuse. Uncertain findings are reported without changing the defaults.
+
+It validates the pricing data and any changed model-matching patterns.
+
+When changes are needed, a pull request is opened.
+
+This process keeps the default definitions current without relying on a third-party pricing aggregator. Approved changes ship in the next Langfuse release. See When default prices update for how Langfuse Cloud and self-hosted deployments pick them up.
+Why doesn't Langfuse estimate token usage from inputs and outputs?
++
+Text-based token estimates can produce incorrect costs for thinking models and cached-token pricing.
+
+Langfuse no longer estimates token usage for any model. Cost tracking requires submitted usage or costs. Use an integration that captures provider usage, or ingest usage or costs manually.
+
+Ingest usage and cost manually
+
+While Langfuse tracks this data automatically (if it unexpectedly doesn't, open an issue on GitHub), you might want to ingest it yourself in some cases, for example custom or self-hosted models Langfuse cannot price, private pricing, or exact provider counts you want recorded verbatim.
+
+Python SDKJS/TS SDK
+
+from langfuse import get_client
+import anthropic
+
+langfuse = get_client()
+anthropic_client = anthropic.Anthropic()
+
+with langfuse.start_as_current_observation(
+ as_type="generation",
+ name="anthropic-completion",
+ model="claude-3-opus-20240229",
+ input=[{"role": "user", "content": "Hello, Claude"}]
+) as generation:
+ response = anthropic_client.messages.create(
+ model="claude-3-opus-20240229",
+ max_tokens=1024,
+ messages=[{"role": "user", "content": "Hello, Claude"}]
+ )
+
+ generation.update(
+ output=response.content[0].text,
+ usage_details={
+ "input": response.usage.input_tokens,
+ "output": response.usage.output_tokens,
+ "cache_read_input_tokens": response.usage.cache_read_input_tokens
+ # "total": int, # if not set, it is derived as the sum of all usage types
+ },
+ # Optionally, also ingest USD cost. Alternatively, infer it via a model definition in Langfuse.
+ cost_details={
+ # Here we assume the input and output cost are 1 USD each and half the price for cached tokens.
+ "input": 1,
+ "cache_read_input_tokens": 0.5,
+ "output": 1,
+ # "total": float, # if not set, it is derived as the sum of all usage types
+ }
+ )
+
+import { startObservation } from "@langfuse/tracing";
+
+const generation = startObservation(
+ "llm-call",
+ {
+ model: "gpt-4",
+ input: [{ role: "user", content: "What is the capital of France?" }],
+ },
+ { asType: "generation" }
+);
+
+// ... LLM call logic ...
+
+generation.update({
+ usageDetails: {
+ input: 10,
+ output: 5,
+ cache_read_input_tokens: 2,
+ some_other_token_count: 10,
+ total: 27, // optional, it is derived as the sum of all usage types
+ },
+ costDetails: {
+ // Optional. If omitted, cost is inferred from a model definition.
+ input: 1,
+ output: 1,
+ cache_read_input_tokens: 0.5,
+ some_other_token_count: 1,
+ total: 3.5,
+ },
+ output: { content: "The capital of France is Paris." },
+});
+
+generation.end();
+
+Other ways to attach usage and cost with the SDK
++
+You can set usage_details and cost_details from any observation style, not just manual generations.
+
+Python SDKJS/TS SDK
+
+When using the @observe() decorator:
+
+from langfuse import observe, get_client
+import anthropic
+
+langfuse = get_client()
+anthropic_client = anthropic.Anthropic()
+
+@observe(as_type="generation")
+def anthropic_completion(**kwargs):
+ # optional, extract some fields from kwargs
+ kwargs_clone = kwargs.copy()
+ input = kwargs_clone.pop('messages', None)
+ model = kwargs_clone.pop('model', None)
+ langfuse.update_current_generation(
+ input=input,
+ model=model,
+ metadata=kwargs_clone
+ )
+
+ response = anthropic_client.messages.create(**kwargs)
+
+ langfuse.update_current_generation(
+ usage_details={
+ "input": response.usage.input_tokens,
+ "output": response.usage.output_tokens,
+ "cache_read_input_tokens": response.usage.cache_read_input_tokens
+ },
+ cost_details={
+ "input": 1,
+ "cache_read_input_tokens": 0.5,
+ "output": 1,
+ }
+ )
+
+ # return result
+ return response.content[0].text
+
+@observe()
+def main():
+ return anthropic_completion(
+ model="claude-3-opus-20240229",
+ max_tokens=1024,
+ messages=[
+ {"role": "user", "content": "Hello, Claude"}
+ ]
+ )
+
+main()
+
+When using the context manager:
+
+import { startActiveObservation, startObservation } from "@langfuse/tracing";
+
+await startActiveObservation("context-manager", async (span) => {
+ span.update({
+ input: { query: "What is the capital of France?" },
+ });
+
+ const generation = startObservation(
+ "llm-call",
+ {
+ model: "gpt-4",
+ input: [{ role: "user", content: "What is the capital of France?" }],
+ },
+ { asType: "generation" }
+ );
+
+ // ... LLM call logic ...
+
+ generation.update({
+ usageDetails: { input: 10, output: 5, total: 15 },
+ costDetails: { input: 1, output: 1, total: 2 },
+ output: { content: "The capital of France is Paris." },
+ });
+
+ generation.end();
+});
+When using the observe wrapper:
+
+import { observe, updateActiveObservation } from "@langfuse/tracing";
+
+async function fetchData(source: string) {
+ updateActiveObservation(
+ {
+ usageDetails: { input: 10, output: 5, total: 15 },
+ costDetails: { input: 1, output: 1, total: 2 },
+ },
+ { asType: "generation" }
+ );
+
+ // ... logic to fetch data
+ return { data: `some data from ${source}` };
+}
+
+const tracedFetchData = observe(fetchData, {
+ name: "observe-wrapper",
+ asType: "generation",
+});
+
+const result = await tracedFetchData("API");
+You can also update usage and cost later via generation.update().
+
+Usage types are mutually exclusive buckets
+
+Langfuse treats every key in usage_details as a separate, non-overlapping bucket: each token must be counted in exactly one key. This means that
+
+input excludes any input_* values (such as input_cached_tokens)
+
+output excludes any output_* values (such as output_reasoning_tokens)
+
+total is the sum of the buckets, not a bucket itself.
+
+If buckets overlap, usage and inferred cost will be counted double, and cost shown in Langfuse overstates what your provider actually charged. Directly ingested cost_details are unchanged.
+
+Be careful with inclusive provider counts
+
+Some provider counts are inclusive. For example, OpenAI input counts include cached tokens. Inclusive counts must be converted into exclusive buckets before they are stored.
+For example, an OpenAI-style response with 17,903 prompt tokens (of which 17,817 were cache hits) and 188 completion tokens:
+
+Provider reports (inclusive)Stored in Langfuse (exclusive)
+prompt_tokens: 17903input: 86
+prompt_tokens_details: { cached_tokens: 17817 }input_cached_tokens: 17817
+completion_tokens: 188output: 188
+total_tokens: 18091total: 18091
+When Langfuse normalizes usage
+
+Usage sourceHandling
+Langfuse integrations and SDK wrappers, such as the OpenAI wrapperNormalized automatically
+OpenTelemetry gen_ai.usage.* or llm.token_count.*Cache reads and writes are subtracted from input
+OpenAI usage schemaNormalized only when it contains OpenAI usage fields; extra keys make it flat usage
+Flat usage_details / usageDetails, including langfuse.observation.usage_detailsStored unchanged; values must already be exclusive
+
+Compatibility with OpenAI
+
+For increased compatibility with OpenAI, you can also use the OpenAI Usage schema. Langfuse maps its fields to its own usage types:
+
+OpenAI fieldLangfuse usage type
+prompt_tokensinput
+completion_tokensoutput
+total_tokenstotal
+prompt_tokens_details.*input_*
+completion_tokens_details.*output_*
+
+Since OpenAI reports the detail counts inclusively, Langfuse subtracts them from input and output respectively, so that the stored buckets are mutually exclusive.
+
+Schema recognition is strict: the usage object must contain only the OpenAI usage fields shown below. If it includes any additional key (for example, some gateways append a cost field), it is not recognized as OpenAI-style usage and is instead stored verbatim as flat keys — without the mapping and without the subtraction.
+
+Python SDKJS/TS SDK
+
+from langfuse import get_client
+
+langfuse = get_client()
+
+with langfuse.start_as_current_observation(
+ as_type="generation",
+ name="openai-style-generation",
+ model="gpt-4o"
+) as generation:
+ # Simulate LLM call
+ # response = openai_client.chat.completions.create(...)
+
+ generation.update(
+ usage_details={
+ # usage (OpenAI-style schema)
+ "prompt_tokens": 10,
+ "completion_tokens": 25,
+ "total_tokens": 35,
+ "prompt_tokens_details": {
+ "cached_tokens": 5,
+ "audio_tokens": 2,
+ },
+ "completion_tokens_details": {
+ "reasoning_tokens": 15,
+ },
+ }
+ )
+
+import { startObservation } from "@langfuse/tracing";
+
+const generation = startObservation(
+ "openai-style-generation",
+ {
+ model: "gpt-4o",
+ usageDetails: {
+ // usage (OpenAI-style schema)
+ prompt_tokens: 10,
+ completion_tokens: 25,
+ total_tokens: 35,
+ prompt_tokens_details: {
+ cached_tokens: 5,
+ audio_tokens: 2,
+ },
+ completion_tokens_details: {
+ reasoning_tokens: 15,
+ },
+ },
+ },
+ { asType: "generation" },
+);
+generation.end();
+
+You can also ingest OpenAI-style usage via generation.update() and generation.end().
+
+Troubleshooting
+
+The usage not submitted and no cost warnings in a generation's header explain when usage is missing or no model price matched. Hover or focus the warning for links to model settings and the ingestion guide.
+
+If you don't see cost on your generations, check the following:
+
+Usage or cost must be present. Langfuse can only infer cost if usage is ingested. If neither cost nor usage is ingested, no cost is calculated. Check that your integration captures provider usage, or ingest usage or cost manually.
+
+The model must match a definition. Inferred cost requires a model definition whose match_pattern matches the generation's model value. If no model matches, add a custom model definition.
+
+Model definition changes only apply to new generations. If you change or add a model definition, the updated costs are applied only to generations logged afterward.
+
+Only generation and embedding observations track cost. Other observation types do not carry usage or cost.
+
+Gateways: If you use OpenRouter, Langfuse can directly capture the OpenRouter cost information. If you use LiteLLM, Langfuse directly captures the cost information returned in each LiteLLM response.
+
+GitHub Discussions
+
+Was this page helpful?
+
+Good
+Bad
+
+Support
+
+Last updated on 
+
+PreviousSampling
+NextTrace URLs
+
+On this page
+
+Model Usage & Cost TrackingWhat you can do with cost dataHow cost tracking worksModel definitions and pricesWhen default prices updateUsageCostAdding custom model definitionsPricing TiersHow tier matching worksFrequently asked questionsIngest usage and cost manuallyUsage types are mutually exclusive bucketsWhen Langfuse normalizes usageCompatibility with OpenAITroubleshootingGitHub Discussions
+
+Actions
+Give us feedbackEdit this page on GitHub
+
+Contributors
+Last edited
+Valeriy MeleshkinAkio NuernbergerJannik Maierhöfer+7 more
+
+Ask AIA

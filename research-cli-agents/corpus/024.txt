@@ -1,0 +1,2470 @@
+TITLE: Token Reduction Is Not Cost Reduction
+URL: https://arxiv.org/abs/2607.12161
+ORG: arXiv  TYPE: paper  DATE: 2026-07
+
+Token Reduction Is Not Cost Reduction:
+An Empirical Study of End-to-End Efficiency
+in API-Based Coding Agents
+Sarel Weinberger
+
+Amir Hozez
+
+PointFive
+
+PointFive
+
+sarel.weinberger@pointfive.co
+
+amir@pointfive.co
+
+arXiv:2607.12161v5 [cs.CL] 12 Aug 2026
+
+July 2026
+Abstract
+Token-reduction tools for coding agents are often evaluated by the number of tokens they remove, but
+token count alone does not determine end-to-end inference cost. We evaluate context- and tool-output
+reduction in Claude Code using paired, provider-billed coding tasks, measuring task success, cache traffic,
+agent behavior, and cost. Across the experiments, tool-output reduction was not a reliable predictor
+of lower billed cost. The most aggressive compression setup reduced delivered tool-output tokens by
+38.4% but increased billed cost by 6.8%. Cost decomposition shows that prompt-cache traffic accounts
+for most measured input-side cost, limiting the fraction of spend directly addressable by tool-output
+compression. We also find that compression can alter the agent trajectory by inducing additional retrieval,
+diagnosis, testing, or turns, offsetting local token savings. In a SWE-bench-derived Go subset, aggressive
+compression also reduced task completion. These results show that token reduction alone is an inadequate
+proxy for cost reduction in tool-heavy coding agents. Efficiency should therefore be evaluated using
+success-adjusted end-to-end cost, including cache behavior, trajectory changes, and correctness.
+
+1
+
+Introduction
+
+API-based coding agents such as Claude Code [3], SWE-agent [33], and OpenHands [29] operate by iteratively
+invoking tools—shell commands, file reads, searches, test runs—and feeding the resulting text back into a
+large language model. Each turn re-transmits an ever-growing context: repository excerpts, prior tool outputs,
+test logs, diffs, and conversation history. This context growth has motivated several optimization approaches:
+deterministic command-output compressors, query-aware retrieval rankers, semantic and structural code
+search, and API-boundary proxies that rewrite payloads in flight.
+Nearly all of these layers are evaluated by some form of tokens removed: compression ratios on captured
+command outputs, recall-at-budget on retrieval corpora, or preserved-marker counts on synthetic fixtures.
+This study tests whether tokens removed predicts the provider-billed cost of completing a task successfully
+in the evaluated workloads. The paired-campaign results show that token reduction alone is an incomplete
+predictor of that outcome.
+Three mechanisms invalidate this simple equivalence. First, modern serving stacks bill cached context at
+discounted rates [2, 14, 20]; in the workloads we measure, the large majority of the reconstructed spend is
+prompt-cache traffic whose price per token is 10–125% of the nominal input price, so removing text from
+it saves far less than a token count suggests. Second, an agent is a closed loop: if compression removes
+context the model later needs, the model can search again, re-read files, or take extra diagnostic turns, and
+those added turns re-transmit the entire context prefix. Third, compression can make transformed outputs
+incompatible with downstream consumers other than the model—in one failure mode we analyze, ranked
+search summaries were piped into shell counting pipelines that expected raw grep lines, producing incorrect
+answers without an explicit error.
+We therefore separate six measurement layers that are frequently conflated: (1) component-level compression ratios; (2) retrieval-quality metrics; (3) model-visible context reduction; (4) billed API-token reduction;
+1
+
+(5) end-to-end task success; and (6) cost per successful execution. Using a completed evidence audit over
+all retained campaign artifacts (transcripts, ledgers, manifests, gate traces, and analysis code), we place
+every system for which artifacts exist—baseline Claude Code, RTK, the RTK-ML architecture, Headroom, a
+vendor CLI compressor, the ml_lexical engine, Caveman, and lexical, embedding-based, structural, and
+union retrieval—at the highest evidence layer its artifacts support, and we report end-to-end results only
+where paired, actually-billed campaigns exist.
+Scale of the broader program. The results reported here emerged from a substantially larger research
+and development effort: across the broader program, exploratory, superseded, tuning, failure-analysis, and
+infrastructure experiments consumed API resources well beyond the campaigns analyzed here. This paper
+does not treat that broader spend as a statistical sample. Instead, it reports in detail the controlled
+campaigns for which tasks, configurations, provider-returned usage, success judgments, transcripts, and
+analysis artifacts were retained and could be audited; those auditable campaigns comprise the roughly 5,500
+billed executions reconciled in the campaign inventory (table 4, Appendix A.2). We disclose the broader
+experimental investment to convey the scale of the search process, while restricting quantitative claims to the
+smaller evidence set that satisfies the study’s reproducibility and statistical requirements.1
+Research questions.
+• RQ1. Which components dominate the billed cost of API-based coding agents in realistic paired
+workloads?
+• RQ2. How much of that cost is addressable by tool-output compression and retrieval-context reduction?
+• RQ3. Do component-level compression and retrieval gains predict end-to-end task efficiency?
+• RQ4. How do model tier, effort level, task family, and trajectory structure mediate system effects?
+• RQ5. What benchmark design is required for trustworthy token-efficiency claims?
+Contributions.
+1. A calibrated cost decomposition for API-based coding agents: a four-component decomposition that
+reproduces most individual bills with a median per-run residual of ≈1%, showing that cache creation
+and reads accounted for ≈87% of the reconstructed cost (≈80% of the actual bill), alongside an explicitly
+quantified 8.7% dollar-weighted residual that the retained telemetry cannot attribute (section 6). A
+per-component attribution of billed cost (table 1) shows that the surfaces a user-side layer can modify
+account for only ≈6% of cost, placing the estimated upper bound for visible-token compression at ≈5%
+under the measured cost decomposition.
+2. A large paired, provider-billed comparison of context-reduction layers for coding agents—the primary
+campaign alone spans 2,908 runs, 103 tasks, 7 repositories, 3 models, up to 5 effort levels, and 4 arms
+from identical fresh working copies with block-randomized order, within a measurement program of
+5,493 billed executions (5,123 of them in append-only cost ledgers), plus 8,263 zero-inference-cost
+component evaluations (section 5).
+3. Direct evidence that token reduction and cost reduction decouple: a 38.4% reduction in estimated raw
+tool-output tokens coexisting with a +6.8% paired cost increase, and a near-zero per-task correlation
+(r = 0.15) between tool-output reduction and billed-cost change (section 7).
+4. A trajectory- and phase-level account of initial cost reductions and downstream cost increases, built
+from 13,620 deterministically classified assistant turns (section 10).
+5. Two documented compression-safety failure modes—shell-pipeline incompatibility with ranked search
+output, and alteration of the verbatim edit anchors that patch application depends on—together with
+the mitigations that fixed them (sections 7.4 and 11).
+6. A single-shot grounded-completion study on SWE-bench-derived Go tasks in which byte-exact context
+grounding was associated with the largest observed solve-rate improvement (1/29 to 5/29), while three
+tasks solved by the grounded raw arm were not solved by the grounded compressed arm and no task
+1 The broader development expenditure is contextual and is excluded from all sample sizes, confidence intervals, cost
+decompositions, and system comparisons in this paper. No repository ledger aggregates it, and this paper reports no absolute
+spend figures.
+
+2
+
+showed the reverse pattern (exact paired p = 0.25; descriptively higher cost per solve under compression;
+section 7.4).
+7. A layered evidence taxonomy and benchmark-design recommendations for future token-efficiency claims
+(sections 12 and 15).
+
+2
+
+Cost Composition of API-Based Coding Agents
+
+2.1
+
+Terminology
+
+We use the following terms throughout; they are deliberately not interchangeable.
+Uncached input tokens Prompt tokens processed at the full input price (provider usage field
+input_tokens).
+Cache-creation tokens Prompt tokens written into the provider’s prompt cache (usage field cache_
+creation_input_tokens), billed at a multiplier of the input price.
+Cache-read tokens Prompt tokens served from the prompt cache (cache_read_input_tokens), billed at
+a discount.
+Generated output tokens Tokens produced by the model (output_tokens), including visible text and
+tool-call arguments.
+Tool-use block A structured tool invocation emitted by the model within an assistant turn.
+Raw tool output The bytes a tool actually produced before any compression layer (observable in these
+campaigns only for the RTK arms, via the hook-side ledger).
+Delivered (model-visible) tool output The text that reached the model after any compression or ranking
+layer. Raw and delivered tool-output token counts are estimates from RTK’s embedded local BPE tokenizer
+(tiktoken o200k_base tables), not the provider tokenizer.
+Turn One assistant message; a run’s trajectory length is its number of turns.
+Cost per run / per successful execution Billed dollars per run; and cost per successful execution: total
+billed cost across all executions in an arm divided by the number of successful executions; repeated
+executions of the same underlying task remain separate attempts. We use success-adjusted cost for the
+broader concept, and we do not report a per-unique-task estimator.
+Raw shell output, delivered tool output, and generated output tokens are three different quantities;
+conflating any two of them produces most of the inflated savings claims we discuss in section 12.
+
+2.2
+
+Formal cost model
+
+Let a run consume Tunc uncached input tokens, Tcw cache-creation tokens, Tcr cache-read tokens, and Tout
+generated tokens, on a model with input price pin and output price pout (USD per 106 tokens). The billed
+cost recorded per run is the provider’s total_cost_usd; our reconstruction is
+
+
+b = 1 Tunc pin + Tcw µw pin + Tcr µr pin + Tout pout ,
+(1)
+C
+106
+with cache multipliers µw (write) and µr (read). Calibration against the billed amounts (section 6.1) selects the
+provider’s published standard prices—Haiku 4.5 at published list prices per million input/output tokens—with
+µr = 0.1 and µw = 1.25 (the five-minute cache TTL) [2, 4].
+Cost per successful execution (CPS) for an arm a over runs Ra with success set Sa (its successful executions)
+is
+P
+r∈Ra Cr
+CPSa =
+.
+(2)
+|Sa |
+b attributable to context
+For a reduction layer j, we distinguish its addressable share Aj —the fraction of C
+that layer j is able to modify (for a tool-output compressor, the delivered tool text and its downstream cache
+traffic)—from its realized saving, the paired change in billed cost,
+ (j)
+(base) 
+∆Cj = Etasks C t − C t
+,
+3
+
+(3)
+
+estimated over paired blocks (section 5). The two differ by a trajectory term: added or removed turns change
+every component of Equation (1) because each turn re-transmits the context prefix. Writing ∆turnsj for
+the paired change in trajectory length, the success-adjusted net effect of a layer is the paired change in CPS,
+which can be negative (a saving) only if per-turn savings exceed the combined trajectory and success penalties.
+This is the quantity we use as the primary decision metric.
+Marginal cost of a delivered tool token. A simplified marginal model estimates the addressable share.
+A delivered tool-output token inserted into the prompt at turn t incurs (per 106 tokens)
+Ctool-token,t = µw pin + Nfuture reads,t µr pin ,
+
+(4)
+
+where µw = 1.25 is the observed five-minute cache-write tier, µr = 0.1, and Nfuture reads,t is the number of
+later model calls that reuse the cached prefix containing the token. Its first cache creation is priced above
+ordinary input; later reuse is discounted. An early token is therefore more addressable than a late one: with
+the authoritative campaign’s mean trajectory of ≈4.5 assistant turns, a token delivered on the first turn
+is re-read on ≈3.5 subsequent calls and costs ≈ (1.25 + 0.35) pin = 1.60 pin , versus 1.25 pin for a final-turn
+token—and removing an early token also removes its future reads. A removed token can additionally alter
+trajectory length itself, so addressability depends on turn position and future reuse, not on token count alone.
+The retained telemetry does not record, per token, the turn of entry and the number of later calls that reused
+it, so we present eq. (4) as a bounded conceptual model; exact per-token addressability measurement is future
+work.
+
+2.3
+
+Empirical cost composition
+
+Figure 3 and table 7 summarize the descriptive result: in the evaluated workloads, generated output is a small
+minority of cost, and cache creation plus cache reads account for approximately 87% of the reconstructed
+four-component cost—about 80% of the actual bill, with a further 8.7% of the bill left unattributed by the
+reconstruction (shown explicitly as a fifth category). These are empirical averages from the coding-agent
+workloads evaluated in this study, not industry averages; denominators, uncertainty, and caveats are given in
+section 6.
+Table 1 states the same constraint from the perspective of a user-side optimization layer, independently of
+the treatment comparisons: which cost-bearing components such a layer can modify. When the benchmark
+bill is attributed to the agent component that generated each measured or inferred contribution, the two
+surfaces a user-side layer cannot reach—the harness base (system prompt and tool definitions) and hidden
+model thinking with its unattributed replay residual—together carry ≈94.0% of cost. Every component a
+layer can modify (tool outputs, tool-call arguments, retrieved file content, injected context, conversation
+history) sums to ≈6.0%. That 6% is the absolute bound under full deletion of every accessible token; since a
+run must retain sufficient information to succeed, the estimated upper bound for visible-token compression is
+≈5% of cost under the measured decomposition. The arms evaluated in this study primarily modified tool
+outputs, i.e. ≈3.3% of cost. This table provides the cost context for the end-to-end results: even complete
+removal of the accessible component would leave most billed cost attributable to components the layer does
+not control.
+Figure 1 renders the same attribution graphically, and fig. 2 shows what the evaluated compressors actually
+removed on each accessible surface: the largest observed tool-output reduction in the campaign—RTK-ML’s
+−38.4% of raw tool-output tokens (section 7.2)—amounts to ≈1.3% of total cost, the shipped RTK’s −1.3%
+to ≈0.04%, and no evaluated layer modified the remaining accessible components.
+
+3
+
+Optimization Surfaces and Architectures
+
+Context-reduction systems differ in where they act on the agent loop, what they can see, and whether their
+transformations are reversible. Table 2 summarizes the systems studied or audited here; evidence levels refer
+to the layered taxonomy of section 12 (L1–L8).
+
+4
+
+Table 1: Cost attribution by agent component (benchmark corpus: 1,212 end-to-end child sessions, 11,773 API
+requests, reconstructed from stored transcripts under a calibrated tokenizer; usage fields exact, component attribution
+measured, hidden-thinking and cache attribution inferred). “Accessible” marks surfaces a user-side layer can modify.
+Shares are of the corpus totals; columns sum to 100% within rounding.
+Component
+
+% context
+
+% cache reads
+
+% cost
+
+Accessible?
+
+Harness base (system prompt + tool defs)
+Hidden thinking + unattributed residual
+Tool outputs (Bash, tests, Git, edits)
+Tool-call arguments (model-emitted JSON)
+Retrieved files (Read, web)
+Conversation history (user + assistant)
+
+71.6
+21.8
+3.5
+1.6
+0.9
+0.5
+
+92.0
+0.0
+4.4
+1.9
+1.0
+0.7
+
+74.7
+19.4
+3.3
+1.4
+0.8
+0.5
+
+No
+Not directly
+Yes (primary surface)
+Yes (untested alone)
+Yes
+Yes
+
+Not directly modifiable total
+Accessible total
+
+93.4
+6.5
+
+92.0
+8.0
+
+94.0
+6.0
+
+SHARE OF COST
+
+accessible: 6.0%
+locked to a user-side layer: 94.0%
+
+Harness base
+(system prompt + tool defs)
+Hidden thinking
++ unattributed residual
+Tool outputs
+Tool-call arguments
+Retrieved files
+Conversation history
+
+74.7%
+19.4%
+3.3%
+1.4%
+0.8%
+0.5%
+
+0
+
+20
+
+40
+
+60
+
+80
+
+% of cost
+
+Figure 1: Cost attribution by agent component (table 1 as a graphic; benchmark corpus). Gray components are not
+directly modifiable by a user-side optimization layer (94.0% of cost); blue components are accessible (6.0%). The
+estimated upper bound for visible-token compression is ≈5% of cost.
+
+Hook-based compression (RTK). RTK installs a PreToolUse hook that rewrites eligible shell commands
+to route through a CLI proxy; the proxy applies YAML-configured, strategy-based compression to the
+command’s output before it reaches the model. RTK is the shipped deterministic layer. The RTK-ML
+architecture adds nine independently flag-gated capabilities on top: (1) query propagation from the user
+prompt into the proxied command; (2) retrieval routing of search-type commands (grep, rg, find, ls, . . . )
+into a grouped, ranked search-group representation; (3) query-aware deterministic re-ranking; (4) a lexical
+scoring leg; (5) an embedding scoring leg backed by a loopback BGE sidecar [30]; (6) a task-family router
+that classifies the context; (7) a preserve gate that bypasses compression entirely for high-recall families; (8)
+structural retrieval using ast-grep [5] to inject focus-file hints; and (9) a session-scoped focus cache. All nine
+are off by default, and the disabled paths covered by the dedicated equivalence tests were byte-equivalent; a
+safety router (default-on) prevents semantic stages from touching sensitive tool output, and a stdout-consumer
+guard (section 11) suppresses ranking when the command’s stdout feeds another program.
+API-boundary proxying (Headroom). Headroom [15] interposes on the provider API endpoint via
+ANTHROPIC_BASE_URL and optimizes payloads in flight. Its observed configuration in these campaigns was
+token-mode optimization with caching enabled and code-aware mode disabled. Because it is a black box to our
+harness, we can measure its billed effects and trajectories but cannot attribute them to internal mechanisms;
+we therefore avoid causal claims about why it behaves as it does.
+
+5
+
+accessible share of cost
+
+removed by RTK-ML ( 38.4% of tool-output tokens)
+removed by RTK (−1.3% of tool-output tokens)
+
+Tool outputs
+
+3.3%
+
+1.3% of cost
+
+Tool-call
+arguments
+
+1.4%
+
+Retrieved
+files
+
+not attacked in the
+E2E campaign
+
+0.8%
+
+Injected +
+history
+
+0.5%
+
+0
+
+1
+
+2
+
+3
+
+4
+
+% of cost
+Figure 2: Realized reduction per accessible component. Light bars: each component’s share of cost. Overlaid bars:
+the share actually removed by the evaluated hook layers, applying the hook-side ledger’s raw-vs-delivered tool-output
+reduction (−38.4% RTK-ML, −1.3% RTK; section 7.2) to the tool-output share. Even the campaign’s largest observed
+reduction reaches ≈1.3% of cost—and that arm’s paired billed cost was higher than baseline (table 8).
+
+Deterministic CLI compression (external vendor tool). One audited system is a commercially
+distributed deterministic command-output compressor from an unaffiliated vendor. The retained artifacts
+contain only that vendor’s own per-category claimed savings (75–80% for git diff, git log, ls, grep),
+embedded as reference literals in a benchmark harness. No same-harness, paired, actually-billed end-to-end
+run of it exists in the artifacts, so it appears in this paper only as a related architectural approach.
+Query-aware research engine (ml_lexical). The ml_lexical engine is an implemented research
+architecture combining chunking, lexical and cosine ranking, packing with protected regions, and a BGE
+embedding sidecar. Its evidence is component-level retrieval quality only (section 4); it has no end-to-end
+task-success or billed cost evidence.
+Agent-prose compression (Caveman). Caveman compresses LLM-generated prose (never tool output)
+under an explicit preservation contract (paths, line numbers, test names, error types, metrics, and code
+blocks are kept verbatim). It is not registered in any production strategy table; its evidence is a seven-fixture
+component study (section 4).
+
+4
+
+Benchmarks and Datasets
+
+Table 3 maps every benchmark used in the underlying research program to what it does and does not measure.
+Two properties matter most: whether the benchmark observes end-to-end task success, and whether its costs
+are actually billed rather than reconstructed.
+Limits of gold-context preservation as an agent metric. Component benchmarks score a compressor
+against human- or test-annotated gold context. Four mechanisms can cause gold-context preservation metrics
+to diverge from agent outcomes. (i) Agents can recover: if a needed line is removed, the model can search
+again or re-read the file, converting a preservation failure into a trajectory cost rather than a task failure.
+(ii) Agents can succeed without the gold: prior knowledge or inference over remaining context is often sufficient.
+6
+
+Uncached input
+Cache write
+
+Cache read
+Generated output
+
+Unattributed residual
+
+All runs (n=2,848)
+
+44
+
+35
+
+10
+
+9
+
+Baseline (712)
+
+45
+
+35
+
+12
+
+7
+
+RTK (712)
+
+46
+
+35
+
+12
+
+6
+
+RTK-ML (712)
+
+44
+
+37
+
+13
+
+Headroom (712)
+
+43
+
+0
+
+25
+
+35
+
+50
+
+Share of actual billed cost (%)
+
+7
+
+75
+
+14
+
+100
+
+Figure 3: Cost decomposition as shares of actual billed cost (n=2,848 analyzed runs; component prices as in eq. (1)).
+The hatched fifth segment is the unattributed billed-cost residual (billed minus reconstructed). Numbers inside
+segments are percentages; run-bootstrap 95% CIs for every segment are in table 7. Normalized four-component shares
+appear in Appendix A.3.
+Table 2: System architecture and evidence matrix. “Billed E2E” means paired end-to-end campaigns with providerbilled cost and deterministic task scoring exist in the retained artifacts. Evidence levels: L1 compression ratio, L2
+retrieval/preservation quality, L3 model-visible context change, L4 production-path activation, L5 task success, L6
+billed cost, L7 cost per successful execution, L8 trajectory/failure analysis.
+System
+
+Surface
+
+Visibility
+
+Reversible
+
+Prod. wiring
+
+Evidence
+
+Baseline Claude Code
+RTK
+RTK-ML
+Headroom v0.27.0
+Vendor CLI compressor
+ml_lexical engine
+Caveman
+Lexical ranking
+Embedding ranking
+Structural (ast-grep)
+Union/hybrid retrieval
+
+— (reference)
+PreToolUse hook; CLI proxy
+hook + flag-gated gate stack
+API-boundary proxy
+CLI output compressor
+query-aware rank/pack engine
+agent-prose compressor
+candidate re-ranker (gate 4)
+BGE sidecar re-ranker (gate 5)
+AST-anchored retrieval (gate 8)
+lexical∪embedding
+
+full harness
+raw+delivered tool I/O
+raw+delivered tool I/O
+opaque (black box)
+external; not run here
+component harness
+component harness
+candidates
+candidates
+focus hints
+candidates
+
+—
+rules only
+byte-equiv. on covered disabled paths
+unknown
+n/a
+fail-open
+preservation contract
+reorder only
+reorder only
+additive only
+reorder only
+
+shipped
+shipped
+benchmark build
+shipped (OSS)
+external
+research code
+not registered
+flag-gated
+flag-gated
+flag-gated
+component harness
+
+L4–L8
+L1–L8
+L1–L8
+L5–L8
+vendor claims only
+L1–L2
+L1–L2
+L2, L4
+L4 (active, not decisive)
+L2, L4
+L2
+
+(iii) Agents can fail with the gold: receiving the right lines does not guarantee correct edits. (iv) Retrieval is
+one stage of a multi-stage trajectory; a single extra diagnosis-and-retry loop re-transmits the full context
+prefix and can eliminate the nominal savings of a much larger compression (section 10). Long-context research
+documents related gaps between context presence and context use [7, 23].
+Suite-level benchmarks and created corpora. Beyond the benchmarks above, the program built and
+ran a family of suite-level corpora: a 159-case command-output compression corpus (cmdcompress) with 34
+paired live-API cases, privacy-redaction and intent-classification suites (privacybench, observer_intent),
+retrieval-mode and output-compression exercises, and a path-coverage suite proving which changed code
+each arm actually executes. It also created the synthetic task fixtures the end-to-end campaigns run on:
+seven scripted repository tasks for the pilot harness, fourteen fixture suites (343 files, including 150/400-test
+pass/fail suites and bulk-output generators) for the comprehensive campaign, three synthetic large repositories
+(911 files) for the long-session marathons, seeded synthetic monorepos with committed ground truth for
+Stages 1–2 and the authoritative campaign, the 7 Caveman prose fixtures, and the 24-observation captured
+pytest corpus. Appendix A.12 inventories all of them with sizes and paths.
+
+7
+
+Table 3: Benchmark capability matrix. “Billing” distinguishes: provider-returned usage with execution-result cost
+cross-checked against the pricing schedule (billed+usage); cost reconstructed from provider-returned token counts
+(tokens); billed cost recovered from frozen reports, ledgers, or traces (billed, with the source named); and length-based
+estimates (est.).
+Benchmark
+
+n used
+
+Gold / success metric
+
+Level
+
+Billing
+
+ContextBench [10]
+
+36 sweep runs / 7,510 rows; 50 (policy study)
+
+gold-span token survival
+
+component
+
+tokens
+
+Key limitation
+
+no task success; dataset revision unrecorded
+LoCoEval [1]
+50 (preservation; retained)
+reference-answer survival
+component
+est. (len/4)
+judge unavailable; preservation proxy only
+InterCode-proxy [32]
+24 obs. / 240 rows (12 MBPP [6] × pass/bug) marker recall ≥95%
+component
+tokens
+interactive
+task
+success
+blocked (no container runtime)
+Structural retrieval
+8 tasks / 38 queries
+test-grounded def-site gold
+component
+tokens
+agent success not measured
+Caveman fixtures
+7 synthetic
+critical-marker drops
+component
+tokens
+synthetic; not production
+traffic
+ContextBench-Go grounded E2E 29 rows × 4 arms
+patch applies + tests resolve E2E (single-shot) billed (usage)
+one model; single-shot shape
+(section 7.4)
+SWE-bench_Pro Go agent smoke 4×4 + 18 trials
+patch apply / resolve
+E2E (single-shot) billed (report-derived)
+0 applies context-only; smoke
+scale
+IC-SWE flask pilot
+3 tasks × 4 modes
+FAIL_TO_PASS flips
+E2E (single-shot) billed (trace-derived)
+n=3, single repo; labeled pilot
+Comprehensive E2E pilot
+21 tasks × 4 systems
+pytest exit + diff constraints E2E
+billed (report-derived)
+single model, 1 repetition
+Large-session campaign
+529 sessions, 3 tasks
+pytest exit
+E2E
+billed (ledger)
+different RTK binary lineage
+Authoritative campaign
+103 tasks, 2,908 runs
+deterministic judges
+E2E
+billed+usage (cross-checked) Claude-Code-specific harness
+Codex Headroom replication
+40 tasks × 2 arms (+12×2 pilot)
+deterministic graders
+E2E
+tokens (reconstructed)
+different agent (Codex CLI);
+transcribed from frozen report (section 9)
+
+SWE-bench lineage. The grounded-completion program (section 7.4) draws its tasks from SWE-benchderived corpora: the ContextBench-Go rows are Multi-SWE-bench Go instances [36] exposed through the
+ContextBench loader, the agent smoke ran on the Contextbench/SWE-bench_Pro dataset [11], and the
+IC-SWE pilot uses SWE-bench Python repositories at pinned base commits [19]. Task success is scored by
+whether the row’s FAIL_TO_PASS tests flip to passing after the agent’s patch applies.
+Snapshots. The authoritative campaign is fully frozen (task manifests, six pinned repository SHAs plus a
+seeded synthetic monorepo, sha256-pinned binaries, gzipped transcripts). The component-benchmark side is
+weaker: the ContextBench dataset revision hash was not recorded (row identifiers are retained), and parts of
+the LoCoEval artifacts were written to volatile temporary directories. Appendix A.9 lists the exact snapshot
+state per dataset.
+
+5
+
+Experimental Methodology
+
+5.1
+
+Campaign hierarchy
+
+The underlying research program produced several campaign generations (table 4). The program’s evidence
+classes are reconciled exactly in Appendix A.2: 5,123 executions recorded in append-only runtime cost ledgers
+(guarded re-executions such as the Stage-1 post-guard rerun and the two separately-billed long-session sibling
+campaigns counted at their true cost); 8 costsmoke executions whose count derives from the suite results file
+rather than a per-run ledger; and 362 billed single-shot trials whose reported or trace-reconstructed spend is
+itemized in table 5 (analyzed in section 7.4). The combined measured program therefore comprises 5,493
+billed executions, 8,263 zero-inference-cost component evaluations, and a free deterministic gate-activation
+proof (Stage 0). Later campaigns supersede earlier ones where they overlap. Table 4 lists them with their
+role in this paper. All quantitative end-to-end claims in Sections 6 to 8 and 10 come from the authoritative
+campaign unless explicitly labeled otherwise; the long-session campaign is reported separately because it used
+an earlier experimental configuration and must not be pooled with the authoritative campaign; earlier pilots
+are cited only for provenance and for the failure analysis of section 11.
+
+5.2
+
+Design of the authoritative campaign
+
+Arms. (1) Baseline: Claude Code 2.1.201 with no layers. (2) RTK v0.44.1 : the open-source RTK hook
+layer used for all RTK experiments in this paper. (3) RTK-ML: the flag-gated architecture at the guard
+commit, all nine gates enabled, safety router in enforce mode, BGE embedding sidecar health-checked before
+every batch. (4) Headroom v0.27.0 via ANTHROPIC_BASE_URL. Binary sha256 hashes and exact provenance
+8
+
+Table 4: Campaign inventory and role, entire measurement program. Execution counts are totaled from each
+campaign’s append-only runtime cost ledger (every billed execution counted once, including guarded re-executions);
+analysis populations de-duplicate rescored rows separately. The authoritative campaign comprises a base phase and
+a pre-specified expansion (new hash-frozen holdout) analyzed jointly. Stage 0 is a free deterministic proof and is
+excluded from the paid total.
+
+Campaign
+
+Runs
+
+Models
+
+Systems
+
+E2E smoke pilot
+Small comparison (costsmoke)
+
+32
+8d
+
+Haiku 4.5
+Opus 4.8
+
+4
+4
+
+Single-shot grounding program 362
+
+Sonnet 4.6
+
+(see table 5)
+
+anchor alteration + grounding study (section 7.4)
+
+—
+
+Stage 0 adds 4 free checks;
+d
+= count derived from suite
+results, no per-run ledger
+
+Comprehensive E2E pilot
+Expanded statistical (API)
+Large-session (2-system gen.)
+Large-session campaign
+Large-session attribution
+Stage 1 (pre-guard + rerun)
+Stage 2 (paid, post-guard)
+Authoritative campaign
+
+Paid total
+
+Role in this paper
+
+provenance only
+suite-level; superseded on
+compression axis
+96
+Haiku 4.5
+4(+4 modes) Headroom 18/21 discussion
+(section B)
+112
+Opus 4.8
+4
+component-level; compression at scale
+133
+Opus 4.8
+2
+earlier generation, superseded by 4-system
+529
+Opus 4.8
+4
+long-session evidence; separate binary lineage
+attribution follow-up (same
+60
+Opus 4.8
+4
+lineage)
+911
+Haiku 4.5
+5
+pipeline-incompatibility
+analysis + post-guard rerun
+guard validation; model342
+Haiku, Sonnet
+4
+reversal observation
+2,908 Haiku, Sonnet, Opus 4
+all primary results
+
+5,493 —
+
+are in Appendix A.8. All RTK rows in the paper refer to v0.44.1. The post-hoc Opus-medium replication
+uses the same RTK version and is reported separately only because it was run after the main campaign under
+Claude Code 2.1.220 (section C).
+Tasks and repositories. 103 analyzed tasks across 24 defined families (23 with analyzed tasks; the one
+family without an analyzed task contained only the excluded defective task) (section 8) over 7 repositories: six
+pinned open-source repositories (click, cobra, express, flask, gin, requests) and a seeded synthetic monorepo.
+Tasks are frozen in pre-specified, hash-frozen manifests with per-task judges (deterministic answer/regex/test
+checks), allowed/forbidden file constraints, timeouts, and design attributes (difficulty, retrieval mode, session
+band, output band).
+Pairing and randomization. The unit of execution is a block: one task × model × effort × repetition,
+in which all four arms run from identical fresh working copies in randomized order. Runs execute in
+an isolated per-run $HOME with a scrubbed environment (all CLAUDE*/ANTHROPIC* and compression-layer
+variables removed except the API key), fixed harness settings (project-only setting sources so no user hooks
+load), per-run budget caps, and a global spend cap enforced under a lock.
+Models and effort. Claude Haiku 4.5, Claude Sonnet 5, and Claude Opus 4.8, at effort levels
+low/medium/high/xhigh/max for Haiku and low/high for Sonnet and Opus (unmeasured cells are reported
+as such, never imputed; section 8).
+
+9
+
+Table 5: The single-shot grounded-completion and agent-smoke program (companion bench harness; claude-sonnet-4-6;
+billed anthropic_api_usage). Trials are (row × arm) agent calls; ∼ marks report-approximate or trace-derived spend.
+Experiment (single-shot, Sonnet 4.6)
+
+Trials Result
+
+SWE-bench_Pro agent smoke
+ContextBench-Go C3/D3/D3b/E investigation
+
+16
+84
+
+SWE-bench_Pro Go probe+confirm
+
+18
+
+G2 grounded 4-arm (29 oracle rows)
+
+116
+
+Family-routing E2E validation
+
+116
+
+IC-SWE flask agent pilot
+
+12
+
+Program subtotal
+
+362
+
+oracle 2/4 resolved; Claude patches generated, 0 applied
+Phase E (n=40 x 2 arms): raw 2/40 vs compressed 1/40
+resolved; apply 27/40 vs 15/40
+0/18 applied, 0 solved (context-only agent, no verbatim
+anchors)
+grounded raw 5/29 solved; 3 rows solved only by grounded
+raw, 0 only by grounded compressed (exact paired p=0.25)
+preserve 83% vs aggressive 48% apply; grounded preserve
+6 solves
+0/3 all modes; hybrid-lexical 34.7% savings, 67% patchapply
+plus 8,263 zero-inference-cost component evaluation rows
+
+Measurement. Cost is the provider-billed total_cost_usd from the harness JSON output (field cost_
+source equal to actual_billed on every analyzed run). For every execution, total_cost_usd was obtained
+from the Claude Code/API execution result and independently cross-checked against the provider-returned
+usage fields and the applicable Anthropic pricing schedule; it was not estimated from text length or local token
+heuristics. Usage tokens come from the provider usage object; success is scored by the frozen deterministic
+judges; gate activation is read from per-run gate traces; raw-vs-delivered tool tokens come from the hook-side
+ledger (RTK arms only), counted with an embedded local BPE tokenizer (estimates, not provider token
+counts). Every transcript is retained gzipped, enabling the turn-level ledgers and phase analysis of section 10.
+Pre-specification and split roles. The campaign design, arms, tasks, judges, and analysis plan were
+frozen in hash-pinned manifests and pre-specification documents before execution (the expansion added a
+new frozen holdout before its spend). There was no public, independently timestamped preregistration; we
+therefore use “pre-specified” throughout rather than “pre-registered.” Findings are labeled by provenance:
+development/base-split observations (which also drove the guard fix and judge repairs), frozen-holdout
+confirmations (table 9), pooled estimates, and exploratory strata.
+Exclusions and integrity. Analysis rows are de-duplicated keep-last per run id (rescored rows are appended,
+never overwritten), restricted to completed non-infrastructure-failure runs, and exclude one manifest-flagged
+defective task and the calibration split: 2,848 analyzed runs out of 2,908 executed. Five judge-defect classes
+found before the holdout were fixed and rescored symmetrically across all arms from stored outputs, with the
+full append-only row history retained.
+
+5.3
+
+Prompt-cache carryover between arms (threat to validity)
+
+Because the measured outcome is directly affected by provider-side prompt caching, within-block cache
+carryover is a first-order threat: all four arms of a block run the same task from identical working copies,
+per-run $HOME isolation does not isolate the provider’s cache, and the median gap between consecutive runs
+in a block is 10.8 s (p90 28.6 s; 100% of the 2,136 consecutive pairs fall inside the five-minute cache TTL). A
+TTL-separated re-analysis is therefore impossible on this data — carryover cannot be ruled out by temporal
+separation. Three retained-data checks bound the concern (table 6; full numbers in the reproducibility
+package). First, the design is exactly balanced at the margins: each arm ran 712 times in total and each
+block position contains exactly 712 runs (arm-by-position cell counts vary 147–221 under randomization,
+which is not stratified by position). Second, the primary paired deltas do not depend on relative order: for
+every arm, the delta measured when the arm ran before baseline is statistically indistinguishable from the
+delta when it ran after (all order-difference CIs cross zero). Third, later block positions show no cache-write
+deflation—mean cache-creation tokens at positions 1–3 are 3.7% higher than at position 0, the opposite of
+
+10
+
+Table 6: Order-sensitivity check for the main 2,848-run campaign: paired per-task cost delta vs. baseline, split by
+whether the arm executed before or after baseline within its randomized block. All order-difference CIs cross zero.
+The post-hoc RTK v0.44.1 Opus-medium replication is not pooled into this table because it is a different campaign
+(section C).
+Arm
+RTK v0.44.1
+RTK-ML
+Headroom v0.27.0
+
+∆% (arm first)
+
+∆% (arm after)
+
+Order difference (%) [95% CI]
+
+nT
+
+-4.41
++11.53
++47.31
+
+-1.57
++4.04
++49.69
+
+-2.84 [-9.54, +3.75]
++7.49 [-2.32, +18.01]
+-2.40 [-17.57, +12.02]
+
+101/99
+99/101
+102/99
+
+what shared-prefix reuse would produce, and mean cost varies non-monotonically by position (a 9% spread).
+Randomized order limits systematic bias by construction, and these checks detect no order signature in cost,
+cache traffic, or success; they do not prove carryover is absent, and we carry the point as a limitation.
+
+5.4
+
+Statistical procedure
+
+The task is the unit of inference for comparative arm effects. Descriptive cost-composition and reconstruction
+intervals use run-level resampling and are not interpreted as task-level treatment-effect inference. For any
+comparative metric we form paired within-block differences (arm minus baseline), average them within
+task, and bootstrap over tasks (10,000 resamples, fixed seed) for 95% confidence intervals; the expansion
+analysis additionally reports repository-clustered bootstrap intervals and leave-one-repository-out sensitivity
+for the same contrasts. Resampling units by analysis: arm comparisons use the task-clustered bootstrap;
+cost-composition shares and the reconstruction residual use a run-level bootstrap (descriptive only; run-level
+resampling does not account for repeated-task dependence); repository sensitivity uses a repository-clustered
+bootstrap; grounded paired outcomes use an exact paired analysis; exploratory task-family cells are descriptive
+or task-bootstrap as flagged in each table. Repeated runs of the same task are never treated as independent:
+intraclass correlation of cost across repetitions was 0.37–0.55 depending on arm, giving Kish effective sample
+sizes of roughly 38–45 tasks per arm despite 712 runs per arm. Family-level results are exploratory screening:
+the underlying campaign screened families by whether task-clustered bootstrap intervals excluded zero, but
+no per-contrast p-values were computed, so no false-discovery-rate control is claimed; we report family-level
+effect sizes with confidence intervals and label them exploratory. Cells with fewer than six tasks are flagged
+unstable and reported as exploratory. We report effect sizes with confidence intervals and avoid binary
+significance language where power is insufficient. Failed tasks are never dropped from cost aggregates, and
+lower cost caused by early failure is not treated as efficiency: cost per successful execution (eq. (2)) keeps
+failed runs in the numerator.
+
+6
+
+Aggregate Cost Composition
+
+6.1
+
+Calibration of the decomposition
+
+Applying eq. (1) with the provider’s published standard prices and the five-minute cache-write multiplier
+(µw =1.25, µr =0.1) reproduces the billed cost of individual runs with median per-run residuals of +0.9%
+(Haiku, n=1,748), +0.0% (Sonnet, n=948), and +0.2% (Opus, n=152). Alternative configurations are rejected
+by the same calibration: the one-hour cache multiplier leaves −23% to −33% median residuals, and Sonnet 5
+introductory pricing leaves +33% unexplained—so the campaign was billed at standard prices under the
+five-minute cache tier.
+The median residual and the aggregate residual answer different questions, and the distinction matters
+for all reported results in this paper. The four-component model is accurate for most individual runs (the
+median residuals above), but the dollar-weighted aggregate residual is +8.7% of total billed spend (95% CI
+[7.2, 10.1]; by arm: baseline +7.1%, RTK +5.5%, RTK-ML +4.9%, Headroom +14.5%)—an economically
+material share that cannot be explained by the small median. A post-hoc per-model analysis (script
+scripts/extract_thinking_addressability.py; retained run records only) localizes it. On Sonnet 5
+the four components account for the bill at both measured efforts (residual +0.2%), so its aggregate
+
+11
+
+Table 7: Cost decomposition as shares of actual billed cost with run-bootstrap 95% CIs, by slice, including the
+unattributed residual (billed minus reconstructed). Population: 2,848 analyzed runs from the main campaign; the RTK
+row therefore refers to RTK v0.44.1 in the main campaign; the post-hoc Opus-medium cells are reported separately.
+Cache write plus cache read is ≈80% of the bill (≈87% of the reconstructed four-component cost). Normalized
+four-component shares for finer slices are in Appendix A.3.
+
+Slice
+
+Uncached
+
+Cache write
+
+Cache read
+
+Output
+
+Unattributed residual
+
+All runs
+Baseline
+RTK v0.44.1
+RTK-ML
+Headroom
+
+1.3 [1.1, 1.5]
+1.4 [1.0, 1.8]
+1.5 [1.1, 2.0]
+1.4 [1.0, 1.8]
+0.9 [0.6, 1.1]
+
+44.3 [43.2, 45.3]
+44.7 [42.9, 46.4]
+46.4 [44.7, 48.2]
+44.0 [42.2, 46.1]
+42.8 [40.4, 45.4]
+
+35.4 [34.5, 36.3]
+35.2 [33.6, 36.6]
+35.0 [33.5, 36.5]
+37.1 [35.2, 38.8]
+34.6 [32.6, 36.8]
+
+10.4 [10.0, 10.9]
+11.7 [10.7, 12.6]
+11.5 [10.7, 12.4]
+12.6 [11.6, 13.6]
+7.3 [6.6, 7.9]
+
+8.7 [7.2, 10.1]
+7.1 [4.6, 10.1]
+5.5 [3.0, 8.4]
+4.9 [2.9, 7.4]
+14.5 [11.0, 18.0]
+
+output_tokens appear to include thinking charges. On Haiku 4.5 the residual rises monotonically with the
+thinking-effort setting—from 11.0% to 18.3% of the cell’s bill per run (rising monotonically; implied +753 to
++1,283 tokens at the output price)—while measured output (≈780/run), cache volumes, and turn counts
+stay flat. Cache-tier and turn-count explanations are ruled out by those flat covariates, and secondary-model
+auxiliary calls contribute only a smaller, flat component (residual 5.2% for one-model vs. 7.2% for two-model
+runs): the effort-scaling component is therefore thinking-consistent, and on this model thinking charges sit
+inside the residual rather than the measured output component. Opus 4.8 cells are too small to conclude
+(n=24/90). Provider usage semantics are thus not uniform across models in this harness—the same aggregate
+field appears to include thinking on Sonnet 5 and exclude it on Haiku 4.5. The reconstruction therefore
+does not account for every billed dollar, and all reported shares are reported against the actual bill with
+the residual shown explicitly; the “generated output” component is measured output. The larger Headroom
+residual is an observation, not evidence of any particular internal mechanism.
+
+6.2
+
+Billed cost decomposition
+
+Across all 2,848 analyzed runs (table 7, fig. 3), as shares of the actual bill: cache creation 44.3% (CI
+[43.2, 45.3]), cache reads 35.4% [34.5, 36.3], generated output 10.4% [10.0, 10.9], uncached input 1.3% [1.1, 1.5],
+and unattributed residual 8.7% [7.2, 10.1]. Equivalently, cache creation and cache reads accounted for
+approximately 87% of the reconstructed four-component cost (48.5% and 38.7% of b
+C) and about 80% of the
+bill itself. The mean run carried ≈117k cache-read tokens and ≈12k cache-creation tokens against only ≈715
+generated tokens.
+This composition, rather than any property of a specific compression layer, is the paper’s main explanatory
+result for RQ1. A system may remove a large fraction of a particular tool output while changing only a small
+fraction of total billed cost because that output may represent only a small part of the complete prompt-cache
+and trajectory cost.
+Slice-level analysis provides additional detail (normalized four-component shares; Appendix A.3). Failed
+b on successes) and generated output (14.1% vs.
+runs shift spend toward cache reads (43.5% vs. 38.6% of C
+11.3%)—a pattern consistent with additional re-reading or recovery behavior. Long sessions raise the output
+share from 7.4% (short) to 18.4% and nearly triple cache-read tokens per run. Headroom’s profile has the
+lowest output share (8.5%) and the highest cache share of any arm; the tested configuration was associated
+with higher cache-side usage; Opus is the only model with a material uncached-input share (11.3%). Because
+cache reads are billed at 0.1× input price, the addressable saving from removing one delivered tool token is
+an order of magnitude smaller than nominal token counts suggest once that token has entered the cached
+prefix—and is then re-read on subsequent turns at the discounted rate. Consequently, end-to-end agent cost
+cannot be inferred from a simple input-versus-output token decomposition (RQ2).
+
+12
+
+Table 8: Aggregate end-to-end results, authoritative campaign (per arm: 712 runs, 103 tasks). CPS = cost per
+successful execution (eq. (2)). ∆cost is the paired per-task billed-cost change vs. baseline as % of the baseline mean,
+task-clustered bootstrap 95% CI; ∆succ. is the paired success change in percentage points.
+System
+
+Runs Succ. (%) Turns
+
+Baseline Claude Code
+RTK v0.44.1
+RTK-ML
+Headroom v0.27.0
+
+712
+712
+712
+712
+
+96.2
+96.4
+97.5
+97.8
+
+4.46
+4.32
+4.69
+4.20
+
+∆cost (%)
+
+∆succ. (pp)
+
+—
+—
+-2.7 [-5.6, -0.1]
+-0.2 [-2.9, +1.9]
++6.8 [+2.8, +11.3] +0.9 [-0.6, +2.5]
++48.4 [+42.3, +55.0] +1.4 [-0.2, +3.1]
+
+Table 9: Frozen-holdout-only vs. pooled paired billed-cost change vs. baseline. Findings first observed during
+development and confirmed on the frozen holdout are distinguished from pooled estimates.
+Arm
+RTK v0.44.1
+RTK-ML
+Headroom v0.27.0
+
+Frozen holdout only
+
+Pooled (development + holdout)
+
+-2.3% [-7.4, +2.1] (nT =27)
++9.1% [+2.4, +16.9] (nT =27)
++47.3% [+35.2, +59.2] (nT =27)
+
+-2.7% [-5.6, -0.1] (nT =103)
++6.8% [+2.8, +11.3] (nT =103)
++48.4% [+42.3, +55.0] (nT =103)
+
+7
+
+End-to-End Results
+
+7.1
+
+Aggregate outcomes
+
+Table 8 reports the primary end-to-end comparison. No success-rate difference was detected within the
+precision of the campaign (all paired success CIs cross zero; RTK-ML +0.9 pp [-0.6, +2.5], Headroom +1.4 pp
+[-0.2, +3.1]); the study was not designed as a formal non-inferiority trial, and the high baseline success
+rate (96–98%) limits sensitivity to small performance losses (section 14). Costs, by contrast, separate
+clearly: RTK v0.44.1 is slightly lower than baseline (−2.7%, CI [-5.6, -0.1]); the RTK-ML build is a small
+net cost (+6.8%, CI [+2.8, +11.3]); and Headroom carries a large, consistent cost increase (+48.4%, CI
+[+42.3, +55.0]). The expansion analysis confirmed the Headroom and RTK-ML-vs-RTK orderings under
+repository-clustered intervals and leave-one-repository-out sensitivity. Table 9 separates the frozen-holdout
+estimates from the pooled ones: the Headroom cost increase (+47.3% [+35.2, +59.2]) and the RTK-ML cost
+(+9.1% [+2.4, +16.9]) are confirmed on the holdout alone, whereas RTK v0.44.1’s small saving is a pooled
+estimate whose holdout-only interval crosses zero (−2.3% [-7.4, +2.1])—it should be read as suggestive, not
+holdout-confirmed. A post-hoc paired replication extended RTK v0.44.1 to cells the main campaign did not
+measure—Opus 4.8 and Opus 5 at medium effort. RTK v0.44.1 changed billed cost by −2.9% [-18.8, +9.3] on
+Opus 4.8 and by +2.5% [-6.1, +12.0] on Opus 5; pooled across those cells the change was −0.1% [-9.3, +7.8].
+The corresponding CPS ratios are 0.933 [0.795, 1.073], 1.025 [0.941, 1.123], and 0.979 [0.896, 1.066] pooled
+(table 10 and section C).
+
+7.2
+
+Token reduction versus cost reduction
+
+The hook-side ledger makes raw-vs-delivered tool output observable for the RTK arms. Over the campaign, the
+RTK-ML arm reduced estimated raw tool-output tokens from 5.62M to 3.46M delivered (−38.4%), while RTK
+delivered essentially raw output (−1.3%). Raw and delivered counts are produced by RTK’s hook-side ledger
+using an embedded local BPE tokenizer (tiktoken o200k_base merge tables), not the provider tokenizer, so
+we report them as estimates; the reduction percentage compares like-for-like counts under the same tokenizer.
+Yet the RTK-ML arm’s paired billed cost was higher than baseline and RTK’s was marginally lower. At the
+task level (fig. 4), observed tool-output reduction was a weak, unstable predictor of paired billed-cost change:
+Pearson r = 0.154 [-0.051, +0.356], Spearman ρ = 0.013 [-0.082, +0.339] over 100 Haiku tasks; the Pearson
+interval crosses zero, the point estimate rises to 0.24 when the five highest-reduction tasks are removed,
+and it is 0.13 [-0.09, +0.36] on the 68 tasks where the gate actually routed output. Two caveats bound the
+interpretation. First, reduction is concentrated: 87 of 100 tasks saw under 0.1% reduction, and the four tasks
+in the 5–20% band show a positive mean cost change (+24.7% [+6.3, +46.0]; binned means in fig. 4). Second,
+observed reduction is endogenous—the optimized arm can issue different commands and different trajectories,
+13
+
+Paired billed-cost change vs.\ baseline (%)
+
+RTK-ML arm, Haiku 4.5 (n=100 tasks)
+Pearson r=0.154 [-0.051, 0.356]; Spearman ρ=0.013 [-0.082, 0.339]
+
+120
+100
+80
+60
+40
+n=7
+20
+n=87
+0
+−20
+−40
+0
+
+n=4
+
+10
+
+20
+
+30
+
+40
+
+50
+
+Estimated raw tool-output tokens removed per task (%)
+
+Figure 4: Per-task estimated raw tool-output reduction (local BPE tokenizer) vs. paired billed-cost change (RTK-ML
+arm, Haiku 4.5; each point one task, n = 100; task means over paired blocks; red squares: binned means with bootstrap
+95% CIs). Pearson r = 0.154 [-0.051, +0.356]; Spearman ρ = 0.013 [-0.082, +0.339] (task bootstrap, 10,000 resamples,
+seed 7). Observed reduction is endogenous to the arm’s own trajectory, not an assigned dose.
+
+so raw-output exposure is partly determined by the model’s own actions, and the compression percentage is
+not an externally assigned treatment dose. We therefore read r descriptively: in this evaluated Haiku task
+set, per-task observed tool-output reduction was a weak predictor of paired billed-cost change; this does not
+establish that compression cannot affect cost. Answering RQ3, component-level reduction did not predict
+end-to-end cost movement in these workloads. The phase analysis (section 10) identifies trajectory patterns
+consistent with a possible mechanism: the realized saving (eq. (3)) is small once cache prices and added turns
+are accounted for—retrieval-stage savings were real but small at cache prices, and were offset downstream by
+added diagnosis, testing, and re-retrieval turns.
+
+7.3
+
+Cost per successful execution
+
+Table 10 and fig. 5 give the primary success-adjusted metric with its uncertainty. In the main campaign,
+RTK v0.44.1 has a CPS ratio of 0.968 [0.937, 1.004]; RTK-ML is 1.051 [1.006, 1.100] and Headroom is 1.464
+[1.397, 1.531]. The post-hoc medium-effort replication uses the same RTK v0.44.1. There, Opus 4.8 shows a
+−2.9% billed-cost change [-18.8, +9.3] and CPS ratio 0.933 [0.795, 1.073]; Opus 5 shows a +2.5% billed-cost
+change [-6.1, +12.0] and CPS ratio 1.025 [0.941, 1.123]. Pooled across both post-hoc cells, billed cost changes
+by −0.1% [-9.3, +7.8] and CPS is 0.979 [0.896, 1.066]. On every model measured in the main campaign,
+Headroom’s cost per successful execution is the highest (67% above baseline on Opus 4.8). Figure 6 shows
+the run-level relationship between trajectory length and billed cost that drives these aggregates: cost grows
+with turns on every arm, so any layer that adds turns must overcome that growth before its per-turn savings
+show up as net savings.
+
+7.4
+
+Single-shot grounded-completion study (separate harness)
+
+A companion program ran a single-shot SEARCH/REPLACE coding agent (claude-sonnet-4-6, billed
+anthropic_api_usage) over SWE-bench-derived Go tasks in the benchmark worktree harness (table 5). It
+is not a Claude Code campaign—one model, one shot, small n—but it is the only place in the artifact record
+where task success under compression is measured jointly with a grounding intervention, and it illustrates a
+broader risk for edit formats that depend on verbatim anchors.
+Compression can alter verbatim edit anchors. On the full ContextBench-Go population (40 rows
+× {raw, compressed}), the compressed arm cut billable tokens by 73% and cost by 59%, yet lost patch-
+
+14
+
+Table 10: Billed-cost change and cost per successful execution (eq. (2)), with task-bootstrap 95% CIs. Top: maincampaign estimates for RTK v0.44.1, RTK-ML, and Headroom, followed by the post-hoc RTK v0.44.1 medium-effort
+replication on Opus 4.8 and Opus 5. Bottom: model-level CPS indices; nT = unique tasks, s/r = successes/runs (u
+= fewer than six tasks; main-campaign Opus 4.8 cells rest on 38 runs each and are based on smaller samples; r =
+post-hoc replication campaign, medium effort, 52 tasks, Claude Code 2.1.220, section C). Failed runs remain in the
+cost numerator.
+System
+
+Scope
+
+Baseline Claude Code
+RTK v0.44.1
+RTK-ML
+Headroom v0.27.0
+
+main campaign
+reference
+main campaign
+−2.7% [-5.6,-0.1]
+main campaign +6.8% [+2.8,+11.3]
+main campaign +48.4% [+42.3,+55.0]
+
+1.000
+0.968 [0.937,1.004]
+1.051 [1.006,1.100]
+1.464 [1.397,1.531]
+
+685/712
+686/712
+694/712
+696/712
+
+RTK v0.44.1r
+RTK v0.44.1r
+RTK v0.44.1r
+
+Opus 4.8
+Opus 5
+pooled
+
+−2.9% [-18.8,+9.3]
++2.5% [-6.1,+12.0]
+−0.1% [-9.3,+7.8]
+
+0.933 [0.795,1.073]
+1.025 [0.941,1.123]
+0.979 [0.896,1.066]
+
+51/52
+51/52
+102/104
+
+System
+
+Model
+
+Baseline Claude Code
+Baseline Claude Code
+Baseline Claude Code
+Baseline Claude Code
+RTK v0.44.1 (main)
+RTK v0.44.1 (main)
+RTK v0.44.1 (main)
+RTK v0.44.1 (medium)
+RTK v0.44.1 (medium)
+RTK-ML
+RTK-ML
+RTK-ML
+Headroom v0.27.0
+Headroom v0.27.0
+Headroom v0.27.0
+
+Haiku 4.5
+Sonnet 5
+Opus 4.8
+Opus 5r
+Haiku 4.5
+Sonnet 5
+Opus 4.8
+Opus 4.8r
+Opus 5r
+Haiku 4.5
+Sonnet 5
+Opus 4.8
+Haiku 4.5
+Sonnet 5
+Opus 4.8
+
+∆ billed cost [95% CI] CPS ratio [95% CI] Succ./runs
+
+CPS index vs. model baseline [95% CI] nT
+1.000 [0.863, 1.156]
+1.000 [0.886, 1.142]
+1.000 [0.828, 1.187]
+1.000 [0.849, 1.172]
+0.989 [0.858, 1.151]
+0.967 [0.873, 1.076]
+0.931 [0.797, 1.079]
+0.933 [0.795, 1.073]
+1.025 [0.941, 1.123]
+0.981 [0.855, 1.129]
+1.096 [0.945, 1.277]
+1.202 [0.909, 1.553]
+1.474 [1.277, 1.715]
+1.420 [1.285, 1.570]
+1.673 [1.359, 1.997]
+
+103
+103
+30
+52
+103
+103
+30
+52
+52
+103
+103
+30
+103
+103
+30
+
+s/r
+412/437
+235/237
+38/38
+51/52
+415/437
+234/237
+37/38
+51/52
+51/52
+426/437
+231/237
+37/38
+422/437
+236/237
+38/38
+
+applicability on a net 12 rows (raw applied 27/40, compressed 15/40; failure mix edit_apply_failed 20
+vs. 12): SEARCH/REPLACE editing requires the agent to reproduce a code anchor byte-for-byte, and
+aggressive compression rewrote or dropped exactly those spans. Resolved tasks were 2/40 (raw) vs. 1/40
+(compressed), and on the 10-row subset where both arms applied, solve rate was equal (1–1). The observed
+deficit was concentrated in patch applicability; the experiment does not isolate whether compression also
+affected reasoning quality. The causal chain for application failures is mechanical: the model receives context,
+emits an edit whose SEARCH block must match the on-disk file byte-for-byte, and application precedes any
+test; compression that rewrites, omits, normalizes, or reorders the anchored span fails the patch even when the
+intended change is conceptually correct. The failure taxonomy therefore separates four states—evidence loss
+before reasoning, reasoning failure, edit-application failure, and test failure after successful application—and
+the observed failure mix moves between them: under grounding, edit_apply_failed decreased (17→5
+on the compressed arm) and tests_failed became the dominant residual (genuine reasoning limits). A
+context-only agent on SWE-bench_Pro Go rows applied 0/18 patches, a pattern consistent with the same
+anchor-availability limitation. The frozen report itself warns against the “successes-per-million-tokens” framing
+under which the compressed arm would appear superior: with 1 vs. 2 solves on non-overlapping subsets, that
+ratio metric inverts the verdict while obscuring the reduction in patch-application rate.
+Effect of byte-exact grounding. Phase G2 re-ran 29 oracle-resolved rows across four arms, adding
+a grounding prelude—byte-exact ±30-line windows read from the prepared repository at the gold-context
+file paths—ahead of the (raw or compressed) broad context (table 11). Grounding lifted apply rates from
+76% to 90% (raw) and from 31% to 83% (compressed) and produced the program’s first nonzero solve-rate
+
+15
+
+CPS index vs. model baseline
+
+2.0
+
+Baseline
+RTK
+
+RTK-ML
+Headroom v0.27.0
+
+1.5
+1.0
+0.5
+0.0
+
+Haiku 4.5
+
+Sonnet 5
+
+Opus 4.8
+
+Opus 5
+(med., repl.)
+
+Figure 5: Cost per successful execution by system and model (whiskers: task-bootstrap 95% CIs; 10,000 resamples,
+seed 7; success and run counts in table 10). The hatched Opus 5 group is the post-hoc medium-effort RTK v0.44.1
+replication cell (CPS 1.025, 95% CI [0.941, 1.123]); the Opus 4.8 medium-effort replication value is reported in tables 10
+and 26.
+Table 11: Phase G2 grounded-completion results (29 oracle-resolved ContextBench-Go rows per arm, single-shot,
+claude-sonnet-4-6, billed usage; token-reconstructed costs reported as indices). In this small study, the largest observed
+improvement was associated with grounding; under grounding, the compressed arm produced descriptively fewer
+solves at higher observed cost per resolved row (table 12).
+Arm
+raw context-only
+compressed context-only
+grounded raw
+grounded compressed
+
+Applied
+
+Resolved
+
+Billable tok
+
+Cost index
+
+22/29 (76%)
+9/29 (31%)
+26/29 (90%)
+24/29 (83%)
+
+1 (3.4%)
+1 (3.4%)
+5 (17.2%)
+2 (6.9%)
+
+114,658
+37,157
+347,231
+276,531
+
+1.00×
+0.45×
+2.18×
+1.82×
+
+improvement: 5/29 for grounded raw at the lowest observed cost per resolved row among the arms. Under
+grounding, the compressed arm’s solves were a strict subset of the raw arm’s: three tasks solved by the
+grounded raw arm were not solved by the grounded compressed arm, while no task showed the reverse
+pattern (table 12). With only three discordant pairs the paired contrast is not statistically resolvable (exact
+two-sided p = 0.25), and per-row costs were not retained, so no confidence interval can be attached to the
+per-resolved-row cost ratio; descriptively, the compressed grounded arm produced fewer solves at a higher
+observed cost per resolved row (2.08× the raw arm’s) even though its cost per attempted row was 17%
+lower—compression reduced per-attempt spend while reducing application probability, while observed cost
+per resolved row increased. These counts are small; we report them as evidence about the mechanism, not as
+a stable general result. A family-routing variant of the same design showed the preserve policy (section 3,
+gate 7) preserving this content type: preserve vs. aggressive compression applied 83% vs. 48% context-only,
+with evidence-loss failures 5 vs. 15, and grounded-preserve solving most (6) at the lowest observed cost per
+resolved row of the family study.
+Scope limits. These are single-shot trials: the agent cannot search again or recover, so the recoveryloop dynamics of section 10 are structurally invisible here (the IC-SWE pilot records them explicitly as
+not_measured). Sample sizes are small (solve counts of five and two), one model (Sonnet 4.6) and one
+edit format (SEARCH/REPLACE) were used, tasks are SWE-bench-derived Go rows, and one compression
+configuration was evaluated. These results should not be generalized beyond this experimental setting. We
+interpret this program as evidence about the mechanism—what the evaluated compression configuration does
+to edit anchors, and what grounding does to apply rates—not as a system ranking; its direction is consistent
+with the paired multi-turn campaigns.
+
+16
+
+Billed cost per run\n(× baseline mean, log)
+
+Baseline
+
+RTK
+
+Haiku 4.5
+
+RTK-ML
+
+Headroom v0.27.0
+
+Sonnet 5
+
+Opus 4.8
+
+101
+
+100
+
+0
+
+20
+
+40
+
+Assistant turns
+
+0
+
+20
+
+40
+
+Assistant turns
+
+0
+
+10
+
+20
+
+Assistant turns
+
+Figure 6: Billed cost vs. trajectory length (assistant turns) per run, by model (n=2,848 runs; log-scaled cost). Each
+added turn re-transmits the cached prefix, so trajectory changes dominate per-turn savings.
+Table 12: Paired task outcomes and cost decomposition in the grounded study (29 rows; grounded raw vs. grounded
+compressed). With three discordant pairs, the exact two-sided p is 0.25; the comparison is descriptive. Per-row costs
+were not retained, so uncertainty for the per-resolved-row cost cannot be computed.
+Paired outcome (29 rows)
+
+Count
+
+Solved by both arms
+Solved only by grounded raw
+Solved only by grounded compressed
+Solved by neither
+
+2
+3
+0
+24
+
+Exact two-sided p (discordant pairs)
+
+0.25
+
+Cost per attempted row (compressed vs. raw)
+Cost per applied patch (compressed vs. raw)
+Cost per resolved row (compressed vs. raw)
+
+7.5
+
+0.83× raw
+0.90× raw
+2.08× raw
+
+Long-session evidence (separate lineage)
+
+A separate long-session program (Opus 4.8; three long-horizon code-change tasks on synthetic large repositories;
+paired design) provides the long-session view: a 529-session main campaign, preceded by a superseded 133session two-system generation and followed by a 60-session attribution follow-up, all separately billed (disjoint
+session identifiers), with the caveat that its RTK “current” arm was built from an earlier binary lineage (the
+pre-RTK-ML observer build), so its results must not be merged with table 8. There, RTK was cost-neutral
+(−1.3%, n.s.), the observer-lineage build was 6.5% more expensive (CI [1.5, 11.7]), and Headroom was 60.9%
+more expensive, with 131/132 task success. The qualitative pattern—no consistent cost reduction from
+compression on long sessions and substantial proxy overhead—is consistent with the authoritative campaign.
+
+8
+
+Heterogeneity by Model, Effort, and Task Family
+
+8.1
+
+Model × effort
+
+Table 13 and fig. 7 present all nine main-campaign model–effort cells, plus two post-hoc medium-effort RTK
+v0.44.1 cells (Opus 4.8 and Opus 5) contributed by the replication campaign. Three observations are relevant.
+
+17
+
+Table 13: Model × effort matrix: paired billed-cost change vs. baseline (% of same-cell baseline mean;
+task-clustered bootstrap 95% CI; n = paired tasks). Cells never measured in any campaign are stated
+as such, not imputed.
+Model
+
+Effort
+
+Haiku 4.5
+Haiku 4.5
+Haiku 4.5
+Haiku 4.5
+Haiku 4.5
+Sonnet 5
+Sonnet 5
+Opus 4.8
+Opus 4.8
+Opus 4.8
+Opus 5
+Sonnet 5
+Opus 4.8
+Opus 5
+
+low
++7.0 [-2.7, +19.1] (76)
++6.8 [-2.0, +18.3] (76)
++55.3 [+40.6, +72.8] (76)
+medium
+-3.8 [-14.9, +5.9] (20)u +32.9 [+6.2, +69.5] (20)u +110.2 [+41.1, +197.8] (20)u
+high
+-2.6 [-11.5, +5.7] (103)
+-1.6 [-12.5, +7.3] (103)
++47.9 [+34.6, +62.3] (103)
+xhigh
+-10.5 [-31.4, +2.5] (20)u
+-8.7 [-50.6, +20.1] (20)u
++46.4 [+28.2, +66.2] (20)u
+u
+u
+max
+-9.9 [-32.2, +11.8] (20)
+-21.2 [-40.6, -4.8] (20)
++9.0 [-13.6, +30.6] (20)u
+low
++10.3 [-3.4, +32.8] (20)u
++1.2 [-5.7, +8.1] (20)u
++80.8 [+49.0, +116.9] (20)u
+high
+-4.9 [-10.9, +0.1] (103)
++8.3 [+3.0, +14.4] (103)
++39.5 [+32.9, +46.5] (103)
+low
+-2.8 [-13.7, +7.3] (8)u
++34.8 [-6.2, +109.6] (8)u
++81.1 [+41.3, +123.8] (8)u
+r
+medium
+-2.9 [-18.8, +9.3] (52)
+not arms of the replication
+high
+-11.0 [-23.1, -2.2] (30)
++12.4 [-6.8, +34.7] (30)
++63.7 [+37.5, +91.7] (30)
+r
+medium
++2.5 [-6.1, +12.0] (52)
+not arms of the replication
+med./xhigh/max
+not measured in any campaign
+xhigh/max
+not measured in any campaign
+low/high/xhigh/max
+not measured in any campaign
+
+RTK v0.44.1 ∆%
+
+RTK-ML ∆%
+
+Headroom ∆%
+
+u exploratory stratum (n=20 tasks or fewer; the campaign’s power analysis flags such cells and the expansion
+
+analysis found arm×effort interactions not significant).
+r post-hoc RTK v0.44.1 replication (section C): 52 family-stratified tasks, medium effort, Claude Code 2.1.220.
+RTK-ML and Headroom were not arms of that campaign.
+
+Table 14: Task-family effects for families with ≥3 analyzed tasks: paired billed-cost change vs. baseline (% of
+family baseline mean; task-clustered bootstrap 95% CI). One- and two-task families are exploratory and reported in
+Appendix A.4. Families are descriptive decompositions, not pre-specified contrasts.
+Task family
+
+nT
+
+lexical_search
+symbol_location
+dependency_tracing
+semantic_search
+architecture
+long_session
+multi_file_debug
+feature_impl
+negative_control
+root_cause_log
+shell_pipeline
+structured_data
+
+19 -0.7 [-4.1, +2.4]
+-2.3 [-5.2, -0.3]
++63.0 [+48.7, +79.4]
+14 +1.2 [-1.7, +4.6]
++3.6 [-0.7, +8.6]
++51.9 [+37.3, +69.9]
+13 -6.7 [-15.2, -0.2]
++1.9 [-4.1, +8.2]
++60.2 [+41.3, +80.2]
+11 -3.2 [-12.6, +5.2] +12.4 [-1.4, +28.2] +50.7 [+28.9, +69.1]
+7 +1.3 [-7.2, +9.3]
+-0.8 [-6.6, +6.0]
++57.1 [+33.1, +86.5]
+6 -4.0 [-9.6, +3.0]
++4.7 [-9.5, +16.0] +44.6 [+24.2, +65.1]
+4 -9.7 [-20.7, +1.4] +25.0 [-2.2, +52.2] +37.7 [+12.5, +64.5]
+3 +3.9 [-9.9, +17.4] +7.3 [-9.6, +21.6] +36.2 [+31.6, +40.0]
+3
+-1.5 [-2.4, -0.6]
+-2.9 [-6.9, -0.7]
++81.7 [+30.7, +147.1]
+3
+-2.1 [-3.3, -0.1]
++2.3 [-2.1, +9.3]
++46.4 [+21.4, +95.1]
+3
+-1.5 [-2.1, -0.7]
+-1.0 [-2.1, +0.2]
++50.9 [+36.5, +79.6]
+3 -1.0 [-10.6, +4.5] +7.7 [-4.9, +31.7] +43.0 [+31.9, +62.4]
+
+RTK ∆%
+
+RTK-ML ∆%
+
+Headroom ∆%
+
+First, Headroom’s cost increase is positive in every observed cell (+9.0% to +110.2%). Second, RTK effects
+hover in single digits and flip sign between cells; the expansion campaign’s interaction tests found neither
+arm×model nor arm×effort effects significant, and specifically retired the apparent effort flips—e.g., the
+RTK-ML Haiku-medium cell at +32.9% [+6.2, +69.5] against the Haiku-max cell at −21.2%—as small-sample
+artifacts of 20-task exploratory strata. We therefore do not promote any effort-conditioned deployment rule.
+Third, coverage is incomplete by design and budget: Sonnet 5 was never run at medium, xhigh, or max effort
+in any campaign, and Opus 4.8 at xhigh or max; the medium-effort Opus cells shown in the model–effort
+table are the post-hoc RTK v0.44.1 replication results. All other cells are absent from every figure and table
+rather than estimated.
+
+8.2
+
+Task families
+
+Across the 23 analyzed families (12 with ≥3 tasks in table 14; the remainder in Appendix A.4; fig. 8
+shows all), Headroom’s cost delta is positive in all of them (range +14.7% to +82.4%). RTK effects are
+family-heterogeneous: RTK shows its strongest savings on dependency tracing and multi-file debugging;
+RTK-ML saves modestly on bulk lexical retrieval and shell pipelines while increasing cost on semantic search
+and multi-file debugging. The double-digit RTK-ML cells are all one-to-four-task families and are labeled
+
+18
+
+Not measured: Sonnet 5 / Opus 4.8
+at medium, xhigh, max
+
+haiku 4.5 / low
+haiku 4.5 / medium
+haiku 4.5 / high
+haiku 4.5 / xhigh
+haiku 4.5 / max
+sonnet 5 / low
+sonnet 5 / high
+opus 4.8 / low
+opus 4.8 / high
+
+RTK
+RTK-ML
+Headroom v0.27.0
+
+−50
+0
+50
+100
+150
+200
+Paired billed-cost change vs.\ baseline (%; task-clustered 95\% bootstrap CI)
+Figure 7: Paired billed-cost change vs. baseline by main-campaign model–effort cell (task-clustered 95% CIs). This
+figure shows the main campaign only; the post-hoc RTK v0.44.1 Opus-medium cells are reported in tables 13 and 26.
+Unmeasured main-campaign cells are annotated, not imputed.
+
+exploratory. Session length is the strongest task-side moderator of cost composition (table 7); the expansion
+analysis found retrieval-mode and output-band interactions not significant. The overall answer to RQ4 is that
+system effects are composition-dependent and heterogeneous: the earlier campaign’s lower cost for RTK-ML on
+the weaker-model, bulk-retrieval-heavy mix did not generalize as a model-monotonic pattern on the broader
+read-only mix.
+
+9
+
+Cross-Agent Replication on Codex
+
+A subsequent replication campaign (codex_headroom_replication40_20260715_v1) tested whether the
+Headroom cost signal transfers to a different agent harness: the Codex CLI with gpt-5.6-luna at low
+reasoning effort. All numbers in this section are transcribed from that campaign’s frozen replication report; its
+artifacts (frozen task manifest, sources lock, budget ledger, per-pair results, raw run telemetry) are retained
+in the Codex campaign tree, which is separate from this paper’s artifact release. Provider-billed cost is
+unavailable in Codex telemetry, so costs here are reconstructed from provider-returned token counts at list
+prices—evidence class “tokens,” not “billed,” in the terms of table 3.
+Design. Forty tasks were sampled deterministically (seed 20260715) from the frozen 110-task pool after
+excluding all 12 tasks of the original Codex pilot, giving a disjoint sample. Two arms—baseline and a
+fixture-preserving, isolated Headroom-only configuration—ran in randomized order within every paired block:
+80 new paid runs in 40 complete pairs, with zero paid retries. Benchmark commit, tasks, prompts, graders,
+fixtures, and success criteria were unchanged from the pilot. Activation evidence is complete: all 40 Headroom
+runs retained a live proxy WebSocket request, and all 40 baseline runs were isolated from the proxy.
+
+19
+
+lexical_search (19)
+symbol_location (14)
+dependency_tracing (13)
+semantic_search (11)
+architecture (7)
+long_session (6)
+multi_file_debug (4)
+feature_impl (3)
+negative_control (3)
+root_cause_log (3)
+shell_pipeline (3)
+structured_data (3)
+doc_grounded_impl (2)
+exact_preservation (2)
+regression_investigation (2)
+code_review (1)
+config_dependency (1)
+localized_debug (1)
+migration (1)
+performance (1)
+security_analysis (1)
+shell_workflow (1)
+test_repair (1)
+
+RTK
+RTK-ML
+Headroom v0.27.0
+
+−25
+0
+25
+50
+75
+100
+125
+150
+Paired billed-cost change vs.\ baseline (%; CI where ≥ 3 tasks)
+Figure 8: Paired billed-cost change by task family (task counts in parentheses; CIs where ≥3 tasks). Headroom is
+right of zero in every family; RTK effects change sign across families.
+
+Table 15: Codex replication, Headroom-only vs. baseline (40 disjoint task pairs; costs reconstructed from provider
+token counts; differences are Headroom relative to baseline). Transcribed from the frozen replication report.
+Metric
+
+Baseline
+
+Headroom-only
+
+Difference
+
+Task success
+Reconstructed cost
+Cost per successful task
+Input tokens
+Cached input tokens
+Output tokens
+Reasoning tokens
+Completed shell calls
+Delivered shell-output bytes
+Wall time
+
+39/40
+—
+—
+—
+—
+—
+—
+71
+—
+—
+
+39/40
+—
+—
+—
+—
+—
+—
+76
+—
+—
+
+0 discordant pairs
+−12.49%
+−12.49%
+−10.88%
+−8.33%
++6.63%
++31.30%
++7.04%
++3.67%
++238.52%
+
+Result. Both arms passed 39/40 tasks with no discordant correctness outcome (both failed the same task,
+returning the same incorrect frozen-fixture subject). Headroom’s reconstructed cost was 12.49% lower than
+baseline, and identically so per successful task. The paired per-task change averaged −14.76% (median
+−19.49%); Headroom was cheaper on 35 of 40 tasks. The saving came from lower input and cached-input
+token volumes—not from measured output compression: Headroom again reported zero compressed tokens
+across all runs, so the difference is an observed proxy/cache/trajectory effect, not a demonstrated consequence
+of its compression counter. The lower reconstructed cost was accompanied by higher latency: wall time more
+than tripled (+238.5%), and output tokens, reasoning tokens, shell calls, and delivered shell-output bytes all
+increased.
+
+20
+
+Combined Codex evidence. Pooling this disjoint replication descriptively with the original 12-task pilot
+gives 52 task pairs: 51/52 success on both arms and a −14.35% reconstructed-cost difference. The larger
+sample strengthens the association between this Headroom configuration and lower reconstructed Codex cost
+at equal task success; it does not establish that compression caused the saving, and latency remains a severe
+regression.
+Cross-campaign 12-task slice: Headroom vs. RTK. The original 12 pilot tasks can be matched
+by task identifier to the same tasks in a later patched-RTK Codex campaign. This is a cross-campaign
+comparison— each treatment has its own concurrent baseline, not a randomized simultaneous three-arm
+design. Against its own baseline, Headroom was cheaper by 19.53% (cheaper on 11/12 tasks, 12/12 success);
+RTK was cheaper by 10.45% (cheaper on 5/12, 11/12 success—its one failure was a known counting regression
+in which compacted output changed a required count). Within this matched slice Headroom shows the
+larger observed cost reduction, but the cross-campaign design prevents attributing the difference solely to
+treatment. The RTK slice also has a distributional limitation: the mean reduction reflects a minority of tasks
+(cheaper on 5 of 12, more expensive on the rest), so the mean does not represent a stable per-task reduction.
+Distribution-level analysis on Codex—median and tail behavior, and whether the improving minority is
+identifiable in advance—remains open.
+Integrity notes. Eight pairs initially returned a grader exit-127 because the campaign judge PATH exposed
+only python3; no paid run was repeated—all 16 retained worktrees passed the unchanged graders offline
+under the pinned test environment. One baseline telemetry heuristic flagged the word “headroom” in the
+campaign’s directory path; preflight configuration, commands, environment, and zero proxy requests establish
+this as a path-name false positive. One local Headroom process failed before proxy readiness and before any
+API request; the failure record is retained with the campaign artifacts, and the installation was repaired from
+the same pinned commit before the paid campaign began.
+Interpretation. On Claude Code, the tested Headroom configuration was the study’s largest cost increase
+(CPS ratio 1.464); on Codex, an isolated Headroom-only configuration was associated with a 12–14%
+reconstructed-cost saving at equal success. The sign reversal across harnesses, with zero compressor activity
+in both, is additional evidence for the paper’s main conclusion: context-layer effects are properties of the
+layer–harness–model–workload combination, not of the layer alone, and must be measured end to end in each
+deployment.
+
+10
+
+Trajectory and Phase Efficiency
+
+10.1
+
+Phase taxonomy and validation
+
+Every retained transcript of the base campaign was decomposed into assistant turns and each turn assigned
+one of eight phases (orientation, retrieval, diagnosis, planning, implementation, testing/debug, verification,
+final response) plus an ambiguous/mixed catch-all, using a frozen deterministic priority rule (edits win over
+tests, tools over text; no model calls). The ledger covers 13,620 classified turns from 1,120 base campaign runs.
+A manual implementation audit independently reproduced 40/40 sampled rule assignments, and 2.0% of
+turns (187/9,523 in the audited slice) fell into the ambiguous class. The audit validates that the deterministic
+rules were applied as specified; it does not establish that the labels match independent human judgments
+of cognitive phase. Mixed tool-using turns are forced into mutually exclusive categories, so the taxonomy
+characterizes observable turn behavior, not latent reasoning; a blind semantic validation by independent
+annotators was not performed and is listed as a limitation. The near-zero planning share is primarily a
+property of the frozen classifier, which assigns mixed tool-using turns to other phases; it should not be read as
+evidence that planning is absent from coding agents. Expansion-split phase claims require regeneration from
+the retained transcripts, which has not been performed; all phase numbers here are base-campaign numbers.
+
+21
+
+Table 16: Share of generated (output) tokens by phase and arm (characterization split; 10,376 turns). Retrieval plus
+diagnosis account for ≈58–61% of generated tokens on every arm.
+Phase
+
+Baseline
+
+RTK
+
+RTK-ML
+
+Headroom
+
+6.3
+35.1
+23.7
+0.0
+27.0
+1.3
+0.8
+3.3
+2.5
+
+6.2
+35.4
+23.8
+0.1
+26.6
+1.3
+0.9
+3.3
+2.5
+
+5.6
+34.5
+24.1
+0.0
+28.8
+1.7
+1.1
+2.7
+1.4
+
+5.0
+36.5
+24.5
+0.0
+25.6
+1.2
+0.8
+3.2
+3.3
+
+P1 orientation
+P2 retrieval
+P3 diagnosis
+P4 planning
+P5 implementation
+P6 testing/debug
+P7 verification
+P8 final response
+ambiguous/mixed
+
+P1 orient
+P2 retrieval
+
+P3 diagnosis
+P4 plan
+
+P5 implement
+P6 test/debug
+
+P7 verify
+P8 final
+
+Baseline
+
+35
+
+24
+
+27
+
+RTK
+
+35
+
+24
+
+27
+
+RTK-ML
+
+34
+
+24
+
+29
+
+Headroom v0.27.0
+
+36
+
+24
+
+26
+
+0
+
+25
+
+50
+
+75
+
+Share of generated (output) tokens by phase (%)
+
+mixed
+
+100
+
+Figure 9: Generated-token composition by phase (characterization split; 10,376 turns). Coarse phase-token shares
+were similar across arms under the frozen turn-level taxonomy.
+
+10.2
+
+Where generated tokens go
+
+Table 16 and fig. 9 show that coarse phase-token shares were similar across arms under the frozen turn-level
+taxonomy: retrieval ≈35% (33–36%), diagnosis ≈24%, implementation 26–29%. Retrieval plus diagnosis
+account for approximately 58% of generated tokens (58.8%/59.2%/58.6%/60.9% across the four arms). Within
+this campaign and under the frozen turn-level taxonomy, the arms differed less in coarse phase composition
+than in the measured cost and context volume associated with those phases (delivered tool bytes and the
+cache traffic they induce).
+
+10.3
+
+Phase-level cost changes
+
+The phase-resolved cost decomposition (table 17) shows both the RTK arms first diverging from baseline at
+the retrieval phase with lower cost, while Headroom diverges at orientation already—its higher cache-read
+usage is concentrated in the early phases (62% of it accumulates before the first edit) and reaches roughly
++180k cache-read tokens per run by the final phase. For the RTK-ML arm, downstream cost increases are
+approximately four times the retrieval-phase reduction: added diagnosis, implementation, testing/debug,
+and ambiguous-turn cost, a later first edit (+0.94 turns), more post-edit retrieval re-entries (+0.32/run),
+
+22
+
+Table 17: Phase-resolved paired cost deltas vs. baseline (percent of the baseline mean run cost; billed cost allocated
+to turns by price-weighted token usage; base-campaign phase ledger). The RTK arms save in retrieval (P2); the
+RTK-ML arm shows downstream cost increases that offset the retrieval-phase reduction.
+RTK ∆
+
+RTK-ML ∆
+
+Headroom ∆
+
+P1 orientation
+P2 retrieval
+P3 diagnosis
+P4 planning
+P5 implementation
+P6 testing/debug
+P7 verification
+P8 final response
+ambiguous/mixed
+
++0.53
+-3.07
+-0.99
++6.19
+-0.15
++0.24
++0.22
+-0.20
++1.68
+
++1.39
+-1.96
++4.83
+-0.29
++7.87
++10.94
++3.57
+-0.29
++6.77
+
++11.40
++18.14
++17.81
+-3.29
++0.51
++12.72
++3.51
++3.59
++15.15
+
+Median cache-read tokens
+at first edit (thousands)
+
+50
+
+38.7k
+(n=85)
+
+40
+30
+
+25.9k
+(n=89)
+
+25.7k
+(n=85)
+
+20
+10
+0
+
+Median delivered tool tokens
+before first edit (est., Haiku)
+
+Phase
+
+Base
+
+RTK
+
+25.9k
+(n=92)
+
+RTK-MLHeadroom
+
+600
+
+579
+(n=55)
+
+400
+
+531
+(n=53)
+
+416
+(n=52)
+
+442
+(n=55)
+
+RTK
+
+RTK-MLHeadroom
+
+200
+0
+
+Base
+
+Figure 10: Left: median cache-read context at the first code edit (runs with an implementation phase, base splits, all
+models). Right: median estimated delivered tool tokens before the first edit (Haiku runs; bytes/4 estimate). Headroom
+has ≈49% more cache-read context at the first edit; the RTK arms match baseline context at the same milestone.
+
+and more repeated-search tokens (+301/run). RTK is the only arm with downstream behavior closest to
+baseline and slightly earlier first edits (−0.60 turns, −0.26 re-entries). These are observed associations from
+the frozen ledgers, not causal decompositions.
+Two milestone measurements provide additional detail (fig. 10). Median cache-read context at the first
+code edit is essentially identical for baseline and both RTK arms (≈25.7–25.9k tokens) but 49% higher for
+Headroom (38.7k). And on Haiku—the model where the RTK-ML compression surface is largest—the median
+estimated delivered tool-token count before the first edit was 442 for the RTK-ML arm versus 579 for baseline,
+approximately 24% lower, with heavy upper tails (a frozen campaign report characterized the reduction as
+roughly twofold, but its exact metric, population, and denominator could not be reconstructed from the
+retained artifacts, so we report only the auditable per-run ledger median), while on Sonnet the same arm
+reached milestones ≈0.4 turns later. On Haiku, reduced delivered retrieval was achievable without a later
+first-edit milestone, but it did not translate into net billed savings after trajectory effects were included.
+
+11
+
+Failure Modes and Safety Constraints
+
+Pipeline incompatibility with downstream shell consumers. One safety-relevant failure mode in the
+artifact record was discovered in the first paid gate campaign: when retrieval routing was enabled, every
+genuine gates-on task failure (4 of 4) followed the same pattern—the agent piped proxied search output
+into a shell counting pipeline (grep ... | cut -d: -f1 | sort | uniq -c), which then parsed the ranked
+search-group summary instead of raw file:line:content matches and produced invalid answers (e.g., src/8
+23
+
+instead of a file name). Tool tokens on that campaign fell 40.3% while gates-on success fell to 93.3% against
+100% for every other arm: an example in which lower tool-token counts coincided with lower task success
+because the transformed output was incompatible with the downstream consumer. The fix marks a rewritten
+command segment as a stdout consumer whenever its stdout feeds a pipe or a stdout redirect; the proxy then
+skips ranking for that segment (output stays byte-preserving) and records the skip in the gate trace. Stderr
+and stdin redirects still rank; command substitution was already never rewritten. In subsequent campaigns
+the guard suppressed 42% (Haiku) and 30% (Sonnet) of otherwise-eligible routes, and in the authoritative
+campaign it recorded 339/150/28 skips against 521/208/26 routes on Haiku/Sonnet/Opus. The corrected
+reruns superseded the earlier aggregate result. The observed failure motivates a content-dependent policy:
+dense, task-critical evidence such as tracebacks, test output, structured shell streams, and patch anchors
+should be handled differently from redundant retrieval context.
+Edit-anchor alteration under compression. The grounded-completion study (section 7.4) documents a second failure mode: aggressive compression of retrieved code strips the byte-exact spans that
+SEARCH/REPLACE patch application depends on, reducing patch application by approximately 44% (27/40
+→ 15/40; 83% vs. 48% in the family study) despite a large reduction in token metrics (−73% billable). The
+mitigation that worked was content-aware: the task-family preserve gate bypasses compression for high-recall
+and grounded-editing families, and byte-exact grounding windows restore anchors outright (apply 31% →
+83% on the compressed arm).
+Other observed failure modes. (i) Over-compression followed by additional agent work: removed context
+that the model still needed returned as repeated searches and diagnosis re-reads (section 10); the additional
+searches and diagnosis turns incur normal trajectory costs. (ii) Early failure can have low measured cost: a
+run that fails quickly can cost less than successful runs; all aggregates here therefore report success alongside
+cost and use cost per successful execution for decisions. (iii) Inactive code paths can invalidate comparisons:
+a free pre-campaign check proved the gate environment variables are inert in RTK (byte-identical output on
+the covered test paths, no gate trace) and that the gate build changes bytes only when enabled (11,050 B raw
+grep vs. 2,570 B search-group on the fixture)—without such activation proofs, an “optimized” arm can be
+equivalent to the baseline without detection. (iv) Component benchmarks can encourage unsafe optimization:
+the pytest-rule example in section 12 shows a preservation gate catching a compression rule that scored well
+on savings while dropping task-critical markers.
+Gate activation summary. Table 18 condenses the per-gate activation evidence: every gate is off by
+default, and the disabled paths covered by the dedicated equivalence tests were byte-equivalent; the embedding,
+structural, and focus-cache paths were enabled and operational in the authoritative campaign (zero sidecar
+outages), but no task was identified in which any of them was uniquely decisive—activation is not effect.
+
+11.1
+
+Performance degradation under context reduction
+
+The observed performance-degradation evidence, ordered by directness, is:
+1. Binary task-success degradation. The pre-guard Stage-1 campaign: 93.3% vs. 100% success (4/4
+failures from pipeline incompatibility). The grounded study: three tasks solved by grounded raw were
+not solved by grounded compressed, none reverse (exact paired p = 0.25; descriptive). The authoritative
+campaign detected no aggregate success-rate degradation, but baseline success was 96–98%, limiting
+sensitivity to small differences, and the study was not a non-inferiority design; its intervals still permit
+small losses or gains.
+2. Patch-application degradation. 27/40 → 15/40 applies under compression (Phase E); 83% vs. 48%
+preserve-vs-aggressive in the family study; edit_apply_failed 20 vs. 12.
+3. Evidence/marker degradation. The pre-fix pytest rule scored 31.9% savings at only 56.1% marker
+recall; ContextBench one-size-aggressive reached 39.8% savings with substantial context loss on 45 of
+50 conversations.
+4. Trajectory degradation. RTK-ML: later first edit (+0.94 turns), more post-edit retrieval re-entries
+(+0.32/run), more repeated-search tokens (+301/run), downstream phase-cost increase (table 17).
+
+24
+
+Table 18: Gate-activation matrix for RTK-ML’s nine gates (condensed). “Fired” cites the authoritative campaign
+traces (routes/query-propagations/guard-skips on Haiku/Sonnet/Opus: 521/208/26, 916/395/57, 339/150/28; all
+comparator arms 0/0/0).
+Gate
+
+Default
+
+Fired in E2E
+
+Output-changing
+
+Observed effect
+
+1 Query propagation
+2 Retrieval routing
+3 Query-aware ranking
+4 Lexical leg
+5 Embedding leg (BGE)
+6 Task-family router
+7 Family preserve
+8 Structural (ast-grep)
+9 Focus cache
+— Safety router
+— Stdout-consumer guard
+
+off
+off
+off
+off
+off
+off
+off
+off
+off
+enforce
+auto w/ gate 2
+
+yes (916/395/57)
+yes (521/208/26)
+yes
+yes
+active, healthy
+active
+active
+active
+active
+on
+yes (339/150/28 skips)
+
+no (signal only)
+yes (search-group)
+yes (reorder)
+yes (reorder)
+in principle
+no (routing var)
+yes (raw bypass)
+indirect (hints)
+no (latency only)
+no (this layout)
+prevents downstream incompatibility
+
+enables gates 2–5
+primary compression surface
+with gates 4–5
+deterministic scoring
+no decisive per-task signature
+guards BGE exposure
+protects exact-byte tasks
+no measurable signature
+no measurable signature
+future-guards sensitive output
+fixes section 11 failure
+
+5. Structured-consumer incompatibility. The stdout-pipeline failure above: compression altered
+program-consumed shell-output semantics, not model comprehension.
+6. Unmeasured quality dimensions. Code maintainability, patch quality beyond test outcomes, partial
+correctness, latent bug introduction, reasoning quality, and human review effort were not measured in
+any campaign; success here is deterministic test/judge outcome only.
+
+12
+
+Limits of Component-Level Benchmarks
+
+The artifact record contains component-level results for every retrieval and compression approach studied;
+none of them, alone, would have predicted the end-to-end outcomes of section 7.
+ContextBench (gold-context survival). On the 50-conversation policy study, an oracle per-task-type
+policy achieved 12.3% savings at 95.2% recall with 0/50 severe drops; a one-size conservative policy achieved
+7.1% at 95.7% recall with 7/50 severe failures; and a one-size aggressive policy reached 39.8% savings with
+substantial context loss on 45 of 50 conversations. The relevant comparison is oracle-vs-fixed rather than the
+absolute numbers: safe savings are policy-dependent and modest. These are retrieval-quality proxies; the
+study records no task success.
+LoCoEval (long-history preservation). The retained runs are a preservation-only proxy (referenceanswer token survival after compressing long conversations); the pipeline’s LLM-judge stage was unavailable,
+and token savings above the counting API’s size cap fall back to length/4 estimates. We cite it only as
+evidence that deterministic command-level compression does not affect conversational history, which it was
+not designed to modify,and that long-history compression requires its own track.
+InterCode-proxy (dense diagnostic evidence). On 24 pytest observations (12 MBPP tasks × pass/bug),
+the original deterministic pytest rule scored 31.9% savings at only 56.1% marker recall—dropping task-critical
+traceback lines; after a preservation-first fix, the rule scores 15.3% savings at 99.2% marker recall with zero
+critical drops. Reducing nominal savings from 31.9% to 15.3% doubled the fidelity of the evidence the model
+needs; interactive task-success evaluation remained blocked by the missing container runtime.
+Structural retrieval (candidate quality). On 8 repository tasks (38 query rows) with test-grounded gold,
+plain ripgrep [13] returned a mean 310.9 matches / 2,905 tokens per query at 0.66 precision, against 170.9 /
+2,090 at 0.995 for the ast-grep hybrid; on the 14 point-definition queries the contrast is 75.6 matches / 752.8
+tokens / 0.44 precision vs. 17.2 / 335.4 / 0.99. Under a 150-token budget, gold survival was 28.6% (ripgrep)
+vs. 85

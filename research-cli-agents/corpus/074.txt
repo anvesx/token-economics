@@ -1,0 +1,1270 @@
+TITLE: Hooks reference
+URL: https://code.claude.com/docs/en/hooks
+ORG: Anthropic  TYPE: doc  DATE: 
+
+Hooks reference - Claude Code Docs
+
+Documentation Index
+Fetch the complete documentation index at: /docs/llms.txt
+Use this file to discover all available pages before exploring further.
+Skip to main content
+
+Assistant
+
+Responses are generated using AI and may contain mistakes.
+
+For a quickstart guide with examples, see Automate actions with hooks.
+Hooks are user-defined shell commands, HTTP endpoints, MCP tool calls, LLM prompts, or subagents that execute automatically at specific points in Claude Code’s lifecycle. Claude Code fires the same hook events wherever it runs: sessions in the terminal, IDE extensions, the Desktop app, and cloud sessions. Use this reference to look up event schemas, configuration options, JSON input/output formats, and advanced features like async hooks, HTTP hooks, and MCP tool hooks.
+A plugin can also register hooks as JavaScript functions that Claude Code calls in its own process, which can draw in the interface as well as act on events. A plugin that does is a mod, and those function hooks are covered in React to events rather than here. The hooks on this page keep working alongside mods.
+
+​
+Hook lifecycle
+Claude Code runs hooks at specific points during a session. When an event fires and a matcher matches, Claude Code passes JSON context about the event to your hook handler. For command hooks, input arrives on stdin. For HTTP hooks, it arrives as the POST request body. Your handler can then inspect the input, take action, and optionally return a decision.
+Events fall into three cadences:
+
+per session: SessionStart and SessionEnd
+
+per turn: UserPromptSubmit, Stop, and StopFailure
+
+on every tool call inside the agentic loop: PreToolUse and PostToolUse, except EndConversation calls, which skip both
+
+The table below summarizes when each event fires. The Hook events section documents the full input schema and decision control options for each one.
+
+EventWhen it fires
+SessionStartWhen a session begins or resumes
+SetupWhen you start Claude Code with --init-only, or with --init or --maintenance in -p mode. For one-time preparation in CI or scripts
+UserPromptSubmitWhen a prompt is submitted, before Claude processes it. Also fires on turns Claude Code starts on its own
+UserPromptExpansionWhen a user-typed command expands into a prompt, before it reaches Claude. Can block the expansion
+PreToolUseBefore a tool call executes. Can block it
+PermissionRequestWhen a tool call needs a permission decision
+PermissionDeniedWhen auto mode denies a tool call, including denials without a classifier verdict. Use JSON hookSpecificOutput.retry: true to tell the model it may retry the denied tool call. Claude Code ignores retry when the classifier produced no verdict
+PostToolUseAfter a tool call succeeds
+PostToolUseFailureAfter a tool call fails
+PostToolBatchAfter a full batch of parallel tool calls resolves, before the next model call
+NotificationWhen Claude Code sends a notification
+MessageDisplayWhile assistant message text is displayed
+SubagentStartWhen a subagent is spawned
+SubagentStopWhen a subagent finishes
+TaskCreatedWhen a task is being created via TaskCreate
+TaskCompletedWhen a task is being marked as completed
+StopWhen Claude finishes responding
+StopFailureWhen the turn ends due to an API error
+TeammateIdleWhen an agent team teammate is about to go idle
+InstructionsLoadedWhen a CLAUDE.md or .claude/rules/*.md file is loaded into context. Fires at session start and when files are lazily loaded during a session
+ConfigChangeWhen a configuration file changes during a session
+CwdChangedWhen the working directory changes, for example when Claude executes a cd command. Useful for reactive environment management with tools like direnv
+DirectoryAddedWhen a working directory is added mid-session via /add-dir or the SDK register_repo_root control request
+FileChangedWhen a watched file changes on disk. The matcher field specifies which filenames to watch
+WorktreeCreateWhen a worktree is being created via --worktree, isolation: "worktree", or for a background session. Replaces default git behavior
+WorktreeRemoveWhen a worktree that a WorktreeCreate hook created is being removed
+PreCompactBefore context compaction
+PostCompactAfter context compaction completes
+PreModelSwitchBefore Claude Code applies a model switch that you or a client requested. Can block the switch
+PostModelSwitchAfter the session’s model changes, including changes Claude Code makes on its own, such as restoring the model when you resume a session
+ElicitationWhen an MCP server requests user input during a tool call
+ElicitationResultAfter a user responds to an MCP elicitation, before the response is sent back to the server
+SessionEndWhen a session terminates
+
+​
+How a hook resolves
+To see how the event, the matcher, and the handler fit together, consider this PreToolUse hook that blocks destructive shell commands.
+
+ macOS/Linux
+
+ Windows (PowerShell)
+
+The matcher narrows to Bash tool calls and Monitor commands, and the if condition narrows further to Bash subcommands matching rm *, so block-rm.sh only spawns when both filters match:
+
+{
+ "hooks": {
+ "PreToolUse": [
+ {
+ "matcher": "Bash",
+ "hooks": [
+ {
+ "type": "command",
+ "if": "Bash(rm *)",
+ "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-rm.sh",
+ "args": []
+ }
+ ]
+ }
+ ]
+ }
+}
+
+The script reads the JSON input from stdin, extracts the command, and returns a permissionDecision of "deny" if it contains rm -rf. Save it to .claude/hooks/block-rm.sh in your project and make it executable with chmod +x .claude/hooks/block-rm.sh so Claude Code can run it:
+
+#!/bin/bash
+# .claude/hooks/block-rm.sh
+COMMAND=$(jq -r '.tool_input.command')
+
+if echo "$COMMAND" | grep -q 'rm -rf'; then
+ jq -n '{
+ hookSpecificOutput: {
+ hookEventName: "PreToolUse",
+ permissionDecision: "deny",
+ permissionDecisionReason: "Destructive command blocked by hook"
+ }
+ }'
+else
+ exit 0 # no decision; normal permission flow applies
+fi
+
+This script, like the other Bash examples on this page that parse JSON input, uses jq, so install jq and make sure it is on your PATH before trying them.
+The matcher Bash|PowerShell covers the PowerShell tool as well as Bash. A single if rule names one tool, so each tool gets its own handler: the first narrows to Bash subcommands matching rm *, the second to PowerShell commands matching Remove-Item *. Both run the same script through powershell.exe:
+
+{
+ "hooks": {
+ "PreToolUse": [
+ {
+ "matcher": "Bash|PowerShell",
+ "hooks": [
+ {
+ "type": "command",
+ "if": "Bash(rm *)",
+ "command": "powershell.exe",
+ "args": [
+ "-NoProfile",
+ "-ExecutionPolicy",
+ "Bypass",
+ "-File",
+ "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-rm.ps1"
+ ]
+ },
+ {
+ "type": "command",
+ "if": "PowerShell(Remove-Item *)",
+ "command": "powershell.exe",
+ "args": [
+ "-NoProfile",
+ "-ExecutionPolicy",
+ "Bypass",
+ "-File",
+ "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-rm.ps1"
+ ]
+ }
+ ]
+ }
+ ]
+ }
+}
+
+The -NoProfile flag skips loading your PowerShell profile so the hook starts fast, and -ExecutionPolicy Bypass lets PowerShell run the local script file.The script reads the JSON input from stdin, extracts the command, and returns a permissionDecision of "deny" if it contains rm -rf or Remove-Item followed by -Recurse. Save it to .claude/hooks/block-rm.ps1 in your project:
+
+# .claude/hooks/block-rm.ps1
+$callInput = [Console]::In.ReadToEnd() | ConvertFrom-Json
+$command = $callInput.tool_input.command
+
+if ($command -match 'rm -rf|Remove-Item.*-Recurse') {
+ @{
+ hookSpecificOutput = @{
+ hookEventName = "PreToolUse"
+ permissionDecision = "deny"
+ permissionDecisionReason = "Destructive command blocked by hook"
+ }
+ } | ConvertTo-Json
+} else {
+ exit 0 # no decision; normal permission flow applies
+}
+
+Now suppose Claude Code decides to run Bash "rm -rf /tmp/build" against the macOS/Linux config. Here’s what happens:
+
+1
+
+Event fires
+The PreToolUse event fires. Claude Code sends the tool input as JSON on stdin to the hook:
+
+{ "tool_name": "Bash", "tool_input": { "command": "rm -rf /tmp/build" }, ... }
+
+2
+
+Matcher checks
+The matcher "Bash" matches the tool name, so this hook group activates. If you omit the matcher or use "*", the group activates on every occurrence of the event.
+
+3
+
+If condition checks
+The if condition "Bash(rm *)" matches because rm -rf /tmp/build is a subcommand matching rm *, so this handler spawns. If the command had been npm test, the if check would fail and block-rm.sh would never run, avoiding the process spawn overhead. The if field is optional; without it, every handler in the matched group runs.
+
+4
+
+Hook handler runs
+The script inspects the full command and finds rm -rf, so it prints a decision to stdout:
+
+{
+ "hookSpecificOutput": {
+ "hookEventName": "PreToolUse",
+ "permissionDecision": "deny",
+ "permissionDecisionReason": "Destructive command blocked by hook"
+ }
+}
+
+If the command had been a safer rm variant like rm file.txt, the script would hit exit 0 instead. Exit code 0 with no output means the hook has no decision to report, so the tool call continues through the normal permission flow. The hook can deny the call, but staying silent doesn’t approve it.
+
+5
+
+Claude Code acts on the result
+Claude Code reads the JSON decision, blocks the tool call, and shows Claude the reason.
+The Configuration section below documents the full schema, and each hook event section documents what input your command receives and what output it can return.
+
+​
+Configuration
+Hooks are defined in JSON settings files. The configuration has three levels of nesting:
+
+Choose a hook event to respond to, like PreToolUse or Stop
+
+Add a matcher group to filter when it fires, like “for the Bash tool”
+
+Define one or more hook handlers to run when matched
+
+See How a hook resolves above for a complete walkthrough with an annotated example.
+
+This page uses specific terms for each level: hook event for the lifecycle point, matcher group for the filter, and hook handler for the shell command, HTTP endpoint, MCP tool, prompt, or agent that runs. “Hook” on its own refers to the general feature.
+
+​
+Hook locations
+Where you define a hook determines its scope:
+
+LocationScopeShareable
+~/.claude/settings.jsonAll your projectsNo, local to your machine
+.claude/settings.jsonSingle projectYes, can be committed to the repo
+.claude/settings.local.jsonSingle projectNo, gitignored when Claude Code saves a setting to it
+Managed policy settingsOrganization-wideYes, admin-controlled
+Plugin hooks/hooks.jsonWhen plugin is enabledYes, bundled with the plugin
+Skill frontmatterThe rest of the session once the skill is invoked. See Hooks in skills and agentsYes, defined in the skill file
+Subagent frontmatterWhile that subagent is runningYes, defined in the subagent file
+Cloud sessions don’t read your local ~/.claude/settings.json. In a self-hosted environment, Claude Code also runs the hooks the operator seeded from the runner host’s ~/.claude/, and it runs the hooks in the runner image’s managed settings file when that file is among the managed sources Claude Code applies, which by default means only when neither server-managed settings nor an MDM-delivered Claude Code policy supplies the managed tier. See what carries over from your setup for which settings files and plugins, and so which hooks, reach a cloud session.
+For details on settings file resolution, see settings.
+Hooks from settings files, managed policy settings, and plugins also run inside subagents. When a subagent calls a tool, tool events such as PreToolUse and PostToolUse fire the same configured hooks as in the main conversation, and the input carries the agent_id and agent_type common input fields that identify the subagent.
+Administrators can use allowManagedHooksOnly in managed settings to restrict which hooks run:
+
+Your user, project, local, and plugin hooks are blocked. Hooks from plugins force-enabled in managed settings enabledPlugins are exempt
+
+Claude Code also narrows your statusLine, fileSuggestion, and subagentStatusLine settings to managed settings
+
+Claude Code also disables plugins with a command source, including plugins force-enabled in managed settings enabledPlugins, unless disableCommandPluginSources is explicitly set to false. command sources require Claude Code v2.1.229 or later
+
+Claude Code also blocks marketplace headersHelper commands unless disableCommandPluginSources is explicitly set to false, except for a marketplace that managed settings themselves declare
+
+See what runs under allowManagedHooksOnly.
+Hook entries merge across settings levels rather than replacing each other: user, project, and local settings add their own hooks without removing managed ones, and the disableAllHooks setting can’t disable managed hooks from outside managed settings.
+The HTTP hook allowlists apply to hooks from every source, including managed policy settings:
+
+allowedHttpHookUrls: when defined at any settings level, Claude Code runs an HTTP hook handler only if its URL matches the merged allowlist
+
+httpHookAllowedEnvVars: when defined, Claude Code interpolates only the environment variables on that list into hook headers
+
+​
+Matcher patterns
+The matcher field filters when hooks fire. How a matcher is evaluated depends on the characters it contains:
+
+Matcher valueEvaluated asExample
+"*", "", or omittedMatch allfires on every occurrence of the event
+Only letters, digits, _, -, spaces, ,, and |Exact string, or list of exact strings separated by | or , with optional surrounding whitespaceBash matches the Bash tool, and on PreToolUse and PermissionRequest also Monitor commands; Edit|Write and Edit, Write each match either tool exactly; code-reviewer matches only that agent type
+Contains any other characterJavaScript regular expression, unanchored^Notebook matches any tool whose name starts with Notebook; mcp__memory__.* matches every tool from the memory server
+A matcher on the regular-expression path is tested with JavaScript’s RegExp.prototype.test, which succeeds on a match anywhere in the value. Edit.* matches both Edit and NotebookEdit; wrap the pattern in ^ and $, as in ^Edit$, when you need a whole-string match.
+FileChanged and StopFailure use a narrower exact-match set of letters, digits, _, and | only. A hyphen, space, or comma in a matcher for those two events keeps it on the regular-expression path, and only | separates alternatives. Every other event with matcher support in the table that follows accepts | or ,.
+The FileChanged event doesn’t follow these rules when building its watch list. See FileChanged.
+Each event type matches on a different field:
+
+EventWhat the matcher filtersExample matcher values
+PreToolUse, PostToolUse, PostToolUseFailure, PermissionRequest, PermissionDeniedtool nameBash, Edit|Write, mcp__.*
+SessionStarthow the session startedstartup, resume, clear, compact, fork
+Setupwhich CLI flag triggered setupinit, maintenance
+SessionEndwhy the session endedclear, resume, logout, prompt_input_exit, other
+Notificationnotification typepermission_prompt, idle_prompt, auth_success, auth_storage_failure, elicitation_dialog, elicitation_url_dialog, elicitation_complete, elicitation_response, agent_needs_input, agent_completed, quota_auto_resume_fired, quota_auto_resume_stale, quota_auto_resume_disabled, plugin_notification
+SubagentStartagent typegeneral-purpose, Explore, Plan, custom agent names, or plugin-scoped names like ^my-plugin:reviewer$
+PreCompact, PostCompactwhat triggered compactionmanual, auto
+PreModelSwitch, PostModelSwitchcanonical name of the model the session switches to, as described under PreModelSwitchclaude-opus-5, claude-opus-4-6|claude-opus-5, .*opus.*
+SubagentStopagent typesame values as SubagentStart
+ConfigChangeconfiguration sourceuser_settings, project_settings, local_settings, policy_settings, skills
+CwdChangedno matcher supportalways fires on every occurrence
+DirectoryAddedhow the directory was addedslash_command, register_repo_root
+FileChangedliteral filenames to watch (see FileChanged).envrc|.env
+StopFailureerror typerate_limit, overloaded, authentication_failed, oauth_org_not_allowed, account_on_hold, billing_error, invalid_request, model_not_found, server_error, max_output_tokens, cloud_credential_error, unknown
+InstructionsLoadedload reasonsession_start, nested_traversal, path_glob_match, include, compact
+UserPromptExpansioncommand nameyour skill or command names
+ElicitationMCP server nameyour configured MCP server names
+ElicitationResultMCP server namesame values as Elicitation
+UserPromptSubmit, PostToolBatch, Stop, TeammateIdle, TaskCreated, TaskCompleted, WorktreeCreate, WorktreeRemove, MessageDisplayno matcher supportalways fires on every occurrence
+Matching StopFailure on cloud_credential_error requires Claude Code v2.1.267 or later, the first version that reports credential-load failures under that value rather than server_error or unknown.
+For most events, Claude Code evaluates the matcher against a field from the JSON input it sends to your hook on stdin. For tool events, that field is tool_name. For PreModelSwitch and PostModelSwitch, Claude Code evaluates the matcher against the canonical name it derives from to_model, as described under PreModelSwitch. Each hook event section lists the full set of matcher values and the input schema for that event.
+This example runs a linting script only when Claude writes or edits a file:
+
+{
+ "hooks": {
+ "PostToolUse": [
+ {
+ "matcher": "Edit|Write",
+ "hooks": [
+ {
+ "type": "command",
+ "command": "/path/to/lint-check.sh"
+ }
+ ]
+ }
+ ]
+ }
+}
+
+If you add a matcher field to an event without matcher support, it is silently ignored.
+For tool events, you can filter more narrowly by setting the if field on individual hook handlers. if uses permission rule syntax to match against the tool name and arguments together, so "Bash(git *)" runs when any subcommand of the Bash input matches git * and "Edit(*.ts)" runs only for TypeScript files.
+
+​
+Match MCP tools
+MCP server tools appear as regular tools in tool events (PreToolUse, PostToolUse, PostToolUseFailure, PermissionRequest, PermissionDenied), so you can match them the same way you match any other tool name.
+MCP tools follow the naming pattern mcp__<server>__<tool>, for example:
+
+mcp__memory__create_entities: Memory server’s create entities tool
+
+mcp__filesystem__read_file: Filesystem server’s read file tool
+
+mcp__github__search_repositories: GitHub server’s search tool
+
+To match every tool from a server, append .* to the server prefix. The .* is required: a matcher like mcp__memory or mcp__brave-search contains only exact-match characters, so it is compared as an exact string and matches no tool.
+
+mcp__memory__.* matches all tools from the memory server
+
+mcp__brave-search__.* matches all tools from a server whose name contains a hyphen
+
+mcp__.*__write.* matches any tool whose name starts with write from any server
+
+Tools from a plugin-bundled MCP server use a scoped server segment that includes the plugin name: mcp__plugin_<plugin-name>_<server-name>__<tool>. A matcher written against the bare server key never fires for these tools. For a plugin named my-plugin that bundles a server under the key db, a query tool appears as mcp__plugin_my-plugin_db__query, so the matcher for every tool from that server is mcp__plugin_my-plugin_db__.*. Use the same scoped tool name in a handler’s if field. See Plugin-provided MCP servers for how the scoped name is built.
+This example logs all memory server operations and validates write operations from any MCP server:
+
+{
+ "hooks": {
+ "PreToolUse": [
+ {
+ "matcher": "mcp__memory__.*",
+ "hooks": [
+ {
+ "type": "command",
+ "command": "echo 'Memory operation initiated' >> ~/mcp-operations.log"
+ }
+ ]
+ },
+ {
+ "matcher": "mcp__.*__write.*",
+ "hooks": [
+ {
+ "type": "command",
+ "command": "/home/user/scripts/validate-mcp-write.py"
+ }
+ ]
+ }
+ ]
+ }
+}
+
+​
+Match Monitor commands
+A PreToolUse or PermissionRequest hook with a Bash matcher also runs on shell commands Claude starts with the Monitor tool, but its allow and updatedInput have no effect on them. Requires Claude Code v2.1.314 or later. Matchers such as Bash|PowerShell, ^Bash$, and Bash.* are Bash matchers too. A hook with a Bash matcher doesn’t run for a WebSocket watch, and a PostToolUse hook with one doesn’t run for Monitor.
+A hook that runs for a Monitor command can deny it or have Claude Code ask you about it. To allow or rewrite the command, switch from a Bash matcher to one that includes Monitor:
+
+Matcher that includes Monitor: with a matcher such as Bash|Monitor or .*, or with no matcher, the hook gets the Monitor call’s own input, and allow and updatedInput apply. In if, name Monitor, as in Monitor(tail *), which matches by the rules Bash(tail *) follows. If its if names Bash, the hook still gets the Monitor call’s input, but allow and updatedInput have no effect
+
+Bash matcher: the hook gets a Bash call. In if, name Bash, as in Bash(tail *). The hook doesn’t run if its if names Monitor
+
+​
+Hook handler fields
+Each object in the inner hooks array is a hook handler: the shell command, HTTP endpoint, MCP tool, LLM prompt, or agent that runs when the matcher matches. There are five types:
+
+Command hooks (type: "command"): run a shell command. Your script receives the event’s JSON input on stdin and communicates results back through exit codes and stdout.
+
+HTTP hooks (type: "http"): send the event’s JSON input as an HTTP POST request to a URL. The endpoint communicates results back through the response body using the same JSON output format as command hooks.
+
+MCP tool hooks (type: "mcp_tool"): call a tool on a configured MCP server. The tool’s text output is treated like command-hook stdout.
+
+Prompt hooks (type: "prompt"): send a prompt to a Claude model for single-turn evaluation. The model returns its decision as JSON. See Prompt-based hooks.
+
+Agent hooks (type: "agent"): spawn a subagent that can use tools like Read, Grep, and Glob to verify conditions before returning a decision. Agent hooks are experimental and may change. See Agent-based hooks.
+
+When an event fires, its matching hooks run in parallel. If more than 12 of them are prompt or agent hooks, 12 of those run at once and the rest start as running ones finish. Each waiting hook’s timeout starts counting when that hook starts.
+If you define the same handler in more than one settings file, it runs once. A plugin’s or skill’s copy of the same handler stays separate.
+Handlers run in the current directory with Claude Code’s environment. If the current directory no longer exists, for example a worktree or temp directory that another shell deleted mid-session, Claude Code runs command hooks from the first of these that still exists: the directory the session started in, the project root, your home directory, or the system temp directory. Claude Code records a warning naming the fallback directory in the debug log. For a worktree session that you start from the desktop app, see What worktrees share with the main checkout.
+The $CLAUDE_CODE_REMOTE environment variable is "true" in remote web environments and not set in the local CLI. Claude Code v2.1.199 and later sets $CLAUDE_CODE_BRIDGE_SESSION_ID to the Remote Control session ID while the local session has an active Remote Control connection.
+
+​
+Common fields
+These fields apply to all hook types:
+
+FieldRequiredDescription
+typeyes"command", "http", "mcp_tool", "prompt", or "agent"
+ifnoPermission rule syntax to filter when this hook runs, such as "Bash(git *)" or "Edit(*.ts)". The hook command only runs if the tool call matches the pattern. See the Bash matching table for how Bash patterns evaluate against subcommands, $(), and backticks. Only evaluated on tool events: PreToolUse, PostToolUse, PostToolUseFailure, PermissionRequest, and PermissionDenied. On other events, a hook with if set never runs
+timeoutnoSeconds before canceling. Claude Code doesn’t enforce it on a command hook you run with async: true. Defaults: 600 for command, http, and mcp_tool; 30 for prompt; 60 for agent. Claude Code lowers the command, http, and mcp_tool default to 30 on UserPromptSubmit, PreModelSwitch, and PostModelSwitch, and to 10 on MessageDisplay. SessionEnd hooks share a 1.5-second budget; if your settings set a longer per-hook timeout, Claude Code raises the budget to match, up to 60 seconds
+statusMessagenoCustom spinner message displayed while the hook runs
+oncenoIf true, Claude Code removes the hook after its first successful run. A run that fails, blocks with exit code 2, or times out leaves the hook in place, so it runs again on the next matching event. Only honored for hooks declared in skill frontmatter; ignored in settings files and agent frontmatter
+The if field holds exactly one permission rule. There is no &&, ||, or list syntax for combining rules; to apply multiple conditions, define a separate hook handler for each.
+In an if condition for a file tool, a single-segment directory pattern like "Edit(src/**)" matches only the src directory in the working directory and the files under it. To match a directory named src at any depth, write "Edit(**/src/**)".
+
+​
+How if patterns match Bash commands
+For Bash patterns in the if field, whether your hook command runs depends on the shape of the pattern and the Bash command Claude is invoking. Leading VAR=value assignments are stripped before matching.
+
+if patternBash commandHook runs?Why
+Bash(git *)FOO=bar git pushyesleading assignments are stripped; git push matches
+Bash(git *)npm test && git pushyeseach subcommand is checked; git push matches
+Bash(rm *)echo $(rm -rf /)yescommands inside $() and backticks are checked; rm -rf / matches
+Bash(rm *)echo $(date)nono subcommand matches rm *
+Bash(git push *)echo $(date)yespatterns that specify more than the command name run the hook anyway on $(), backticks, or $VAR
+When Claude Code can’t determine which commands the Bash input runs, it runs your hook regardless of the pattern. Because the if filter is best-effort, use the permission system rather than a hook to enforce a hard allow or deny.
+
+​
+Command hook fields
+In addition to the common fields, command hooks accept these fields:
+
+FieldRequiredDescription
+commandyesShell command to execute. With args, the executable to spawn directly. See Exec form and shell form
+argsnoArgument list. When present, command is resolved as an executable and spawned directly with args as the argument vector, with no shell involved. See Exec form and shell form
+asyncnoIf true, runs in the background without blocking. See Run hooks in the background
+asyncRewakenoIf true, runs in the background and wakes Claude on exit code 2. The hook’s stderr, or stdout if stderr is empty, is shown to Claude as a system reminder so it can react to a long-running background failure
+shellnoShell to use for this hook. Accepts "bash" or "powershell". Defaults to "bash", or to "powershell" on Windows when Git Bash isn’t installed. Setting "powershell" runs the command via PowerShell on Windows. Does not require CLAUDE_CODE_USE_POWERSHELL_TOOL since hooks spawn PowerShell directly. Ignored when args is set
+onFailurenoWhether the action that triggered the hook goes ahead when the hook fails: "continue" or "block". See Block the action when a hook fails for "block" and for leaving the field unset. Requires Claude Code v2.1.295 or later
+
+Exec form and shell form
+A command hook runs as exec form when args is set, and shell form when args is omitted. Set args whenever the hook references a path placeholder, since each element is passed as one argument with no quoting. Omit args when you need shell features like pipes or &&, or when neither concern applies.
+Exec form runs when args is present. Claude Code resolves command as an executable on PATH and spawns it directly with args as the argument vector. There is no shell, so each args element is one argument exactly as written, and path placeholders like ${CLAUDE_PLUGIN_ROOT} are substituted into command and into each args element as plain strings. Special characters such as apostrophes, $, and backticks pass through verbatim because there is no shell to interpret them. No shell tokenization happens on any platform.
+Shell form runs when args is absent. The command string is passed to a shell: sh -c on macOS and Linux, Git Bash on Windows, or PowerShell when Git Bash isn’t installed. Set the shell field to choose explicitly. The shell tokenizes the string, expands variables, and interprets pipes, &&, redirects, and globs.
+
+On Windows, exec form requires command to resolve to a real executable such as a .exe. The .cmd and .bat shims that npm, npx, eslint, and other tools install in node_modules/.bin are not executables and can’t be spawned without a shell. To run them in exec form, invoke the underlying script with node directly, for example "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/node_modules/eslint/bin/eslint.js"]. The node plus script-path pattern works on every platform because node.exe is a real binary. To run a .cmd or .bat shim by name, use shell form.
+This example runs a Node script bundled with a plugin. Exec form passes the resolved script path as one argument with no quoting:
+
+{
+ "type": "command",
+ "command": "node",
+ "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/format.js", "--fix"]
+}
+
+The equivalent shell form needs quoting to handle paths with spaces or special characters:
+
+{
+ "type": "command",
+ "command": "node \"${CLAUDE_PLUGIN_ROOT}\"/scripts/format.js --fix"
+}
+
+Both forms support the same path placeholders, and both export them as the environment variables CLAUDE_PROJECT_DIR, CLAUDE_PLUGIN_ROOT, and CLAUDE_PLUGIN_DATA on the spawned process, so a script can read process.env.CLAUDE_PLUGIN_ROOT regardless of how it was launched.
+Plugin hooks additionally substitute ${user_config.*} values, in exec form only: the value is substituted into command and into each args element as a plain string, so no shell re-parses it.
+A shell-form plugin hook whose command references ${user_config.*} fails with an error instead of running. To use an option value from a shell-form hook, read the $CLAUDE_PLUGIN_OPTION_<KEY> environment variable, such as $CLAUDE_PLUGIN_OPTION_WEBHOOK_URL for a webhook_url option, or set args to switch the hook to exec form. Before v2.1.207, shell-form plugin hook commands also substituted ${user_config.*}.
+
+In exec form, command is the executable name or path only. If command is a bare name with no path separator and contains whitespace alongside args, Claude Code logs a warning because the spawn will fail: there is no executable named node script.js. Move the extra tokens into args. Absolute paths with spaces, such as C:\Program Files\nodejs\node.exe, are a single valid executable and don’t trigger the warning.
+
+​
+HTTP hook fields
+In addition to the common fields, HTTP hooks accept these fields:
+
+FieldRequiredDescription
+urlyesURL to send the POST request to
+headersnoAdditional HTTP headers as key-value pairs. Values support environment variable interpolation using $VAR_NAME or ${VAR_NAME} syntax. Only variables listed in allowedEnvVars are resolved
+allowedEnvVarsnoList of environment variable names that may be interpolated into header values. References to unlisted variables are replaced with empty strings. Required for any env var interpolation to work
+onFailurenoWhat happens to the action when the hook fails: "continue", the default, or "block". See Block the action when a hook fails. Requires Claude Code v2.1.295 or later
+Claude Code sends the hook’s JSON input as the POST request body with Content-Type: application/json. The response body uses the same JSON output format as command hooks.
+Error handling differs from command hooks; see HTTP response handling.
+This example sends PreToolUse events to a local validation service, authenticating with a token from the MY_TOKEN environment variable:
+
+{
+ "hooks": {
+ "PreToolUse": [
+ {
+ "matcher": "Bash",
+ "hooks": [
+ {
+ "type": "http",
+ "url": "http://localhost:8080/hooks/pre-tool-use",
+ "timeout": 30,
+ "headers": {
+ "Authorization": "Bearer $MY_TOKEN"
+ },
+ "allowedEnvVars": ["MY_TOKEN"]
+ }
+ ]
+ }
+ ]
+ }
+}
+
+​
+MCP tool hook fields
+In addition to the common fields, MCP tool hooks accept these fields:
+
+FieldRequiredDescription
+serveryesName of a configured MCP server. For a plugin-bundled server, this is the scoped name plugin:<plugin-name>:<server-name>, such as plugin:my-plugin:db, not the bare server key
+toolyesName of the tool to call on that server
+inputnoArguments passed to the tool. String values support ${path} substitution from the hook’s JSON input, such as "${tool_input.file_path}"
+This example calls the security_scan tool on the my_server MCP server after each Write or Edit, passing the edited file’s path:
+
+{
+ "hooks": {
+ "PostToolUse": [
+ {
+ "matcher": "Write|Edit",
+ "hooks": [
+ {
+ "type": "mcp_tool",
+ "server": "my_server",
+ "tool": "security_scan",
+ "input": { "file_path": "${tool_input.file_path}" }
+ }
+ ]
+ }
+ ]
+ }
+}
+
+How the tool’s result is read
+Claude Code reads the tool’s text content the same way it reads command-hook stdout, following the parsing rule under exit code 0. If the tool returns isError: true, the hook produces a non-blocking error and execution continues.
+When the server is still connecting
+On events where a hook can block or change the result, such as PreToolUse or Stop, Claude Code waits for a connecting server before it calls the tool, for at most MCP_TIMEOUT and within the hook’s own timeout. On observational events, such as Notification or SessionEnd, it doesn’t wait.
+A server showing the cached status connects when the hook calls its tool. If the server isn’t connected at that point, the hook produces a non-blocking error and execution continues. The hook never starts an OAuth flow, so authenticate the server from /mcp first.
+Events that fire before MCP servers are available
+SessionStart at launch, including with --continue or --resume, and every Setup event fire before the session’s MCP servers are available to hooks. Claude Code skips their mcp_tool hooks without calling the tool, and the debug log records mcp_tool hooks are not available for the 'SessionStart' hook event (no MCP client context), or the same message naming Setup. When SessionStart fires again later in the session, after /clear or a compaction, its mcp_tool hooks run. For anything the session needs at launch, use a type: "command" hook on SessionStart instead.
+
+​
+Prompt and agent hook fields
+In addition to the common fields, prompt and agent hooks accept these fields:
+
+FieldRequiredDescription
+promptyesPrompt text to send to the model. Use $ARGUMENTS as a placeholder for the hook input JSON. Escape with a backslash to include literal text: \$1.00 renders as $1.00
+modelnoModel to use for evaluation. Defaults to the model Claude Code uses for background functionality
+
+​
+Reference scripts by path
+Use these placeholders to reference hook scripts relative to the project or plugin root, regardless of the working directory when the hook runs:
+
+${CLAUDE_PROJECT_DIR}: the project root where the session started. Claude Code also sets this variable in the environment of stdio MCP servers and plugin LSP servers.
+
+${CLAUDE_PLUGIN_ROOT}: the plugin’s installation directory, for scripts bundled with a plugin. See plugin environment variables for how the path behaves across updates.
+
+${CLAUDE_PLUGIN_DATA}: the plugin’s persistent data directory, for dependencies and state that should survive plugin updates.
+
+Worktrees are different. If Claude enters a worktree during the session, Claude Code keeps ${CLAUDE_PROJECT_DIR} where it was and passes the worktree path to your hooks a different way:
+
+${CLAUDE_PROJECT_DIR} stays put: it still points at the project root where the session started, so a command such as ${CLAUDE_PROJECT_DIR}/.claude/hooks/check-style.sh still runs the script in the main checkout.
+
+cwd follows Claude: the cwd field in the hook’s input JSON is the worktree root after Claude enters a worktree, and the new directory after Claude runs cd. Read it when a hook needs to know which directory Claude is working in.
+For a worktree session that you start from the desktop app, see What worktrees share with the main checkout for where ${CLAUDE_PROJECT_DIR} points.
+Prefer exec form for any hook that references a path placeholder. In shell form, wrap each placeholder in double quotes.
+
+ Project scripts
+
+ Plugin scripts
+
+This example uses ${CLAUDE_PROJECT_DIR} to run a style checker from the project’s .claude/hooks/ directory after any Write or Edit tool call:
+
+{
+ "hooks": {
+ "PostToolUse": [
+ {
+ "matcher": "Write|Edit",
+ "hooks": [
+ {
+ "type": "command",
+ "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/check-style.sh",
+ "args": []
+ }
+ ]
+ }
+ ]
+ }
+}
+
+Define plugin hooks in hooks/hooks.json with an optional top-level description field. When a plugin is enabled, its hooks merge with your user and project hooks.This example runs a formatting script bundled with the plugin:
+
+{
+ "description": "Automatic code formatting",
+ "hooks": {
+ "PostToolUse": [
+ {
+ "matcher": "Write|Edit",
+ "hooks": [
+ {
+ "type": "command",
+ "command": "${CLAUDE_PLUGIN_ROOT}/scripts/format.sh",
+ "args": [],
+ "timeout": 30
+ }
+ ]
+ }
+ ]
+ }
+}
+
+See the plugin components reference for details on creating plugin hooks.
+
+​
+Hooks in skills and agents
+In addition to settings files and plugins, hooks can be defined directly in skills and subagents using frontmatter, in the same configuration format as settings-based hooks. How long Claude Code keeps them registered depends on the component:
+
+Subagent hooks: Claude Code runs them only while that subagent is running and removes them when it finishes. Claude Code converts a Stop hook here to SubagentStop, the event it fires when a subagent completes.
+
+Skill hooks: Claude Code registers them when you or Claude invoke the skill and keeps running them for the rest of the session, on turns after the skill’s own turn as well. To have Claude Code remove a hook after its first successful run instead, set once: true on it.
+
+This skill defines a PreToolUse hook that runs a security validation script before each Bash command:
+
+---
+name: secure-operations
+description: Perform operations with security checks
+hooks:
+ PreToolUse:
+ - matcher: "Bash"
+ hooks:
+ - type: command
+ command: "./scripts/security-check.sh"
+---
+
+Subagents use the same format in their YAML frontmatter.
+Frontmatter hooks in a project skill follow the same workspace trust rule as hooks in settings files. Claude Code registers them when you or Claude invoke the skill, including in a -p run in a folder you haven’t trusted.
+Frontmatter hooks in a project subagent run only after you accept the workspace trust dialog for the folder the agent file came from. A -p session doesn’t count as accepting it. What runs before you trust a folder compares this with the settings-file rule, and the subagents page lists which scopes are exempt.
+
+​
+Limits on skill hooks
+When a skill’s frontmatter hooks don’t fire after you or Claude invoke the skill, run /hooks in that session. If it lists them, see Hook not firing. If it lists none of them, the skill may be under a plugin-only lock or past a hook limit, and runs without any of its frontmatter hooks. Check for each case:
+
+Plugin-only lock: your organization’s administrator can lock hooks to plugins and managed settings with the strictPluginOnlyCustomization managed setting. A skill keeps its frontmatter hooks under that lock only if it’s a plugin skill, a bundled skill, or a skill in the managed settings directory. The hooks in your own settings files don’t run either.
+
+Check: type /status in a Claude Code session. If the Setting sources line includes Enterprise managed settings, ask your administrator whether strictPluginOnlyCustomization locks hooks.
+
+Fix: move the skill into a plugin, because plugin skills keep their frontmatter hooks. List the plugin in a marketplace, then install it from there. If Claude Code refuses the marketplace with is blocked by enterprise policy, ask your administrator to allow that marketplace.
+
+Hook limit: in Claude Code v2.1.304 or later, each source of skills has its own limit per session. Your project, your personal skills folder, and each plugin count as separate sources. The skills from one source can register at most 1,024 hooks. Those hooks’ matchers can total at most 16,384 characters. A matcher with several hooks under it counts once for each hook.
+
+Check: repeat the session where the hook didn’t fire, with debug logging on:
+
+Start a new session from your shell with claude --debug. If you don’t start sessions from a shell, type /debug first in the new session instead.
+
+Invoke the same skills in the same order, including the ones Claude invoked, because both totals build up skill by skill. Ask Claude to invoke any skill you can’t type as a command.
+
+Search the debug log for registers none of its hooks. A line containing that text names the skill that went past the limit.
+
+Fix: declare fewer hooks or shorter matchers in that skill or in the other skills from its source, then start a new session. If those skills aren’t yours to edit, ask their author for that change. Until then, start a new session and invoke the skill you need before any other skill from its source.
+
+If neither case is yours, check for frontmatter that didn’t parse.
+
+​
+The /hooks menu
+Type /hooks in Claude Code to open a read-only browser for your configured hooks. The list labels each hook with where it comes from, such as user settings, project settings, local settings, a plugin, or the current session.
+Select a hook to see the full text of what it runs and where it’s defined, such as the path of its settings file or the name of its plugin.
+To browse all hook events, including ones with no hooks configured, select All events at the end of the list.
+
+​
+Disable or remove hooks
+To remove a hook defined in a settings file, delete its entry from that file.
+To temporarily disable all hooks without removing them, set "disableAllHooks": true in your settings file. Claude Code reads the value left after settings precedence applies, so a "disableAllHooks": false in a project’s .claude/settings.json overrides a true in your user settings. To turn hooks off for one run whatever the project’s settings say, pass --settings '{"disableAllHooks": true}', which takes precedence over project and local settings. There is no way to disable an individual hook while keeping it in the configuration.
+The disableAllHooks setting respects the managed settings hierarchy. If an administrator has configured hooks through managed policy settings, disableAllHooks set in user, project, or local settings can’t disable those managed hooks. Only disableAllHooks set at the managed settings level can disable managed hooks. For the full reach of each level, see disableAllHooks.
+Direct edits to hooks in settings files are normally picked up automatically by the file watcher.
+
+​
+Hook input and output
+Command hooks receive JSON data via stdin and communicate results through exit codes, stdout, and stderr. HTTP hooks receive the same JSON as the POST request body and communicate results through the HTTP response body. This section covers fields and behavior common to all events. Each event’s section under Hook events includes its specific input schema and decision control options.
+On macOS and Linux, command hooks run in their own session without a controlling terminal. The hook process and any child processes can’t open /dev/tty or send escape sequences directly to the Claude Code interface. Windows has no /dev/tty.
+To surface a message to the user on any platform, return systemMessage in JSON output. Some events discard it or deliver it elsewhere, and each event’s section says so. To trigger a desktop notification, set a window title, or ring the bell, return terminalSequence instead.
+
+​
+Common input fields
+Hook events receive these fields as JSON, in addition to event-specific fields documented in each hook event section. For command hooks, this JSON arrives via stdin. For HTTP hooks, it arrives as the POST request body.
+
+FieldDescription
+session_idCurrent session identifier
+prompt_idUUID identifying the user prompt currently being processed. Matches the prompt.id attribute on OpenTelemetry events, so you can correlate hook output with telemetry for a single prompt. Absent until the first user input
+transcript_pathPath to conversation JSON. The transcript file is written asynchronously and may lag the in-memory conversation, so it may not yet include the current turn’s most recent messages when a hook fires. Hooks that need the final assistant text of the current turn should use last_assistant_message on Stop and SubagentStop instead of reading the transcript
+cwdCurrent working directory when the hook is invoked
+scratchpad_dirPath to the session’s scratchpad directory, where Claude keeps temporary working files. Absent when the session has no scratchpad or the temp directory is unavailable. Requires Claude Code v2.1.257 or later
+permission_modeCurrent permission mode: "default", "plan", "acceptEdits", "auto", "dontAsk", or "bypassPermissions". The mode labeled Manual arrives as "default", never as "manual", so scripts that match "default" keep working. Not all events receive this field. Check the JSON example in each hook event section
+effortObject whose level is the effort level setting when the hook runs, including a skill’s, subagent’s, or ultrathink level: "low", "medium", "high", "xhigh", or "max". Present for PreToolUse, PostToolUse, Stop, SubagentStop, and other events with a tool-use context, on models with effort. If the model doesn’t support your level, level is the level that ran. A level you changed can show here before it starts. $CLAUDE_EFFORT holds the same level.
+hook_event_nameName of the event that fired
+agent_id and agent_type tell your script which agent a hook fired in, such as a subagent, an in-process teammate, or the agent you chose with --agent:
+
+FieldDescription
+agent_idUnique identifier for the subagent or in-process teammate the hook fires in.
+agent_typeAgent name (for example, "Explore" or "security-reviewer"). Present when the session uses --agent or the hook fires inside a subagent. For subagents, the subagent’s type takes precedence over the session’s --agent value. See SubagentStart for the values custom and plugin subagents report and how to write a matcher against a plugin-scoped name.
+Only SessionStart hooks can receive a model field, and Claude Code doesn’t always include it. PreModelSwitch and PostModelSwitch hooks receive from_model and to_model instead, so use a PostModelSwitch hook to follow the model as it changes during a session.
+There is no $CLAUDE_MODEL environment variable. The hook can read $ANTHROPIC_MODEL if you set it in your shell, but that value doesn’t change when you switch models with /model during a session.
+A hook process inherits the parent environment, apart from the OTEL_* exporter variables that Claude Code removes from every subprocess it spawns and, when CLAUDE_CODE_SUBPROCESS_ENV_SCRUB is set to 1, the variables it strips. In a session that gets the HIPAA configuration, Claude Code also removes Anthropic credentials from the hook’s environment.
+For example, a PreToolUse hook for a Bash command receives this on stdin:
+
+{
+ "session_id": "abc123",
+ "prompt_id": "550e8400-e29b-41d4-a716-446655440000",
+ "transcript_path": "/home/user/.claude/projects/.../transcript.jsonl",
+ "cwd": "/home/user/my-project",
+ "scratchpad_dir": "/tmp/claude-1000/-home-user-my-project/abc123/scratchpad",
+ "permission_mode": "default",
+ "hook_event_name": "PreToolUse",
+ "tool_name": "Bash",
+ "tool_input": {
+ "command": "npm test",
+ "description": "Run test suite",
+ "timeout": 120000,
+ "run_in_background": false
+ },
+ "tool_use_id": "toolu_01ABC123..."
+}
+
+The tool_name, tool_input, and tool_use_id fields are event-specific. Each hook event section documents the additional fields for that event.
+
+​
+Exit code output
+When your hook’s run finishes, Claude Code uses its exit code to decide whether to continue with the action that triggered it, such as a tool call or a prompt:
+
+Success: your hook exits 0. Claude Code applies any JSON output fields your hook printed, and the action goes ahead unless those fields block or deny it. Hooks that start a background process covers the exception.
+
+Blocking error: your hook exits 2. On events that can block, Claude Code stops the action.
+
+Non-blocking error: your hook exits with any other code, or fails in some other way, such as not starting or printing invalid JSON. The action goes ahead, except for hooks whose failure blocks the action, for example a hook with onFailure set to "block". On events such as PreToolUse, you see a <hook name> hook error notice in the transcript.
+
+What your hook prints to stdout can change the outcome. For example, when a PreToolUse hook exits 1 but prints JSON that passes validation, that JSON can still decide what happens. To find your hook’s outcome on an event such as PreToolUse, match what it printed to stdout in the first column with its exit code along the top:
+
+StdoutExit 0Exit 2Any other exit code
+JSON object that passes schema validationSuccess. The fields applyBlocking error. Claude Code still reads the fields, but they can’t override the blockSuccess. Claude Code ignores the exit code, and the fields alone decide. For hooks whose failure blocks the action, the run counts as a failure instead
+JSON that can’t be parsed or fails schema validationNon-blocking error. The notice carries the parse or validation messageBlocking error. Your stderr is the reasonNon-blocking error. The notice carries the parse or validation message
+Plain text, or nothingSuccessBlocking error. Your stderr is the reasonNon-blocking error. The notice carries the first line of your stderr
+Some events have their own rules:
+
+WorktreeCreate: any non-zero exit code makes worktree creation fail, whatever your JSON says.
+
+WorktreeRemove: any non-zero exit code makes worktree removal fail if the directory still exists afterward.
+
+Stop, SubagentStop, TaskCompleted, and a plugin’s UserPromptSubmit hook: when your hook exits 2 with nothing on stdout and its stderr says a file is missing, such as No such file or directory, Claude Code treats the run as a non-blocking error.
+
+Elicitation and ElicitationResult: Claude Code applies your hookSpecificOutput when your hook exits 0, and ignores it on any other exit code.
+
+Events that discard hook output, such as StopFailure: Claude Code ignores your JSON on any exit code, apart from side-effect fields like terminalSequence, which still fire.
+
+To check what exit code 2 does on your event, see Exit code 2 behavior per event. To check which decision fields it honors, see Decision control.
+
+​
+Exit code 0
+Exit 0 means success, and is the intended exit code when you print JSON for structured control. When your hook exits 0 but prints JSON that can’t be parsed or fails schema validation, the action goes ahead unless the hook is one whose failure blocks the action. Instead of a success with your fields applied, the run is a non-blocking error.
+To fix your output, use the parse or validation message that the <hook name> hook error notice carries. For a hook that isn’t async, your stdout counts as JSON output only when you print one JSON object, on one line or several, with nothing around it but whitespace. Claude Code reads any other stdout as plain text or a parse failure:
+
+Output that doesn’t start with {, or that starts with { and doesn’t end with }: plain text. A JSON array and a quoted JSON string are plain text by this rule.
+
+Two or more lines that each parse as JSON on their own, the first starting with { and the last ending with }: plain text when no line is a JSON output object that sets a field. When one line is, the output is a parse failure, so print that object with nothing else on stdout.
+
+Anything else that starts with { and ends with } but isn’t valid JSON: a parse failure.
+
+For most events, Claude Code writes stdout to the debug log and doesn’t show it in the transcript. On these events, your stdout reaches Claude or the compaction summary:
+
+UserPromptSubmit, UserPromptExpansion, SessionStart, and PostModelSwitch: Claude Code adds plain-text stdout as context that Claude can see and act on. It doesn’t add stdout it failed to parse.
+
+PreCompact: your stdout becomes instructions for the compaction summary
+
+Claude never sees stderr from a hook that exits 0. To read it yourself on events such as PreToolUse, enable debug logging. To surface a warning to Claude from a PostToolUse or PostToolUseFailure hook, exit 2 instead so Claude sees the stderr even though the tool already ran.
+
+​
+Exit code 2
+Exit with code 2 to block the action. On events that can block, Claude Code stops the action: a PreToolUse hook blocks the tool call, for example, and a UserPromptSubmit hook rejects the prompt.
+The message that comes with the block is your hook’s stderr. If your hook also printed JSON that makes a blocking decision, Claude Code uses that decision’s reason instead.
+Exit 2 blocks even when your hook prints JSON:
+
+JSON that passes schema validation: Claude Code still reads the JSON output fields, but they can’t override the block. Even a permissionDecision of "allow" doesn’t let the action through. On Elicitation and ElicitationResult, an exit-2 hook’s hookSpecificOutput is ignored.
+
+JSON that fails schema validation: the hook still blocks. Claude Code uses your stderr as the blocking reason and records the validation failure in the debug log.
+
+This script blocks rm commands by exiting 2 and leaves every other command to the normal permission flow:
+
+#!/bin/bash
+# Reads JSON input from stdin, checks the command
+input=$(cat)
+command=$(jq -r '.tool_input.command' <<<"$input")
+
+if [[ "$command" == rm* ]]; then
+ echo "Blocked: rm commands are not allowed" >&2
+ exit 2 # Blocking error: tool call is prevented
+fi
+
+exit 0 # No decision: the normal permission flow applies
+
+With this script registered as a PreToolUse hook on Bash, a command that starts with rm is blocked, and Claude receives the hook’s stderr as the tool’s error, prefixed with the event name, the tool name, and the hook’s command:
+
+PreToolUse:Bash hook error: [${CLAUDE_PROJECT_DIR}/.claude/hooks/no-rm.sh]: Blocked: rm commands are not allowed
+
+​
+Other exit codes
+A <hook name> hook error notice with Failed with non-blocking status code: means your hook’s exit code wasn’t 0 or 2 and its stdout was plain text or empty. Unless the hook is one whose failure blocks the action, this is a non-blocking error, so your hook didn’t stop the action. To capture your hook’s full stderr rather than the first line the notice shows, enable debug logging.
+For example, when a PreToolUse hook on Bash prints something broke to stderr and exits 1, the PreToolUse:Bash hook error notice carries this line:
+
+Failed with non-blocking status code: something broke
+
+If the notice carries the shell’s No such file or directory message, as in the following line, the hook never ran, for example because its script path doesn’t exist:
+
+Failed with non-blocking status code: /bin/sh: /path/to/hook.sh: No such file or directory
+
+If the path is wrong, correct it where the hook is configured. In shell form, when the script path doesn’t exist or isn’t executable, the shell exits with a code like 127 and the notice carries the interpreter’s message. Unless the hook is one whose failure blocks the action, a hook that can’t start is a non-blocking error too.
+When you set up a policy hook, watch for this notice on its first run, because a mistyped path in settings.json means the hook never runs. To block the action when the hook can’t start, set onFailure: "block".
+
+Exit code 1 without valid JSON output is a non-blocking error unless the hook is one whose failure blocks the action, even though 1 is the conventional Unix failure code. If your hook is meant to enforce a policy, use exit 2.
+
+​
+Timeouts
+Apart from a command hook you run with async: true, Claude Code cancels a command, http, or mcp_tool hook that reaches its timeout, discarding the hook’s output, so on most events a timed-out hook renders no decision. On PreModelSwitch, a hook canceled at its timeout blocks the model switch.
+On PreToolUse, a timed-out command, http, or mcp_tool hook doesn’t block the tool call, except for hooks whose failure blocks the action. The call continues through the normal permission flow, so don’t count on a stalled hook to act as a gate. To block the call when a command or http hook times out, set onFailure: "block". An Agent SDK callback hook that exceeds its timeout blocks the tool call.
+
+​
+Hooks that start a background process
+If your command hook makes its decision in a background process and exits, a deny that process prints after Claude Code has stopped reading doesn’t block the tool call. For a hook that isn’t async, Claude Code finishes reading the hook’s output shortly after the hook’s own process exits.
+Print the decision before you start a background process, and redirect that process’s stdout and stderr. If your script prints an allow, then starts a background process without redirecting that process’s stdout and stderr, Claude Code blocks the tool call. The hook error includes refusing to honor the suspect capture.
+This PreToolUse hook script prints the decision with policy-check.sh, then uploads metrics in the background:
+
+#!/bin/bash
+"$CLAUDE_PROJECT_DIR"/.claude/hooks/policy-check.sh || exit $?
+"$CLAUDE_PROJECT_DIR"/.claude/hooks/upload-metrics.sh >/dev/null 2>&1 &
+
+The rest of the script does this:
+
+|| exit $?: makes the check’s exit code the hook’s own, so a check that exits 2 to deny still blocks. Otherwise the hook exits with the last line’s code, which is 0.
+
+>/dev/null 2>&1 &: runs upload-metrics.sh in the background with its output redirected, so it doesn’t keep the hook’s output open.
+
+To test the script, make policy-check.sh exit 2, then trigger a tool call that the hook matches. The tool call is blocked.
+
+​
+Block the action when a hook fails
+On most events, when a hook fails or times out, Claude Code still carries out the action. A policy hook with a wrong path or a crashing script then lets everything through. To block the action instead, set "onFailure": "block" on a command or http hook. Requires Claude Code v2.1.295 or later. For Agent SDK callback hooks, see Block the action when a callback fails.
+
+On Windows without Git Bash, a shell-form PreToolUse or PermissionRequest command hook that fails with onFailure unset can instead block the tool call.
+This PreToolUse hook in .claude/settings.json runs a project script before each Bash command, and blocks the command if the script fails:
+
+{
+ "hooks": {
+ "PreToolUse": [
+ {
+ "matcher": "Bash",
+ "hooks": [
+ {
+ "type": "command",
+ "command": "node",
+ "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/check-command.js"],
+ "onFailure": "block"
+ }
+ ]
+ }
+ ]
+ }
+}
+
+To test it, leave check-command.js missing and ask Claude to run a Bash command such as ls. Claude Code blocks the call, and the error includes failed; blocking because onFailure is "block" followed by node’s own error output, trimmed here to one line:
+
+PreToolUse:Bash hook error: [node ${CLAUDE_PROJECT_DIR}/.claude/hooks/check-command.js]: failed; blocking because onFailure is "block"
+Error: Cannot find module '/path/to/project/.claude/hooks/check-command.js'
+
+After a timeout, the message says timed out instead of failed. Without onFailure set, the same missing script is a non-blocking error and ls runs.
+Each of these counts as a failure:
+
+Can’t start: a command hook fails to start, for example because the script or executable doesn’t exist
+
+Exit code other than 0 or 2: counts for a command hook even if it printed JSON that allows the action, such as permissionDecision: "allow". To return a JSON decision, exit 0
+
+HTTP error: an HTTP hook’s connection fails, or the response status isn’t 2xx
+
+Timeout: the hook reaches its timeout
+
+Invalid output: the JSON output can’t be parsed or fails schema validation. For an HTTP hook, a 2xx body that is neither empty nor a JSON object also counts. Plain-text stdout from a command hook isn’t a failure
+
+With "block" set, a failure does what exit code 2 does on that event, except on PermissionRequest, where it denies the request. For example, a PreToolUse failure blocks the tool call and a UserPromptSubmit failure blocks the prompt.
+The field has no effect on these hooks:
+
+Stop, SubagentStop, TaskCompleted, and TeammateIdle hooks: exit code 2 on these events sends Claude back to keep working, and Claude can’t repair a hook that won’t run
+
+Background command hooks: command hooks that set async or asyncRewake
+
+​
+Failed hooks on Windows without Git Bash
+If the error for a blocked tool call includes this text, a PreToolUse or PermissionRequest command hook failed or timed out and blocked the call:
+
+blocking because Git Bash wasn't found, so only exit code 0 or 2 counts as this hook's verdict.
+
+If the error also says PowerShell started no program, start with the fixes for a command that is only quoted strings, which PowerShell prints instead of running.
+Without Git Bash, any exit code other than 0 or 2 from that hook counts as a failure, even when it prints JSON that doesn’t deny the call. To find out why the hook failed, check the debug log. Then pick the fix that matches your hook:
+
+The call should go ahead when the hook fails: add "onFailure": "continue" to the hook
+
+The hook exits 1 to warn but must block when it crashes: with "onFailure": "continue", the call goes ahead on exit code 1, warning or crash alike. Add "onFailure": "block" instead, and have the script exit 0 where it warns, so those calls go ahead. To still show the warning on PreToolUse, print it to stdout as the systemMessage field of one JSON object.
+
+The hook is written for Bash: without Git Bash, a shell-form hook with no shell set runs in PowerShell, where it can fail. Install Git for Windows, or set CLAUDE_CODE_GIT_BASH_PATH if Git Bash is installed where Claude Code doesn’t find it. Then start a new session.
+
+The hook runs one .exe, not a .cmd or .bat file: put the program in command and its arguments in args to use exec form, and add "onFailure": "block". Claude Code then starts the program with no shell. Without "onFailure": "block", the call can go ahead when the program fails, is missing, or times out
+
+A PowerShell guard hook that must block on failure: with onFailure unset, it stops doing so once Git for Windows is installed and Claude Code finds Git Bash. Add "onFailure": "block" so a failure or a timeout blocks the call with or without Git Bash. Also set "shell": "powershell" so the hook keeps running in PowerShell from then on instead of in Git Bash
+
+Before v2.1.309, the message read blocking because Git Bash wasn't found and this hook doesn't set "shell" to "powershell", so only exit code 0 or 2 counts as its verdict.
+
+​
+PowerShell started no program
+A hook with this error ran in PowerShell, which prints a command that is only quoted strings, such as "command": "\"C:\\Tools\\guard.exe\"", instead of running it.
+
+To print text, such as JSON: set "shell": "powershell", and the hook exits 0
+
+To run a .ps1, .cmd, or .bat file, or a .exe whose path has a variable: set "shell": "powershell" and put & before the quoted path. Leave $HOME as written, and spell environment variables as the check.ps1 example spells $env:CLAUDE_PROJECT_DIR
+
+To run one .exe at a path without $: remove the inner quotes from command, then apply the fix for a hook that runs one .exe, writing "args": [] if the program takes no arguments
+
+To run a script written for Bash: apply the fix for a hook written for Bash
+
+​
+Exit code 2 behavior per event
+Exit code 2 is the way a hook signals “stop, don’t do this.” The effect depends on the event, because some events represent actions that can be blocked (like a tool call that hasn’t happened yet) and others represent things that already happened or can’t be prevented.
+
+Hook eventCan block?What happens on exit 2
+PreToolUseYesBlocks the tool call
+PermissionRequestNoExit code 2 isn’t honored for this event and the permission flow proceeds unchanged. Deny through the decision object instead
+UserPromptSubmitYesBlocks the prompt, so it never reaches Claude. See What a blocked prompt leaves behind
+UserPromptExpansionYesBlocks the expansion
+StopYesPrevents Claude from stopping, continues the conversation
+SubagentStopYesPrevents the subagent from stopping
+TeammateIdleYesPrevents the teammate from going idle, so it continues working
+TaskCreatedYesRolls back the task creation
+TaskCompletedYesPrevents the task from being marked as completed
+ConfigChangeYesBlocks the configuration change from taking effect (except policy_settings)
+StopFailureNoOutput and exit code are ignored, except terminalSequence
+PostToolUseNoShows stderr to Claude; the tool already ran
+PostToolUseFailureNoShows stderr to Claude; the tool already failed
+PostToolBatchYesStops the agentic loop before the next model call
+PermissionDeniedNoExit code and stderr are ignored because the denial already occurred. Use JSON hookSpecificOutput.retry: true to tell the model it may retry; Claude Code ignores retry: true for no-verdict denials
+NotificationNoExit code and stderr are ignored
+SubagentStartNoShows stderr to user only
+SessionStartNoShows stderr to user only
+SetupNoExit code and stderr are ignored
+SessionEndNoShows stderr to user only
+CwdChangedNoShows stderr to user only
+DirectoryAddedNoStderr goes to the debug log; the directory is already added
+FileChangedNoShows stderr to user only
+PreCompactYesBlocks compaction
+PostCompactNoShows stderr to user only
+PreModelSwitchYesBlocks the model switch and shows stderr to the user
+PostModelSwitchNoShows stderr to user only; the model already switched
+ElicitationYesDeclines the request, and no dialog appears
+ElicitationResultYesBlocks the response (action becomes decline)
+WorktreeCreateYesAny non-zero exit code causes worktree creation to fail
+WorktreeRemoveYesAny non-zero exit code causes worktree removal to fail if the directory still exists afterward. See WorktreeRemove for what happens to the directory
+InstructionsLoadedNoExit code is ignored
+MessageDisplayNoThe original text is displayed
+For SessionStart, SubagentStart, and PostModelSwitch, Claude Code renders the exit code 2 stderr in the transcript as a <hook name> hook error notice, the same way it renders a non-blocking error. Claude doesn’t see it, and the session or subagent proceeds. For SubagentStart, the notice appears in the subagent’s own transcript, not in the parent conversation.
+
+​
+HTTP response handling
+HTTP hooks use HTTP status codes and response bodies instead of exit codes and stdout. To block the action when the request fails or returns a non-2xx status, set onFailure: "block". To block a tool call or deny a permission, return a 2xx response with a JSON body containing the appropriate decision fields.
+After a non-blocking error, the action goes ahead unless the hook is one whose failure blocks the action. Except on events with their own failure contract in the per-event table, such as WorktreeCreate, you get these results for each response or failure:
+
+2xx with an empty body: success, equivalent to exit code 0 with no output
+
+2xx with a JSON object body: parsed using the same JSON output schema as command hooks. A body that fails schema validation is a non-blocking error
+
+2xx with any other body, such as plain text: non-blocking error, handled the same as a non-2xx status. Claude Code doesn’t add the text to Claude’s context
+
+Non-2xx status: non-blocking error
+
+Connection failure: non-blocking error
+
+Timeout: the hook is canceled, as described under Timeouts
+
+​
+JSON output
+Exit codes only let you block or stay silent, but JSON output gives you finer-grained control. Instead of exiting with code 2 to block, exit 0 and print a JSON object to stdout. Claude Code reads specific fields from that JSON to control behavior, including decision control for blocking, allowing, or escalating to the user.
+
+Choose one approach per hook: either use exit codes alone for signaling, or exit 0 and print JSON for structured control. If you mix them, exit 2 keeps its blocking effect, and Claude Code still reads the JSON fields, with the one elicitation exception noted under Exit code 2.
+Print nothing but the JSON object to stdout. For a hook that isn’t async, other text there, such as a line your shell profile echoes at startup, keeps Claude Code from reading the object as JSON, and Hook JSON has no effect shows how to find and silence that text.
+A hook’s additionalContext, systemMessage, and initialUserMessage strings, and its plain stdout, are capped at 10,000 characters:
+
+Scope: Claude Code measures each string on its own, even when several hooks run for the same event. For JSON output, each field is measured separately; plain stdout is measured whole.
+
+Over the limit: except for PreCompact stdout, Claude Code saves the output to a file in the session directory. It replaces the output with the file path and a preview of up to the first 2,000 characters. A large valid Bash result is handled the same way, described under Output limits. Unlike that Bash ceiling, this cap has no setting or environment variable to raise it.
+
+Reading the file: Claude Code doesn’t ask Claude to read the file, so keep anything Claude must always see within the cap.
+
+The JSON object supports three kinds of fields:
+
+Universal fields like continue are listed in the table below. Every event accepts them, but some events discard them or deliver systemMessage somewhere other than the transcript. Each event’s section says so. terminalSequence works on those events too, with the exceptions listed under Emit terminal notifications.
+
+Top-level decision and reason are used by some events to block or provide feedback.
+
+hookSpecificOutput is a nested object for events that need richer control. It requires a hookEventName field set to the event name.
+
+FieldDefaultDescription
+continuetrueIf false, Claude stops processing entirely after the hook runs. Takes precedence over any event-specific decision fields
+stopReasonnoneMessage shown to the user when continue is false. It stays in the conversation, so Claude sees it if the conversation continues
+suppressOutputfalseHas no effect: Claude Code accepts the field but doesn’t act on it. A successful hook’s stdout is never shown in the transcript and is recorded in the debug log
+systemMessagenoneWarning message shown to the user. In Agent SDK and --output-format stream-json output, it can arrive as an SDKInformationalMessage
+terminalSequencenoneA terminal escape sequence for Claude Code to emit on your behalf, such as a desktop notification, window title, or bell. Restricted to OSC 0/1/2/9/99/777 and BEL. If the value contains anything outside the allowlist, the field is ignored. Use this instead of writing to /dev/tty, which is unavailable to hooks
+To stop Claude entirely:
+
+{ "continue": false, "stopReason": "Build failed, fix errors before continuing" }
+
+For PreToolUse and PostToolUse hooks, the stop applies even when the tool call fails or completes while Claude is still streaming a response.
+
+​
+Emit terminal notifications
+Hooks run without a controlling terminal, so writing escape sequences directly to /dev/tty fails. Instead, return the escape sequence in the terminalSequence field and Claude Code emits it for you through its own terminal write path. This is race-free, works inside tmux and GNU screen, and works on Windows where there is no /dev/tty.
+The field accepts a string of one or more allowlisted escape sequences:
+
+OSC 0, 1, 2: window and icon titles
+
+OSC 9: iTerm2, ConEmu, Windows Terminal, and WezTerm notifications, including 9;4 taskbar progress
+
+OSC 99: Kitty notifications
+
+OSC 777: urxvt, Ghostty, and Warp notifications
+
+Bare BEL
+
+Sequences may be terminated with BEL or with ST. Anything outside the allowlist, including CSI cursor and color sequences, OSC palette sequences, OSC 8 hyperlinks, OSC 52 clipboard writes, and OSC 1337, is rejected and the field is ignored.
+Claude Code writes the sequence itself when it processes your hook’s output, so the field works on events that discard systemMessage and continue, such as Notification and StopFailure. It has two limits:
+
+Claude Code writes the sequence only in an interactive session, and only while its interface is on screen. In non-interactive mode with the -p flag and in the Agent SDK, it ignores the field.
+
+A WorktreeCreate command hook can’t return JSON, because Claude Code reads its stdout as the worktree path. An HTTP WorktreeCreate hook returns JSON and can include the field.
+
+The example below fires a desktop notification from a Notification hook. The escape sequence is built with printf octal escapes so the control bytes never appear on the shell command line, and jq -n --arg builds the JSON output so quotes, backslashes, and newlines in the notification message are escaped correctly:
+
+#!/bin/bash
+# Notification hook: ping the desktop when Claude Code needs attention.
+input=$(cat)
+title="Claude Code"
+body=$(jq -r '.message // "Needs your attention"' <<<"$input")
+seq=$(printf '\033]777;notify;%s;%s\007' "$title" "$body")
+jq -nc --arg seq "$seq" '{terminalSequence: $seq}'
+
+The { "terminalSequence": "..." } shape is the same from any shell or language.
+
+​
+Add context for Claude
+The additionalContext field passes a string from your hook into Claude’s context window. Claude Code wraps the string in a system reminder and inserts it into the conversation at the point where the hook fired. Claude reads the reminder on the next model request, but it doesn’t appear as a chat message in the interface.
+Return additionalContext inside hookSpecificOutput alongside the event name:
+
+{
+ "hookSpecificOutput": {
+ "hookEventName": "PostToolUse",
+ "additionalContext": "This file is generated. Edit src/schema.ts and run `bun generate` instead."
+ }
+}
+
+Where the reminder appears depends on the event:
+
+SessionStart and SubagentStart: at the start of the conversation, before the first prompt
+
+UserPromptSubmit and UserPromptExpansion: alongside the submitted prompt
+
+PreToolUse, PostToolUse, PostToolUseFailure, and PostToolBatch: next to the tool result
+
+Stop and SubagentStop: at the end of the turn. The conversation continues so Claude can act on the feedback. See Stop decision control
+
+PostModelSwitch: with the next request after the switch. See PostModelSwitch decision control for timing
+
+When several hooks return additionalContext for the same event, Claude receives all of the values.
+If your string contains a <system-reminder> or </system-reminder> tag, Claude receives the string with that tag’s < replaced by <.
+If a value exceeds 10,000 characters, Claude Code writes the text to a file in the session directory and passes Claude the file path with a preview of up to the first 2,000 characters instead. Claude can read the file, but Claude Code doesn’t ask it to.
+Use additionalContext for information Claude should know about the current state of your environment or the operation that just ran:
+
+Environment state: the current branch, deployment target, or active feature flags
+
+Conditional project rules: which test command applies to the file just edited, which directories are read-only in this worktree
+
+External data: open issues assigned to you, recent CI results, content fetched from an internal service
+
+For instructions that never change, prefer CLAUDE.md. It loads without running a script and is the standard place for static project conventions.
+Write the text as factual statements rather than imperative system instructions. Phrasing such as “The deployment target is production” or “This repo uses bun test” reads as project information. Text framed as out-of-band system commands can trigger Claude’s prompt-injection defenses, which causes Claude to surface the text to you instead of treating it as context.
+Claude Code saves the injected text in the session transcript. For mid-session events like PostToolUse or UserPromptSubmit, when you resume with --continue or --resume, Claude Code replays the saved text rather than re-running the hook for past turns, so values like timestamps or commit SHAs become stale. SessionStart hooks run again on resume with source set to "resume", or "fork" if you added --fork-session, so they can refresh their context.
+
+​
+Decision control
+Not every event supports blocking or controlling behavior through JSON. The events that do each use a different set of fields to express that decision. Use this table as a quick reference before writing a hook:
+
+EventsDecision patternKey fields
+UserPromptSubmit, UserPromptExpansion, PostToolUse, PostToolUseFailure, PostToolBatch, Stop, SubagentStop, ConfigChange, PreCompactTop-level decisiondecision: "block", reason. Stop and SubagentStop also accept hookSpecificOutput.additionalContext for non-error feedback that continues the conversation
+TeammateIdle, TaskCompletedExit code or continue: falseExit code 2 blocks the action with stderr feedback. JSON {"continue": false, "stopReason": "..."} also stops the teammate entirely, matching Stop hook behavior; TaskCompleted ignores it when the TaskUpdate tool triggered the event
+TaskCreatedExit code or top-level decisionExit code 2 or decision: "block" cancels the task and returns the message to Claude. continue: false is ignored
+PreToolUsehookSpecificOutputpermissionDecision (allow/deny/ask/defer), permissionDecisionReason
+PreModelSwitchhookSpecificOutput or top-level decisionpermissionDecision (allow/deny/ask), permissionDecisionReason. decision: "block" also cancels the switch
+PermissionRequesthookSpecificOutputdecision.behavior (allow/deny)
+PermissionDeniedhookSpecificOutputretry: true tells the model it may retry the denied tool call; Claude Code ignores it for no-verdict denials
+WorktreeCreatepath returnCommand hook prints path on stdout; HTTP hook returns hookSpecificOutput.worktreePath. Hook failure or missing path fails creation
+WorktreeRemoveExit codeAny non-zero exit code makes the removal fail if the directory still exists afterward. JSON output is discarded
+Elicitation, ElicitationResulthookSpecificOutput or top-level decisionaction (accept/decline/cancel), content (form field values). decision: "block" also declines
+MessageDisplayhookSpecificOutputdisplayContent replaces the displayed text on screen. Display-only: the transcript and what Claude sees keep the original
+SessionStart, SubagentStart, PostModelSwitchContext onlyhookSpecificOutput.additionalContext adds context for Claude. SessionStart also accepts initialUserMessage, watchPaths, sessionTitle, and reloadSkills. No blocking or decision control
+Setup, Notification, SessionEnd, PostCompact, InstructionsLoaded, StopFailure, CwdChanged, DirectoryAdded, FileChangedNoneNo decision control. Used for side effects like logging or cleanup
+A few events can also rewrite content rather than only allow or block it:
+
+PreToolUse: updatedInput directly under hookSpecificOutput replaces a tool’s arguments before it runs. See PreToolUse decision control
+
+PermissionRequest: updatedInput inside the decision object. See PermissionRequest decision control
+
+PostToolUse: updatedToolOutput replaces the tool’s result. See PostToolUse decision control
+
+UserPromptSubmit: can’t replace the prompt; it only injects additionalContext alongside it
+
+For redaction or transformation use cases, intercept at PreToolUse for outbound tool inputs and PostToolUse for inbound tool results.
+Here are examples of each pattern in action:
+
+ Top-level decision
+
+ PreToolUse
+
+ PermissionRequest
+
+The only value for decision is "block". To allow the action to proceed, omit decision from your JSON, or exit 0 without any JSON at all:
+
+{
+ "decision": "block",
+ "reason": "Test suite must pass before proceeding"
+}
+
+Uses hookSpecificOutput for richer control: allow, deny, or escalate to the user. You can also modify tool input before it runs or inject additional context for Claude. See PreToolUse decision control for the full set of options.
+
+{
+ "hookSpecificOutput": {
+ "hookEventName": "PreToolUse",
+ "permissionDecision": "deny",
+ "permissionDecisionReason": "Database writes are not allowed"
+ }
+}
+
+Uses hookSpecificOutput to allow or deny a permission request on behalf of the user. When allowing, you can also modify the tool’s input or apply permission rules so the user isn’t prompted again. See PermissionRequest decision control for the full set of options.
+
+{
+ "hookSpecificOutput": {
+ "hookEventName": "PermissionRequest",
+ "decision": {
+ "behavior": "allow",
+ "updatedInput": {
+ "command": "npm run lint"
+ }
+ }
+ }
+}
+
+For extended examples including Bash command validation, prompt filtering, and auto-approval scripts, see What you can automate in the guide and the Bash command validator reference implementation.
+
+​
+Hook events
+Each event corresponds to a point in Claude Code’s lifecycle where hooks can run. The sections below are ordered to match the lifecycle: from session setup through the agentic loop to session end. Each section describes when the event fires, what matchers it supports, the JSON input it receives, and how to control behavior through output.
+
+​
+SessionStart
+Runs when Claude Code starts a new session or resumes an existing session. Useful for loading development context like existing issues or recent changes to your codebase, or setting up environment variables. For static context that doesn’t require a script, use CLAUDE.md instead.
+SessionStart runs on every session, so keep these hooks fast. Only type: "command" and type: "mcp_tool" hooks are supported. See MCP tool hook fields for when mcp_tool hooks run.
+The matcher value corresponds to how the session was initiated:
+
+MatcherWhen it fires
+startupNew session
+resume--resume, --continue, or /resume
+clear/clear
+compactAuto or manual compaction
+forkA new session forked from an existing one: --fork-session with --resume or --continue, the /fork background copy, /branch, or a conversation you move to the background
+When you start an interactive session, resume a conversation at launch with --continue or --resume, or run /clear, SessionStart hooks run in the background. You can type right away, and a conversation you resumed appears without waiting for the hooks. Claude’s first response still waits for the hooks to finish, so their context reaches Claude.
+When you switch conversations with /resume inside a session, the switch waits for the hooks to finish instead. If you run /clear or switch to another conversation while background hooks are still running, nothing they return applies to the session.
+The same wait applies at launch, including a resumed session: a prompt you send while SessionStart hooks are still running doesn’t reach Claude until they finish.
+During either wait, press Esc to take the prompt back into the input without sending it. The hooks keep running.
+
+​
+SessionStart input
+In addition to the common input fields, SessionStart hooks receive source and optionally model, agent_type, and session_title:
+
+FieldDescription
+sourceHow the session started: "startup" for new sessions, "resume" for resumed sessions, "clear" after /clear, "compact" after compaction, or "fork" for a new session forked from an existing one
+modelThe active model identifier. It can be omitted, for example after /clear or when a session is restored through conversation recovery, so check for the field before reading it
+agent_typeThe agent name, present when you start Claude Code with claude --agent <name>
+session_titleThe session’s custom title, present when one is set, for example with --name, /rename, a hook’s sessionTitle output, or the Agent SDK’s renameSession(). A hook that emits sessionTitle can check this field first to avoid overwriting an existing custom title
+A session you haven’t named can still have a generated title. That title isn’t a custom title and doesn’t appear in session_title.
+When source is "resume" or "fork" and the transcript contains at least one response from Claude, SessionStart hooks also receive the four fields below. Your hook can use them to report what resuming a stale conversation costs before the first request, for example in a systemMessage. These fields require Claude Code v2.1.251 or later.
+
+FieldDescription
+seconds_since_last_responseWall-clock seconds since the last response in the resumed transcript
+context_tokensTokens the first request of the resumed session re-sends as its prompt
+prompt_cache_likely_expiredtrue when the last response is older than the session’s prompt cache lifetime or a later compaction replaced the cached conversation
+estimated_cache_write_usdEstimated cost in US dollars of writing context_tokens to the prompt cache on the session’s model, excluding the response
+This example shows the input for a session resumed 90 minutes after its last response:
+
+{
+ "session_id": "abc123",
+ "transcript_path": "/Users/.../.claude/projects/.../00893aaf-19fa-41d2-8238-13269b9b3ca0.jsonl",
+ "cwd": "/Users/...",
+ "hook_event_name": "SessionStart",
+ "source": "resume",
+ "model": "claude-opus-5",
+ "seconds_since_last_response": 5400,
+ "context_tokens": 182340,
+ "prompt_cache_likely_expired": true,
+ "estimated_cache_write_usd": 1.1396
+}
+
+​
+SessionStart decision control
+A SessionStart hook can add context for Claude, supply the first user message, set the session title, watch files, and reload skills. Return the field for each one, in addition to the JSON output fields available to all hooks:
+
+FieldDescription
+additionalContextString added to Claude’s context at the start of the conversation, before the first prompt. See Add context for Claude for how the text is delivered and what to put in it
+initialUserMessageString used as the first user message of the session, in non-interactive mode with the -p flag. It becomes the first turn even if you pass no prompt. A prompt you do pass follows as the next turn
+sessionTitleSets the session title, with the same effect as /rename. Applies when source is "startup", "resume", or "fork"
+watchPathsArray of absolute paths to watch for FileChanged events during this session
+reloadSkillsBoolean. When true, Claude Code re-scans the skill and command directories after the SessionStart hooks complete. See Reload skills that a hook installs
+This output adds context and names the session:
+
+{
+ "hookSpecificOutput": {
+ "hookEventName": "SessionStart",
+ "additionalContext": "Current branch: feat/auth-refactor\nUncommitted changes: src/auth.ts, src/login.tsx\nActive issue: #4211 Migrate to OAuth2",
+ "sessionTitle": "auth-refactor"
+ }
+}
+
+A hook that only adds context can print it without building JSON, because Claude Code adds a SessionStart hook’s plain-text stdout to Claude’s context.
+If your plugin’s SessionStart hook supplies initialUserMessage or sessionTitle, install the plugin before the session starts. Claude Code ignores both fields from a plugin that finishes installing after the SessionStart hooks have run.
+
+​
+Reload skills that a hook installs
+To make skills that a SessionStart hook installs available in the same session, return reloadSkills. Skill discovery normally runs before SessionStart hooks finish, so without it, files a hook writes into ~/.claude/skills/ or .claude/skills/ can be missing when the first prompt runs.
+This example syncs a shared skills repository and requests the re-scan:
+
+#!/bin/bash
+
+git -C ~/.claude/skills/team-skills pull --quiet 2>/dev/null || \
+ git clone --quiet https://git.example.com/your-org/team-skills.git ~/.claude/skills/team-skills
+
+echo '{"hookSpecificOutput": {"hookEventName": "SessionStart", "reloadSkills": true}}'
+
+The repository URL is a placeholder. Replace it with your own skills repository.
+
+​
+Persist environment variables
+SessionStart hooks have access to the CLAUDE_ENV_FILE environment variable, which provides a file path where you can persist environment variables for the shell commands Claude runs later in the session.
+To set individual environment variables, write export statements to CLAUDE_ENV_FILE. Use append (>>) to preserve variables set by other hooks:
+
+#!/bin/bash
+
+if [ -n "$CLAUDE_ENV_FILE" ]; then
+ echo 'export NODE_ENV=production' >> "$CLAUDE_ENV_FILE"
+ echo 'export DEBUG_LOG=true' >> "$CLAUDE_ENV_FILE"
+ echo 'export PATH="$PATH:./node_modules/.bin"' >> "$CLAUDE_ENV_FILE"
+fi
+
+exit 0
+
+To capture all environment changes from setup commands, compare the exported variables before and after:
+
+#!/bin/bash
+
+ENV_BEFORE=$(export -p | sort)
+
+# Run your setup commands that modify the environment
+source ~/.nvm/nvm.sh
+nvm use 20
+
+if [ -n "$CLAUDE_ENV_FILE" ]; then
+ ENV_AFTER=$(export -p | sort)
+ comm -13 <(echo "$ENV_BEFORE") <(echo "$ENV_AFTER") >> "$CLAUDE_ENV_FILE"
+fi
+
+exit 0
+
+Each Bash command runs the file’s contents as shell code before the command itself, so a line there can use anything Bash evaluates, such as the $PATH reference in export PATH="$PATH:./node_modules/.bin".
+
+Persisted variables in PowerShell commands
+PowerShell commands receive the variables from CLAUDE_ENV_FILE too, in Claude Code v2.1.296 or later, but PowerShell never runs the file. Claude Code reads the assignments out of it and copies them into the PowerShell command’s environment instead. It does so only when every line is one of the following, across what every hook in this session wrote and any script you set CLAUDE_ENV_FILE to before launch:
+
+A blank line or a # comment
+
+One assignment at the start of the line, written export NAME=value, declare -x NAME=value, or NAME=value, with a value Bash would use exactly as written, made of any mix of these parts: unquoted text that uses only letters, digits, and the characters _ @ % + = : , . / -, text in single quotes, and text in double quotes where any $, backtick, or " inside is escaped with a backslash
+
+If any line is of another kind, such as export PATH="$PATH:./node_modules/.bin" with its unescaped $PATH, a source command, or the $'

@@ -1,0 +1,2243 @@
+TITLE: Conformal Cascade: Distribution-Free Accuracy Guarantees for Multi-Tier LLM Inference
+URL: https://arxiv.org/abs/2607.25018
+ORG: arXiv  TYPE: paper  DATE: 2026-07
+
+Conformal Cascade: Distribution-Free Accuracy Guarantees
+for Multi-Tier LLM Inference
+Yifan Dou
+
+yd25b@fsu.edu
+
+Department of Computer Science, Florida State University
+
+Shikan Lian
+
+shikanlian@gmail.com
+
+Shibo Li
+
+shiboli@cs.fsu.edu
+
+Department of Computer Science, Florida State University
+
+arXiv:2607.25018v3 [cs.LG] 31 Jul 2026
+
+Abstract
+Large language model (LLM) cascades reduce inference cost by routing easy queries to a
+small model and deferring hard queries to a larger one. Production cascades govern this
+deferral through a confidence threshold, but LLM confidence scores are miscalibrated, the
+threshold must be tuned per model pair and per domain, and no setting yields a formal
+bound on cascade accuracy. We introduce Conformal Cascade (CC), a multi-tier inference framework that uses conformal prediction set size as the deferral rule: accept when
+the calibrated set collapses to a single answer, defer otherwise. The procedure delivers a
+distribution-free, finite-sample accuracy guarantee. By a per-tier union bound, the prediction set at the accepting tier covers the correct answer with probability at least 1 − Kα
+for any user-specified α; under a selection-preservation condition (consistent with, but not
+strictly implied by, our marginal coverage results), the bound tightens to 1 − α. We further characterise expected cascade cost as an explicit function of α and the calibration-set
+acceptance rate. Across 18 multiple-choice benchmarks spanning science, medicine, commonsense, and standardized exams, evaluated on two-tier cascades drawn from four openweight model families, CC strictly improves over the strongest calibration-tuned heuristic
+cascade on the majority of family–benchmark pairs, with the largest gains on reasoningheavy benchmarks where majority vote is unreliable; on easier benchmarks the cascade
+commits the vast majority of queries to the small model at no accuracy cost. Extension
+to open-ended generation requires an answer-clustering step that we leave for future work.
+The method requires no model training and only black-box API access.
+
+1. Introduction
+Deploying large language models at scale forces a sharp trade-off between answer quality
+and inference cost. Serving a frontier model on every query is often prohibitive: at current
+token prices, inference dominates the operating expense of any high-traffic product, and each
+expensive call consumes accelerator time that could serve simpler queries cheaply elsewhere.
+LLM cascades offer the dominant production response: a query runs first on a small model,
+and escalates to a larger one only when needed (Chen et al., 2023; Ong et al., 2025; Aggarwal
+et al., 2024). What determines whether a cascade works is the deferral rule: at each tier,
+the decision to return the current answer or hand the query to the next model. Production
+cascades implement this decision as a threshold on a confidence signal such as softmax
+probability (Ong et al., 2025), self-consistency agreement (Wang et al., 2023; Valkanas et al.,
+1
+
+2025), or a learned router score (Shnitzer et al., 2023): accept if the signal exceeds a cutoff
+θ, defer otherwise.
+Confidence-threshold deferral has a well-documented calibration problem. LLMs are
+overconfident in ways that depend on domain and input format, sharpest on the reasoningheavy queries that benefit most from escalation (Kadavath et al., 2022; Xiong et al., 2024),
+and no choice of θ separates confidently-wrong inputs from genuinely easy ones. The deeper
+issue is that the cascade’s error rate becomes an uncontrolled random variable: realized
+accuracy depends on the unknown joint distribution of queries, confidences, and correctness,
+and no analytical relationship maps a target error rate onto a threshold. Practitioners cannot
+answer the question that matters for deployment, “if I promise my users at most 5% wrong
+answers, what should θ be?”, and must re-sweep θ on a labelled split for every new model
+pair, benchmark, or difficulty distribution.
+We propose Conformal Cascade (CC), which replaces the confidence threshold with
+a conformal prediction set. At each tier, split conformal calibration (Vovk et al., 2005;
+Papadopoulos et al., 2002) turns a held-out labelled set into a threshold that satisfies a
+distribution-free coverage guarantee at that tier : for any new query, the per-tier prediction
+set built from this threshold contains the correct answer with probability at least 1 − α,
+for a user-specified α. The size of this set, not the value of a confidence score, drives
+deferral. A set that collapses to a single answer declares the model conformally certain
+on this input, and the cascade accepts; a set with multiple candidates declares the model
+conformally uncertain, and the cascade escalates. Deferral cannot itself cause an error: only
+the acceptance event |C| = 1 commits a wrong answer, so the conformal guarantee binds at
+whichever tier the cascade commits, and per-tier guarantees compose into a cascade-level
+coverage bound. The calibrated threshold is fully determined by α, which reads directly as
+the user’s error budget, and the expected cascade cost is a closed-form function of α and
+the calibration-set acceptance rate.
+We make three contributions. We formulate the conformal cascade for arbitrary K tiers,
+where prediction-set size replaces the confidence score, and prove a cascade-level coverage
+bound (Theorem 2): the accepting tier’s prediction set covers the correct answer with probability at least 1 − Kα in the worst case, tightening to 1 − α under a selection-preservation
+condition consistent with our marginal-coverage measurements. We then derive a closedform expression for expected cascade cost as a function of α (Theorem 4). Empirically,
+we evaluate two-tier instantiations (K = 2) across four open-weight model families (Llama,
+Gemma, Ministral, Phi) and 18 multiple-choice benchmarks; CC strictly improves over the
+strongest calibration-tuned heuristic cascade on the majority of family–benchmark pairs,
+with the largest gains on reasoning-heavy tasks where majority vote is unreliable: examples
+include Ministral on MathQA, Phi on GPQA-Diamond and MedMCQA, and Gemma on
+TruthfulQA. The framework requires a finite, extractable answer set; extension to openended generation through answer clustering is left for future work. The method imposes no
+architectural constraints beyond self-consistency-style sampling, requires neither training
+nor logprob access, and exposes one interpretable hyperparameter.
+2
+
+2. Background and Problem Setup
+Split conformal prediction. Given a nonconformity score s : X ×Y → R (lower indicates
+better fit), a calibration set Dcal = {(xi , yi )}ni=1 drawn exchangeably with the test point, and
+a target miscoverage level α ∈ (0, 1), split conformal prediction (Papadopoulos et al., 2002;
+Vovk et al., 2005; Lei et al., 2018; Angelopoulos and Bates, 2023) sets the threshold
+
+
+q̂ = Quantile {si }ni=1 ; ⌈(n+1)(1−α)⌉
+n
+
+(1)
+
+and returns the prediction set C(x) = {y ∈ Y : s(x, y) ≤ q̂}, which satisfies the distributionfree, finite-sample guarantee:
+Theorem 1 (Marginal coverage; Vovk et al., 2005) Pr[yn+1 ∈ C(xn+1 )] ≥ 1−α whenever the calibration and test points are exchangeable.
+The upper bound 1 − α + 1/(n + 1) holds when scores are almost surely distinct (Lei et al.,
+2018). Conditional coverage (per-x at level 1 − α) is impossible without further assumptions
+(Vovk, 2012; Lei and Wasserman, 2014; Foygel Barber et al., 2021).
+LLM cascades. A K-tier LLM cascade is a sequence of models m1 , . . . , mK ordered by
+increasing capability and per-call cost c1 < · · · < cK . Tier k produces one or more responses;
+a deferral rule then decides between accepting tier k’s answer and
+P ∗escalating to tier k + 1. If
+the cascade accepts at tier k ∗ , the incurred cost is Cost(x) = kk=1 ck , since a cheap-model
+response is always produced before an expensive one is requested.
+Problem. For queries with a finite answer set A(x) (multiple choice, or extractable short
+answers), let ytrue ∈ A(x) be the true answer and Ck∗ (x) the conformal prediction set at the
+accepting tier. The goal is to minimise expected inference cost E[Cost(X)] subject to
+Pr[ytrue ∈ Ck∗ (X)] ≥ 1 − α,
+
+(2)
+
+where the coverage target is on the prediction set at whichever tier the cascade commits,
+not at a fixed tier index; this is what makes the guarantee a cascade-level statement.
+
+3. Method
+We describe each component of the Conformal Cascade. Sections 3.1–3.2 introduce the
+black-box nonconformity score and its per-tier calibration. Section 3.3 states the cascade
+algorithm. Sections 3.4–3.5 establish the cascade-level coverage guarantee and the cost–
+accuracy trade-off. Proofs, auxiliary lemmas, and the computational-complexity breakdown
+are collected in Appendix L.
+The core idea is to replace the signal-plus-threshold deferral rule of Section 1 with a
+calibrated prediction set at each tier, whose size is the signal. A confidence threshold θ has
+no formal tie to an error rate; the conformal threshold q̂k has the tie supplied by Theorem 1.
+The user-specified parameter α then appears in two roles: as a coverage level (Theorem 2)
+and as a handle on expected cost (Theorem 4).
+3
+
+3.1 Frequency-Based Nonconformity Score
+Split conformal prediction (Theorem 1) requires a real-valued nonconformity score on (x, a)
+but is silent about where the score comes from. Under black-box API access, where tokenlevel probabilities are typically not exposed, the natural choice is the sampling frequency of
+a under repeated decoding from mk . A logprob-based variant sk (x, a) = 1 − pk (a | x) slots
+into the same framework with finer resolution; we develop the frequency version because it
+preserves the black-box interface assumed by many production deployments and discuss the
+comparison to the logprob alternative in Appendix L.1.
+For tier k, we draw N independent responses from mk at temperature τ > 0 (the self(k)
+(k)
+consistency regime of Wang et al. (2023)), giving extracted answers ŷ1 , . . . , ŷN . When the
+answer set A(x) varies per query (TruthfulQA has |A(x)| ∈ {4, . . . , 10}), all quantities below
+are defined per-query on A(x). The frequency-based nonconformity score for a ∈ A(x) is
+(k)
+
+sk (x, a) = 1 −
+
+{i : ŷi = a}
+.
+N
+
+(3)
+
+An answer sampled often scores low (high conformity); a rarely sampled answer scores
+high (low conformity). The score uses only black-box API access, reuses the N samples
+already produced under self-consistency decoding, and composes naturally with a majorityvote tiebreaker when multiple answers survive calibration; its validity as a nonconformity
+measure follows Kumar et al. (2023). Appendix L.1 (Lemma 5) certifies that exchangeability
+of queries lifts to exchangeability of scores under per-query independent Monte-Carlo draws.
+3.2 Per-Tier Conformal Calibration
+Calibration converts the score sk into a prediction-set construction rule with a concrete
+coverage guarantee at level α. For each tier k, we calibrate a threshold q̂k on a held-out
+calibration set Dcal = {(xi , yi )}ni=1 by (i) drawing N samples from mk for each calibration
+(k)
+(k)
+(k)
+(k)
+query and computing si = sk (xi , yi ), (ii) sorting the scores s(1) ≤ s(2) ≤ · · · ≤ s(n) , and
+(k)
+
+(iii) setting q̂k = s(⌈(1−α)(n+1)⌉) . The prediction set at tier k for a new query x is
+Ck (x) = {a ∈ A : sk (x, a) ≤ q̂k }.
+
+(4)
+
+Operationally, q̂k is the smallest nonconformity score the calibration set permits at coverage
+level α: answers scoring below it pass the conformal filter, those above are filtered out.
+By Theorem 1, under exchangeability Pr[ytrue ∈ Ck (x)] ≥ 1 − α at each tier in isolation.
+Calibration-size choice, quantile tie-breaking, and computational complexity are detailed in
+Appendix L.2.
+3.3 The Conformal Cascade Algorithm
+With per-tier prediction sets in hand, the cascade asks one question at each tier: is the calibrated set small enough to commit on? Algorithm 1 specifies the procedure. An acceptance
+threshold κ ≥ 1 governs how small a set counts as a commitment (default κ = 1).
+Interpretation. The set size measures tier-level uncertainty through the conformal filter.
+A set of size one (the cascade accepts, the model is conformally certain) commits to an
+4
+
+Algorithm 1 Conformal Cascade (CC)
+Require: Query x; models m1 , . . . , mK ; calibrated thresholds q̂1 , . . . , q̂K ; acceptance parameter κ
+Ensure: Answer ŷ, accepting tier k ∗
+1: for k = 1, . . . , K do
+2:
+Draw N samples from mk on x
+3:
+Compute sk (x, a) for each a ∈ A
+▷ Eq. (3)
+4:
+Construct Ck (x) = {a ∈ A : sk (x, a) ≤ q̂k }
+▷ Eq. (4)
+5:
+if 1 ≤ |Ck (x)| ≤ κ then
+6:
+ŷ ← arg mina∈Ck (x) sk (x, a)
+▷ Most frequent answer in set
+7:
+return ŷ, k ∗ = k
+8:
+end if
+9: end for
+10: ŷ ← arg mina∈A sK (x, a)
+▷ Fallback at last tier
+∗
+11: return ŷ, k = K
+answer; size larger than κ (conformally uncertain) escalates. An empty set is an out-ofdistribution signal and is also treated as a defer. Relaxed acceptance (κ > 1) accepts when
+the set is merely small, breaks argmin ties lexicographically on A, and trades a controlled
+amount of correctness for earlier acceptance (Section 3.5). Our implementation runs the
+fallback (line 11) over CK (x) when |CK (x)| ≥ 1 and over A only when the tier-K set is
+empty; this affects boundary behaviour on benchmarks where the cascade defers all queries
+but does not change the offline coverage guarantee (Appendix H).
+Worked example. Consider a 4-choice query x on which tier-1 self-consistency draws
+(N = 16) yield extracted-answer counts {A : 10, B : 4, C : 1, D : 1} and tier-1 score
+values s1 (x, A) = 6/16, s1 (x, B) = 12/16, s1 (x, C) = 15/16, s1 (x, D) = 15/16. With a
+tight calibrated threshold q̂1 = 0.50 (a small α), only A passes: C1 (x) = {A}, the cascade
+accepts at tier 1, and the per-query cost is c1 . With a looser q̂1 = 0.80, the set becomes
+C1 (x) = {A, B}: the cascade defers under κ = 1 and pays c1 + c2 , but with κ = 2 it accepts
+and returns arg mina∈{A,B} s1 (x, a) = A. The same query commits at tier 1 or escalates
+depending on α and κ; the conformal threshold turns the raw frequency distribution into a
+calibrated commit/defer signal.
+3.4 Theoretical Analysis
+Let K ∗ (x) ∈ {1, . . . , K} denote the first tier at which the cascade commits in Algorithm 1
+(defined as K when the fallback fires), and let A = {|CK ∗ (x) (x)| = 1} be the acceptance
+event.
+Theorem 2 (Cascade coverage) Let (x, ytrue ) be exchangeable with each tier-k calibration set, for k = 1, . . . , K. In a K-tier Conformal Cascade with per-tier level α and acceptance parameter κ = 1,
+Pr[ ŷ ̸= ytrue , A ] ≤ K · α,
+(5)
+so per-tier level α/K ensures cascade error at most α.
+5
+
+The proof partitions A into the K disjoint first-commit events Ak = {K ∗ (x) = k} and
+applies Theorem 1 on each (Appendix L.3). Two facts about the bound matter for practice.
+Deferral cannot itself cause an error: only the acceptance event A commits a wrong answer,
+escalation only incurs additional cost, and the cascade error decomposes over the disjoint
+commit events {Ak }K
+k=1 . Per-tier guarantees therefore compose into a cascade-level bound
+by a union bound on these disjoint events. The factor K is the union-bound worst case;
+tighter statements hold under selective-inference conditions (Bates et al., 2023; Angelopoulos
+and Bates, 2023), captured by the next assumption.
+Assumption 3 (Selection preservation) For each tier k, Pr[ ytrue ∈ Ck (x) | K ∗ (x) =
+k ] ≥ 1 − α.
+Under Assumption 3 the cascade error is bounded by α directly. The first-commit event
+
+{K ∗ (x) = k} is label-free—a function of x and the calibration scores, not ytrue —which places
+
+it in the family studied by selective conformal inference; the assumption asks that this labelfree selection preserve per-tier coverage, and is not derivable from split CP alone. Section 5.3
+reports marginal miscoverage tracking α rather than Kα, which rules out the Kα bound
+being tight here but is only consistent with, not strictly implied by, Assumption 3 (which
+would require per-tier conditional miscoverage). Two further notes on scope: Theorem 2
+bounds the joint event {error, acceptance}; on the fallback path the cascade returns an
+argmin without an active conformal commit and inherits no per-tier guarantee (rare in
+practice—Appendix H). For κ > 1 the union bound controls set coverage, and the top-1
+error picks up an additional slack from the argmin tiebreaker (Remark 8, Appendix L.3).
+The relaxed-acceptance variant and the heterogeneous-αk extension are also in Appendix L.3.
+3.5 Cost–Coverage Trade-off
+The accuracy guarantee comes paired with a closed-form expression for expected cost.
+Theorem 4 (Cost–coverage, two-tier) For a two-tier cascade (K = 2) with costs c1 <
+c2 and κ = 1,
+E[Cost(X)] = c1 + c2 · Pr[ |C1 (X)| ̸= 1 ] .
+(6)
+Expected cost depends only on the calibration-set non-acceptance rate, which is observable on labelled calibration data without further test queries. The asymptotes are clean: as
+α → 0 prediction sets grow and cost approaches c1 + c2 ; as α → 1 sets shrink to singletons
+and cost approaches c1 . Cost is monotone in α on the admissible range, and the cascade
+strictly improves over the always-defer baseline (E[Cost] < c1 +c2 ) whenever the cheap model
+produces any singleton sets on calibration (Proposition 10). Improving over Always-Strong
+(which skips tier 1 and pays c2 ) requires the stricter condition Pr[|C1 (X)| = 1] > c1 /c2 ,
+since the cascade pays c1 per query for the tier-1 samples regardless of whether they trigger
+acceptance.
+P
+Pk
+∗
+For K > 2 tiers, E[Cost(X)] = K
+k=1 ( j=1 cj ) · pk with pk = Pr[K (X) = k] (Corollary 11, appendix). Combined with Theorem 2, this gives a practitioner recipe: for a target
+cascade error rate β, set α = β/K in the worst case or α = β under Assumption 3 as a
+deployment heuristic (Remark 12, appendix; finite-N monotonicity is checked by a small
+6
+
+calibration sweep, Appendix J). The user fixes the error budget; the cascade picks the
+threshold.
+Concretely, with K = 2 and c1 = 1, c2 = 2.7, an 80% calibration acceptance rate gives
+E[Cost] = 1.54 (43% saving over Always-Strong); the saving as a function of cost ratio
+r = c2 /c1 is in Appendix J.
+
+4. Related Work
+Split conformal prediction (Vovk et al., 2005; Papadopoulos et al., 2002; Angelopoulos
+and Bates, 2023; Shafer and Vovk, 2008) produces prediction sets with distribution-free
+finite-sample coverage and has been extended to regression (Romano et al., 2019; Lei et al.,
+2018), classification with adaptive coverage (Romano et al., 2020; Angelopoulos et al., 2021),
+jackknife-style resampling (Barber et al., 2021), and covariate shift (Tibshirani et al., 2019;
+Gibbs and Candès, 2021; Angelopoulos et al., 2023). Recent LLM-specific variants address
+the settings where standard scores fail: sampling-frequency nonconformity when logprobs
+are unavailable (Kumar et al., 2023), conformal stopping rules for open-ended generation
+(Quach et al., 2024; Deutschmann et al., 2024), conformal factuality for free-form generation
+(Mohri and Hashimoto, 2024; Cherian et al., 2024), and conformal binary routing between
+a base LLM and a reasoning model (Su et al., 2026). These methods cover single-model or
+two-model settings; none constructs conformal sets at every tier of a cascade, uses set size
+as the deferral criterion, or proves coverage composition across tiers. On the cascade side,
+heuristic-threshold methods (Chen et al., 2023; Aggarwal et al., 2024), preference-learned
+routers (Ong et al., 2025; Ding et al., 2024), benchmark-trained routers (Shnitzer et al., 2023),
+mixture-of-thought cascades (Yue et al., 2024), and theoretical analyses of confidence-based
+cascade deferral (Jitkrittum et al., 2023; Dohan et al., 2022) form the current production
+and analytical landscape; none of these provides a distribution-free finite-sample accuracy
+guarantee that holds at every tier, and each requires labelled data to tune per deployment.
+Comparison to C3PO. The closest prior work is C3PO (Valkanas et al., 2025), also a
+conformal-prediction approach to LLM cascades but on an orthogonal axis: C3PO bounds
+the probability that per-query inference cost exceeds a budget (Pr[cost > C ∗ ] ≤ α) using
+a confidence-threshold deferral rule and self-supervised calibration, whereas CC bounds the
+probability that the accepting tier’s set misses the correct answer using a binary set-size
+test and labelled calibration. C3PO suits a fixed compute budget seeking cost control; CC
+suits a fixed error budget seeking accuracy control. Appendix A gives the row-by-row design
+contrast.
+Underneath these threshold-based cascades lies a calibration problem: neural-network
+confidence is systematically miscalibrated (Guo et al., 2017), and elicited LLM confidence
+in particular drifts on reasoning tasks (Kadavath et al., 2022; Xiong et al., 2024; Lin
+et al., 2022a; Tian et al., 2023; Kuhn et al., 2023; Lin et al., 2024). Classical post-hoc
+rescaling (Platt scaling, temperature scaling) adjusts score magnitudes without restoring a
+distribution-free guarantee, whereas conformal prediction sidesteps calibration by bounding
+set-level coverage directly. Beyond calibration, adaptive compute allocation at inference
+time is an active area: Snell et al. (2025) show that the optimal allocation depends on query
+difficulty, Setlur et al. (2025) argue that verification-based strategies outperform verificationfree sampling, and Lightman et al. (2024) show that verifiers trained at the step level can
+7
+
+substantially improve reasoning reliability; CC is verification-based in this sense, with the
+verifier being a conformal set-size check whose correctness carries a distribution-free guarantee. Our frequency-based score builds on self-consistency decoding (Wang et al., 2023; Chen
+et al., 2024), which is itself part of the chain-of-thought family (Wei et al., 2022).
+
+5. Experiments
+5.1 Setup
+Models. We evaluate two-tier (K = 2) cascades drawn from four open-weight instructiontuned families: Llama (Llama Team, 2024), Gemma (Gemma Team, 2024), Ministral
+(Mistral AI Team, 2024), and Phi (Abdin et al., 2024); while the framework supports
+arbitrary K, the empirical sweep is restricted to K = 2. Tier 1 is the smallest public
+instruction-tuned checkpoint; tier 2 is a substantially larger checkpoint from the same family
+(identifiers in Appendix B). For each query we draw N = 16 samples at temperature τ = 0.7
+from each tier via vLLM (Kwon et al., 2023). Per-call costs are fixed at c1 = 1, c2 = 2.7
+across all four families; sensitivity to alternative c2 /c1 is in Appendix J.
+Benchmarks. We evaluate on 18 multiple-choice benchmarks covering science (Welbl
+et al., 2017; Khot et al., 2020; Clark et al., 2018; Rein et al., 2024), medicine (Pal et al.,
+2022; Jin et al., 2021, 2019), broad knowledge (Hendrycks et al., 2021; Wang et al., 2024),
+commonsense (Zellers et al., 2019; Bisk et al., 2020; Sap et al., 2019; Huang et al., 2019;
+Clark et al., 2019), factuality (Lin et al., 2022b), standardized exams (Zhong et al., 2024),
+mathematics (Amini et al., 2019), and multilingual reading (Bandarkar et al., 2024). Answer
+sets range from four to ten options. Each benchmark splits 30%/70% calibration/test with
+seed 42, giving 72 family–benchmark pairs; full statistics in Table 6.
+Baselines. CC is compared against five label-light deferral rules that share its sample
+budget: (1) Always-Weak and (2) Always-Strong (majority vote at the corresponding
+tier, no tuning); (3) Agreement cascade, deferring if tier-1 top-answer agreement is below θ ∈ {0.5, 0.6, 0.7, 0.8, 0.9}; (4) Entropy cascade, τ ∈ {−1.5, −1.0, −0.5, −0.3}; (5)
+Random defer, p ∈ {0.2, 0.5, 0.8}. The heuristic grid contains 12 tunable configurations.
+Learned routers (Ong et al., 2025; Shnitzer et al., 2023; Ding et al., 2024) require labelled
+preference data and a separate parametric scorer outside CC’s calibration regime; we discuss
+them in Section 4 but do not run them as direct baselines.
+CC and reporting protocol. CC is evaluated over a 15-point grid: α ∈ {0.05, 0.10, 0.15, 0.20, 0.30}
+and κ ∈ {1, 2, 3}. For each family–benchmark pair, Best Heuristic is the argmax test-set
+accuracy over the 12-configuration heuristic grid; CC Best is the argmax over the 15configuration CC grid. Both methods are thus reported at oracle-tuned operating points
+per benchmark, on grids of comparable size. Coverage (Table 2, Appendix I) and tier-1
+acceptance (Table 3, Appendix E) are reported at the tuning-free anchor α = 0.10, κ = 1,
+where α reads as the user’s error budget.
+5.2 CC strictly improves over heuristic cascades on accuracy
+Table 1 reports the per-benchmark, per-family accuracy gap ∆ = CC Best − Best Heuristic
+across the 72 evaluated pairs at oracle-tuned operating points (both methods test-set argmax
+8
+
+Table 1: Accuracy gap ∆ (in pp) between CC Best and Best Heuristic, per benchmark
+and model family. Both methods are tuned by test-set argmax over their hyperparameter grids (15 configurations for CC, 12 for the heuristic family; see Section 5.1). Bold highlights ∆ ≥ +1.0 pp; underlined highlights ∆ ≤ −1.0 pp. Row
+and column totals summarize wins (W), ties within 0.05 pp (T), and losses (L).
+Gains are broad (49 wins of 72 pairs) and concentrate on reasoning-heavy benchmarks (GPQA-Diamond, MathQA, MMLU-Pro, MMLU, TruthfulQA, MedMCQA,
+MedQA-USMLE-4).
+Benchmark
+
+Llama
+
+Gemma
+
+Ministral
+
+Phi
+
+GPQA-Diamond
+MathQA
+MMLU-Pro
+MMLU
+TruthfulQA
+MedMCQA
+MedQA-USMLE-4
+AGI-Eval
+HellaSwag
+ARC-Challenge
+PIQA
+Social-i-QA
+Cosmos-QA
+BoolQ
+QASC
+SciQ
+Belebele-Eng
+PubmedQA
+
++1.5
++1.7
++1.4
++0.4
++1.9
++0.3
++0.4
++0.2
++0.2
+−0.1
++0.2
++0.2
+−0.1
++0.4
++0.0
+−0.1
++0.2
+−0.2
+
++0.7
++0.4
++2.4
++1.6
++3.3
++3.0
++2.8
++2.0
++2.7
+−0.1
++0.0
++0.1
+−0.2
++0.0
++1.6
++0.0
+−0.3
++0.0
+
++0.0
++4.6
++2.6
++0.7
++0.7
++0.8
++1.0
++1.1
++0.4
++0.9
+−0.6
++0.7
++0.2
++0.3
++0.2
+−0.1
+−0.2
+−0.7
+
++4.3
+−1.4
++2.0
++1.5
++1.2
++3.6
++2.2
+−4.5
++0.4
+−0.4
++1.3
++1.0
++0.3
++0.1
+−0.1
++0.2
+−0.5
+−1.4
+
+W/T/L
+
+13 / 1 / 4 11 / 4 / 3 13 / 1 / 4 12 / 0 / 6
+
+over their hyperparameter grids; deployment-time numbers at fixed α=0.10, κ=1 are in
+Tables 2, 3). CC strictly improves on 49 pairs, ties within 0.05 pp on 6, and underperforms on 17. The six largest gains are Ministral/MathQA (+4.6), Phi/GPQA-Diamond
+(+4.3), Phi/MedMCQA (+3.6), Gemma/TruthfulQA (+3.3), Gemma/MedMCQA (+3.0),
+and Gemma/MedQA-USMLE-4 (+2.8). Every family has at least one gain ≥ +1.5 pp,
+and all four families win the majority of their benchmarks. Full absolute accuracies are in
+Appendix C.
+Where the method is weaker. Phi is the outlier on the losing side: large wins on reasoning and medicine (Phi/GPQA-Diamond +4.3, Phi/MedMCQA +3.6), but −4.5 pp on
+AGI-Eval and −1.4 pp on both MathQA and PubmedQA. The failure mode is diagnosable
+from the tier-1 set-size distribution (Section 5.5): on these benchmarks the Phi mini checkpoint spreads sampling probability so broadly that every tier-1 conformal set retains all (or
+nearly all) answer choices, the cascade defers 100% of queries to tier 2, and the cascade’s
+fallback selection rule under-performs Always-Strong’s unrestricted majority on the same
+9
+
+Table 2: Empirical set miscoverage for CC-Offline on the Llama cascade. Bold cells satisfy
+the strict α target within finite-sample fluctuation (miscoverage ≤ α + 0.02). All
+non-bold cells lie inside the union-bound Kα = 2α tolerance from Theorem 2.
+Benchmark
+
+α = 0.05
+
+α = 0.10
+
+α = 0.20
+
+α = 0.30
+
+AGI-Eval
+MMLU-Pro
+MMLU
+TruthfulQA
+GPQA-Diamond
+MedMCQA
+ARC-Challenge
+HellaSwag
+
+0.000
+0.000
+0.000
+0.000
+0.000
+0.000
+0.078
+0.000
+
+0.000
+0.000
+0.087
+0.000
+0.000
+0.130
+0.124
+0.065
+
+0.169
+0.194
+0.210
+0.278
+0.000
+0.254
+0.166
+0.199
+
+0.298
+0.295
+0.298
+0.357
+0.223
+0.351
+0.207
+0.308
+
+tier-2 samples (e.g., 45.7% vs 51.0% on Phi/AGI-Eval; see Appendix H). CC is most useful
+when the cheap model’s sampling distribution is concentrated enough to commit at tier 1 on
+easy queries and bimodal-or-narrow on hard queries to leave a small conformal set; uniformly
+diffuse tier-1 distributions, like Phi on AGI-Eval, eliminate both modes.
+5.3 The coverage guarantee holds empirically
+Table 2 reports the empirical set-miscoverage rate Pr[ytrue ∈
+/ CK ∗ (x) (x)] for CC-Offline at
+α ∈ {0.05, 0.10, 0.20, 0.30} on the Llama cascade. At α = 0.10, six of eight benchmarks
+meet the strict target within the ±0.02 finite-sample band; MedMCQA at 0.130 and ARCChallenge at 0.124 exceed strict α by margins that are statistically significant given their
+test-set sizes (5.4σ and 2.3σ, respectively), but both remain comfortably inside the worstcase Kα = 0.20 bound of Theorem 2. The same pattern (small overshoot at strict α, well
+within Kα) holds on five additional cells across the other three families (Appendix I marks
+them with ∗ ); every reported cell satisfies the union bound. The empirical regime is therefore
+between α and Kα, closer to the former. This rules out the worst-case Kα bound being
+tight in our setting; it is consistent with, but does not directly verify, Assumption 3, which
+would require the per-tier conditional miscoverage breakdown that our aggregate logs do not
+retain (Section 3.4). Results for the other three families are in Appendix I.
+5.4 The cost–accuracy Pareto frontier
+Accuracy at the best-α operating point is only part of the story. In production, the
+practitioner-facing question is how CC trades cost for accuracy across a range of operating points. Figure 1 plots the cost–accuracy scatter on MMLU for three of the four cascades
+(Llama, Gemma, Ministral), sweeping every hyperparameter of every method; the Phi panel
+is in Appendix D.
+On Llama, CC (κ = 1) sits strictly above every heuristic for expected cost ≥ 1.5
+(e.g., at cost 2.86, 75.1% vs Always-Strong’s 74.8% at 2.70); on Ministral, CC dominates
+Agreement across the mid-cost range (e.g., 83.7% at cost 2.01 vs Agree(θ = 0.8)’s 82.5% at
+1.97); on Gemma, where tier-1 already hits 82.6%, headroom is smaller and CC matches
+10
+
+Cost--accuracy Pareto frontier on MMLU
+Llama-3.2-3B
+
+Gemma-4-E4B-it
+Gemma-4-31B-it
+Always-Strong
+
+Llama-3.1-8B
+
+Always-Strong
+
+75
+
+90
+
+Accuracy (%)
+
+74
+73
+71
+
+82
+Agreement
+Entropy
+Random defer
+CC ( = 1)
+CC-k2 ( = 2)
+CC-k3 ( = 3)
+
+86
+
+70
+69
+
+84
+
+68
+Always-Weak
+
+1.0
+
+1.5
+
+2.0
+
+2.5
+
+3.0
+
+Expected inference cost
+
+3.5
+
+Ministral-3-14B
+
+Always-Strong
+
+83
+
+88
+
+72
+
+Ministral-3-3B
+
+84
+
+Always-Weak
+
+1.0
+
+1.5
+
+2.0
+
+2.5
+
+3.0
+
+Expected inference cost
+
+3.5
+
+81
+80
+79
+78
+Always-Weak
+
+1.0
+
+1.5
+
+2.0
+
+2.5
+
+3.0
+
+Expected inference cost
+
+3.5
+
+Figure 1: Cost–accuracy Pareto frontier on MMLU for three cascades. Each method traces
+a curve through its hyperparameter sweep (points joined left-to-right by cost).
+CC (κ = 1, blue) dominates every heuristic on Llama and Ministral across the
+full cost range; on Gemma, where tier-1 is already at 82.6%, CC matches or
+slightly improves on Agreement. Relaxed-acceptance CC-k2 (green) and CC-k3
+(purple) unlock cheaper operating points while retaining the conformal guarantee:
+on Llama, moving from κ = 1 to κ = 3 at α = 0.10 cuts expected cost from 2.86
+to 1.34 (53% reduction) at a 5.3 pp accuracy cost.
+
+or slightly exceeds the heuristic frontier. Relaxing κ to {2, 3} accepts earlier and trades
+within-set selection accuracy for lower cost, moving along a second Pareto axis that no
+single agreement or entropy threshold tracks. Full per-family curves for the remaining 17
+benchmarks are in Appendix D.
+5.5 Where the gains come from
+Where in the data does CC’s advantage concentrate? Two stratifications give complementary
+views. A difficulty breakdown on MMLU-Pro (Llama, α = 0.10, 100% deferral to tier
+2) shows CC’s gap over Always-Strong sitting on the hard bucket: 7.2% versus 3.4% on
+queries where the strong model’s per-query accuracy p̂ < 0.25, a +3.8 pp gain. On the easy
+and medium buckets the methods sit within 0.5 pp of each other. The same hard-bucketconcentrated pattern holds on Ministral/MMLU and Ministral/MMLU-Pro (CC ahead by
+4–6 pp on hard queries); on Gemma/MMLU-Pro the strong model bottoms out at 0% on
+hard queries and CC has no headroom to recover. Full per-bucket numbers for all four cells
+are in Appendix G.
+The second view is the tier-1 prediction-set distribution. Table 3 reports the tier-1
+acceptance rate (|C1 | = 1) and median set size at α = 0.10 on the Llama cascade. Acceptance
+ranges from 0% on MMLU-Pro and GPQA-Diamond (all queries defer) to 95.6% on BelebeleEng (almost all queries commit at tier 1): the cascade automatically routes benchmarks
+where the small model is reliable to tier 1 and defers the rest, without per-benchmark
+tuning.
+11
+
+Table 3: Tier-1 acceptance rate (|C1 | = 1) at α = 0.10 on the Llama cascade, ordered by
+acceptance. When the small model is broadly confident (top rows), the cascade
+commits most queries cheaply; when it is uniformly uncertain (bottom rows), the
+cascade defers everything. Full per-family distributions in Appendix E.
+Benchmark
+
+|A|
+
+Tier-1 accept (%)
+
+Median |C1 |
+
+Belebele-Eng
+SciQ
+ARC-Challenge
+Cosmos-QA
+PIQA
+QASC
+BoolQ
+MMLU
+MedMCQA
+GPQA-Diamond
+MMLU-Pro
+
+4
+4
+4
+4
+2
+8
+2
+4
+4
+4
+10
+
+95.6
+94.0
+85.6
+85.6
+80.3
+75.7
+72.8
+31.3
+22.0
+0.0
+0.0
+
+1
+1
+1
+1
+1
+1
+1
+2
+2
+4
+10
+
+Diagnosing failures. On Phi/AGI-Eval (∆ = −4.5 pp), the tier-1 conformal sets never
+collapse to a singleton at any tested α, the cascade defers 100% of queries, and the gap to
+Always-Strong comes from the fallback selection rule (Appendix H).
+
+6. Discussion
+Deployment recipe. Setup is three steps: hold out a labelled calibration split per tier
+(n ≥ 200 recommended), draw N self-consistency samples per calibration query at the
+production temperature and store q̂k , and at inference run Algorithm 1. The practitioner
+picks β and sets α = β/K in the worst case or α = β under Assumption 3. A label-free
+guard rail handles the diffuse-tier-1 regime (Phi/AGI-Eval, Section 5.5): if calibration tier-1
+acceptance falls below the break-even rate 1/r (r = c2 /c1 ; r = 2.7 here gives 1/r ≈ 0.37,
+larger production ratios push it lower; Appendix J), replacing CC with Always-Strong saves
+c1 per query at no accuracy cost.
+Scope, limitations, and impact. The guarantee is marginal, not conditional on query
+difficulty; strengthening this is a known hard problem. Calibration–test exchangeability
+comes from within-benchmark splitting, so covariate-shift deployment needs online recalibration. The framework requires a finite extractable answer set; open-ended generation
+needs an answer-clustering step. Aggregate-only logs preclude bootstrap intervals; small
+differences (|∆| < 0.5 pp on GPQA-Diamond at ntest = 139) are point estimates. The
+auditable error budget reduces per-query compute when the small model is reliable, but the
+marginal guarantee gives no subgroup protection and base-model disparities pass through;
+high-stakes deployments should pair CC with subgroup-conditioned calibration and contentsafety tooling.
+
+12
+
+References
+Marah Abdin, Jyoti Aneja, Hany Awadalla, Ahmed Awadallah, Ammar Ahmad Awan,
+Nguyen Bach, Amit Bahree, Arash Bakhtiari, Jianmin Bao, Harkirat Behl, et al. Phi-3
+technical report: A highly capable language model locally on your phone. arXiv preprint
+arXiv:2404.14219, 2024.
+Pranjal Aggarwal, Aman Madaan, Ankit Anand, Srividya Pranavi Potharaju, Swaroop
+Mishra, Pei Zhou, Aditya Gupta, Dheeraj Rajagopal, Karthik Kappaganthu, Yiming
+Yang, Shyam Upadhyay, Manaal Faruqui, and Mausam. AutoMix: Automatically mixing language models. In Advances in Neural Information Processing Systems (NeurIPS),
+2024.
+Aida Amini, Saadia Gabriel, Shanchuan Lin, Rik Koncel-Kedziorski, Yejin Choi, and Hannaneh Hajishirzi. MathQA: Towards interpretable math word problem solving with
+operation-based formalisms. In North American Chapter of the Association for Computational Linguistics (NAACL), 2019.
+Anastasios N. Angelopoulos and Stephen Bates. Conformal Prediction: A Gentle Introduction. Foundations and Trends in Machine Learning, 16(4):494–591, 2023.
+Anastasios N. Angelopoulos, Stephen Bates, Michael I. Jordan, and Jitendra Malik. Uncertainty sets for image classifiers using conformal prediction. In International Conference
+on Learning Representations (ICLR), 2021.
+Anastasios N. Angelopoulos, Emmanuel J. Candès, and Ryan J. Tibshirani. Conformal PID
+control for time series prediction. In Advances in Neural Information Processing Systems
+(NeurIPS), 2023.
+Lucas Bandarkar, Davis Liang, Benjamin Muller, Mikel Artetxe, Satya Narayan Shukla, Donald Husa, Naman Goyal, Abhinandan Krishnan, Luke Zettlemoyer, and Madian Khabsa.
+The Belebele benchmark: A parallel reading comprehension dataset in 122 language variants. In Association for Computational Linguistics (ACL), 2024.
+Rina Foygel Barber, Emmanuel J. Candès, Aaditya Ramdas, and Ryan J. Tibshirani. Predictive inference with the jackknife+. Annals of Statistics, 49(1):486–507, 2021.
+Stephen Bates, Emmanuel Candès, Lihua Lei, Yaniv Romano, and Matteo Sesia. Testing
+for outliers with conformal p-values. Annals of Statistics, 51(1):149–178, 2023.
+Yonatan Bisk, Rowan Zellers, Ronan Le Bras, Jianfeng Gao, and Yejin Choi. PIQA: Reasoning about physical commonsense in natural language. In AAAI Conference on Artificial
+Intelligence, 2020.
+Lingjiao Chen, Matei Zaharia, and James Zou. FrugalGPT: How to use large language
+models while reducing cost and improving performance. arXiv preprint arXiv:2305.05176,
+2023.
+13
+
+Xinyun Chen, Renat Aksitov, Uri Alon, Jie Ren, Kefan Xiao, Pengcheng Yin, Sushant
+Prakash, Charles Sutton, Xuezhi Wang, and Denny Zhou. Universal self-consistency for
+large language models. In International Conference on Machine Learning (ICML), 2024.
+John J. Cherian, Isaac Gibbs, and Emmanuel J. Candès. Large language model validity via
+enhanced conformal prediction methods. In Advances in Neural Information Processing
+Systems (NeurIPS), 2024.
+Christopher Clark, Kenton Lee, Ming-Wei Chang, Tom Kwiatkowski, Michael Collins, and
+Kristina Toutanova. BoolQ: Exploring the surprising difficulty of natural yes/no questions.
+In North American Chapter of the Association for Computational Linguistics (NAACL),
+2019.
+Peter Clark, Isaac Cowhey, Oren Etzioni, Tushar Khot, Ashish Sabharwal, Carissa
+Schoenick, and Oyvind Tafjord. Think you have solved question answering? Try ARC,
+the AI2 reasoning challenge. arXiv preprint arXiv:1803.05457, 2018.
+Nicolas Deutschmann, Mattia Rigotti, and Maria Rodriguez Martinez. Conformal autoregressive generation: Beam search with coverage guarantees. In AAAI Conference on
+Artificial Intelligence, 2024.
+Dujian Ding, Ankur Mallick, Chi Wang, Robert Sim, Subhabrata Mukherjee, Victor Ruhle,
+Laks V. S. Lakshmanan, and Ahmed Hassan Awadallah. Hybrid LLM: Cost-efficient and
+quality-aware query routing. In International Conference on Learning Representations
+(ICLR), 2024.
+David Dohan, Winnie Xu, Aitor Lewkowycz, Jacob Austin, David Bieber, Raphael Gontijo
+Lopes, Yuhuai Wu, Henryk Michalewski, Rif A. Saurous, Jascha Sohl-Dickstein, Kevin
+Murphy, and Charles Sutton. Language model cascades. arXiv preprint arXiv:2207.10342,
+2022.
+Rina Foygel Barber, Emmanuel J. Candès, Aaditya Ramdas, and Ryan J. Tibshirani. The
+limits of distribution-free conditional predictive inference. Information and Inference, 10
+(2):455–482, 2021.
+Gemma Team. Gemma 2: Improving open language models at a practical size. arXiv
+preprint arXiv:2408.00118, 2024.
+Isaac Gibbs and Emmanuel Candès. Adaptive conformal inference under distribution shift.
+In Advances in Neural Information Processing Systems (NeurIPS), 2021.
+Chuan Guo, Geoff Pleiss, Yu Sun, and Kilian Q. Weinberger. On calibration of modern
+neural networks. In International Conference on Machine Learning (ICML), 2017.
+Dan Hendrycks, Collin Burns, Steven Basart, Andy Zou, Mantas Mazeika, Dawn Song, and
+Jacob Steinhardt. Measuring massive multitask language understanding. In International
+Conference on Learning Representations (ICLR), 2021.
+14
+
+Lifu Huang, Ronan Le Bras, Chandra Bhagavatula, and Yejin Choi. Cosmos QA: Machine
+reading comprehension with contextual commonsense reasoning. In Conference on Empirical Methods in Natural Language Processing (EMNLP), 2019.
+Di Jin, Eileen Pan, Nassim Oufattole, Wei-Hung Weng, Hanyi Fang, and Peter Szolovits.
+What disease does this patient have? A large-scale open domain question answering
+dataset from medical exams. Applied Sciences, 11(14), 2021.
+Qiao Jin, Bhuwan Dhingra, Zhengping Liu, William W. Cohen, and Xinghua Lu. PubMedQA: A dataset for biomedical research question answering. In Conference on Empirical Methods in Natural Language Processing (EMNLP), 2019.
+Wittawat Jitkrittum, Neha Gupta, Aditya Krishna Menon, Harikrishna Narasimhan,
+Ankit Singh Rawat, and Sanjiv Kumar. When does confidence-based cascade deferral
+suffice? In Advances in Neural Information Processing Systems (NeurIPS), 2023.
+Saurav Kadavath, Tom Conerly, Amanda Askell, Tom Henighan, Dawn Drain, Ethan Perez,
+Nicholas Schiefer, Zac Hatfield-Dodds, Nova DasSarma, Eli Tran-Johnson, et al. Language
+models (mostly) know what they know. arXiv preprint arXiv:2207.05221, 2022.
+Tushar Khot, Peter Clark, Michal Guerquin, Peter Jansen, and Ashish Sabharwal. QASC: A
+dataset for question answering via sentence composition. In AAAI Conference on Artificial
+Intelligence, 2020.
+Lorenz Kuhn, Yarin Gal, and Sebastian Farquhar. Semantic uncertainty: Linguistic invariances for uncertainty estimation in natural language generation. In International
+Conference on Learning Representations (ICLR), 2023.
+Bhawesh Kumar, Charlie Lu, Gauri Gupta, Anil Palepu, David Bellamy, Ramesh Raskar,
+and Andrew Beam. Conformal prediction with large language models for multi-choice
+question answering. In Workshop at the International Conference on Machine Learning
+(ICML), 2023.
+Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu,
+Joseph E. Gonzalez, Hao Zhang, and Ion Stoica. Efficient memory management for large
+language model serving with PagedAttention. In Symposium on Operating Systems Principles (SOSP), 2023.
+Jing Lei and Larry Wasserman. Distribution-free prediction bands for non-parametric regression. Journal of the Royal Statistical Society: Series B, 76(1):71–96, 2014.
+Jing Lei, Max G’Sell, Alessandro Rinaldo, Ryan J. Tibshirani, and Larry Wasserman.
+Distribution-free predictive inference for regression. Journal of the American Statistical
+Association, 113(523):1094–1111, 2018.
+Hunter Lightman, Vineet Kosaraju, Yuri Burda, Harrison Edwards, Bowen Baker, Teddy
+Lee, Jan Leike, John Schulman, Ilya Sutskever, and Karl Cobbe. Let’s verify step by step.
+In International Conference on Learning Representations (ICLR), 2024.
+15
+
+Stephanie Lin, Jacob Hilton, and Owain Evans. Teaching models to express their uncertainty
+in words. Transactions on Machine Learning Research (TMLR), 2022a.
+Stephanie Lin, Jacob Hilton, and Owain Evans. TruthfulQA: Measuring how models mimic
+human falsehoods. In Association for Computational Linguistics (ACL), 2022b.
+Zhen Lin, Shubhendu Trivedi, and Jimeng Sun. Generating with confidence: Uncertainty
+quantification for black-box large language models. Transactions on Machine Learning
+Research (TMLR), 2024.
+Llama Team. The Llama 3 herd of models. arXiv preprint arXiv:2407.21783, 2024.
+Mistral AI Team. Un Ministral, des Ministraux: Introducing the world’s best edge models.
+https://mistral.ai/news/ministraux/, 2024.
+Christopher Mohri and Tatsunori Hashimoto. Language models with conformal factuality
+guarantees. In International Conference on Machine Learning (ICML), 2024.
+Isaac Ong, Amjad Almahairi, Vincent Wu, Wei-Lin Chiang, Tianhao Wu, Joseph E. Gonzalez, M. Waleed Kadous, and Ion Stoica. RouteLLM: Learning to route LLMs from
+preference data. In International Conference on Learning Representations (ICLR), 2025.
+Ankit Pal, Logesh Kumar Umapathi, and Malaikannan Sankarasubbu. MedMCQA: A largescale multi-subject multi-choice dataset for medical domain question answering. In Conference on Health, Inference, and Learning (CHIL), 2022.
+Harris Papadopoulos, Kostas Proedrou, Vladimir Vovk, and Alex Gammerman. Inductive confidence machines for regression. In European Conference on Machine Learning
+(ECML), 2002.
+Victor Quach, Adam Fisch, Tal Schuster, Adam Yala, Jae Ho Sohn, Tommi Jaakkola, and
+Regina Barzilay. Conformal language modeling. In International Conference on Learning
+Representations (ICLR), 2024.
+David Rein, Betty Li Hou, Asa Cooper Stickland, Jackson Petty, Richard Yuanzhe Pang,
+Julien Dirani, Julian Michael, and Samuel R. Bowman. GPQA: A graduate-level Googleproof Q&A benchmark. In Conference on Language Modeling (COLM), 2024.
+Yaniv Romano, Evan Patterson, and Emmanuel Candès. Conformalized quantile regression.
+In Advances in Neural Information Processing Systems (NeurIPS), 2019.
+Yaniv Romano, Matteo Sesia, and Emmanuel Candès. Classification with valid and adaptive
+coverage. In Advances in Neural Information Processing Systems (NeurIPS), 2020.
+Maarten Sap, Hannah Rashkin, Derek Chen, Ronan Le Bras, and Yejin Choi. Social IQa:
+Commonsense reasoning about social interactions. In Conference on Empirical Methods
+in Natural Language Processing (EMNLP), 2019.
+16
+
+Amrith Setlur, Chirag Nagpal, Adam Fisch, Xinyang Geng, Jacob Eisenstein, Rishabh Agarwal, Alekh Agarwal, Jonathan Berant, and Aviral Kumar. Rewarding progress: Scaling
+automated process verifiers for LLM reasoning. In International Conference on Learning
+Representations (ICLR), 2025.
+Glenn Shafer and Vladimir Vovk. A tutorial on conformal prediction. Journal of Machine
+Learning Research, 9:371–421, 2008.
+Tal Shnitzer, Anthony Ou, Mírian Silva, Kate Soule, Yuekai Sun, Justin Solomon, Neil
+Thompson, and Mikhail Yurochkin. Large language model routing with benchmark
+datasets. arXiv preprint arXiv:2309.15789, 2023.
+Charlie Snell, Jaehoon Lee, Kelvin Xu, and Aviral Kumar. Scaling LLM test-time compute
+optimally can be more effective than scaling parameters for reasoning. In International
+Conference on Learning Representations (ICLR), 2025.
+Jiayuan Su, Fulin Lin, Zhaopeng Feng, Han Zheng, Teng Wang, Zhenyu Xiao, Xinlong Zhao,
+Zuozhu Liu, Lu Cheng, and Hongwei Wang. CP-Router: An Uncertainty-Aware Router
+Between LLM and LRM. In AAAI Conference on Artificial Intelligence, 2026.
+Katherine Tian, Eric Mitchell, Allan Zhou, Archit Sharma, Rafael Rafailov, Huaxiu Yao,
+Chelsea Finn, and Christopher D. Manning. Just ask for calibration: Strategies for eliciting calibrated confidence scores from language models fine-tuned with human feedback.
+In Conference on Empirical Methods in Natural Language Processing (EMNLP), 2023.
+Ryan J. Tibshirani, Rina Foygel Barber, Emmanuel Candès, and Aaditya Ramdas. Conformal prediction under covariate shift. In Advances in Neural Information Processing
+Systems (NeurIPS), 2019.
+Antonios Valkanas, Soumyasundar Pal, Pavel Rumiantsev, Yingxue Zhang, and Mark Coates.
+C3PO: Optimized large language model cascades with probabilistic cost constraints for
+reasoning. In Advances in Neural Information Processing Systems, 2025.
+Vladimir Vovk. Conditional validity of inductive conformal predictors. Machine Learning,
+92:349–376, 2012.
+Vladimir Vovk, Alex Gammerman, and Glenn Shafer. Algorithmic Learning in a Random
+World. Springer, 2005.
+Xuezhi Wang, Jason Wei, Dale Schuurmans, Quoc Le, Ed H. Chi, Sharan Narang, Aakanksha
+Chowdhery, and Denny Zhou. Self-consistency improves chain of thought reasoning in
+language models. In International Conference on Learning Representations (ICLR), 2023.
+Yubo Wang, Xueguang Ma, Ge Zhang, Yuansheng Ni, Abhranil Chandra, Shiguang Guo,
+Weiming Ren, Aaran Arulraj, Xuan He, Ziyan Jiang, et al. MMLU-Pro: A more robust
+and challenging multi-task language understanding benchmark. In Advances in Neural
+Information Processing Systems (NeurIPS) Datasets and Benchmarks Track, 2024.
+17
+
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Brian Ichter, Fei Xia, Ed H.
+Chi, Quoc V. Le, and Denny Zhou. Chain-of-thought prompting elicits reasoning in large
+language models. In Advances in Neural Information Processing Systems (NeurIPS), 2022.
+Johannes Welbl, Nelson F. Liu, and Matt Gardner. Crowdsourcing multiple choice science
+questions. In Workshop on Noisy User-generated Text (W-NUT), 2017.
+Miao Xiong, Zhiyuan Hu, Xinyang Lu, Yifei Li, Jie Fu, Junxian He, and Bryan Hooi. Can
+LLMs express their uncertainty? An empirical evaluation of confidence elicitation in LLMs.
+In International Conference on Learning Representations (ICLR), 2024.
+Murong Yue, Jiuhai Zhao, Min Zhang, Liang Du, and Ziyu Yao. Large language model cascades with mixture of thought representations for cost-efficient reasoning. arXiv preprint
+arXiv:2310.03094, 2024.
+Rowan Zellers, Ari Holtzman, Yonatan Bisk, Ali Farhadi, and Yejin Choi. HellaSwag: Can a
+machine really finish your sentence? In Association for Computational Linguistics (ACL),
+2019.
+Wanjun Zhong, Ruixiang Cui, Yiduo Guo, Yaobo Liang, Shuai Lu, Yanlin Wang, Amin
+Saied, Weizhu Chen, and Nan Duan. AGIEval: A human-centric benchmark for evaluating
+foundation models. In Findings of the North American Chapter of the Association for
+Computational Linguistics (NAACL), 2024.
+
+18
+
+Appendix A. C3PO Design Contrast
+Table 4 expands the comparison summarised in Section 4.
+Table 4: Design contrast between Conformal Cascade and C3PO (Valkanas et al., 2025), the
+closest prior conformal-prediction approach to LLM cascades. The two methods
+are complementary: C3PO calibrates against cost, CC against coverage.
+
+Guaranteed quantity
+User-facing knob
+Deferral rule
+Calibration target
+Label requirement
+
+C3PO (Valkanas et al., 2025)
+
+Conformal Cascade (ours)
+
+Pr[cost > C ∗ ] ≤ α
+cost budget C ∗ + risk α
+confidence threshold sj ≥ τj
+(1−α)-quantile of inference cost
+self-supervised (MPM as target)
+
+Pr[ytrue ∈ CK ∗ (x) (x)] ≥ 1 − Kα
+error budget α
+prediction-set size |Ck (x)| = 1
+(1−α)-quantile of nonconformity
+labelled calibration split
+
+Appendix B. Model and Benchmark Details
+Cascade pairs. Table 5 lists the small/large instruction-tuned pair drawn from each family. The per-call costs are fixed at c1 = 1 and c2 = 2.7 across all four families: this uniform
+ratio decouples cross-family comparisons from provider-specific token pricing, and allows
+the cost numbers reported in the main paper to be read as expensive-call equivalents rather
+than absolute compute.
+Table 5: Model family cascade pairs. The small model is tier 1, the large model is tier 2.
+The same c1 = 1, c2 = 2.7 per-call cost is used in every experiment.
+Family
+
+Tier 1 (small)
+
+Tier 2 (large)
+
+c1
+
+c2
+
+Llama
+Gemma
+Ministral
+Phi
+
+Llama-3.2-3B-Instruct
+Gemma-4-E4B-it
+Ministral-3-3B-Instruct-2512
+Phi-3.5-mini-instruct
+
+Llama-3.1-8B-Instruct
+Gemma-4-31B-it
+Ministral-3-14B-Instruct-2512
+Phi-4
+
+1.0
+1.0
+1.0
+1.0
+
+2.7
+2.7
+2.7
+2.7
+
+Appendix C. Full Main Results
+Table 7 reports absolute test-set accuracy (%) for Best Heuristic and CC Best across all 72
+family–benchmark pairs. This is the data underlying the compact matrix in Table 1.
+
+Appendix D. Full Per-Family Pareto Frontiers
+Figure 1 in the main body shows the MMLU Pareto frontier for three of the four cascades;
+the Phi panel is qualitatively similar and is omitted from the figure for visual readability. A
+full per-benchmark Pareto visualisation across all 72 family–benchmark pairs is released with
+the code. The qualitative pattern on MMLU repeats across benchmarks: CC (κ = 1) sits
+19
+
+Table 6: Benchmark summary. |A| is the number of answer choices; Ntest is the size of the
+held-out test split (70% of the full benchmark, with the remaining 30% used for
+calibration). Sizes are identical across the four cascades.
+Benchmark
+
+Domain
+
+|A|
+
+Ntest
+
+AGI-Eval
+ARC-Challenge
+Belebele-Eng
+BoolQ
+Cosmos-QA
+GPQA-Diamond
+HellaSwag
+MathQA
+MedMCQA
+MedQA-USMLE-4
+MMLU
+MMLU-Pro
+PIQA
+PubmedQA
+QASC
+SciQ
+Social-i-QA
+TruthfulQA
+
+Standardized exams (English split)
+Grade-school science
+English reading comprehension
+Yes/No reading comprehension
+Commonsense
+Graduate-level science
+Sentence completion
+Multiple-choice math
+Medical MCQ
+Medical licensing exam
+57 academic subjects
+Broad knowledge
+Physical commonsense
+Biomedical yes/no/maybe
+Science commonsense
+Elementary science
+Social commonsense
+Factual accuracy
+
+5
+4
+4
+2
+4
+4
+4
+5
+4
+4
+4
+10
+2
+3
+8
+4
+3
+4–10
+
+1783
+821
+630
+2289
+2090
+139
+7030
+3133
+2929
+892
+9830
+8423
+1287
+700
+649
+700
+1368
+572
+
+on or above the heuristic frontier in the mid- to high-cost region on most benchmarks, while
+relaxed-acceptance variants κ ∈ {2, 3} extend the frontier downward into the low-cost region
+that heuristics can only reach by sacrificing the coverage guarantee. The exceptions are the
+benchmarks where Table 1 shows ∆ < 0 (notably Phi on AGI-Eval and PubmedQA), where
+the heuristic frontier slightly dominates; these are the failure modes discussed in Section 5.5
+and Appendix H.
+
+Appendix E. Full Set-Size Distributions
+Table 8 reports the tier-1 acceptance rate (the fraction of test queries with |C1 (x)| = 1)
+at α = 0.10 across the 72 family–benchmark pairs, extracted directly from the experiment
+logs. Rows are ordered by mean acceptance across families. The table makes the cascade’s
+partitioning behaviour concrete: the same α = 0.10 threshold produces acceptance rates
+ranging from 0% (cascade defers every query) to over 95% (cascade commits nearly every
+query). The acceptance rate varies strongly across benchmarks within a family and across
+families within a benchmark, tracking the tier-1 model’s per-benchmark confidence.
+Two observations are worth flagging. First, the cascade never accepts at tier 1 on GPQADiamond, MMLU-Pro, AGI-Eval, TruthfulQA, or PubmedQA for any family at α = 0.10:
+these are benchmarks on which tier-1 sampling is broadly uncertain, and the cascade correctly defers everything. Second, Phi has zero or near-zero acceptance on 14 of 18 bench20
+
+Table 7: Full main results: absolute test-set accuracy (%) for Best Heuristic (H) and CC
+Best (CC) across the four model families.
+Llama
+
+Gemma
+
+Ministral
+
+Phi
+
+Benchmark
+
+H
+
+CC
+
+H
+
+CC
+
+H
+
+CC
+
+H
+
+CC
+
+GPQA-Diamond
+MathQA
+MMLU-Pro
+MMLU
+TruthfulQA
+MedMCQA
+MedQA-USMLE-4
+AGI-Eval
+HellaSwag
+ARC-Challenge
+PIQA
+Social-i-QA
+Cosmos-QA
+BoolQ
+QASC
+SciQ
+Belebele-Eng
+PubmedQA
+
+33.8
+83.0
+55.0
+74.7
+58.2
+63.1
+75.8
+46.8
+73.7
+89.5
+86.3
+76.2
+88.9
+85.9
+89.1
+98.4
+94.6
+80.9
+
+35.3
+84.7
+56.4
+75.1
+60.1
+63.4
+76.2
+47.0
+73.9
+89.4
+86.5
+76.4
+88.8
+86.3
+89.1
+98.3
+94.8
+80.7
+
+77.7
+91.6
+83.7
+89.4
+80.4
+76.3
+91.3
+60.1
+84.4
+97.1
+94.4
+80.2
+80.8
+91.3
+89.5
+99.3
+97.3
+81.4
+
+78.4
+92.0
+86.1
+91.0
+83.7
+79.3
+94.1
+62.1
+87.1
+97.0
+94.4
+80.3
+80.6
+91.3
+91.1
+99.3
+97.0
+81.4
+
+65.5
+86.5
+73.7
+83.1
+66.4
+69.1
+82.3
+51.7
+74.0
+94.3
+89.7
+75.0
+80.4
+84.2
+87.2
+98.7
+95.9
+78.6
+
+65.5
+91.1
+76.3
+83.8
+67.1
+69.9
+83.3
+52.8
+74.4
+95.2
+89.1
+75.7
+80.6
+84.5
+87.4
+98.6
+95.7
+77.9
+
+47.5
+79.2
+64.5
+82.0
+72.4
+68.1
+79.1
+50.2
+83.8
+94.6
+90.7
+78.7
+84.1
+87.1
+86.7
+98.4
+95.6
+79.1
+
+51.8
+77.8
+66.5
+83.5
+73.6
+71.7
+81.3
+45.7
+84.2
+94.2
+92.0
+79.7
+84.4
+87.2
+86.6
+98.6
+95.1
+77.7
+
+marks; this pattern correlates with Phi’s weaker performance on the negative-∆ benchmarks
+in Table 1 (see Appendix H).
+
+Appendix F. Why CC Outperforms Majority Vote
+The conformal set acts as a calibrated frequency filter. On benchmarks with many answer
+choices (MMLU-Pro has 10), the correct answer often receives only 4–6 of the 16 samples
+while incorrect answers fragment across the remaining nine alternatives. Majority vote is
+easy to beat in this regime: two wrong answers with three votes each can outvote the correct
+answer with four. The conformal threshold removes low-frequency answers, denoising the
+vote at a calibration-guaranteed rate.
+
+Appendix G. Difficulty Stratification
+Table 9 expands the difficulty breakdown summarised in Section 5.5 to four (family, benchmark) cells. Buckets follow the raw evaluation: easy queries have tier-2 per-query accuracy
+p̂ ≥ 0.6, medium 0.25 ≤ p̂ < 0.6, hard p̂ < 0.25. These four cells split into two regimes
+that we analyse separately (Table 8). On the MMLU-Pro rows the tier-1 acceptance rate
+at α = 0.10 is 0%, so the cascade defers every query and CC reduces to post-hoc conformal
+selection over the tier-2 candidate set. On the MMLU rows the tier-1 acceptance is 78.7%
+21
+
+Table 8: Tier-1 acceptance rate (%) at α = 0.10 across model families. On easy benchmarks
+the cascade commits most queries to the small model; on hard benchmarks it
+correctly defers.
+Benchmark
+
+Llama
+
+Gemma
+
+Ministral
+
+Phi
+
+Belebele-Eng
+SciQ
+ARC-Challenge
+Cosmos-QA
+PIQA
+QASC
+BoolQ
+MathQA
+Social-i-QA
+MMLU
+MedMCQA
+MedQA-USMLE-4
+HellaSwag
+AGI-Eval
+TruthfulQA
+PubmedQA
+GPQA-Diamond
+MMLU-Pro
+
+95.6
+94.0
+85.6
+85.6
+80.3
+75.7
+72.8
+43.1
+39.7
+31.3
+22.0
+20.3
+10.6
+0.0
+0.0
+0.0
+0.0
+0.0
+
+92.7
+97.6
+92.0
+65.2
+99.0
+80.9
+94.9
+98.7
+0.0
+78.7
+0.0
+68.7
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+
+96.3
+93.4
+94.5
+24.3
+82.0
+54.9
+68.9
+81.3
+32.5
+62.7
+0.0
+30.4
+20.2
+0.0
+0.0
+0.0
+0.0
+0.0
+
+81.4
+92.6
+92.8
+0.0
+50.7
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+
+(Gemma) and 62.7% (Ministral), so CC is doing both routing and, on the deferred subset,
+conformal selection.
+Pure-selection regime (MMLU-Pro cells). All rows here operate on the same tier-2
+samples; differences come entirely from how each method selects among the strong model’s
+candidates. Against Always-Strong, CC gains +3.8 pp on Llama/MMLU-Pro hard (7.2%
+vs. 3.4%) and +4.4 pp on Ministral/MMLU-Pro hard (4.7% vs. 0.3%): the conformal filter
+retains the correct answer in a multi-element set, and the argmin-frequency tiebreaker over
+the calibrated set picks more reliably than the strong model’s argmax when that argmax
+is wrong. Against unrestricted majority (Agreement, θ = 0.8), CC gains +3.3 pp and
++2.8 pp on the hard buckets of these two cells respectively. The easy-bucket cost relative to
+Always-Strong is at most 0.6 pp, since on p̂ ≥ 0.6 queries the strong-model argmax is rarely
+overturned by the tiebreaker.
+Routing + selection regime (MMLU cells). On these cells CC’s accuracy is a mixture
+of the small model on accepted queries and the conformally filtered cascade on deferred
+queries, and deferral is concentrated on hard queries: although the overall tier-1 acceptance
+is 78.7%/62.7%, the cascade defers more often when the small model is uncertain, which
+on these cells coincides with queries where the strong model also fails (Always-Strong hard
+accuracy is 0.0% on both cells). The bucket-level effect is asymmetric:
+• Easy. CC (96.1% on Gemma/MMLU, 98.9% on Ministral/MMLU) sits between
+Always-Weak (88.6%, 90.4%) and Always-Strong (100.0%, 100.0%): selective defer22
+
+ral catches part of the small model’s easy-bucket error mass without forcing every
+query through the strong model.
+• Hard. CC (5.5%, 6.4%) lies much closer to Always-Strong (0.0%, 0.0%) than to AlwaysWeak (19.1%, 14.3%). The cascade defers the bulk of hard queries to a strong model
+that is wrong on essentially all of them, and conformal selection cannot recover what
+is not in the candidate set; the +5.5/+6.4 pp the filter extracts over Always-Strong is
+what is available given that recall constraint.
+Cross-regime takeaway. Always-Weak has the highest hard-bucket accuracy on all four
+cells. This is not in tension with the cascade’s value but a predictable consequence of two
+facts: difficulty is defined by the strong model’s per-query accuracy, so queries hard for the
+strong model are not always hard for the small model; and on the MMLU cells the strong
+model’s hard bucket collapses to 0%, leaving Always-Weak with structurally unrecoverable
+headroom. On MMLU cells the cascade therefore trades a hard-bucket loss for higher overall
+accuracy and calibrated coverage; on MMLU-Pro cells, where the small model never accepts,
+CC delivers a strict hard-bucket improvement over Always-Strong at ≤ 0.6 pp easy-bucket
+cost. The four cells reflect properties of the (family, benchmark) pair, not an inconsistency
+in CC’s deferral rule, which targets the same calibrated risk throughout.
+Table 9: Accuracy (%) on four (family, benchmark) cells, by tier-2 per-query difficulty
+p̂. Buckets: Easy p̂ ≥ 0.6, Medium 0.25 ≤ p̂ < 0.6, Hard p̂ < 0.25. Bold
+marks the highest value in each (cell, bucket) triple. Bucket sizes (nE /nM /nH ):
+Llama/MMLU-Pro 3248/1960/3215; Gemma/MMLU 8889/208/733; Ministral/MMLU 7874/841/1115; Ministral/MMLU-Pro 5584/1265/1574.
+Cell
+
+Method
+
+Easy
+
+Medium
+
+Hard
+
+Llama / MMLU-Pro
+
+Always-Weak
+Always-Strong
+Agreement (θ = 0.8)
+CC (α = 0.10)
+
+80.1
+99.9
+98.2
+99.4
+
+43.8
+66.0
+65.7
+65.7
+
+14.6
+3.4
+3.9
+7.2
+
+Gemma / MMLU
+
+Always-Weak
+88.6
+Always-Strong
+100.0
+Agreement (θ = 0.8) 94.4
+CC (α = 0.10)
+96.1
+
+47.1
+25.5
+38.9
+38.5
+
+19.1
+0.0
+9.3
+5.5
+
+Ministral / MMLU
+
+Always-Weak
+90.4
+Always-Strong
+100.0
+Agreement (θ = 0.8) 98.3
+CC (α = 0.10)
+98.9
+
+42.0
+36.3
+39.2
+43.5
+
+14.3
+0.0
+3.5
+6.4
+
+48.9
+46.3
+54.2
+61.0
+
+13.7
+0.3
+1.9
+4.7
+
+Always-Weak
+Always-Strong
+Ministral / MMLU-Pro
+Agreement (θ = 0.8)
+CC (α = 0.10)
+
+23
+
+86.1
+99.9
+98.3
+99.3
+
+Appendix H. Failure Diagnostics: Phi’s Under-Performance
+Phi is the cascade with the most negative-∆ benchmarks (Table 1: 12 wins, 0 ties, 6 losses,
+with ∆ ≤ −1 pp on 3 benchmarks: AGI-Eval, MathQA, PubmedQA). The most visible
+failure is AGI-Eval at ∆ = −4.5 pp. The raw logs reveal a consistent pattern: on the
+benchmarks where Phi under-performs, the Phi tier-1 model produces prediction sets that
+saturate toward the full answer set at α ≤ 0.20, which forces CC to defer 100% of queries
+to tier 2 (defer rate = 100.0%, cost = c1 + c2 = 3.70). At the committed tier-2 output,
+the cascade’s accuracy is then lower than Always-Strong’s accuracy on the same benchmark
+(e.g., on Phi/AGI-Eval: all CC variants achieve 45.7% accuracy versus 51.0% for AlwaysStrong). The gap arises from a design choice in the fallback rule: when CC reaches the last
+tier with a non-singleton prediction set, it returns the argmin frequency answer within the
+tier-K set rather than the unrestricted majority vote, and the two decisions disagree exactly
+when the tier-K set is itself non-singleton. An alternative fallback that takes the argmax
+frequency over tier-K samples without conditioning on the tier-K set would recover AlwaysStrong accuracy under full deferral. We use the more conservative fallback throughout the
+experiments and note the alternative as an implementation choice that affects boundary
+behaviour but not the offline coverage guarantee of Theorem 2.
+The Phi tier-1 saturation itself is a property of the Phi-3.5-mini-instruct checkpoint at
+N = 16: on benchmarks where the mini model is uniformly uncertain, the frequency-based
+score produces broad sets that never meet the singleton acceptance criterion, and the cascade
+cannot exit at tier 1. Switching to a logprob-based score or increasing N would sharpen the
+sets but neither addresses the underlying tier-1 uncertainty. The simplest practical fix is to
+detect this regime on calibration data (tier-1 acceptance rate close to 0%) and fall back to
+Always-Strong.
+
+Appendix I. Additional Coverage Results
+We report empirical set miscoverage at α = 0.10 across the four model families in Table 10.
+The strict α = 0.10 target (within a ±0.02 finite-sample band) is met on most cells; seven
+cells exceed it (Llama/ARC-Challenge 0.124, Llama/BoolQ 0.122, Llama/MedMCQA 0.130,
+Llama/PIQA 0.138, Gemma/MedQA 0.124, Gemma/MMLU 0.128, Gemma/TruthfulQA
+0.122, marked ∗ ). All seven lie comfortably inside the Kα = 0.20 union-bound guarantee
+of Theorem 2; their existence indicates that the marginal evidence for Assumption 3 is
+approximate rather than exact, but does not contradict the (weaker) marginal coverage
+guarantee, which they satisfy at every cell.
+
+Appendix J. Cost-Ratio Sensitivity
+The main paper fixes the per-call cost ratio at c2 /c1 = 2.7 across all four families to decouple
+cross-family comparisons from provider-specific pricing. Real ratios vary: closed-API pricing
+for small/large model pairs typically gives c2 /c1 ∈ [3, 50], with reasoning-tuned models at
+the high end. Theorem 4 expresses expected cost as E[Cost] = c1 + c2 · Pr[|C1 (X)| ̸= 1], so
+for any acceptance rate p = Pr[|C1 (X)| = 1] the cost reduction relative to Always-Strong
+24
+
+Table 10: Empirical set miscoverage at α = 0.10 across model families. Each cell reports
+Pr[ytrue ∈
+/ Ck∗ (x)] on the test split. All cells satisfy the union-bound Kα = 0.20
+guarantee; cells exceeding the strict α + 0.02 band are marked with ∗ .
+Benchmark
+
+Llama
+
+Gemma
+
+Ministral
+
+Phi
+
+AGI-Eval
+ARC-Challenge
+Belebele-Eng
+BoolQ
+Cosmos-QA
+GPQA-Diamond
+HellaSwag
+MathQA
+MedMCQA
+MedQA-USMLE-4
+MMLU
+MMLU-Pro
+PIQA
+PubmedQA
+QASC
+SciQ
+Social-i-QA
+TruthfulQA
+
+0.000
+0.124∗
+0.075
+0.122∗
+0.107
+0.000
+0.065
+0.012
+0.130∗
+0.067
+0.087
+0.000
+0.138∗
+0.000
+0.092
+0.043
+0.097
+0.000
+
+0.000
+0.038
+0.037
+0.105
+0.069
+0.000
+0.093
+0.090
+0.000
+0.124∗
+0.128∗
+0.094
+0.096
+0.000
+0.105
+0.010
+0.000
+0.122∗
+
+0.000
+0.074
+0.059
+0.114
+0.089
+0.000
+0.085
+0.065
+0.107
+0.108
+0.100
+0.106
+0.106
+0.000
+0.068
+0.027
+0.087
+0.000
+
+0.000
+0.105
+0.071
+0.085
+0.111
+0.000
+0.080
+0.000
+0.000
+0.104
+0.102
+0.000
+0.103
+0.000
+0.080
+0.019
+0.000
+0.000
+
+(which pays c2 ) is
+Saving(p, r) =
+
+c2 − (c1 + c2 (1 − p))
+1
+= p− ,
+c2
+r
+
+r := c2 /c1 ,
+
+and CC saves cost over Always-Strong if and only if p > 1/r. The same expression rewritten
+shows that as r grows, the threshold acceptance rate 1/r
+as Saving(p, r) = p · r−1/p·(1−p)
+r
+shrinks toward zero and saving asymptotes at p.
+Table 11: Cost saving over Always-Strong as a function of cost ratio r = c2 /c1 and tier-1
+acceptance rate p, for a two-tier cascade with κ = 1. Bold cells indicate ≥ 30%
+saving. The break-even acceptance rate 1/r is reported in the bottom row.
+p
+
+r = 2.7
+
+r=5
+
+r = 10
+
+r = 20
+
+r = 50
+
+0.30
+0.50
+0.70
+0.90
+
+−7%
+13%
+33%
+53%
+
+10%
+30%
+50%
+70%
+
+20%
+40%
+60%
+80%
+
+25%
+45%
+65%
+85%
+
+28%
+48%
+68%
+88%
+
+break-even 1/r
+
+0.37
+
+0.20
+
+0.10
+
+0.05
+
+0.02
+
+Two qualitative consequences for deployment. First, the larger the cost gap between
+cheap and expensive models (i.e., the more economically meaningful a cascade is), the lower
+25
+
+the acceptance threshold for CC to save cost. At r = 10 (typical of small/frontier model
+pairs), even 20% tier-1 acceptance produces a 10% saving over Always-Strong; at r = 50,
+5% acceptance suffices. Second, the cost figures reported in the main paper at r = 2.7 are
+conservative: on Llama/Belebele-Eng with p = 0.956, the saving rises from 58% at r = 2.7
+to 86% at r = 10 and 94% at r = 50. The diffuse-tier-1 guard rail discussed in Section 6
+(replace CC with Always-Strong when calibration acceptance is below 1/r) is therefore a
+function of the deployment cost ratio rather than a fixed 5% rule.
+
+Appendix K. Algorithm and Implementation Details
+Sampling. All experiments use temperature τ = 0.7 and N = 16 samples. For multiplechoice benchmarks we extract the answer letter from the first token of the response, falling
+back to regex extraction on the body. Malformed responses contribute to no candidate and
+thus score sk (x, a) = 1 for every a, which produces a maximal set and defers.
+Calibration. We use a 30%/70% calibration/test split with fixed seed 42. The conformal
+quantile in Eq. (1) is implemented by sorting the calibration scores and indexing at position
+⌈(1 − α)(n + 1)⌉; ties are broken by preserving the sort order, which makes the quantile
+conservative.
+Baselines and selection. The agreement cascade is swept over θ ∈ {0.5, 0.6, 0.7, 0.8, 0.9};
+the entropy cascade over τ ∈ {−1.5, −1.0, −0.5, −0.3}; the random-defer baseline over
+p ∈ {0.2, 0.5, 0.8}. For each family–benchmark pair, Best Heuristic is the argmax test-set
+accuracy over the resulting 12 configurations, and CC Best is the argmax test-set accuracy
+over the 15-configuration CC grid (5 α × 3 κ from Section 5.1); the same oracle-tuning rule is
+applied on both sides. Coverage and tier-1 acceptance results in the main paper are reported
+at the fixed operating point α = 0.10, κ = 1 without per-benchmark selection.
+Compute. The full evaluation (four families × 18 benchmarks × N = 16 samples per
+tier per query) runs on four NVIDIA B200 SXM6 GPUs. Conformal calibration itself is
+negligible—a sort and an index per tier.
+
+Appendix L. Proofs and Technical Details for Section 3
+This appendix collects the formal material referenced from Section 3. Subsection L.1 certifies
+that the Monte-Carlo-based nonconformity score inherits exchangeability from the underlying queries (Lemma 5) and discusses the resolution of the score. Subsection L.2 spells
+out the computational cost and calibration-size recommendations for the per-tier calibration. Subsections L.3 and L.4 contain the proofs of the two main theorems (Theorem 2
+and Theorem 4), the auxiliary results cited from the main body, and additional remarks.
+Subsection L.5 gives the end-to-end computational-complexity breakdown of Algorithm 1.
+L.1 Score-Level Exchangeability and Resolution
+The main body states two properties of the frequency score sk (Section 3.1) that drive its
+use inside split conformal prediction. We record both formally here.
+26
+
+Validity through exchangeability. The split conformal guarantee (Theorem 1) requires
+the calibration and test points to produce exchangeable nonconformity scores. Our score sk
+is stochastic in the Monte-Carlo samples drawn from mk , so this is not immediate: in
+principle, the randomness of the draws could break the joint exchangeability of the score
+vector even when the query sequence is exchangeable. The following Lemma establishes that
+this concern does not materialize.
+(1)
+
+(n)
+
+(n+1)
+
+Lemma 5 (Exchangeability of frequency scores) Let (x1 , ytrue ), . . . , (xn , ytrue ), (xn+1 , ytrue )
+be an exchangeable sequence of query–answer pairs. For each tier k and each index i, let
+(k)
+(k)
+(k)
+Zi = (ŷi,1 , . . . , ŷi,N ) denote the N Monte Carlo samples drawn from mk on xi , and assume
+(k)
+
+that the conditional law of Zi given xi is the same measurable kernel Pk (· | ·) for every
+(k)
+(k)
+i (so that Zi | xi ∼ Pk (· | xi ) identically across queries) and that the draws {Zi }i are
+(i)
+mutually independent given {xi }i . Then the tier-k frequency scores {sk (xi , ytrue )}n+1
+i=1 are
+exchangeable.
+(i)
+
+(i)
+
+(k)
+
+Proof Each score can be written as sk (xi , ytrue ) = f (xi , ytrue , Zi ), where the deterministic
+measurable function f : X × A × AN → [0, 1] is defined by
+N
+
+f (x, a, z) = 1 −
+
+1 X
+⊮[zj = a].
+N
+j=1
+
+(i)
+
+(k)
+
+Consider the augmented sequence Wi = (xi , ytrue , Zi ) for i = 1, . . . , n + 1. By assumption,
+(i)
+(k)
+{(xi , ytrue )} is exchangeable and {Zi } is conditionally i.i.d. given {xi } and independent
+of the queries across i. The joint distribution of (W1 , . . . , Wn+1 ) is therefore invariant under any permutation π of {1, . . . , n + 1}: permuting the indices re-labels the exchangeable
+queries and correspondingly re-labels their (conditionally i.i.d.) Monte-Carlo draws, leaving
+(i)
+the joint distribution unchanged. Because sk (xi , ytrue ) = f (Wi ) and f is a fixed measurable
+(1)
+(n+1)
+function applied coordinate-wise, the score vector (sk (x1 , ytrue ), . . . , sk (xn+1 , ytrue )) inherits the same permutation invariance, which is the definition of exchangeability.
+Lemma 5 certifies that the split conformal machinery (Theorem 1) applies to the frequency score without modification. The argument extends to any nonconformity score that
+is a fixed measurable function of (x, a) and a conditionally i.i.d. randomization; in particular,
+logprob-based scores of the form s(x, a) = 1 − pk (a | x) (where pk (a | x) is itself estimated
+from N draws) are covered by the same argument.
+Caveat: shared randomness across queries. Lemma 5 assumes that the Monte Carlo
+(k)
+draws {Zi } are independent across queries. Production LLM serving stacks sometimes
+introduce per-query dependencies that can violate this: shared KV-cache prefixes across
+queries that happen to be batched together, or deterministic seeding that reuses randomness across queries. When those dependencies exist, the exchangeability argument needs to
+be re-examined. In our experiments we draw each query’s N samples independently (standard vLLM behaviour at non-zero temperature with per-query seeds), so the assumption is
+satisfied.
+27
+
+Cross-tier correlation of calibration scores. The calibration queries (xi , yi ) are shared
+(k)
+across tiers k = 1, . . . , K, but the Monte Carlo draws {Zi }i and hence the scores {sk (xi , yi )}i
+are tier-specific. Theorem 2’s proof only uses the per-tier marginal coverage guarantee and is
+therefore unaffected by cross-tier score correlation. The cascade’s overall behaviour (which
+tier commits) does depend on the joint tier-1 through tier-k thresholds, but that dependence
+is captured in the accounting of the first-commit events {Ak }, not in the CP guarantee at
+each tier.
+Resolution of the frequency score. The score sk (x, a) takes at most N + 1 distinct
+values, namely {0, 1/N, 2/N, . . . , 1}, because the numerator is an integer in {0, . . . , N }. The
+calibrated quantile q̂k is a specific order statistic of these scores and therefore also takes
+values on the same grid. At N = 16 (our default), the per-query resolution is 1/16 ≈ 0.063,
+which means the conformal threshold can be placed at one of 17 discrete levels per tier.
+This is enough to discriminate confident from uncertain queries while keeping inference
+inexpensive; if sharper prediction sets are needed, increasing N linearly refines the grid but
+also scales per-query inference cost linearly.
+Comparison to logprob-based scores. When logprobs are available (e.g., in openweight inference or some API endpoints), the continuous score sk (x, a) = 1 − pk (a | x)
+produces prediction sets whose conformal thresholds are not restricted to a discrete grid,
+and therefore yields tighter sets at the same α. We default to the frequency score because
+it preserves the black-box API interface assumed by many production deployments. The
+method in Section 3 is otherwise agnostic to the score choice: any valid nonconformity score
+composes with Algorithm 1.
+L.2 Calibration Details
+Computational cost. For each tier k, calibration performs n calls to mk (drawing N
+samples per call) and then sorts the n resulting scores. The sort is O(n log n) time and
+O(n) space; subsequent inference uses q̂k via a single O(1) lookup. Across K tiers, the full
+calibration cost is K · n · N inference calls plus O(Kn log n) arithmetic, which is dominated
+by the inference budget.
+Calibration-set size. The calibration size n controls the upper-side slack in Theorem 1:
+coverage lies in [1 − α, 1 − α + 1/(n + 1)]. With our default n = 0.3 · |benchmark|, the slack
+is at most 0.02 on all benchmarks with |benchmark| ≥ 50, which includes every benchmark
+we evaluate except the smallest (AGI-Eval at n ≈ 54 calibration queries, with slack ≈ 0.018,
+and GPQA-Diamond at n ≈ 59, with slack ≈ 0.017). For fresh deployments, we recommend
+n ≥ 200 calibration queries, giving slack ≤ 0.005.
+Tie-breaking. When the calibration scores contain ties at the quantile index, we break
+ties by preserving sort order. This is the conservative convention: it slightly enlarges the
+prediction sets relative to randomized tie-breaking, which strengthens the coverage lower
+bound at the cost of minor set-size inflation.
+28
+
+L.3 Proof of Theorem 2 and Additional Remarks
+Proof [Proof of Theorem 2] Partition the acceptanceFevent A into the K disjoint first-commit
+events Ak = {K ∗ (x) = k} for k = 1, . . . , K, so A = K
+k=1 Ak . On the event Ak , Algorithm 1
+returns ŷ equal to the unique element of Ck (x). Therefore the error event intersected with
+Ak ,
+Ak ∩ {ŷ ̸= ytrue } = Ak ∩ {Ck (x) ̸∋ ytrue } ⊆ {ytrue ∈
+/ Ck (x)}.
+By the per-tier split conformal guarantee at tier k (Theorem 1, applicable by Lemma 5),
+Pr[ytrue ∈
+/ Ck (x)] ≤ α. Monotonicity of probability gives
+Pr[ŷ ̸= ytrue , Ak ] ≤ Pr[ytrue ∈
+/ Ck (x)] ≤ α.
+Summing over k and using the disjointness of {Ak }K
+k=1 ,
+Pr[ŷ ̸= ytrue , A] =
+
+K
+X
+
+Pr[ŷ ̸= ytrue , Ak ] ≤
+
+k=1
+
+K
+X
+
+α = Kα.
+
+k=1
+
+This establishes (5). The final equivalence (per-tier level α/K gives cascade error α) is
+immediate by substitution.
+
+Remark 6 (Tightness of the union bound and selection preservation) The factor K
+in (5) is a worst-case union bound. In practice, the events {ytrue ∈
+/ Ck (x)} ∩ {K ∗ (x) = k}
+do not stack—most error mass at tier k is not also error mass at other tiers. Assumption 3
+in the main body formalizes this through the conditional bound
+Pr[ytrue ∈ Ck (x) | K ∗ (x) = k] ≥ 1 − α,
+
+for each k = 1, . . . , K,
+
+under which the conditional cascade-error bound Pr[ŷ ̸= ytrue | A] ≤ α holds without the
+factor of K.
+The assumption is in the family studied by the selective-conformal literature (Bates
+et al., 2023; Angelopoulos and Bates, 2023; Foygel Barber et al., 2021), which treats coverage
+preservation under selection rules that depend on the calibration and test covariates but not
+on the test label. In our setting, the first-commit event {K ∗ (x) = k} is indeed measurable
+with respect to (x, Dcal ) alone and does not touch ytrue , so the assumption is plausible
+in principle. It is not, however, a theorem of split conformal prediction without further
+regularity on the score distribution, and the cascade literature has not to our knowledge
+established sufficient conditions for it to hold identically in the multi-tier setting.
+Empirical evidence for the assumption in this paper is indirect. Section 5.3 (Table 2)
+and Appendix I (Table 10) report the marginal set-miscoverage rate Pr[ytrue ∈
+/ CK ∗ (x) (x)]
+across the reported benchmark–family pairs. The marginal rate tracks α rather than the
+worst-case Kα; on benchmarks with a substantial tier-1 acceptance rate (Section 5.5), this
+observation rules out the possibility that the bound Kα is tight in our setting. We do
+not report the conditional rate Pr[ytrue ∈
+/ Ck (x) | K ∗ (x) = k] directly in this version of
+the paper; a future version could include a per-tier conditional miscoverage breakdown for
+stronger direct evidence.
+29
+
+Remark 7 (Deferral never errs) Only the acceptance event can commit a wrong answer:
+when the cascade defers at tier k, the query is passed to tier k + 1 with no claim made, and
+the error accounting in Theorem 2 sums only over commit events {A1 , . . . , AK }. Escalation
+therefore incurs only additional cost, never coverage violation.
+Remark 8 (Relaxed acceptance, κ > 1) For κ > 1, the acceptance event becomes Aκ =
+{1 ≤ |CK ∗ (x) (x)| ≤ κ}, and the cascade returns ŷ = arg mina∈CK ∗ (x) (x) sK ∗ (x) (x, a). The setcoverage guarantee carries through: Pr[ytrue ∈ CK ∗ (x) (x), Aκ ] ≤ Kα (or ≤ α under selection
+preservation) with |CK ∗ (x) (x)| ≤ κ. The top-1 error is bounded by the set-coverage miss plus
+the probability that the arg min tiebreaker selects a wrong element from a set that contains the
+correct answer; the latter quantity is bounded by (κ − 1)/κ in the worst case but is typically
+much smaller when the frequency ranking is informative.
+Remark 9 (Heterogeneous per-tier levels αk ) Theorem 2 uses a common level α at
+every tier, but the same argument
+extends to heterogeneous levels α1 , . . . , αK : the cascadeP
+α
+(or
+maxk αk under selection preservation). Practitioners
+level error is bounded by K
+k=1 k
+who want a tighter guarantee at later tiers, where escalation cost is already sunk, can choose
+α1 > α2 > · · · > αK to concentrate the coverage budget on deeper commits.
+L.4 Proof of Theorem 4 and Cost Results
+Proof [Proof of Theorem 4] By Algorithm 1 with K = 2 and κ = 1: when |C1 (X)| = 1 the
+cascade accepts at tier 1 and pays c1 ; otherwise it escalates to tier 2 and pays c1 + c2 (tier-1
+samples are drawn regardless). Linearity of expectation gives
+E[Cost(X)] = c1 · Pr[|C1 (X)| = 1] + (c1 + c2 ) · Pr[|C1 (X)| ̸= 1] = c1 + c2 · Pr[|C1 (X)| ̸= 1].
+The asymptotic limits follow from the monotonicity of the calibrated threshold q̂1 in α: as
+(1)
+α → 0, the quantile index ⌈(1 − α)(n + 1)⌉ → n + 1, pushing q̂1 toward maxi si ; prediction
+sets then grow and the probability of a non-singleton set tends to 1. As α → 1, the quantile
+index tends to 0, q̂1 tends to the minimum score value, prediction sets shrink to the singleton
+of each query’s argmin-score answer, and Pr[|C1 (X)| ̸= 1] → 0.
+
+Proposition 10 (When the cascade saves cost) E[Cost(X)] < c1 + c2 if and only if
+Pr[|C1 (X)| = 1] > 0, i.e., the cheap model produces at least some singleton prediction sets
+under calibration.
+Proof By (6), E[Cost(X)] = c1 + c2 − c2 · Pr[|C1 (X)| = 1]. Since c2 > 0, the expected cost
+is strictly below c1 + c2 iff Pr[|C1 (X)| = 1] > 0.
+
+Corollary 11 (K-tier cost) For a K-tier cascade with costs c1 < · · · < cK and κ = 1,
+let pk = Pr[K ∗ (X) = k] denote the probability of first-commit at tier k (with pK absorbing
+fallback events). Then
+
+
+K
+k
+X
+X
+
+E[Cost(X)] =
+cj  · pk .
+(7)
+k=1
+
+30
+
+j=1
+
+Each pk is determined by the per-tier thresholds q̂1 , . . . , q̂K and is estimable on calibration
+data.
+Proof [Proof of Corollary 11] Partition the space by the first-commit tier K ∗ (X) ∈ {1, . . . , K},
+∗
+which is exhaustive and disjoint.
+Pk On the event {K (X) = k} the cascade has run tiers
+1, . . . , k, so the incurred cost is j=1 cj . Linearity of expectation yields
+
+
+K
+k
+X
+X
+
+E[Cost(X)] =
+cj  Pr[K ∗ (X) = k],
+k=1
+
+j=1
+
+which is (7) with pk = Pr[K ∗ (X) = k]. Each pk depends only on the per-tier thresholds
+q̂1 , . . . , q̂k and is thus estimable from the calibration set without further labels on test queries.
+
+Remark 12 (Deployment recipe for choosing α under a target error rate) Fix a target cascade error rate β ∈ (0, 1). The coverage bound of Theorem 2 restricts the admissible
+per-tier levels to the interval (0, β/K]; under Assumption 3 the admissible interval widens
+to (0, β]. Within either interval we recommend the upper endpoint — α = β/K in the worst
+case, α = β under selection preservation — as a deployment heuristic, on the grounds that
+larger α produces tighter per-tier thresholds, more singleton tier-1 sets, and lower expected
+cost.
+This is a heuristic, not a theorem. The argument below establishes monotonicity of E[Cost(X)]
+in α up to an O(γ) slack controlled by the empty-set probability γ = maxk Pr[|Ck (X; α)| = 0],
+which vanishes only asymptotically in the per-query sample size N . At finite N (we use
+N = 16), strict monotonicity is not guaranteed, so the heuristic recipe should be validated
+by sweeping α on calibration data and inspecting the cost curve before deployment. We do
+this sweep for α ∈ {0.05, 0.10, 0.15, 0.20, 0.30} (Appendix J); the curve is monotone on every
+reported benchmark–family pair in the regime α ≤ 0.30.
+Proof [Justification of Remark 12] Admissibility follows from Theorem 2: for cascade error
+at most β, per-tier level α must satisfy Kα ≤ β, so α ∈ (0, β/K] in the worst case; the
+corresponding statement under Assumption 3 is immediate.
+We sketch the asymptotic monotonicity claim. Define the non-empty regime at tolerance
+γ as the set of α values for which Pr[|Ck (X; α)| = 0] ≤ γ for every tier k. For the frequency
+score with N samples per query, empty sets occur only at q̂k < 1/N , which corresponds to α
+close to 1; at N = 16, the non-empty regime at γ = 0.05 covers α ≲ 0.9 on the benchmarks
+we evaluate.
+Within the non-empty regime, fix α1 < α2 . The quantile index ⌈(1 − α)(n + 1)⌉ is
+non-increasing in α, so q̂k (α1 ) ≥ q̂k (α2 ) at each tier k and Ck (x; α1 ) ⊇ Ck (x; α2 ) pointwise.
+Writing p⋆k (α) = Pr[|Ck (X; α)| = 1] and p∅k (α) = Pr[|Ck (X; α)| = 0], set inclusion gives
+
+p⋆k (α2 ) ≥ p⋆k (α1 ) − p∅k (α2 ) − p∅k (α1 ) ,
+so p⋆k is non-decreasing in α up to an O(γ) slack on the non-empty
+regime. Plugging into
+P
+Corollary 11 yields E[Cost(X; α2 )] ≤ E[Cost(X; α1 )] + O(γ k ck ). The slack γ vanishes as
+31
+
+N → ∞ whenever the cheap model places non-vanishing mass on at least one answer per
+query, so strict monotonicity, and the minimum at α = β/K, hold asymptotically. At finite
+N the slack persists, which is why we frame the claim as a deployment heuristic rather than
+a theorem; the calibration sweep in Appendix J provides the finite-N certificate.
+
+L.5 Computational Complexity
+Every stage of Conformal Cascade has transparent cost, and the overhead introduced by
+conformal calibration is dominated by the LLM inference calls a cascade must make anyway.
+Calibration. At tier k, calibration processes n queries by drawing N Monte Carlo samples per query (amortized against self-consistency decoding) and computing the true-answer
+frequency score. The conformal quantile q̂k is then a single sort over n scores, at O(n log n)
+time and O(n) space per tier. The full calibration over K tiers is K · n · N inference calls
+plus O(Kn log n) for the sorts, dominated entirely by the inference cost.
+Inference. For a new query x, the cascade draws N samples from each tier mk up to and
+including the committed tier K ∗ (x), computes sk (x, a) for each a ∈ A (an |A|-way tally over
+the N samples), and constructs Ck (x) by comparing each score against q̂k . The dominant cost
+is LLM inference: at worst K ·N calls with per-call costs c1 , c2 , . . . , cK growing geometrically.
+The remaining operations—the tally, the threshold comparisons, and the argmin over Ck (x)—
+are O(|A|) and negligible relative to LLM inference. When the cascade accepts at tier 1,
+only N cheap-model calls are incurred per query, which is the regime that makes cascades
+cost-effective in the first place.
+Memory. Persistent state beyond the base cascade is the K calibrated thresholds q̂1 , . . . , q̂K ,
+i.e., K scalars per cascade.
+Summary. The conformal wrapper adds no asymptotic overhead on top of a base selfconsistency cascade: calibration runs once and produces K scalars; inference reuses samples
+that self-consistency already requires. This makes CC a drop-in replacement for heuristic
+deferral rules: the additional computation is linear in the calibration-set size, constant per
+query, and dominated by LLM inference costs that the cascade was already paying.
+L.6 Tightness of the Base Conformal Bound
+Proposition 13 (Marginal-coverage upper bound) Under the exchangeability assumption of Theorem 1, and assuming the calibration scores {s(xi , yi )}ni=1 are almost-surely distinct, split conformal prediction satisfies
+1 − α ≤ Pr[ytrue ∈ C(xn+1 )] ≤ 1 − α +
+
+1
+.
+n+1
+
+The upper bound follows from standard conformal analysis (Vovk et al., 2005; Angelopoulos and Bates, 2023): the probability that the test score exceeds the ⌈(1−α)(n+1)⌉-th order
+statistic of the calibration scores is at most ⌊α(n + 1)⌋/(n + 1) ≤ α, and correspondingly
+the coverage is at most 1 − α + 1/(n + 1). The two bounds together sandwich the coverage
+in a 1/(n + 1)-wide interval, which sharpens as the calibration set grows.
+32
+
+Caveat under discrete scores. The almost-sure-distinct hypothesis is essential for the
+upper bound, not the lower bound. Our frequency score sk takes values on the discrete grid
+{0, 1/N, . . . , 1} at N = 16 (Section L.1, “Resolution of the frequency score”), so calibration
+scores tie with positive probability and the hypothesis fails. The lower bound Pr[ytrue ∈
+C(xn+1 )] ≥ 1 − α continues to hold because the conservative tie-breaking convention in
+Section L.2 only enlarges prediction sets. The upper bound, however, can fail: ties at the
+quantile push extra probability mass into the prediction set, so the realised coverage may
+exceed 1−α+1/(n+1). This is the standard behaviour of split CP under discrete scores and
+explains why our reported set-miscoverage rates (Section 5.3) sometimes lie strictly below
+α rather than tracking the upper edge.
+
+33
