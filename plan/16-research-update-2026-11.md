@@ -1,6 +1,6 @@
 # Research update, November 2026
 
-This update covers papers dated 2026-09-01 or later. Every date was checked on the arXiv page (v1 submission date). The corpus was pruned at the same time: 49 papers with no cost, price or routing angle were deleted, and 14 new papers were added (research/INDEX.md).
+This update covers papers dated 2026-09-01 or later. Every date was checked on the arXiv page (v1 submission date). The corpus was pruned at the same time: 49 papers with no cost, price or routing angle were deleted, and 18 new papers were added (research/INDEX.md). Four of the 18 (a later pass) cover latent and KV-cache compression of tool output.
 
 ## Bottom line
 
@@ -29,6 +29,24 @@ No paper proves a best-possible technique for token cost. Every result in range 
 | Total Cost of Agency (2609.23790) | 2026-09-20 | Memory injection is 13.6% of optimisable cost, 27.6% at depth 6 | Meter injected context per agent and per depth in the ledger. |
 | Identical Runs, Different Results (2609.33812) | 2026-09-27 | Cost differed over 20x on the same model, mostly from caching | Store per-run cost distributions. Capture cache read and write tokens separately. Never publish a single-run figure. |
 | DeltaSelect (2609.19607) | 2026-09-17 | 13 evaluations for $27.86; adopted configuration 58.1% cheaper | Paired A/B on a fixed small task subset. Report the p-value with the cost delta. |
+
+## Latent compression: agents that skip reading tool output as text
+
+Four papers train or build a way for the agent to take tool output as latent (soft) tokens or compressed KV entries instead of text. All four need access to model internals, so they work only on self-hosted open-weight models. A hosted API such as Claude or OpenAI's models accepts text and cannot take injected embeddings.
+
+| Paper | Date | Key number | Limit |
+|---|---|---|---|
+| Coca-Cola, "Tools Need Not Speak in Text" (2611.06500) | 2026-11-04 | Tool observations compress into latent tokens injected into the agent's input embeddings. Token use down 70.01 to 89.24%, runtime down 24.45 to 55.97%, accuracy up. | 4 web-search QA benchmarks, Qwen3.5 and GLM open models. Not coding agents. Needs a trained compressor and a frozen open agent. |
+| ASTC (2610.41291) | 2026-10-30 | Training-free. Up to 50.68% fewer attention pairs at equal or better accuracy. Reusable KV caches. | Needs a hybrid GDN-attention model. Attention pairs are compute, not billed cost. |
+| LOHA with ACD (2609.31430) | 2026-09-25 | Old observations become soft tokens, the last K stay text. K=3 cuts context per call 43 to 57% on SWE-bench Verified. | Resolve rate fell: 12.1 and 21.8% against 14.5 and 27.5% for the uncompressed bases. 4B models. |
+| ActKV (2609.31395) | 2026-09-25 | Keeps 98.53% of full-KV accuracy with 25.98% of peak KV memory. 3.97x token throughput. | Serving-side. Needs control of the inference engine. |
+
+What it means here:
+
+1. **API backends: no change.** The gateway cannot inject latents. Text-level elision (TokenEconomizer, CliffCompaction) stays the default.
+2. **Self-hosted backends: a P3 candidate.** If we serve open models, a latent compressor in front of web-search tools is the highest-saving item found. Test it on our own traces first.
+3. **Judge on cost, not tokens.** Every figure above is tokens, compute or memory. Beyond Token Savings (2609.32961) shows token cuts can still raise bills.
+4. **Earlier context, before the date window:** CoACT (2607.02911, text-level, next-action preserving), TokenPilot (2606.17016, cache-stable compaction), What Does Context Compression Cost an Agent? (2608.16370, dropped state is re-fetched) and LatentPress (2609.01507, 2026-09-01). They agree with the plan: a compression control must keep the prompt prefix stable and be priced after re-fetch cost.
 
 ## Price and billing changes to load into the price book
 
@@ -77,7 +95,7 @@ No peer-reviewed result gives a rule. Two leaderboards and Anthropic's own guida
 |---|---|
 | 04-cost-formula.md | Add effective-dated price rows and the 12-hour cache write multiplier. Add a break-even rule per prefix: reuses needed before a 2.5x write pays off. |
 | 05-policy-router-budgets.md | Add per-step routing evidence (AgentRouter), the heavy-tail budget model, a security condition on routing, and per-role Pareto assignment. |
-| 06-context-guard.md | Make drop-only compaction the default. Prefer rule-based elision to LLM summarisation. |
+| 06-context-guard.md | Make drop-only compaction the default. Prefer rule-based elision to LLM summarisation. Add latent compression as a self-hosted-only candidate. |
 | 07-observability-eval-rollout.md | Require per-run cost distributions, paired bootstrap with multiple-comparison correction, a metered-calls-per-task field, and a rule that no compression control ships on token count alone. |
 | 09-risks-and-open-questions.md | Record that no proven best-possible technique exists, and that several vendor numbers rest on third-party pages. |
 | 14-research-papers.md | Cite the new papers in the matching paper outlines. |

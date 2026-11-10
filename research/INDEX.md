@@ -119,7 +119,7 @@ Part 1 = by topic (A/B). Part 2 = by vendor (round 2).
 | 2026-10 | blog | Anthropic | [How Claude Code uses prompt caching](https://code.claude.com/docs/en/prompt-caching) |  |  |
 | 2025-07 | blog | Anthropic | [Token-saving updates on the Anthropic API](https://claude.com/blog/token-saving-updates) |  |  |
 
-## B2 Prompt and context compression (8)
+## B2 Prompt and context compression (12)
 
 | Date | Type | Org | Title | Local | Flag |
 |---|---|---|---|---|---|
@@ -131,6 +131,10 @@ Part 1 = by topic (A/B). Part 2 = by vendor (round 2).
 | 2023-10 | paper | Microsoft Research | [LongLLMLingua: Accelerating and Enhancing LLMs in Long Context Scenarios via Prompt Compression](https://arxiv.org/abs/2310.06839) | [pdf](papers/arxiv/2310.06839__longllmlingua-accelerating-and-enhancing-llms-in-long-contex.pdf) |  |
 | 2023-10 | paper | arXiv | [Selective Context: Compressing Context to Enhance Inference Efficiency of Large Language Models](https://arxiv.org/abs/2310.06201) | [pdf](papers/arxiv/2310.06201__selective-context-compressing-context-to-enhance-inference-e.pdf) |  |
 | 2023-04 | paper | arXiv | [Learning to Compress Prompts with Gist Tokens](https://arxiv.org/abs/2304.08467) | [pdf](papers/arxiv/2304.08467__learning-to-compress-prompts-with-gist-tokens.pdf) |  |
+| 2026-11 | paper | arXiv | [Tools Need Not Speak in Text: Latent Context Compression for Agents (Coca-Cola)](https://arxiv.org/abs/2611.06500) | [pdf](papers/arxiv/2611.06500__tools-need-not-speak-in-text-latent-context-compression.pdf) |  |
+| 2026-10 | paper | arXiv | [In-Model Context Compression with Agentic Soft Tokens for Long-Horizon LLM Agents (ASTC)](https://arxiv.org/abs/2610.41291) | [pdf](papers/arxiv/2610.41291__in-model-context-compression-with-agentic-soft-tokens-f.pdf) |  |
+| 2026-09 | paper | arXiv | [Compress What You See, Not What You Say: Anchored Context Distillation for Latent-Observation Software Engineering Agents (LOHA/ACD)](https://arxiv.org/abs/2609.31430) | [pdf](papers/arxiv/2609.31430__compress-what-you-see-not-what-you-say-anchored-context.pdf) |  |
+| 2026-09 | paper | arXiv | [ActKV: Efficient LLM Agents through Action-Guided KV Cache Management](https://arxiv.org/abs/2609.31395) | [pdf](papers/arxiv/2609.31395__actkv-efficient-llm-agents-through-action-guided-kv-cac.pdf) |  |
 
 ## B3 Reasoning-token economics (9)
 

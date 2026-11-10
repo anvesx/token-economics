@@ -1,0 +1,1152 @@
+TITLE: ActKV: Efficient LLM Agents through Action-Guided KV Cache Management
+URL: https://arxiv.org/abs/2609.31395
+ORG: arXiv  TYPE: paper  DATE: 2026-09
+
+                                          ActKV: Efficient LLM Agents through Action-Guided
+                                                        KV Cache Management
+                                                       Zihan Wang                                 Cheng Tang                                 Lei Gong
+                                            University of Science and Technology      University of Science and Technology     University of Science and Technology
+                                                           of China                                  of China                                 of China
+                                                        Hefei, China                              Hefei, China                             Hefei, China
+                                               wangzh196@mail.ustc.edu.cn                 sisyphustc@mail.ustc.edu.cn               leigong0203@ustc.edu.cn
+
+                                                        Chao Wang                                 Wenqi Lou                                 Teng Wang
+                                            University of Science and Technology         Suzhou Institute for Advanced            Suzhou Institute for Advanced
+
+
+
+
+arXiv:2609.31395v1 [cs.OS] 25 Sep 2026
+                                                           of China                    Research, University of Science and      Research, University of Science and
+                                                        Hefei, China                          Technology of China                      Technology of China
+                                                    cswang@ustc.edu.cn                           Suzhou, China                            Suzhou, China
+                                                                                             louwenqi@ustc.edu.cn                     wangt635@ustc.edu.cn
+
+                                                                                                 Xuehai Zhou
+                                                                                      University of Science and Technology
+                                                                                                     of China
+                                                                                                  Hefei, China
+                                                                                              xhzhou@ustc.edu.cn
+                                         Abstract                                                          1   Introduction
+                                         Agentic LLM inference accumulates long KV caches across           Agents transform LLMs from passive question-answering
+                                         iterative observation-reasoning-action loops, imposing sub-       into task-solving systems that perceive environments, rea-
+                                         stantial memory overhead and limiting serving throughput.         son, and act, reshaping how users interact with LLMs. The
+                                         Existing compression methods emphasize overall output             key is to introduce an intermediary agentic layer, forming a
+                                         quality, overlooking the asymmetric importance of actions in      three-layer interaction architecture: user/environment, agen-
+                                         driving task progress. Our key idea is to establish a compres-    tic framework, and LLM inference. The fundamental exe-
+                                         sion criterion that values KV entries by their contribution to    cution paradigm is iterative observation-reasoning-action
+                                         action generation and prioritizes action quality. However, it-    loops, known as ReAct [36], which underpin modern agents
+                                         erative execution, dynamic memory demands, and scattered          like OpenClaw [21], Claude Code [1], and Codex [4]. As
+                                         action-critical entries pose challenges to eviction policies,     shown in Fig. 1, in each iteration, the agentic framework
+                                         budget allocation, and paged memory integration. To this          first collects environmental observations and extends LLM
+                                         end, we propose ActKV, the first KV cache compression             prompt. The LLM then reasons via chain-of-thought [29] for
+                                         framework tailored for agentic LLM inference. (i) Action-         state understanding and deduction from accumulated traces.
+                                         oriented KV cache eviction exploits stable action access pat-     Finally, the LLM generates an action, which is executed by
+                                         terns to retain entries critical to future actions, supporting    the agentic framework in environment. We view agents as
+                                         reliable task progress under compression. (ii) Confidence-        complete systems formed by agentic frameworks and LLMs.
+                                         driven adaptive budget allocation uses LLM’s intrinsic confi-     Agentic LLM inference thus refers to the framework-driven
+                                         dence to adapt the budget to evolving action-critical memory      inference process that repeatedly consumes observation to-
+                                         demands. (iii) Page-aware compression management stan-            kens and generates reasoning and action tokens. Importantly,
+                                         dardizes compression into three primitives with customized        observation and reasoning remain largely internal within the
+                                         kernels, realizing practical throughput gains. On long-trace      agent, and are often hidden or useless to users, while what users
+                                         tasks, ActKV retains an average of 98.53% of FullKV’s accu-       care about is the task progress driven by actions.
+                                         racy with only 25.98% of its peak KV cache memory. It also           Despite its potential for solving complex tasks, agentic
+                                         achieves 3.97× and 3.58× FullKV’s token and task through-         inference incurs substantial KV cache overhead. Observa-
+                                         put, delivering state-of-the-art performance.                     tion, reasoning, and action tokens accumulate as KV entries
+                                                                                                           across interaction rounds, imposing heavy memory and com-
+                                                                                                           putation costs on LLM serving systems. For example, a web
+                                                                                                           shopping task with Qwen3-30B requires 25 iterations and
+                                                                                                           about 35K tokens, consuming 3.20 GB of KV cache, with
+                                         Keywords: Agentic LLM Inference, KV Cache Compression
+                                                                                          Zihan Wang, Cheng Tang, Lei Gong, Chao Wang, Wenqi Lou, Teng Wang, and Xuehai Zhou
+
+
+  Users / Environment                               Hidden For Environment / Users                                                                                                     a fundamental question: do action-critical KV entries exhibit
+                                                   Agentic          Large Language Models                                                                                              consistent attention patterns across iterations? Such regu-
+       I am looking for a gluten                 Framework
+       free, 100% vegan plant         Task
+
+
+
+
+                                                                                                                                      Continuously Accumulate as Tremendous KV Cache
+                                                             Task     Let me think step by                                                                                             larities could provide a reliable basis for compression while
+       based protein shake                                            step… Okay, let’s tackle
+       that is soy-free, and                                          this WebShop task.The
+
+
+
+
+                                                                                                   Observation, Reasoning, and Action Tokens,
+       price lower than…
+                                                                      user wants …
+                                                                      [Model Reasoning]
+                                                                                                                                                                                       preserving subsequent action quality.
+       [User/Task Prompt]
+                                                  OpenClaw   Act
+                                                                      {"name": "Search",                                                                                                  How much to keep? Dynamic memory demands of action-
+                                     Action                           "arguments": {"query":
+
+       Tool: Search [gluten
+                                    Tool Call                         "gluten free vegan soy
+                                                                      free plant based protein
+                                                                                                                                                                                       critical KV entries require adaptive budget allocation. The
+                                                                      shake"}}
+       free vegan soy free…”]                                         [Model Action]
+       [Tool Call]                                                           …
+                                                                                                                                                                                       KV cache budget controls the trade-off between memory
+                                   Observation               Obs      Looking at the search                                                                                            footprint and generation quality. Across task types and diffi-
+                                                                      results, I need… The
+                                                                      observation lists … as the
+       Tool: Click[“…”]
+                                                   Codex              last one with the price                                                                                          culty levels, the number of action-critical KV entries varies
+       [Tool Call]                                                    $21.99. Yes, that\'s the
+                                     Action                  Act      one.
+
+   An Unknown Number of             Tool Call                         [Model Reasoning]                                                                                                with interaction rounds, observation lengths, and reasoning
+                                                                      {‘name’: ‘Click’,
+  Interaction Turns Later…                                                                                                                                                             complexity [36]. However, existing methods typically profile
+                                                             Obs      ‘arguments’: {‘button’:
+                                                                      ‘…’}}
+                                   Observation                        [Model Action]
+                                                                                                                                                                                       full-KV memory consumption on specific tasks and apply
+       Tool: Click[“Buy Now”]
+        [Final Result]               Action        Claude    Act    Memory’s          GPU
+                                    Tool Call                        On Fire          Memory
+                                                                                                                                                                                       predefined compression ratios during inference [3, 10]. Such
+                                                                                                                                                                                       budgets derived from workload-specific offline profiling fail
+                                                                                                                                                                                       to adapt to evolving action-critical memory demands.
+                          Figure 1. Agentic Workflow                                                                                                                                      How to compress efficiently? Scattered action-critical KV
+                                                                                                                                                                                       entries require reconciling compression with paged memory
+                                                                                                                                                                                       management. Agent deployment relies on serving systems
+observation and reasoning entries accounting for over 99%.                                                                                                                             (e.g., vLLM [27] and SGLang [39]), which use block-based KV
+This overhead grows with concurrent requests in batched                                                                                                                                management to reduce fragmentation and improve through-
+serving, limiting concurrency and throughput. Moreover,                                                                                                                                put. However, scattered action-critical entries require token-
+long KV sequences can dilute attention and degrade model                                                                                                                               level eviction misaligned with block-level allocation. Most
+accuracy. Thus, KV cache compression is essential for effi-                                                                                                                            implementations remain limited to algorithmic validation.
+cient and accurate agent deployment.                                                                                                                                                   The few system-level approaches incur copying overhead
+   KV cache compression dynamically evicts redundant KV                                                                                                                                offsetting compression gains [2] or rely on policy-specific
+entries during inference while preserving accuracy. Although                                                                                                                           adaptations lacking generality [23]. These limitations hinder
+many methods exist, most target conventional text gener-                                                                                                                               practical memory savings from fine-grained eviction.
+ation and generalize poorly to agentic inference. The fun-                                                                                                                                To address the challenges, we propose ActKV, the first
+damental mismatch lies in the generation objective:                                                                                                                                    KV cache compression framework tailored for agentic LLM
+preserving overall output quality versus prioritizing                                                                                                                                  inference, enabling accurate, memory-efficient, and high-
+action quality. In continuous text generation, all tokens                                                                                                                              throughput agent deployment through three components.
+contribute to output completeness, so existing methods fairly                                                                                                                             Action-oriented KV cache eviction prioritizes action gener-
+maintain quality of each token generation. By approximating                                                                                                                            ation quality during compression. We observe that actions
+near-future attention, they greedily evict KV entries that are                                                                                                                         generated within a given task exhibit similarities. First, each
+lowly attended by next few tokens [17, 31, 37]. In agentic                                                                                                                             task involves a finite set of semantically related action types.
+inference, however, token importance is asymmetric.                                                                                                                                    Second, action arguments repeatedly draw on shared task
+Observation and reasoning tokens mainly support internal                                                                                                                               context. Third, action outputs follow a standardized tem-
+state understanding and deduction, but are often hidden or                                                                                                                             plate [9]. Motivated by these semantic, contextual, and struc-
+useless for users. Only action tokens affect environments                                                                                                                              tural similarities, we examine attention maps and observe
+and determine user task progress. Thus, uniform token                                                                                                                                  that action-critical KV entries form a stable subset across
+treatment is inherently misaligned with prioritizing action                                                                                                                            iterations but contribute intermittently (Section 3.1). Accord-
+quality. Even worse, short-sighted retention for near-future                                                                                                                           ingly, we propose attention-aware Least Recently Frequently
+reasoning can harm subsequent actions (Section 3.1).                                                                                                                                   Used (LRFU) to retain entries critical to future actions, en-
+   Our key idea is to establish a compression criterion                                                                                                                                abling reliable task progress with a low memory footprint.
+that values each KV entry by its contribution to action                                                                                                                                   Confidence-driven adaptive budget allocation dynamically
+generation and prioritizes action quality during com-                                                                                                                                  adjusts the KV cache budget during inference. We observe a
+pression, thereby aligning eviction with the outcome-driven                                                                                                                            strong correlation between the LLM’s intrinsic confidence
+nature of agentic inference. However, three challenges arise.                                                                                                                          and budget sufficiency. Tighter budgets make action-critical
+   What to keep? Iterative execution calls for stable criteria                                                                                                                         KV information incomplete, forcing model to extend reason-
+to identify action-critical KV entries. Since successive actions                                                                                                                       ing to recover missing context and causing confidence drops
+build on accumulated observations and reasoning, compres-                                                                                                                              (Section 3.2). Accordingly, we design a confidence monitor
+sion must preserve KV entries needed for both current and                                                                                                                              that combines sliding-window analysis with linear fitting
+future actions. However, evolving context makes current im-
+portance an uncertain indicator of future utility. This raises
+ActKV: Efficient LLM Agents through Action-Guided KV Cache Management
+
+
+to detect confidence degradation caused by budget insuffi-                 Agentic LLM inference thus refers to framework-driven
+ciency and trigger budget adjustments, adapting to evolving             inference that repeatedly consumes observations and gen-
+action-critical memory demands.                                         erates reasoning and actions. It differs from conventional
+   Page-aware compression management bridges fine-grained               inference in two key aspects. First, interaction traces accumu-
+KV eviction with block-based memory. We observe that the                lating across iterations rapidly expand the KV cache, increas-
+eviction-based compression can be distilled into a unified              ing memory costs while diluting attention and degrading
+workflow of three primitives: attention calculation, entry              accuracy. Second, token importance is highly asymmetric:
+eviction, and cache compaction, with calculation and com-               observation and reasoning tokens primarily support internal
+paction as the main system gaps (Section 3.3). Accordingly,             understanding and deduction but are often hidden from or
+we design customized kernels. The recovery-based attention              less useful to users, whereas action tokens directly affect
+calculation kernel reconstructs attention scores from soft-             environments and determine task progress.
+max log-sum-exp (LSE), while the in-place cache compaction                 These distinctions respectively highlight the need for KV
+kernel performs one-shot in-place copying by conflict-free              cache compression and action-oriented optimization in agen-
+slot planning. These standardized primitives and customized             tic LLM inference.
+kernels translate algorithmic gains into tangible memory
+savings and throughput improvements.                                    2.2    Context Engineering
+   We evaluate ActKV on four agentic LLMs, Qwen3-30B,                   Context engineering is an important optimization in agentic
+Qwen3-235B [33], GPT-OSS-20B, and GPT-OSS-120B [20],                    frameworks. It reduces the number of tokens entering the
+across HotpotQA [34], WebShop [35], and ALFWorld [25].                  model at the text level, thereby mitigating context-window
+Relative to FullKV, ActKV averages 98.53% accuracy with                 pressure and indirectly slowing KV cache growth. Most con-
+only 25.98% peak KV cache memory on long-trace tasks,                   text engineering operations preserve the existing trace prefix,
+compared with at most 74.22% accuracy and about 33.60%                  so KV cache can still be continuously appended. For example,
+memory for StreamingLLM [31], SnapKV [17], and R-KV [2].                memory-based methods store important information and re-
+End to end, ActKV improves token and task throughput over               trieve it as additional observations when needed [6, 13, 32].
+FullKV by 3.97× and 3.58×, respectively.                                Some operations, such as LLM-based summarization [14, 18],
+      • Action-oriented KV cache eviction. We prioritize                rewrite historical context and affect KV cache reuse, but they
+        action quality during compression to support reliable           incur re-prefilling overhead and are typically triggered only
+        task progress under aggressive memory constraints.              occasionally [19], e.g., when the context window approaches
+      • Confidence-driven adaptive budget allocation.                   its limit. In contrast, eviction-based KV cache compression
+        We use LLM’s intrinsic confidence to adapt the budget           operates at runtime inference. It does not modify high-level
+        to evolving action-critical memory demands.                     textual context, but reduces storage and computation costs
+      • Page-aware compression management. We stan-                     by removing redundant KV entries.
+        dardize compression into three primitives with cus-                In summary, context engineering and KV cache compres-
+        tomized kernels, realizing practical throughput gains.          sion are orthogonal optimizations. Context engineering de-
+      • While maintaining or even improving accuracy, Ac-               cides what text enters the model, while KV cache compres-
+        tKV reduces memory footprint and improves through-              sion decides which runtime KV states are worth preserving.
+        put, achieving state-of-the-art performance.
+                                                                        2.3    KV Cache Compression
+2     Background and Motivation                                         During autoregressive LLM generation, each new token at-
+                                                                        tends to all previous tokens, whose intermediate states are
+2.1    Agentic LLM Inference
+                                                                        stored as Key-Value (KV) cache to avoid recomputation [5].
+Agents have reshaped human interaction with large language              As sequences grow, the KV cache expands proportionally,
+models (LLMs). Unlike conventional question-answering,                  causing substantial memory and computation overhead and
+agents introduce a framework between users/environments                 making KV cache compression essential [38]. Eviction-based
+and the LLM to repeatedly invoke the model, parse its out-              compression removes redundant KV entries, with atten-
+puts, and execute actions on behalf of the user. The frame-             tion scores serving as the gold-standard importance sig-
+work follows iterative observation-reasoning-action loops,              nal [2, 17, 37]. Formally, for layer ℓ and attention head ℎ,
+known as ReAct [36], enabling complex task solving in sys-              at decoding step 𝑖, the current hidden state is projected into
+tems like OpenClaw [21], Claude Code [1], and Codex [4]. Ob-            query 𝑞𝑖ℓ,ℎ , while each previous token 𝑠 has cached key-value
+servations provide environmental feedback, reasoning cap-
+                                                                        pair (𝑘𝑠ℓ,ℎ , 𝑣𝑠ℓ,ℎ ). Let 𝐾<𝑖
+                                                                                                    ℓ,ℎ
+                                                                                                        = [𝑘 1ℓ,ℎ , . . ., 𝑘𝑖ℓ,ℎ        ℓ,ℎ      ℓ,ℎ
+                                                                                                                              −1 ] and 𝑉<𝑖 = [𝑣 1 , . . .,
+tures internal deduction, and actions provide an explicit in-            ℓ,ℎ
+terface to affect environments: document search in retrieval-           𝑣𝑖 −1 ]. The attention score and output are:
+                                                                                                                        
+based question answering, button clicks in web tasks, object                                                    ℓ,ℎ ⊤
+                                                                                 𝐴𝑖ℓ,ℎ = softmax 𝑞𝑖ℓ,ℎ (𝐾<𝑖          ) , 𝑜𝑖ℓ,ℎ = 𝐴𝑖ℓ,ℎ𝑉<𝑖   ℓ,ℎ
+                                                                                                                                                ,
+manipulation in embodied tasks.
+                                                                                                                                               Zihan Wang, Cheng Tang, Lei Gong, Chao Wang, Wenqi Lou, Teng Wang, and Xuehai Zhou
+
+
+where 𝐴𝑖ℓ,ℎ ∈ R1× (𝑖 −1) . A larger 𝐴𝑖ℓ,ℎ [𝑠] indicates that the                                                                                                  this idea to head-wise allocation. These methods optimize rel-
+cached KV entry of token 𝑠 contributes more to current token                                                                                                      ative allocation within a fixed budget, but do not determine
+generation, and is therefore more critical for preserving the                                                                                                     the overall budget for dynamic agentic workflows.
+quality of the current output.
+   Existing KV cache compression methods generally as-                                                                                                            2.5      Paged Memory Management
+sume uniform token importance and use near-future at-                                                                                                             Block-based paged KV cache management is common in
+tention to greedily evict entries less useful for upcoming                                                                                                        modern LLM serving systems, with PagedAttention [16] as
+tokens. StreamingLLM [31] preserves initial and recent to-                                                                                                        representative design adopted by vLLM [27] and SGLang [39].
+kens, H2O [37] and SnapKV [17] approximate near-future                                                                                                            It organizes KV cache memory into fixed-size physical blocks:
+attention through score accumulation or observation win-
+dows. During reasoning, R-KV [2] deduplicates similar en-                                                                                                                          PagedKVCache[2, B, BS, H, D]
+tries, whereas CrystalKV [28] prioritizes those receiving
+                                                                                                                                                                 where the first dimension represents key and value states, B
+long-range attention. However, neither readily generalizes
+                                                                                                                                                                 is the number of physical blocks, BS is the number of slots
+to multi-round agentic inference.
+                                                                                                                                                                 per block, H is the number of KV heads, and D is the head
+   Agentic workflows are outcome-driven, where final ac-
+                                                                                                                                                                 dimension. A block table maps logical token positions to
+tions matter more than intermediate reasoning. KV entries
+                                                                                                                                                                 physical blocks. For example, when BS = 2, block_table =
+useful for near-future reasoning may not support later action
+                                                                                                                                                                 [17,9] and seqused_k = 3 correspond to occupied physi-
+generation, making existing methods shortsighted and de-
+                                                                                                                                                                 cal slots slot_map = [34,35,18], leaving one unused slot
+grading action correctness and stability under compression.
+                                                                                                                                                                 in last block. By reusing fixed-size blocks, paged KV man-
+                                                                                                                                                                 agement avoids per-request contiguous allocation, reducing
+                                                                                                                                                                 fragmentation and improving utilization and throughput.
+2.4   Budget Allocation                                                                                                                                             However, action-critical entries are scattered across blocks,
+                                                                                                                                                                 making token-level eviction misaligned with block-level al-
+The KV budget controls compressed-cache capacity and de-
+                                                                                                                                                                 location. Existing solutions remain limited. R-KV [2] gathers
+fines the trade-off between memory footprint and generation
+                                                                                                                                                                 retained entries into an additional contiguous buffer, increas-
+quality. Existing methods typically use workload-specific,
+                                                                                                                                                                 ing peak memory usage and offsetting compression benefits.
+offline-profiled static budgets. This is impractical for agentic
+                                                                                                                                                                 ThinKV [23] modifies block-table metadata for its compres-
+inference, where the number of action-critical KV entries
+                                                                                                                                                                 sion policy, but algorithm-specific changes disrupt standard
+varies with task type, task difficulty, and model stochasticity.
+                                                                                                                                                                 serving workflows and limit generality and scalability.
+Different environments produce observations of different
+                                                                                                                                                                    Thus, fine-grained KV compression requires general and
+lengths, difficult tasks require more interaction rounds and
+                                                                                                                                                                 scalable integration with paged memory management to
+longer reasoning, and stochastic actions may lead to diver-
+                                                                                                                                                                 translate token-level eviction into actual memory savings
+gent future contexts. Thus, a fixed budget may waste memory
+                                                                                                                                                                 and throughput gains.
+or over-compress the cache, degrading generation quality.
+   Some methods study budget allocation, but mainly dis-
+                                                                                                                                                                  3     Key Insight
+tribute a predefined total budget across layers or heads. For
+example, PyramidKV [3] assigns larger budgets to shallow                                                                                                          3.1 Action-Preferred Entries Are Distinct and Stable
+layers with dispersed attention and smaller budgets to deeper                                                                                                    We analyze the attention patterns of KV entries that con-
+layers with focused attention, while Ada-KV [10] extends                                                                                                         tribute to action generation. As shown in Fig. 2, the attention
+
+                                                                                                                           Case1/Qwen-30B Case2/Qwen-30B Case3/Qwen-235B   Case4/GPT-20B Case5/GPT-20B   Case6/GPT-120B
+
+
+
+
+                                                                            ③ O&R Prefer ② Entire Region ① Action Prefer
+                                           Region Attention MAP                                                                                                                                                           Stable
+
+
+
+
+       Agentic Infer Process (Query)
+                                       R
+                                       A
+                                       O    Do action-critical KV entries
+                                       …    exhibit consistent attention
+                                            patterns across iterations?
+                                       R
+                                       A                                                                                                                                                                                  Distinct
+                                       O
+                                       R
+                                       A
+
+                                       Key/Value Cache in Infer Process
+               R: Agent Reasoning Tokens’ Generate Region
+               A: Agent Action Tokens’ Generate Region
+               O: Observation Region
+
+
+
+
+                                                                                                                               Figure 2. Action-Oriented KV Attention Pattern
+ActKV: Efficient LLM Agents through Action-Guided KV Cache Management
+
+
+                                                        Observation-Prefer      Action-Prefer                                                                      30% Confidence                    10% Confidence                                           Accuracy
+                                                                                                                                                                   20% Confidence                    5% Confidence                                            Trace Len
+                                                        Reasoning-Prefer        FullKV baseline
+
+
+
+
+ Relative Accuracy vs. FullKV
+                                                                                                                                                          (A) ALFWorld                                                                                  (B) WebShop
+                                                     (A) ALFWorld                          (B) WebShop
+                                                     100.0                                                                               1.0                                              2.4x                                       1.0                                                 2.4x
+                                100%                                                       98.0           96.0
+
+
+
+
+                                                                                                                 Accuracy / Confidence                                                                       Accuracy / Confidence
+                                                                                                                                                                                                                                                              2.38x
+                                       Full                           92.0   Full                                                                                                                                                                     2.12x
+                                                                                                                                         0.9                                                                                         0.9
+                                                                                                                                                                                          2.0x                                                                                           2.0x
+                                                                                       75.0
+
+
+                                                                                                                                                                                                 Trace Len                                                                                      Trace Len
+                                75%              69.0                                                 71.0                               0.8
+                                                                                                                                                                                  1.82x
+                                                                                                                                                                                                                                     0.8
+                                                                                                                                                                                                                                                      1.85x
+                                                                                                                                                                               1.69x                                                                                             1.72x
+                                                                                                                                                               1.68x
+                                                                  58.0                                                                                                                                                                                                        1.56x
+                                                                                    54.0           52.0                                  0.7           1.48x                                                                         0.7
+                                                                                                                                                                          1.43x           1.5x                                                                                           1.5x
+                                50%           43.0
+                                                                                                                                                                                                                                                                         1.39x
+                                                               41.0                                                                               1.24x                1.27x                                                               1.28x
+                                                                                                                                         0.6                                                                                         0.6                              1.18x
+                                                                                                                                               1.12x
+
+                                25%                                                                                                      0.5                                              1.0x                                       0.5                                                 1.0x
+                                              Qwen-30B       GPT-OSS-120B           Qwen-30B      GPT-OSS-120B                                   Qwen-30B              GPT-OSS-120B                                                                Qwen-30B           GPT-OSS-120B
+
+
+
+
+                                Figure 3. Action-Preferred KV Preservation Study                                                               Figure 4. Confidence–Budget Correlation Study
+
+
+
+map places key/value states on the horizontal axis and query
+states on the vertical axis. Query states are partitioned into                                                      We validate this with a controlled compression experi-
+interleaved observation (O), reasoning (R), and action (A) re-                                                   ment. From 100 full-KV-correct traces, we remove the last
+gions. For each region, we average attention scores along the                                                    three iterations’ KV cache and compress the remaining prefix
+query dimension to measure each KV entry’s contribution,                                                         KV to 30% using observation-, reasoning-, or action-preferred
+where brighter colors indicate higher scores and stronger                                                        scores. The agent continues for at most six iterations. As
+preference. We then extract the top 30% preferred KV entries                                                     shown in Fig. 3, action-preferred preservation achieves the
+for action regions, and apply same procedure to observation                                                      best success rate, confirming that action-preferred KV entries
+and reasoning regions. Across Qwen3-30B, Qwen3-235B,                                                             are visually distinct, temporally stable, and directly predic-
+GPT-OSS-20B, and GPT-OSS-120B on ALFWorld and Web-                                                               tive of the entries needed for correct downstream actions.
+Shop, we consistently observe two patterns.
+   First, action-critical KV entries are distinct from those
+serving observation and reasoning tokens. Observation
+tokens mainly attend to local extended-prefill context. Rea-                                                     3.2                           Confidence Reveals KV Budget Sufficiency
+soning tokens aggregate information across all previous ob-                                                      We analyze the correlation between LLM confidence and
+servations, producing diffuse attention over history. Action                                                     KV cache budget. Confidence is derived from the model’s
+tokens focus on a smaller set of task-critical history for ex-                                                   predicted token distribution, where peaked distributions in-
+ecutable decisions. Thus, KV entries important for actions                                                       dicate certainty and flatter distributions indicate uncertainty
+may rank low for observation or reasoning, causing obser-                                                        (detailed in Section 6.1). We take 100 full-KV-correct traces,
+vation or reasoning guided eviction to discard action-critical                                                   remove KV cache of last three iterations, and compress re-
+entries. This explains why normal long-context compression                                                       maining prefix KV cache to 30%, 20%, 10%, and 5% by action
+methods fail in agentic inference.                                                                               preference. We then compare success rate, confidence ratio,
+   Second, action-critical KV entries are stable across it-                                                      and trace-length ratio against full KV. As shown in Fig. 4,
+erations. We observe that actions generated within a given                                                       tighter budgets consistently reduce success rate and confi-
+task exhibit similarities in their semantics, contextual de-                                                     dence while increasing trace length.
+pendencies, and output structure. Each action consists of                                                           We further inspect the generated text traces to understand
+three components: type, arguments, and format [24]. First,                                                       this behavior. Under tight budgets, compression corrupts
+each task involves a limited set of semantically related ac-                                                     action-critical information in KV cache. The model then
+tion types, such as clicking in web interaction, object pickup                                                   exhibits low-confidence linguistic markers, such as "wait",
+and placement in embodied control, and search and lookup                                                         "I guess", and "let me check", suggesting that it attempts to
+in information retrieval. Second, action arguments repeat-                                                       extend its reasoning to restate missing context and recover
+edly draw on shared task context, including task constraints,                                                    task progress. However, longer reasoning further stresses
+relevant entities, and evidence acquired in previous itera-                                                      limited budgets, causing repeated restatement of incomplete
+tions. Third, action outputs in modern agentic LLMs are                                                          history and eventually re-exploration or failure.
+often constrained to a common template [9]. Motivated by                                                            This reveals that confidence reflects budget sufficiency in
+these semantic, contextual, and structural similarities, we                                                      agentic inference. As the budget tightens, action-critical
+examine attention maps during action generation and find                                                         KV information becomes incomplete. The model compen-
+that action-critical KV entries form a stable subset across                                                      sates by extending reasoning to recover missing context,
+iterations (quantified in Section 5.1). This stability makes                                                     which manifests as confidence degradation. Therefore,
+current action attention an effective signal for preserving                                                      confidence degradation can serve as a reliable online signal
+KV entries useful for subsequent action generation.                                                              for guiding adaptive budget adjustment during inference.
+                                                                                                                                            Zihan Wang, Cheng Tang, Lei Gong, Chao Wang, Wenqi Lou, Teng Wang, and Xuehai Zhou
+
+
+                                                     Sec.5 Action-Oriented
+                                                      KV Cache Eviction
+                                                                                               Sec.6 Confidence-Driven Adaptive
+                                                                                                      Budget Allocation
+                                                                                                                                                              4   Overview
+  Agentic
+                                                     Token-Level Attention Score                                         Token-Level Confidence               Fig. 5 presents ActKV, a KV cache compression framework
+ Inference
+                                                                                       …                  …
+                                                Compressed                              Token Probability
+                                                                                                                                                              tailored for agentic LLM inference. ActKV consists of three
+                             Action
+                                                             Observation Reasoning Action Distribution                           Sliding Window
+                                                  History
+                                                                                                      Adaptive Budget                        Confidence       key modules: action-oriented KV cache eviction, confidence-
+                                                                 Action                                   Allocation                           Monitor
+                                               LRFU Eviction Prefer Action Guide                    [Slope-Guided Scaling]                [Minimum Pooling]   driven adaptive budget allocation, and page-aware compres-
+
+
+
+ Dynamic Interaction Loops
+                                             [Temporal Patterns]        [Distinct, Stable]                                                      Trace-Level
+                                                                                                                  Slope α
+                                                        Boolean                        New Budget for                                            Confidence
+                                                       Keep Mask                                                                                              sion management. At the end of each observation, reasoning,
+                                                                                                     Confidence
+                                                                                          Next Step
+                                                                    “What to keep？”                                                       Trend Detection
+
+
+                             Reasoning
+                                                                     High-Quality Action                          Fit Line : y = αx + b
+                                                                                                                                            [Fitting Lines]   action round, the action-oriented eviction compresses KV
+                                             Future Action-Critical   Generation under                                   “How much to keep？”
+                                                  KV Entries       Aggressive Compression         Balance Memory Footprint and Gen. Quality                   cache to target budget. Guided by action-region attention
+                                              Support        Sec.7 Page-Aware Compression Management                                              Support     scores and attention-aware LRFU policy, it evicts entries
+                                                 Standard Compression Execution Routine: CalAttn、Eviction、Compaction     LLM
+                                                             Target Query                        Boolean Keep Mask                                            that are less important for subsequent action generation,
+                                                        Recovery-based      Block-based/                             Block-based/
+
+                             Observation
+                                                                                                    In-Place
+                                             Attention                                                                                                        enabling reliable task progress with a low memory footprint
+                                                         Attn Cal Kernel      Paged KV         Compaction Kernel      Paged KV
+                                              Score
+                                                              [LSE]            Cache            [Conflict-free slot]    Cache
+                                                                         “How to compress efficiently？”                                                       (Section 5). The confidence-driven adaptive budget alloca-
+                                               Bridge Token Eviction and Paged Layouts for Real Memory Savings and Throughput Gains.
+                                                                                                                                                              tion continuously monitors model confidence from predicted
+                                                                                                                                                              token distributions via sliding-window scheme. Before each
+                                                        Figure 5. Overview of ActKV
+                                                                                                                                                              compression step, it detects confidence trend via linear fit-
+                                                                                                                                                              ting and adjusts budget accordingly, adapting to evolving
+3.3                                        Standardized Page-Aware KV Compression                                                                             action-critical memory demands across tasks (Section 6). The
+We distill a unified workflow that integrates token-level                                                                                                     page-aware compression management bridges compression
+KV compression with paged memory management. We ob-                                                                                                           policies with block-based KV memory layouts via recovery-
+serve that most compression methods, including H2O [37],                                                                                                      based attention calculation and in-place compaction kernels,
+StreamingLLM [31], SnapKV [17], R-KV [2], RaaS [12] and                                                                                                       translating fine-grained compression into practical memory
+ActKV, can be standardized into three primitives:                                                                                                             savings and throughput gains (Section 7).
+                                                                                                                                                                 Overall, eviction and budget allocation module form a
+                                             AttnScore ← CalAttn(targetq, KCache),                                                                            lightweight feedback loop between generation behavior and
+                                            KeepMask ← Eviction(AttnScore, Budget),                                                                           KV cache management, while page-aware compression mod-
+                                           KVCache ← Compaction(KVCache, KeepMask).                                                                           ule provides system-level interfaces for efficiently execut-
+                                                                                                                                                              ing compression policies on paged memory layouts. These
+Attention calculation computes scores between target queries                                                                                                  modules work synergistically to enable accurate, memory-
+and cached keys, where different methods use different tar-                                                                                                   efficient, and high-throughput agent deployment.
+gets, e.g., observation-window queries in SnapKV and action-
+specific queries in ActKV. Entry eviction applies a policy over
+                                                                                                                                                              5   Action-Oriented KV Cache Eviction
+scores and budget to produce a Boolean keep mask, with 1
+for retention and 0 for eviction. Cache compaction removes                                                                                                    5.1 Action Access Pattern and Temporal KV Eviction
+evicted entries and reorganizes remaining KV cache for the                                                                                                    In Section 3.1, we qualitatively observed that action-preferred
+subsequent inference.                                                                                                                                         KV entries remain stable across successive action regions.
+   This decomposition shows that eviction is cache-layout                                                                                                     We now quantify this stability with the action access vector
+agnostic, while the main system challenges lie in attention                                                                                                   (AAV) for each KV entry:
+calculation and cache compaction. For attention calculation,
+paged attention backends do not expose full attention scores,                                                                                                        AAV𝑘𝑣 = [𝑎 1, 𝑎 2, 𝑎 3, . . . , 𝑎𝑛 ], 𝑘𝑣 ∈ KV_Cache,
+whereas standard attention kernels require scattered pages
+to be materialized into contiguous memory. We address this                                                                                                    where 𝑛 is the number of action regions that can attend to
+with a recovery-based attention calculation kernel that re-                                                                                                   this entry. Each 𝑎𝑖 indicates whether the entry contributes
+constructs scores from softmax log-sum-exp (detailed in Sec-                                                                                                  to 𝑖-th action region: 𝑎𝑖 = 1 if its attention score falls within
+tion 7.1). For cache compaction, arbitrary token eviction                                                                                                     top-p 90% of that region, and 𝑎𝑖 = 0 otherwise. We discard
+creates holes across pages. Gather-based compaction incurs                                                                                                    all-zero AAVs, as they never contribute to action generation.
+extra memory, while naive in-place compaction suffers from                                                                                                       We classify the remaining AAVs into three mutually ex-
+read-write conflicts and cannot be safely parallelized. We                                                                                                    clusive categories. A cold-start AAV begins with one or more
+address this with conflict-free slot planning and a one-shot                                                                                                  zeros, indicating that the entry becomes important only in
+in-place compaction kernel (detailed in Section 7.2).                                                                                                         later actions. An intermittent AAV contains zeros between
+   Thus, standardizing KV compression into a unified                                                                                                          its first and last one, indicating discontinuous contribution.
+workflow supported by customized kernels provides a                                                                                                           A continuous AAV contains no zero between its first and last
+general approach to integrating token-level eviction with                                                                                                     one, indicating consecutive contribution. Fig. 6 reports both
+paged memory management, turning fine-grained com-                                                                                                            the entry-count ratio and per-access attention-score ratio of
+pression into practical memory savings and throughput gains.                                                                                                  these categories. Cold-start entries are negligible, suggesting
+ActKV: Efficient LLM Agents through Action-Guided KV Cache Management
+
+
+                                     Cold-start                  Continuous                           Intermittent           y=x       Algorithm 1 Action-Oriented KV Cache Eviction
+                                                      Qwen3-30B                                                GPT-OSS-120B
+                                     60                                                          60
+                                                                                                                                       Inputs: B: KV budget, p: top-𝑝 threshold for hit mask, 𝜆: keep-score
+                                                 (36.2,50.3)
+
+
+
+
+                   Score ratio (%)                                             Score ratio (%)
+                                                                                                          (29.9,48.1)
+                                                                                                                                           decay rate, Qact : action-region queries, K/V: key/value cache,
+
+      ALFWorld
+                                     40                          (61.3,48.5)                     40                      (64.3,50.7)
+                                                                                                                                           KS: keep scores of existing KV entries, L𝑜𝑟𝑎 : number of newly
+                                     20                                                          20                                        generated KV entries in the current ORA round.
+                                              (2.5,1.2)                                                     (5.8,1.2)
+                                                                                                                                       Outputs: K′ /V′ : compressed KV cache, KS′ : updated keep scores.
+                                     0                                                           0
+                                          0         20           40       60                          0         20      40       60        /* Triggered At The End Of                                  */
+                                                   Count ratio (%)                                             Count ratio (%)
+                                                                                                                         (63.3,52.1)
+                                                                                                                                           /* Each Observation-Reason-Action (ORA) Round */
+                                     60                        (58.5,50.7)                       60
+
+
+
+
+                   Score ratio (%)                                             Score ratio (%)
+                                                                                                          (32.2,45.1)                      /* Step 1: Get Action-Region Preference                     */
+
+      WebShop
+                                                   (40.8,47.8)
+                                     40                                                          40                                     1: AttnScore ← PagedCalAttn(Qact, K)
+                                     20                                                          20
+                                                                                                                                           /* Step 2: Init Keep Scores for New ORA                     */
+                                              (0.7,1.5)                                                    (4.5,2.8)                    2: KS𝑛𝑒𝑤 ← Init(L𝑜𝑟𝑎 , 0)
+                                     0                                                           0
+                                          0         20           40       60                          0         20      40       60     3: KS ← Cat(KS, KS𝑛𝑒𝑤 )
+                                                   Count ratio (%)                                             Count ratio (%)
+                                                                                                                                           /* Step 3: Identify Hit and Miss KV Entries                 */
+                                                                                                                                        4: Mℎ𝑖𝑡 ← GetHitMask(AttnScore, p)
+Figure 6. Access Patterns of Action-Preferred KV Entries
+                                                                                                                                        5: M𝑚𝑖𝑠𝑠 ← 1 − Mℎ𝑖𝑡
+                                                                                                                                           /* Step 4: Update Keep Scores                               */
+                                                                                                                                        6: KS[Mℎ𝑖𝑡 ] ← 𝜆 · KS[Mℎ𝑖𝑡 ] + AttnScore[Mℎ𝑖𝑡 ]
+that entries preferred by current actions are usually pre-
+                                                                                                                                        7: KS[M𝑚𝑖𝑠𝑠 ] ← 𝜆 · KS[M𝑚𝑖𝑠𝑠 ]
+dictable from previous actions. Continuous entries are the
+most common, but their per-access attention contribution                                                                                   /* Step 5: Select Retained KV Entries                       */
+is lower than that of intermittent entries, which contribute                                                                            8: KeepMask, KS′ ← TopK(KS, 𝑘 = B)
+strong attention in a discontinuous manner. Therefore, evict-                                                                              /* Step 6: KV Cache Compaction                              */
+ing entries solely based on current action preference may                                                                               9: K′ /V′ ← PagedCompaction(K/V, KeepMask)
+mistakenly remove entries that will become important again.                                                                            10: return K′ , V′ , KS′
+   Motivated by the patterns, we shift from static importance
+to temporal KV utility. The key criterion is: a KV entry should
+be evicted only after it has not contributed high attention for
+a sufficiently long period. We instantiate this with attention-                                                                        Thus, current action attention provides an effective signal
+aware Least Recently Frequently Used (LRFU) policy. For                                                                                for identifying KV entries useful for future actions.
+each KV entry 𝑒𝑖 , its keep score (KS) is updated as:                                                                                     The algorithm updates each KV entry’s keep score us-
+                 KS𝑡 (𝑖) = 𝜆 · KS𝑡 −1 (𝑖) + AttnScore𝑡 (𝑖) {hit at 𝑡 } ,                                                               ing an attention-aware LRFU rule, favoring eviction of en-
+                                                                                                                                       tries that have not received high attention for an extended
+where 𝑡 is the compression step, 𝜆 ∈ [0, 1] is the decay factor,                                                                       period. This update protects intermittent entries that tem-
+and AttnScore𝑡 (𝑖) is the action-region attention score of 𝑒𝑖 .                                                                        porarily become inactive but later receive high per-access
+An entry is considered hit if its action-region attention score                                                                        attention, while score decay allows stale continuous entries
+falls within the top-p set, with 𝑝 = 90%.                                                                                              to be evicted. Finally, entries with the highest keep scores are
+   This formulation balances recency and frequency. At 𝜆 = 0,                                                                          retained, and the KV cache is compacted. This policy exploits
+recency-based eviction may discard temporarily inactive but                                                                            stable action access patterns to preserve information critical
+future-important intermittent entries. At 𝜆 = 1, frequency-                                                                            to future actions under a constrained budget.
+dominated eviction may retain obsolete continuous entries.
+With 0 < 𝜆 < 1, high-attention intermittent entries survive
+temporary inactivity, while score decay enables eviction of                                                                            6     Confidence-Driven Budget Allocation
+stale continuous entries.                                                                                                              6.1   Confidence Monitor
+                                                                                                                                       Section 3.2 shows that insufficient KV budgets corrupt action-
+5.2              Eviction Algorithm                                                                                                    critical information, forcing model to extend reasoning to
+Algorithm 1 summarizes the action-oriented eviction proce-                                                                             recover missing context and causing confidence degradation.
+dure. We identify the action region by matching generated                                                                              To detect such budget-induced degradation during infer-
+tokens to the LLM’s standardized output template to detect                                                                             ence, we introduce a confidence monitor based on internal
+the start and end of action generation [15, 22]. We collect                                                                            predicted token distributions [11]. The monitor operates at
+attention scores within this region and use them to update                                                                             three levels: token-level confidence, trace-level confidence,
+the temporal utility of KV entries after each ORA round.                                                                               and trend detection across generation steps.
+Action-critical KV entries differ from those supporting ob-                                                                               Token-level confidence. Given the predicted token distribu-
+servation and reasoning and remain stable across iterations.                                                                           tion 𝑃𝑖 at position 𝑖, we define token-level confidence as the
+                                                                        Zihan Wang, Cheng Tang, Lei Gong, Chao Wang, Wenqi Lou, Teng Wang, and Xuehai Zhou
+
+
+                      Qwen3-30B                        GPT-OSS-120B                     Algorithm 2 Confidence-Driven Budget Allocation
+                  7
+                                FullKV Conf        7              FullKV Conf
+                                FullKV Trend                      FullKV Trend          Inputs: P: predicted distribution, k: number of top tokens, TL: token
+                                Budget 5% Conf                    Budget 5% Conf
+                  6                                                                         confidence list, ws: sliding-window size, s: stride, b: bottom-
+    ALFWorld
+                                Budget 5% Trend    6              Budget 5% Trend
+
+
+                                                                                            𝑏% ratio, B: current KV budget, scale𝑢𝑝 : budget scaling factor,
+    Confidence    5                                5
+                                                                                            B𝑢𝑝𝑝𝑒𝑟 : budget upper bound.
+                  4                                4                                    Outputs: B′ : updated KV budget.
+                                                                                            /* Monitoring in Parallel with LLM Inference                  */
+                                                                                            /* Step 1: Collect Token-Level Confidence                     */
+                  7
+                                FullKV Conf        6              FullKV Conf            1: T ← GetTokenConf(P, k)
+                                FullKV Trend                      FullKV Trend
+
+     WebShop                                                                             2: TL ← Append(TL, T)
+                  6             Budget 5% Conf                    Budget 5% Conf
+                                Budget 5% Trend                   Budget 5% Trend
+
+
+     Confidence
+                                                   5                                        /* Step 2: Estimate Trace-Level Confidence                    */
+                  5
+                                                                                         3: R ← GetTraceConf(TL, ws, s, b)
+                  4                                4                                        /* Step 3: Detect Confidence Trend                            */
+                         Step                              Step                          4: 𝛼 ← FitLine(R)
+                                                                                            /* Step 4: Allocate Budget Before Compression */
+           Figure 7. Effectiveness of Confidence Monitor                                 5: B′ ← B
+                                                                                         6: if TriggerCompress then
+                                                                                         7: if 𝛼 < 0 then B′ ← min(B · scale𝑢𝑝 , B𝑢𝑝𝑝𝑒𝑟 )
+negative average log-probability of the top-k tokens:                                    8: return B′
+                                               𝑘
+                                     1 ∑︁
+                         𝑇𝑖 = −            log 𝑃𝑖 ( 𝑗),
+                                     𝑘 𝑗=1                                              runs in parallel with model inference, introducing negligible
+                                                                                        overhead to LLM inference.
+where 𝑃𝑖 ( 𝑗) denotes the probability of the 𝑗-th largest to-                              As shown in Fig. 7, we apply above monitor to experi-
+ken and 𝑘 is the number of top tokens considered. High                                  ments in Section 3.2 and compare the confidence trend under
+confidence corresponds to peaked distributions and greater                              a 5% KV cache budget with that under full-KV cache setting.
+model certainty, while low confidence indicates uncertainty                             The monitor accurately captures the confidence degradation
+in token prediction.                                                                    caused by insufficient budgets, while the linear fitting effec-
+   Trace-level confidence. Token-level confidence is local and                          tively reflects the overall trend despite local fluctuations.
+may fluctuate across tokens, so we aggregate it to charac-
+terize the overall confidence of a generated trace. Given a                             6.2   Adaptive Budget Allocation Algorithm
+token-level confidence sequence {𝑇𝑖 }𝑖=1     𝐿 , we slide a window
+                                                                                        Algorithm 2 presents the confidence-driven adaptive bud-
+of size 𝑤 with stride 𝑠 and apply minimum pooling:                                      get allocation procedure. It continuously tracks generation
+                                                         
+                                                           𝐿 −𝑤
+                                                                                       confidence in parallel with LLM inference and adjusts the
+        ′
+       𝑅𝑚  =        min           𝑇𝑖 , 𝑚 = 0, 1, . . . ,          .                     KV cache budget before compression. The algorithm first
+             𝑖 ∈ [𝑚𝑠+1,...,𝑚𝑠+𝑤 ]                            𝑠
+                                                                                        derives token-level confidence from predicted token distri-
+This produces an intermediate confidence sequence 𝑅 ′ . We                              butions and appends it to a running sequence. It then aggre-
+then retain the bottom b% values of 𝑅 ′ as the final trace-level                        gates token-level confidence into trace-level confidence us-
+confidence sequence:                                                                    ing sliding-window minimum pooling and bottom-percentile
+                                                                                        selection, emphasizing localized degradation associated with
+                       𝑅 = {𝑟 ∈ 𝑅 ′ |𝑟 ≤ 𝑄𝑏 (𝑅 ′ )},
+                                                                                        context restatement, reasoning repair, and task-progress re-
+where 𝑄𝑏 (𝑅 ′ ) denotes the 𝑏-th percentile of 𝑅 ′ . Minimum                            covery. Finally, it fits a linear function to detect the con-
+pooling and bottom-𝑏% selection jointly emphasize low-                                  fidence trend and increases the budget when confidence
+confidence segments, making the monitor sensitive to local-                             declines, forming a lightweight feedback loop between gen-
+ized confidence degradation. Such degradation often occurs                              eration behavior and KV cache management.
+when the model restates missing context, repairs its reason-                               As the task progresses, action-critical KV entries accumu-
+ing, or recovers task progress with phrases such as “wait”, “I                          late, increasing the memory required to support subsequent
+guess”, or “let me check”.                                                              actions. We therefore initialize the cache with a small budget
+   Trend detection. Trace-level confidence can still fluctuate,                         and expand it only when confidence declines, accommo-
+making absolute values unreliable. We therefore estimate                                dating growing memory demands while avoiding prema-
+its overall trend by applying first-order least-squares fitting                         ture over-allocation. When confidence stabilizes or recovers,
+to 𝑅. Let 𝛼 denote the fitted slope. If 𝛼 < 0, confidence is                            we retain the current budget, as this improvement suggests
+decreasing, suggesting an insufficient KV budget, so ActKV                              that the allocation is sufficient but does not establish that a
+increases the budget to preserve more entries. The monitor                              smaller budget would suffice. Maintaining the allocation thus
+ActKV: Efficient LLM Agents through Action-Guided KV Cache Management
+
+
+Algorithm 3 Recovery-Based Attention Calculation Kernel                 Algorithm 4 In-Place KV Cache Compaction Kernel
+ Inputs: Q: current query states, PagedKV: paged KV cache,              Inputs: PagedKV: paged KV cache, KeepMask: keep mask, SlotMap:
+    BlockTable: logical-to-physical block mapping, LSE: softmax             logical-to-physical slot mapping, SeqUsedK: used KV length of
+    log-sum-exp, GQAGroup: query-head group for each KV head,               reqs, B: KV budget of reqs, BlockSize: page block size.
+    ActionReq: requests in action regions.                              Outputs: PagedKV: compacted paged KV cache.
+Outputs: Out: running mean attention scores within action region.           /* Triggered at Action Region Exit                       */
+    /* Triggered For PagedCalAttn Operation                  */             /* Step 1: Plan Copy Pairs in Parallel                   */
+    /* Step 1: Parallel Over ActionReq/Block/Head */                     1: parallel for req ∈ ActionExitedRequests do
+ 1: parallel for req ∈ ActionReq, block, kv_head do                      2: Y ← ⌈SeqUsedK[req] / BlockSize⌉
+    /* Step 2: Load Paged KV Block                           */          3: X ← ⌈B[req] / BlockSize⌉
+ 2: id ← BlockTable[req, block]                                          4: Start ← (Y − X) · BlockSize
+ 3: K𝑏𝑙𝑜𝑐𝑘 ← PagedKV[0, id, :, kv_head, :]                               5: End ← Start + B[req]
+    /* Step 3: Recover for Current Action Query              */             /* Step 2: Identify Logical Destination Slots */
+ 4: for q_head ∈ GQAGroup(kv_head) do                                    6: DstMask ← ¬KeepMask[req, Start : End]
+ 5:    Qℎ𝑒𝑎𝑑 ← LoadQuery(Q, req, q_head)                                    /* Step 3: Identify Logical Source Slots                 */
+ 6:                       ⊤
+       Logits ← Qℎ𝑒𝑎𝑑 · K𝑏𝑙𝑜𝑐𝑘                                           7: KeepMask[req, Start : End] ← False
+ 7:    Attn ← exp(Logits − LSE[req, q_head])                             8: SrcMask ← KeepMask[req]
+    /* Step 4: Aggregate over Query Heads                    */             /* Step 4: Map Logical Slots to Physical Slots */
+ 8:    AttnScore ← max(AttnScore, Attn)                                  9: DstSlots ← SlotMap[req, DstMask]
+    /* Step 5: Update Action-Region Attention                */         10: SrcSlots ← SlotMap[req, SrcMask]
+ 9: UpdateActionAttn(Out, AttnScore)                                        /* Step 5: Generate Conflict-Free Copy Pairs             */
+10: return Out                                                          11: CopyPairs[req] ← Zip(SrcSlots, DstSlots)
+                                                                            /* Step 6: Parallel One-Shot In-Place Copy               */
+                                                                        12: parallel for (src, dst) ∈ CopyPairs do
+                                                                        13: PagedKV[:, dst] ← PagedKV[:, src]
+avoids renewed information loss from budget reductions and
+                                                                        14: return PagedKV
+supports continued confidence recovery.
+
+7     Page-Aware Compression Management                                 can be recovered as:
+7.1   Recovery-Based Attention Calculation Kernel                                                                
+                                                                                          ℓ,ℎ        ℓ,ℎ
+In Section 3.3, we formulate token-level KV cache compres-                               𝐴𝑖,𝑗 = exp 𝑠𝑖,𝑗 − LSE𝑖ℓ,ℎ .
+sion as a unified workflow consisting of three primitives:
+                                                                        Thus, during compression, we only recompute local query-
+attention calculation, entry eviction, and cache compaction.
+                                                                        key dot products within each paged KV block and normalize
+Attention calculation is a key bottleneck in adapting fine-
+                                                                        them with LSE already produced by paged attention backend.
+grained compression to paged memory management. Paged
+                                                                           Algorithm 3 presents our recovery-based attention cal-
+attention backends, such as paged FlashAttention [7], sup-
+                                                                        culation kernel under grouped-query attention (GQA). We
+port non-contiguous KV blocks but do not expose the full
+                                                                        identify action boundaries by matching generated tokens
+attention matrix needed for eviction. Standard attention ker-
+                                                                        against the LLM’s standardized output template [15, 22]. The
+nels provide these scores but require gathering scattered KV
+                                                                        kernel processes only requests currently generating actions
+blocks into contiguous memory, incurring costly copies and
+                                                                        and parallelizes over these requests, logical KV blocks, and
+temporary storage.
+                                                                        KV heads. Each thread block handles one KV head of one log-
+    To avoid recomputing attention from scratch, our key idea
+                                                                        ical block for one request, resolves its physical block through
+is to recover attention scores from the softmax log-sum-exp
+                                                                        the block table, and directly loads keys from the paged KV
+(LSE) produced by paged attention. LSE is a by-product of
+                                                                        cache. For each associated query head, it computes logits for
+on-the-fly softmax normalization. For layer ℓ and head ℎ,
+                                                                        the current query token and recovers attention probabilities
+at decoding step 𝑖, given query 𝑞𝑖ℓ,ℎ and cached keys 𝐾<𝑖
+                                                        ℓ,ℎ
+                                                            =           using the corresponding LSE. It then takes the maximum
+  ℓ,ℎ
+𝑘 𝑗, 𝑗 <𝑖 , the LSE is:                                                 across query heads in the GQA group and incrementally
+                       ∑︁                                             updates the mean across action query tokens, producing a
+                                                               ⊤
+       LSE𝑖ℓ,ℎ = log               ℓ,ℎ
+                              exp 𝑠𝑖,𝑗 ,    ℓ,ℎ
+                                           𝑠𝑖,𝑗 = 𝑞𝑖ℓ,ℎ (𝑘 ℓ,ℎ
+                                                           𝑗 ) .
+                                                                        score for each KV entry without buffering past queries. The
+                       𝑗 <𝑖                                             accumulated state is reset to zero upon entry into each action
+                                                                        region. Implemented in Triton [26], this kernel computes
+        ℓ,ℎ
+where 𝑠𝑖,𝑗  is the unnormalized attention logit. Since attention        token-level attention scores directly on paged KV layouts
+is obtained by softmax normalization, each attention score              without gathering scattered blocks into contiguous memory.
+                                                                                                            Zihan Wang, Cheng Tang, Lei Gong, Chao Wang, Wenqi Lou, Teng Wang, and Xuehai Zhou
+
+
+                                                               FullKV                             Ours                R-KV                             SnapKV                 StreamingLLM
+                                            GPT-OSS-20B                                           GPT-OSS-120B                                           Qwen3-30B                                            Qwen3-235B
+                              100                                                    100
+                                                                                                                                                                                                100
+
+
+
+                 Norm. Acc. (%)                                         Norm. Acc. (%)                                       Norm. Acc. (%)                                        Norm. Acc. (%)
+                                                                                                                                          100
+
+
+
+  ALFWorld
+                                  75                                                     75
+                                                                                                                                              75                                                    75
+                                  50
+                                                                                         50                                                   50                                                    50
+
+                                                 KV Budget Ratio (%)                                   KV Budget Ratio (%)                                  KV Budget Ratio (%)                                   KV Budget Ratio (%)
+                                  5                                                      15                                                   16                                                    14
+                                        5   10         20 25 30                               5   10         20 25 30                              5   10         20 25 30                               5   10         20 25 30
+
+
+
+
+  HotpotQA Web
+                              100                                                    100                                                  100                                                   100
+
+
+
+
+                 Norm. Acc. (%)                                         Norm. Acc. (%)                                       Norm. Acc. (%)                                        Norm. Acc. (%)
+                                  75                                                     75                                                   75                                                    75
+
+                                  50                                                     50                                                   50                                                    50
+
+                                  25                                                     25                                                   25                                                    25
+                                               KV Budget Ratio (%)                                   KV Budget Ratio (%)                                  KV Budget Ratio (%)                                     KV Budget Ratio (%)
+                                   8                                                     10                                                   10                                                    3
+                                        5   10       20 25 30                                 5   10       20 25 30                                5   10       20 25 30                                 5   10         20 25 30
+
+                              100                                                    100                                                  100                                                   100
+
+
+
+  WebShop        Norm. Acc. (%)                                         Norm. Acc. (%)                                       Norm. Acc. (%)                                        Norm. Acc. (%)
+                                  75                                                     75                                                   75                                                    75
+
+                                  50                                                     50                                                   50                                                    50
+
+                                  25                                                     25                                                   25                                                    25
+                                               KV Budget Ratio (%)                                   KV Budget Ratio (%)                                  KV Budget Ratio (%)                                     KV Budget Ratio (%)
+                                  6                                                      3                                                    0                                                     0
+                                        5   10       20 25 30                                 5   10       20 25 30                                5   10       20 25 30                                 5   10         20 25 30
+
+
+
+                                                                                                       Figure 8. Accuracy Comparison
+
+7.2              In-Place Compaction Kernel                                                                                  evicted slots inside it and translating logical slots into physi-
+Cache compaction is another key bottleneck in bridging                                                                       cal addresses. A customized copy kernel then performs the
+token-level KV compression with paged memory manage-                                                                         planned copies in parallel, with each thread block moving
+ment. Token eviction leaves holes within and across pages,                                                                   one KV slot. Since source and destination slots are disjoint,
+requiring retained KV entries to be packed into contiguous                                                                   all copies complete in one pass without an auxiliary KV
+logical slots. Existing gather operators require additional                                                                  buffer. Compaction consolidates retained entries into the tail
+workspace, while naive in-place compaction introduces read-                                                                  blocks and returns freed blocks to the serving system for
+write conflicts that hinder safe parallelization.                                                                            reuse. This memory reclamation is particularly important for
+   Our key idea is to perform conflict-free slot planning before                                                             agentic inference, where token counts can vary significantly
+data movement. We observe that retained entries are typi-                                                                    across observation-reasoning-action rounds, leading to fluc-
+cally denser near the tail of allocated pages after eviction.                                                                tuating memory demands. The design efficiently converts
+We therefore compact all retained entries into the last 𝑋 log-                                                               token-level eviction into reusable paged memory.
+ical blocks. For a request occupying 𝑌 logical blocks before
+compression, the target region is defined by:                                                                                8                     Experimental Evaluation
+                                             𝑋 = ⌈budget / block_size⌉,                                                      8.1                   Experimental Methodology
+                                             𝑠𝑡𝑎𝑟𝑡 = (𝑌 − 𝑋 ) · block_size,                                                  Models. We evaluate ActKV on four recent LLMs with strong
+                                       𝑒𝑛𝑑 = (𝑌 − 𝑋 ) · block_size + budget.                                                 agentic capabilities: Qwen3-30B-A3B-Thinking-2507-BF16,
+                                                                                                                             Qwen3-235B-A22B-Thinking-2507-FP8 [33], GPT-OSS-20B-
+Based on the keep mask, destination slots are evicted posi-                                                                  BF16, and GPT-OSS-120B-BF16 [20]. These models combine
+tions inside this tail region, while source slots are retained                                                               strong reasoning, instruction following, tool use, and struc-
+entries outside it:                                                                                                          tured output, making them representative testbeds for KV
+                    𝑑𝑠𝑡_𝑠𝑙𝑜𝑡𝑠 = keep_mask[𝑠𝑡𝑎𝑟𝑡 : 𝑒𝑛𝑑] == False,                                                             compression under agent workloads. We use the official rec-
+                                            keep_mask[𝑠𝑡𝑎𝑟𝑡 : 𝑒𝑛𝑑] = False,                                                  ommended sampling parameters for all models.
+                                                                                                                             Dataset. We evaluate ActKV on three representative agen-
+                                            𝑠𝑟𝑐_𝑠𝑙𝑜𝑡𝑠 = keep_mask == True.                                                   tic benchmarks: ALFWorld [25], HotpotQA-Web [34], and
+These logical slots are then translated into physical KV cache                                                               WebShop [35]. ALFWorld requires sequential actions in a
+slots through the slot map.                                                                                                  simulated household environment based on textual obser-
+   Algorithm 4 presents our in-place KV cache compaction                                                                     vations. HotpotQA-Web evaluates multi-hop question an-
+procedure, triggered only for requests that have just exited                                                                 swering with external Wikipedia [30] retrieval, requiring
+the action region, after action attention collection and evic-                                                               the model to search, filter, and integrate information across
+tion. Slot planning proceeds in parallel across these requests,                                                              pages. WebShop evaluates web navigation and shopping de-
+pairing retained entries outside the target tail region with                                                                 cisions, where the model compares products and selects an
+ActKV: Efficient LLM Agents through Action-Guided KV Cache Management
+
+
+                                             Empirical Fixed-Budget Pareto Line                        Fixed-5%            Fixed-10%                           Fixed-20%           Fixed-25%                    Fixed-30%            Adaptive
+
+                                                 (A) GPT-OSS-20B                                      (B) GPT-OSS-120B                                              (C) Qwen3-30B                                          (D) Qwen3-235B
+                                 100                                                       100
+
+
+
+
+                 Norm. ACC (%)                                             Norm. ACC (%)                                            Norm. ACC (%)                                               Norm. ACC (%)
+                                        FullKV         107.2%                                                103.9%                                 100                   111.8%                                100
+                                                                                                                                                                                                                                116.1%
+
+
+
+  ALFWorld
+                                 90                                                        90
+                                                                                                                                                    90                                                          94
+                                 80                                                        80
+                                                                                                                                                    80                                                          88
+                                 70                                                        70
+                                 60                   Norm. PeakMem (%)                    60              Norm. PeakMem (%)                        70                    Norm. PeakMem (%)                     82              Norm. PeakMem (%)
+                                       14        19       24    29    34                         14   19        24    29       34                         14       19        24      29    34                         15   20        25    30   35
+
+
+
+
+  HotpotQA Web   Norm. ACC (%)                                             Norm. ACC (%)                                            Norm. ACC (%)                                               Norm. ACC (%)
+                                 100                                                       100                                                      100                                                         100
+                                        FullKV
+                                                                                                           110.2%                                                       120.4%                                                  116.3%
+                                 95                   108.9%
+                                                                                           94                                                       95                                                          95
+
+                                 90                                                                                                                 90                                                          90
+                                                                                           88
+                                 84                   Norm. PeakMem (%)                    84              Norm. PeakMem (%)                        85                    Norm. PeakMem (%)                     85              Norm. PeakMem (%)
+                                       21        26       31    36    41                         23   28        33    38       43                         26       31        36      41    46                         25   30        35    40   45
+
+
+
+
+                 Norm. ACC (%)                                             Norm. ACC (%)                                            Norm. ACC (%)                                               Norm. ACC (%)
+                                                                                           100                                                      100
+
+
+  WebShop
+                                 100                                                                   112.5%                                                    107.8%                                         100
+                                        FullKV 109.9%                                                                                                                                                                       108.4%
+                                 95                                                        92                                                       92                                                          94
+                                 90
+                                                                                           84                                                       84                                                          88
+                                 85
+                                 80                   Norm. PeakMem (%)                    76              Norm. PeakMem (%)                        76                    Norm. PeakMem (%)                     80              Norm. PeakMem (%)
+                                       16        21       26    31    36                         16   21        26    31       36                         17       22        27      32    37                         17   22        27    32   37
+
+
+
+                                                                                 Figure 9. Effectiveness of Adaptive Budget Allocation
+
+item according to the user goal. For each dataset, we sample                                                                                  Configuration. For action-oriented eviction, we set the
+1,500 tasks for evaluation.                                                                                                                   keep-score decay factor 𝜆 = 0.5 and the top-𝑝 hit threshold
+Agentic Framework. We adopt ReAct [36], a foundational                                                                                        𝑝 = 90%. For confidence monitoring, we compute token-level
+paradigm for modern LLM agents that interleaves observa-                                                                                      confidence from the top-𝑘 predicted tokens with 𝑘 = 20, then
+tion, reasoning, and action. For ALFWorld, the action space                                                                                   apply sliding-window minimum pooling with window size
+covers environment observation, navigation, receptacle in-                                                                                    𝑤 = 64 and stride 𝑠 = 8, followed by bottom-𝑏% selection
+teraction, object manipulation, and object-state transforma-                                                                                  with 𝑏 = 10. The adaptive budget starts at 512 entries and
+tion, with an average FullKV trace length of 31K tokens. For                                                                                  increases by a factor of scale𝑢𝑝 = 1.75 when the fitted con-
+HotpotQA-Web, actions include searching Wikipedia entries,                                                                                    fidence slope is negative, capped at 𝐵𝑢𝑝𝑝𝑒𝑟 = 30K entries.
+locating keywords within pages, and submitting final an-                                                                                      We always preserve the KV entries corresponding to the
+swers, with an average FullKV trace length of 8K tokens.                                                                                      system prompt and user task description, excluding them
+For WebShop, actions support product search, webpage-link                                                                                     from compression to retain essential task instructions.
+clicking, product-page navigation, and purchasing, with an                                                                                    Metrics. We evaluate five metrics. (1) Accuracy is the frac-
+average FullKV trace length of 33K tokens.                                                                                                    tion of correctly solved tasks, averaged over eight runs per
+Hardware. We conduct experiments on a server equipped                                                                                         task to mitigate stochastic variability. (2) Budget records
+with eight NVIDIA RTX PRO 6000 Blackwell GPUs (96 GB),                                                                                        the number of KV entries retained after each compression.
+Intel Xeon Platinum 8488C CPUs with 192 cores in total, and                                                                                   It remains fixed under static allocation and varies under
+256,GB of host memory.                                                                                                                        dynamic allocation. (3) ORA-Len is the number of tokens
+Baselines. We compare ActKV with four representative                                                                                          processed per ORA round. (4) Peak-Memory measures peak
+baselines: FullKV, R-KV [2], SnapKV [17], StreamingLLM [31].                                                                                  KV cache size in entries, given by max(Budget + ORA-Len)
+FullKV retains the entire KV cache as an uncompressed                                                                                         across rounds for ActKV, since compression occurs only at
+                                                                                                                                                                     Í
+reference. SnapKV and StreamingLLM target general long-                                                                                       ORA boundaries, and ORA-Len for FullKV. (5) Trace-Len
+context generation, while R-KV eliminates redundancy dur-                                                                                     is the total Í
+                                                                                                                                                           number of tokens processed across all rounds of
+ing reasoning. ActKV specifically targets agentic LLM infer-                                                                                  a task, i.e., ORA-Len. We report all metrics relative to their
+ence. At the implementation level, SnapKV and StreamingLLM                                                                                    corresponding FullKV values.
+primarily provide algorithmic prototypes. R-KV offers a
+vLLM [27] adaptation, termed paged R-KV, but still gath-
+ers KV entries into an auxiliary contiguous workspace out-                                                                                     8.2              Accuracy Comparison
+side the paged cache. ActKV supports both Transformers                                                                                         Fig. 8 compares the accuracy of ActKV and all baselines,
+(v5.3.0) and vLLM (v0.19.0), with the latter integrating KV                                                                                    normalized to FullKV. We allocate budgets per trace rather
+compression directly into paged memory management.                                                                                             than using dataset-wide average trace lengths, accounting for
+                                                                                                                                               the substantial variation in agentic trace lengths. Although
+                                                                                                                                               this offline setting requires prior knowledge of trace length,
+                                                     Zihan Wang, Cheng Tang, Lei Gong, Chao Wang, Wenqi Lou, Teng Wang, and Xuehai Zhou
+
+
+   Table 1. Effectiveness of Paged Compression Kernels
+                                                                           Higher is Better ↑
+
+
+                                                                                               3.76×
+                     r=1      r=4      r = 16    r = 64                                                                        3.91×
+                                                                                                                                           3.84×
+                                                                                                                                                           4.19×
+                                                                            4.02×                              4.09×
+
+
+       1K [0.5K]    3.18×    5.43×    25.05×     25.50×
+       2K [1.5K]    3.76×    5.16×    15.25×     16.47×                    Lower is Better ↓
+
+       6K [4.0K]    5.63×    5.07×    7.22×      7.18×
+                                                                                       3.50×                           3.89×           3.75×                       3.72×
+
+                                                                                                       3.19×                                       3.45×
+
+
+
+it enables a controlled comparison of eviction policies. For
+each trace and budget ratio 𝑟 , we first run FullKV to obtain           Figure 10. Token and Task Throughput Comparison
+its length 𝑇 , then run ActKV with budget 𝐵 = 𝑟𝑇 and record
+its mean ORA length ¯    𝐿. ActKV compresses only at ORA
+boundaries, while each baseline compresses back to the same
+budget 𝐵 when its cache exceeds 𝐵 + ¯   𝐿.                           HotpotQA-Web, and WebShop, respectively. Across the long-
+   Across all evaluated configurations, ActKV consistently           horizon tasks ALFWorld and WebShop, it averages 98.53% of
+outperforms R-KV, SnapKV, and StreamingLLM. On average,              FullKV accuracy with 25.98% of its peak memory. On both
+the gains over R-KV, SnapKV, and StreamingLLM are 27.64%,            datasets, it lies on the accuracy-memory Pareto frontier [8]
+27.06%, and 54.59% on ALFWorld, 32.86%, 31.88%, and 71.08%           among evaluated configurations, demonstrating an effective
+on WebShop, and 29.82%, 28.65%, and 70.14% on HotpotQA-              balance between task success and memory efficiency.
+Web. On the long-horizon tasks ALFWorld and WebShop,                    Bubble size denotes trace length, with adaptive ActKV’s
+ActKV achieves 81.34% and 101.41% of FullKV accuracy with            values relative to FullKV annotated on the left. Tight budgets,
+budgets of only 10% and 25%, suggesting that action-critical         such as 5%, may discard task-critical information, causing
+information is concentrated in a small subset of KV entries          persistently low confidence and prolonged reasoning. Since
+that ActKV effectively preserves.                                    compression occurs only at ORA boundaries, extra reasoning
+   Preserving action-critical KV entries can turn failed trajec-     tokens accumulate within each round and may increase peak
+tories into successful ones. ActKV improves accuracy over            memory despite a smaller retained budget. ActKV monitors
+FullKV by up to 1.40% on ALFWorld and 3.13% on WebShop,              confidence trends and expands the budget upon degradation
+indicating that selective retention can improve task success         to mitigate excessive reasoning from insufficient context. Its
+while reducing memory usage. As traces grow, FullKV’s ex-            trace lengths are 109.76%, 113.97%, and 109.67% of FullKV
+panding cache includes entries less relevant to subsequent           on ALFWorld, HotpotQA-Web, and WebShop, respectively,
+actions, potentially diluting attention to action-critical con-      averaging 109.72% across ALFWorld and WebShop. Adaptive
+text. These results suggest that ActKV can mitigate this effect      allocation thus achieves substantial memory savings and
+by focusing attention on action-critical information, support-       near-FullKV accuracy with only modest trace growth.
+ing more reliable task progress.
+   ActKV also generalizes across model families, model scales,       8.4    Paged Compression Kernels
+and datasets. Its gains are smaller on GPT-OSS than on               We compare ActKV with paged R-KV to evaluate our cus-
+Qwen3. This difference may partly reflect GPT-OSS’s use              tomized recovery-based attention calculation and in-place
+of sliding-window attention in half its layers, which could          compaction kernels for single compression operations. Re-
+increase sensitivity to further KV eviction. ActKV also main-        garding memory usage, paged R-KV gathers scattered KV
+tains high accuracy on Qwen3-235B, where each KV head                entries into a contiguous workspace, incurring storage and
+serves more query heads than in Qwen3-30B, supporting its            data-copy overhead. ActKV instead operates directly on
+effectiveness at larger model scales.                                paged KV layouts without an auxiliary KV buffer. Table 1
+                                                                     reports ActKV’s per-operation speedup over paged R-KV.
+8.3   Adaptive Budget Allocation                                     The experiments use block_size = 16, kv_heads = 8, and
+Fig. 9 compares confidence-driven adaptive and fixed bud-            head_dim = 128, with 𝑟 denoting the number of concurrent
+get allocation in ActKV in terms of accuracy (y-axis), trace         requests, evaluated at 1, 4, 16, and 64. The notation 6K[4.0K]
+length, and peak memory (x-axis), all normalized to FullKV.          indicates compressing each request’s KV cache from 6K to
+Per-trace fixed budgets require knowledge of trace lengths           4K entries. Across these settings, ActKV achieves an average
+from prior FullKV runs and are thus impractical online,              10.41× speedup without additional KV storage.
+whereas adaptive allocation adjusts budgets during infer-
+ence using confidence feedback. Adaptive ActKV achieves              8.5    End-to-End Throughput
+98.04%, 96.81%, and 99.02% of FullKV accuracy with only              Fig. 10 compares the offline token and task throughput of
+26.38%, 35.08%, and 25.58% of its peak memory on ALFWorld,           ActKV and FullKV using Qwen3-30B and GPT-OSS-20B on
+ActKV: Efficient LLM Agents through Action-Guided KV Cache Management
+
+
+a single RTX PRO 6000 Blackwell GPU (96 GB). We sub-                                Mayer, Peter Welinder, Bob McGrew, Dario Amodei, Sam McCan-
+mit all 1,500 tasks at once and use the same default vLLM                           dlish, Ilya Sutskever, and Wojciech Zaremba. 2021. Evaluating Large
+scheduling policy for both methods. ActKV reduces the KV                            Language Models Trained on Code. arXiv preprint arXiv:2107.03374
+                                                                                    (2021).
+cache footprint through compression and promptly returns                        [5] Weijian Chen, Shuibing He, Haoyang Qu, Ruidong Zhang, Siling Yang,
+freed blocks to the scheduler, allowing memory to be reallo-                        Ping Chen, Yi Zheng, Baoxing Huai, and Gang Chen. 2025. IMPRESS:
+cated as requests progress through agentic inference. These                         An Importance-Informed Multi-Tier Prefix KV Storage System for
+mechanisms alleviate memory pressure and enable greater                             Large Language Model Inference. In 23rd USENIX Conference on File
+concurrency. Compared with FullKV, ActKV improves to-                               and Storage Technologies (FAST 25).
+                                                                                [6] Prateek Chhikara, Dev Khant, Saket Aryan, Taranjeet Singh, and
+ken throughput by 3.96×, 3.80×, and 4.14× on ALFWorld,                              Deshraj Yadav. 2025. Mem0: Building Production-Ready AI Agents
+HotPotQA-Web, and WebShop, respectively. Despite a slight                           with Scalable Long-Term Memory. arXiv preprint arXiv:2504.19413
+increase in trace length, ActKV also improves task through-                         (2025).
+put by 3.62×, 3.32×, and 3.80× on these datasets, respectively.                 [7] Dao-AILab. 2026. FlashAttention: Fast and Memory-Efficient Exact
+                                                                                    Attention. https://github.com/Dao-AILab/flash-attention. Accessed:
+                                                                                    2026-06-10.
+9    Conclusion                                                                 [8] Kalyanmoy Deb. 2001. Multi-Objective Optimization Using Evolution-
+This paper presents ActKV, an action-oriented KV cache man-                         ary Algorithms. John Wiley & Sons.
+                                                                                [9] Yixin Dong, Charlie F. Ruan, Yaxing Cai, Ruihang Lai, Ziyi Xu, Yi-
+agement framework for agentic LLM inference. ActKV re-                              long Zhao, and Tianqi Chen. 2024. XGrammar: Flexible and Ef-
+frames cache management around an agent-specific criterion                          ficient Structured Generation Engine for Large Language Models.
+that values each KV entry by its contribution to action gener-                      arXiv:2411.15100 [cs.CL] https://arxiv.org/abs/2411.15100
+ation, shifting the optimization target toward decisions that                  [10] Yuan Feng, Junlin Lv, Yukun Cao, Xike Xie, and S. Kevin Zhou. 2025.
+drive task progress. Guided by this, ActKV combines action-                         Ada-KV: Optimizing KV Cache Eviction by Adaptive Budget Alloca-
+                                                                                    tion for Efficient LLM Inference. In Advances in Neural Information
+oriented eviction that exploits stable action access patterns,                      Processing Systems (NeurIPS 25).
+confidence-driven budget allocation that adapts to evolving                    [11] Yichao Fu, Xuewei Wang, Yuandong Tian, and Jiawei Zhao. 2025. Deep
+memory demands, and page-aware kernels that translate                               think with confidence. arXiv preprint arXiv:2508.15260 (2025).
+token-level eviction into reusable paged memory. Evalua-                       [12] Junhao Hu, Wenrui Huang, Weidong Wang, Zhenwen Li, Tiancheng
+tions across diverse models and agentic benchmarks show                             Hu, Zhixia Liu, Xusheng Chen, Tao Xie, and Yizhou Shan. 2025. RaaS:
+                                                                                    Reasoning-Aware Attention Sparsity for Efficient LLM Reasoning. In
+ActKV preserves near-FullKV accuracy under aggressive                               Findings of the Association for Computational Linguistics (ACL 2025).
+compression while substantially improving serving through-                     [13] Jiazheng Kang, Mingming Ji, Zhe Zhao, and Ting Bai. 2025. Memory
+put. More broadly, these findings suggest that efficient agent                      OS of AI Agent. arXiv preprint arXiv:2506.06326 (2025).
+serving should align memory management with task out-                          [14] Minki Kang, Wei-Ning Chen, Dongge Han, Huseyin A. Inan, Lukas
+comes rather than token-level fidelity, providing a principled                      Wutschitz, Yanzhi Chen, Robert Sim, and Saravan Rajmohan. 2026.
+                                                                                    ACON: Optimizing Context Compression for Long-horizon LLM
+foundation for memory-efficient agentic systems.                                    Agents. In International Conference on Machine Learning.
+                                                                               [15] Dominik Kundel. 2025. OpenAI Harmony Response Format. OpenAI
+References                                                                          Cookbook. Accessed: 2026-09-21. https://developers.openai.com/
+                                                                                    cookbook/articles/openai-harmony
+ [1] Anthropic. 2026. Claude Code Overview. https://code.claude.com/           [16] Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin
+     docs/en/overview. Accessed: 2026-06-09.
+                                                                                    Zheng, Cody Hao Yu, Joseph E. Gonzalez, Hao Zhang, and Ion Stoica.
+ [2] Zefan Cai, Wen Xiao, Hanshi Sun, Cheng Luo, Yikai Zhang, Ke Wan,               2023. Efficient Memory Management for Large Language Model
+     Yucheng Li, Yeyang Zhou, Li-Wen Chang, Jiuxiang Gu, Zhen Dong,                 Serving with PagedAttention. In Proceedings of the 29th Symposium
+     Anima Anandkumar, Abedelkadir Asi, and Junjie Hu. 2025. R-KV:                  on Operating Systems Principles. 611–626.
+     Redundancy-aware KV Cache Compression for Training-Free Reason-           [17] Yuhong Li, Yingbing Huang, Bowen Yang, Bharat Venkitesh, Acyr Lo-
+     ing Models Acceleration. In Advances in Neural Information Processing          catelli, Hanchen Ye, Tianle Cai, Patrick Lewis, and Deming Chen. 2024.
+     Systems.                                                                       SnapKV: LLM Knows What You are Looking for Before Generation.
+ [3] Zefan Cai, Yichi Zhang, Bofei Gao, Yuliang Liu, Yucheng Li, Tianyu Liu,        In Advances in Neural Information Processing Systems.
+     Keming Lu, Wayne Xiong, Yue Dong, Junjie Hu, et al. 2024. Pyramidkv:      [18] Miao Lu, Weiwei Sun, Weihua Du, Zhan Ling, Xuesong Yao, Kang
+     Dynamic kv cache compression based on pyramidal information fun-               Liu, and Jiecao Chen. 2025. Scaling LLM Multi-turn RL with End-
+     neling. arXiv preprint arXiv:2406.02069 (2024).                                to-end Summarization-based Context Management. arXiv preprint
+ [4] Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique                     arXiv:2510.06727 (2025).
+     Ponde de Oliveira Pinto, Jared Kaplan, Harri Edwards, Yuri Burda,         [19] Elias Lumer, Faheem Nizar, Akshaya Jangiti, Kevin Frank, Anmol
+     Nicholas Joseph, Greg Brockman, Alex Ray, Raul Puri, Gretchen                  Gulati, Mandar Phadate, and Vamse Kumar Subbiah. 2026. Don’t
+     Krueger, Michael Petrov, Heidy Khlaaf, Girish Sastry, Pamela Mishkin,          Break the Cache: An Evaluation of Prompt Caching for Long-Horizon
+     Brooke Chan, Scott Gray, Nick Ryder, Mikhail Pavlov, Alethea Power,            Agentic Tasks. arXiv preprint arXiv:2601.06007 (2026).
+     Lukasz Kaiser, Mohammad Bavarian, Clemens Winter, Philippe Tillet,        [20] OpenAI. 2025. gpt-oss-120b & gpt-oss-20b Model Card. arXiv preprint
+     Felipe Petroski Such, Dave Cummings, Matthias Plappert, Fotios                 arXiv:2508.10925 (2025).
+     Chantzis, Elizabeth Barnes, Ariel Herbert-Voss, William Hebgen Guss,      [21] OpenClaw. 2026. OpenClaw: Personal AI Assistant. https://openclaw.
+     Alex Nichol, Alex Paino, Nikolas Tezak, Jie Tang, Igor Babuschkin,             ai/. Accessed: 2026-06-09.
+     Suchir Balaji, Shantanu Jain, William Saunders, Christopher Hesse, An-    [22] Qwen Team. [n. d.]. Function Calling. Qwen Documentation. Ac-
+     drew N. Carr, Jan Leike, Josh Achiam, Vedant Misra, Evan Morikawa,             cessed: 2026-09-21. https://qwen.readthedocs.io/en/latest/framework/
+     Alec Radford, Matthew Knight, Miles Brundage, Mira Murati, Katie
+                                                             Zihan Wang, Cheng Tang, Lei Gong, Chao Wang, Wenqi Lou, Teng Wang, and Xuehai Zhou
+
+
+     function_call.html                                                           Representations.
+[23] Akshat Ramachandran, Marina Neseem, Charbel Sakr, Rangharajan           [37] Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin
+     Venkatesan, Brucek Khailany, and Tushar Krishna. 2025. ThinKV:               Zheng, Ruisi Cai, Zhao Song, Yuandong Tian, Christopher Ré, Clark
+     Thought-Adaptive KV Cache Compression for Efficient Reasoning                Barrett, et al. 2023. H2o: Heavy-hitter oracle for efficient generative
+     Models. arXiv preprint arXiv:2510.01290 (2025).                              inference of large language models. Advances in Neural Information
+[24] Timo Schick, Jane Dwivedi-Yu, Roberto Dessì, Roberta Raileanu, Maria         Processing Systems (NeurIPS 23) 36 (2023), 34661–34710.
+     Lomeli, Luke Zettlemoyer, Nicola Cancedda, and Thomas Scialom.          [38] Youpeng Zhao, Di Wu, and Jun Wang. 2024. Alisa: Accelerating
+     2023. Toolformer: Language Models Can Teach Themselves to Use                large language model inference via sparsity-aware kv caching. In
+     Tools. arXiv:2302.04761 [cs.CL] https://arxiv.org/abs/2302.04761             2024 ACM/IEEE 51st Annual International Symposium on Computer
+[25] Mohit Shridhar, Xingdi Yuan, Marc-Alexandre Côté, Yonatan Bisk,              Architecture (ISCA 24). IEEE, 1005–1017.
+     Adam Trischler, and Matthew Hausknecht. 2021. ALFWorld: Align-          [39] Lianmin Zheng, Liangsheng Yin, Zhiqiang Xie, Chuyue Sun, Jeff
+     ing Text and Embodied Environments for Interactive Learning. In              Huang, Cody Hao Yu, Shiyi Cao, Christos Kozyrakis, Ion Stoica,
+     International Conference on Learning Representations.                        Joseph E. Gonzalez, Clark Barrett, and Ying Sheng. 2023. SGLang:
+[26] Philippe Tillet, Hsiang-Tsung Kung, and David Cox. 2019. Triton:             Efficient Execution of Structured Language Model Programs. arXiv
+     An Intermediate Language and Compiler for Tiled Neural Network               preprint arXiv:2312.07104 (2023).
+     Computations. In Proceedings of the 3rd ACM SIGPLAN International
+     Workshop on Machine Learning and Programming Languages. Associa-
+     tion for Computing Machinery, 10–19. doi:10.1145/3315508.3329973
+[27] vLLM Team. 2023. vLLM: Easy, Fast, and Cheap LLM Serving with
+     PagedAttention. https://github.com/vllm-project/vllm. Accessed:
+     2026-06-09.
+[28] Zihan Wang, Cheng Tang, Lei Gong, Cheng Li, Chao Wang, Wenqi Lou,
+     Xuehai Zhou, et al. 2026. Crystal-KV: Efficient KV Cache Management
+     for Chain-of-Thought LLMs via Answer-First Principle. arXiv preprint
+     arXiv:2601.16986 (2026).
+[29] Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Brian
+     Ichter, Fei Xia, Ed Chi, Quoc Le, and Denny Zhou. 2022. Chain-of-
+     Thought Prompting Elicits Reasoning in Large Language Models. In
+     Advances in Neural Information Processing Systems, Vol. 35. 24824–
+     24837.
+[30] Wikimedia Foundation. 2026. Wikipedia. https://www.wikipedia.org/.
+     Accessed: 2026-06-10.
+[31] Guangxuan Xiao, Yuandong Tian, Beidi Chen, Song Han, and Mike
+     Lewis. 2024. Efficient Streaming Language Models with Attention
+     Sinks. In International Conference on Learning Representations.
+[32] Wujiang Xu, Zujie Liang, Kai Mei, Hang Gao, Juntao Tan, and
+     Yongfeng Zhang. 2025. A-MEM: Agentic Memory for LLM Agents. In
+     Advances in Neural Information Processing Systems.
+[33] An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo
+     Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, Chujie
+     Zheng, Dayiheng Liu, Fan Zhou, Fei Huang, Feng Hu, Hao Ge, Haoran
+     Wei, Huan Lin, Jialong Tang, Jian Yang, Jianhong Tu, Jianwei Zhang,
+     Jianxin Yang, Jiaxi Yang, Jing Zhou, Jingren Zhou, Junyang Lin, Kai
+     Dang, Keqin Bao, Kexin Yang, Le Yu, Lianghao Deng, Mei Li, Mingfeng
+     Xue, Mingze Li, Pei Zhang, Peng Wang, Qin Zhu, Rui Men, Ruize Gao,
+     Shixuan Liu, Shuang Luo, Tianhao Li, Tianyi Tang, Wenbiao Yin,
+     Xingzhang Ren, Xinyu Wang, Xinyu Zhang, Xuancheng Ren, Yang
+     Fan, Yang Su, Yichang Zhang, Yinger Zhang, Yu Wan, Yuqiong Liu,
+     Zekun Wang, Zeyu Cui, Zhenru Zhang, Zhipeng Zhou, and Zihan
+     Qiu. 2025. Qwen3 Technical Report. arXiv preprint arXiv:2505.09388
+     (2025).
+[34] Zhilin Yang, Peng Qi, Saizheng Zhang, Yoshua Bengio, William Cohen,
+     Ruslan Salakhutdinov, and Christopher D. Manning. 2018. HotpotQA:
+     A Dataset for Diverse, Explainable Multi-hop Question Answering.
+     In Proceedings of the 2018 Conference on Empirical Methods in Natu-
+     ral Language Processing. Association for Computational Linguistics,
+     Brussels, Belgium, 2369–2380. doi:10.18653/v1/D18-1259
+[35] Shunyu Yao, Howard Chen, John Yang, and Karthik Narasimhan.
+     2022. WebShop: Towards Scalable Real-World Web Interaction with
+     Grounded Language Agents. In Advances in Neural Information Pro-
+     cessing Systems, Vol. 35. 20744–20757.
+[36] Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik
+     Narasimhan, and Yuan Cao. 2023. ReAct: Synergizing Reasoning and
+     Acting in Language Models. In International Conference on Learning
+
