@@ -39,10 +39,10 @@ Log with every attempt: prompt variant, effort, harness version, tool surface, r
 
 Added from the September to November 2026 papers (2609.33812, 2609.19607, 2609.23790):
 
-7. **Store distributions, not points.** Identical runs differed more than the gap between agents, and cost differed over 20x on one model. Run tens to 100+ runs per agent. Capture cache read and write tokens per run.
-8. **Use a fixed subset for A/B.** DeltaSelect compared configurations on a small subset for $27.86 across 13 evaluations. Report the p-value next to the cost delta.
+7. **Store distributions, not points.** In one 312-run study (584 across three) identical runs differed more than the gap between agents, and cost differed 22.5x on one model from a rate card. Run tens to 100+ runs per agent. Capture cache read and write tokens per run.
+8. **Use a fixed subset for A/B.** DeltaSelect compared configurations on 8 tasks for $27.86 across 13 evaluations, one run each, and its score gain was not significant (p=0.326). Report the p-value next to the cost delta.
 9. **Correct for multiple comparisons.** Use a paired bootstrap with a Holm correction when several arms share tasks.
-10. **Meter calls per task and injected context.** Memory injection was 13.6% of optimisable cost, 27.6% at depth 6. Log injected tokens per agent and depth, and the number of model calls per task.
+10. **Meter calls per task and injected context.** Memory injection was 13.6% of optimisable cost, 27.6% at depth 6, in a synthetic enterprise workflow, not a coding agent. Log injected tokens per agent and depth, and the number of model calls per task.
 
 Sample sizes seen in the corpus: 100 tasks (C:025), 38 to 45 effective tasks per arm (C:024), 60 tasks over 6 repos (C:028). Power formulas and minimum duration are not in the corpus. Fit the variance on a P2 pilot.
 

@@ -41,9 +41,9 @@ C:024 measured 2,848 runs on 103 tasks. Compression of tool output has a ceiling
 | Never truncate | Tracebacks, test failures, edit anchors (C:024) |
 | Masking | Only above about 10 events, window tuned per scaffold, applied at a trigger (C:130, C:133) |
 | Clearing | Trigger 30 to 40k, keep 5, clear at least 3,000 to 5,000 (C:066). Provider defaults are 100,000 and keep 3 (C:065). |
-| Compaction | Last resort. Count compactions. Recommend a restart at 3 (C:106, C:112, A:224). When used, drop old turns outright. Never rewrite or re-compact (CliffCompaction, 2609.26779: up to 50% cost cut). Rule-based elision beat LLM summarisation across 176 matched settings (2609.20804). |
-| Black-box controller | Tool pruning plus loop interruption cut token cost 18.4 to 30.9% on three CLIs (TokenEconomizer, 2610.22732). Matches controls 1 and 4. Replicate before quoting. |
-| Latent compression | Self-hosted open models only. Coca-Cola cut web-search agent tokens 70 to 89% (2611.06500); LOHA cut coding context 43 to 57% but lost resolve rate (2609.31430). API backends cannot take latent tokens. P3 candidate; test on our traces. |
+| Compaction | Last resort. Count compactions. Recommend a restart at 3 (C:106, C:112, A:224). When used, drop old turns outright. Never rewrite or re-compact is the CliffCompaction stance (2609.26779), whose real Kimi SWE-bench saving was about 0%; test drop-only against summarisation and a sliding window first. In 176 settings elision-only and summarisation-only had similar accuracy and summarisation was often cheaper; the staged mix was cheapest (2609.20804). |
+| Black-box controller | Tool pruning, loop interruption and micro-skills cut cache-aware cost 18.4 to 30.9% on 277 SWE-Bench tasks (TokenEconomizer, 2610.22732). It runs harness-side and costs more for about the first six tasks. Matches controls 1 and 4. Replicate before quoting. |
+| Latent compression | Self-hosted open models only. Coca-Cola cut web-search agent tokens 70 to 89% (2611.06500); LOHA cut context per call 43 to 57% but whole-trajectory input only about 8%, and lost resolve rate (2609.31430). API backends cannot take latent tokens. P3 candidate; test on our traces. |
 | Judge on bill | Fewer tokens did not mean cheaper or faster in 35,000 runs (2609.32961). No control ships on token count. |
 | `max_tokens` | Hard cap on every call. Effort does not cap tokens (C:073, C:093). |
 | Instruction files | CLAUDE.md under 200 lines (C:077). AGENTS.md under 32 KiB, which truncates silently (C:036). |

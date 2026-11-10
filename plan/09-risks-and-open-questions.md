@@ -29,8 +29,9 @@ Token Economics cannot be specified from evidence on these. Each needs a measure
 7. No paper dated September 2026 or later proves a best-possible technique for token cost. Results are empirical and several conflict (16-research-update-2026-11.md).
 8. Vendor price changes in the update rest on third-party pages in part. The OpenAI cache-write multiplier conflicts (1.25x against 2.5x). Verify on vendor pages before billing on them.
 9. Two public model leaderboards used for "which model" guidance are secondary or undated. Treat them as leads.
-10. 49 off-topic papers were removed on 2026-11-10 and 18 added. Counts of 423 sources elsewhere in the plan predate this change.
+10. 49 off-topic papers were removed on 2026-11-10 and 19 added. Counts of 423 sources elsewhere in the plan predate this change.
 11. Latent-compression results (2611.06500, 2610.41291, 2609.31430) come from open 4B to 35B models on QA or SWE-bench tasks. None was tested on a hosted API or measured in billed cost.
+12. Full-text reading of the 19 September to November papers narrowed many headline figures (for example AgentRouter's 72% is against GPT-4o, and LOHA's 43 to 57% is 8% over a whole trajectory). Most are single-benchmark, simulated or token-based. Re-measure before quoting.
 
 ## Unresolved conflicts
 

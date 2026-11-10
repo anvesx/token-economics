@@ -1,45 +1,54 @@
 # Research update, November 2026
 
-This update covers papers dated 2026-09-01 or later. Every date was checked on the arXiv page (v1 submission date). The corpus was pruned at the same time: 49 papers with no cost, price or routing angle were deleted, and 18 new papers were added (research/INDEX.md). Four of the 18 (a later pass) cover latent and KV-cache compression of tool output.
+This update covers papers dated 2026-09-01 or later. Every date was checked on the arXiv page (v1 submission date). The corpus was pruned at the same time: 49 papers with no cost, price or routing angle were deleted. 19 papers from the window are now in the corpus: 15 on routing, context and measurement, and 4 on latent and key-value (KV) cache compression. We then read all 19 in full text, not at abstract level, and corrected the figures below (research/INDEX.md).
 
 ## Bottom line
 
-No paper proves a best-possible technique for token cost. Every result in range is empirical and some conflict. Three findings are consistent and change the plan:
+No paper proves a best-possible technique for token cost. Every result in range is empirical and some conflict. Four findings are consistent and change the plan:
 
-1. **Cache reads are the largest cost line, and token savings do not equal cost savings.** CliffCompaction reports cache reads at 78% of an uncompacted bill (search snippet; the abstract does not state it). Beyond Token Savings (about 35,000 runs) found that policies using a third of the tokens ran 20 to 80% slower.
-2. **Cheap, deterministic controls have the best evidence.** Rule-based elision beat LLM summarisation across 176 matched settings. A black-box controller that prunes tools and stops failure loops cut token cost 18.4 to 30.9% on Claude Code, Codex and Copilot CLI.
-3. **A single run is not a measurement.** Run-to-run variation exceeded the gap between agents in a 584-run study, and cost differed over 20x between two agents on one model.
+1. **Cache reads can be the largest cost line, and token savings do not equal cost savings.** CliffCompaction's Table 7 puts cache reads at 78% of an uncompacted bill (GLM 5.1 on Terminal-Bench, idealised cache model). Beyond Token Savings found Qwen running 20 to 80% slower on Terminal-Bench under token-saving policies, while SWE-bench latency stayed flat.
+2. **Cheap, deterministic controls have the better evidence, with caveats.** TokenEconomizer's tool pruning, loop interruption and micro-skills cut cache-aware cost 18.4 to 30.9% on SWE-Bench, from the harness side. The harness design study found elision and summarisation about equal in accuracy, with a staged mix cheapest.
+3. **A single run is not a measurement.** Run-to-run spread exceeded the gap between agents in one 312-run study (584 runs across three studies). Cost differed 22.5x between two agents on one model, from a rate card, mostly following cache share.
+4. **Headline numbers shrank on full-text reading.** All 19 papers were read end to end by seven reader agents. Most savings are single-benchmark, simulated or token-based, so re-measure before quoting any of them.
 
 ## New papers and what they change
 
-| Paper | Date | Key number | Plan change |
+| Paper | Date | Key number, with its qualifier | Plan change |
 |---|---|---|---|
-| AgentRouter (2609.22951) | 2026-09-19 | A 12M-parameter step classifier cuts cost 72% at 97.3% quality, under 5 ms per step | Step-level routing fits in the proxy. Keep it in "Ship second". Report savings per solved task, not per quality retained. |
-| COMPASS (2610.27822) | 2026-10-20 | DeepSWE 78.1% at $215 against 74.1% at $500 for the best single model | Evidence that routing beats the best single model on both axes. Count the router's own cost in the arm. |
-| Pathwise-Budgeted Routing (2611.05835) | 2026-11-04 | Solves over 2x as many tasks at the tightest budgets | Model the heavy tail of response cost when setting hard per-session caps. |
-| Chance-Constrained Routing (2610.22695) | 2026-10-15 | Sublinear cost regret with a high-probability quality guarantee | Template for the "third" online-routing stage. No savings evidence yet. |
-| SCRouter (2610.18566) | 2026-10-13 | 38,869 queries over 144 model-budget pairs | Quality-only routing can pick insecure pairs. Add a security condition to the router policy. |
-| Which Model for Which Role? (2610.26676) | 2026-10-19 | Recovers most of the Pareto frontier at about 10% of exhaustive evaluation cost | Assign models per agent role (planner, coder, reviewer) with a sampled search, not a full grid. |
-| PISA ensemble routing (2611.10193) | 2026-11-06 | Cost down about 36% in distribution against the strongest ensemble baselines | Ensembles are a competitor to routers at equal cost. Test before ruling them out. |
-| MultiTurnRoute (2611.10848) | 2026-11-07 | CoR cuts normalised cost by up to 20.3% | Multi-turn routing benchmark. Chat traces only; adapt to coding traces. |
-| TokenEconomizer (2610.22732) | 2026-10-15 | Token cost down 18.4 to 30.9% at comparable success | Closest match to this gateway: black-box, harness-agnostic, tool pruning plus loop interruption. Validates the context guard and loop guard. |
-| CliffCompaction (2609.26779) | 2026-09-22 | Up to 50% cost cut under a bounded context | Compaction default becomes drop-only: truncate or drop, never rewrite, never re-compact. Time it against the cache. |
-| Harness design study (2609.20804) | 2026-09-17 | 176 matched settings; elision beats summarisation | Prefer rule-based elision to LLM summarisation. Tag every request with harness, tool set and context strategy. |
-| Beyond Token Savings (2609.32961) | 2026-09-26 | Fewer tokens did not reliably mean cheaper or faster | Judge every compression control on billed cost and latency per solved task. |
-| Total Cost of Agency (2609.23790) | 2026-09-20 | Memory injection is 13.6% of optimisable cost, 27.6% at depth 6 | Meter injected context per agent and per depth in the ledger. |
-| Identical Runs, Different Results (2609.33812) | 2026-09-27 | Cost differed over 20x on the same model, mostly from caching | Store per-run cost distributions. Capture cache read and write tokens separately. Never publish a single-run figure. |
-| DeltaSelect (2609.19607) | 2026-09-17 | 13 evaluations for $27.86; adopted configuration 58.1% cheaper | Paired A/B on a fixed small task subset. Report the p-value with the cost delta. |
+| AgentRouter (2609.22951) | 2026-09-19 | A 12M-parameter step classifier cut cost 71.8% at 97.3% of the quality, in 4.7 ms per step on an A100 graphics processing unit. | Step-level routing fits in the proxy. Keep it in "Ship second". The baseline is GPT-4o, not a frontier coding model. Four templated domains, code is weakest (63.8%), no cache pricing, no confidence intervals. Replicate on our own traces. |
+| COMPASS (2610.27822) | 2026-10-20 | DeepSWE 78.1% at $215, against 74.1% at $500 for the best single model. | The $215 excludes router inference and needs the 28-configuration pool (18 configurations give 63.9% at $474). Confidence intervals are wide, and on FrontierSWE no router beat the best constant. Count the router's own cost in the arm. |
+| Pathwise-Budgeted Routing (2611.05835) | 2026-11-04 | Solves over 2x as many tasks only at the tightest budget ($0.025): 216.2 against 100.8 on MATH500, 85.0 against 29.8 on GPQA. At the largest budgets the gap is 2.6 and 4.6 tasks. | Model the heavy tail of response cost when you set hard per-session caps. Untested on agentic or cached workloads. |
+| Chance-Constrained Routing (2610.22695) | 2026-10-15 | Sublinear cost regret with a quality guarantee that holds with high probability. | The guarantee is asymptotic and needs a known-safe fallback model. The experiments shrink the confidence radius by 0.005, so they do not run the proven algorithm, and the real-model test is 100 queries with simulated satisfaction. Template for the "third" stage only. No savings evidence. |
+| SCRouter (2610.18566) | 2026-10-13 | 38,869 in-domain queries (plus 2,753 out-of-distribution) over 144 model-budget actions, which is 12 models times 12 budgets. The gain is mostly on security (+32.9 points, against +3.5 on utility). Cost is tokens times a fixed price table. | Quality-only routing can pick insecure pairs. Add a security condition to the router policy. Out of distribution the gain shrinks, and the probe misclassifies about a quarter of unseen security queries. |
+| Which Model for Which Role? (2610.26676) | 2026-10-19 | A substantial fraction of the Pareto frontier at about 10% of exhaustive evaluation cost, and most of it by 30%. Recall on HotpotQA is 0.58 at 10% and 0.74 at 30%. | Assign models per agent role (planner, coder, reviewer) with a sampled search, not a full grid. Evidence is offline replay on question-answering, math and SQL tasks, not coding agents. |
+| PISA ensemble routing (2611.10193) | 2026-11-06 | Cost down about 36% in distribution and 25% out of distribution. That is 84 against 132 and 292 against 387 (units of 0.0001 dollars per query) at a hand-picked setting, for +0.60 and +0.48 points of accuracy. | A fixed single model often matches or beats adaptive ensembling (Table 5). Keep ensembles off for agent loops until a measured cost-per-success gain exists. |
+| MultiTurnRoute (2611.10848) | 2026-11-07 | A 20.3% drop in simulated normalised cost against Bao on WildChat (16.7% on LMSYS), assuming an 80% cache discount and no eviction. The only billed-dollar result is 19.7% on a separate 3-family pool. | Multi-turn routing built on chat traces only. Adapt it to coding traces before quoting it. |
+| TokenEconomizer (2610.22732) | 2026-10-15 | Cache-aware cost down 18.4 to 30.9%, Pass@1 change of -1.0 to +2.6 points, on 277 SWE-Bench tasks with 3 seeds. Three mechanisms: tool pruning, loop interruption and micro-skills. It costs more for the first six tasks or so. | Closest match to this gateway, but it runs on the harness side, not as a gateway-only black box. It learns from grader success labels through a language-model proposer plus regex detectors. Supports the context guard and loop guard. Replicate before quoting. |
+| CliffCompaction (2609.26779) | 2026-09-22 | Cache reads are 78% of the uncompacted bill (Table 7: GLM 5.1 on Terminal-Bench, idealised cache model). Up to 50% cost cut, but real Kimi savings on SWE-bench are about 0%. | Drop-only is the authors' own stance, but their Table 6 shows summarisation and a sliding window close or better on some benchmarks. Keep compaction a last resort, and test drop-only against the other two on our traces. |
+| Harness design study (2609.20804) | 2026-09-17 | 176 settings (22 models, 4 harness variants, 2 benchmarks). Elision-only and summarisation-only reach similar accuracy, and summarisation is often cheaper (550B model at 32K on SWE-bench Verified: $1.25 against $2.57). Staged elision then summarisation wins on cost. | Do not claim elision beats summarisation. Prefer the staged mix and tag every request with harness, tool set and context strategy. Most of the study needs control of the harness. |
+| Beyond Token Savings (2609.32961) | 2026-09-26 | 65 policies, 3 models, 3 repeats per cell, nearly 35,000 runs. The 20 to 80% slowdown is Qwen on Terminal-Bench only. SWE-bench latency was 0.79 to 1.0x. Costs are an input-only estimate with an assumed 0.1x cache price. | Judge every compression control on billed cost and latency per solved task. This study did not bill spend either. |
+| Total Cost of Agency (2609.23790) | 2026-09-20 | 13.6% is injection over injection plus inference at the mid tier, uncached (11.8% of the full bill). 27.6% is depth 6. The workload is a synthetic 4-node enterprise workflow, not a coding agent. | Meter injected context per agent and per depth in the ledger. Do not quote the percentages for coding traffic. |
+| Identical Runs, Different Results (2609.33812) | 2026-09-27 | 584 runs is 116 + 312 + 156 across three studies. Run-to-run spread exceeded the gap between agents in Study 2 only (312 runs, one machine-learning task). The over-20x cost gap is $0.08 against $1.86 (22.5x) on one model, 3 runs each, from a rate card. | Store per-run cost distributions. Capture cache read and write tokens separately. Never publish a single-run figure. About 9x of the gap follows cache share. The cause of the cache failure is untested. |
+| DeltaSelect (2609.19607) | 2026-09-17 | 13 evaluations for $27.86. The 58.1% cheaper result is one run per configuration on 8 tasks. The score gain is not significant (p=0.326), and bare Luna at medium effort beat the adopted configuration on both score and cost. | Use it as a method for cheap paired A/B on a fixed task subset, not as a result. Report the p-value with the cost delta. |
+
+## What the full text changed
+
+- **Headline numbers narrowed.** Most come from one benchmark, a simulation or a token count. Only two narrow results are in billed dollars (MultiTurnRoute 19.7%, DeltaSelect $27.86 for 13 evaluations), and neither covers a coding agent in production.
+- **One claim reversed.** The harness study does not show that elision beats summarisation. The two reach similar accuracy and summarisation is often cheaper. A staged mix is cheapest.
+- **One claim reclassified.** TokenEconomizer is a harness-side tool with three mechanisms, not a gateway-only black box. It costs more for roughly the first six tasks.
+- **Latent savings shrink end to end.** LOHA cuts context per call 43 to 57% but whole-trajectory decoder input only about 8%, and plain masking matches its resolve rate on Qwen3. Every latent method needs open weights.
+- **Cost-of-agency and variance figures are narrow.** 13.6% and 27.6% are from a synthetic enterprise workflow. The variance-over-gap result is one study of 312 runs on one task.
 
 ## Latent compression: agents that skip reading tool output as text
 
 Four papers train or build a way for the agent to take tool output as latent (soft) tokens or compressed KV entries instead of text. All four need access to model internals, so they work only on self-hosted open-weight models. A hosted API such as Claude or OpenAI's models accepts text and cannot take injected embeddings.
 
-| Paper | Date | Key number | Limit |
+| Paper | Date | Key number, with its qualifier | Limit |
 |---|---|---|---|
-| Coca-Cola, "Tools Need Not Speak in Text" (2611.06500) | 2026-11-04 | Tool observations compress into latent tokens injected into the agent's input embeddings. Token use down 70.01 to 89.24%, runtime down 24.45 to 55.97%, accuracy up. | 4 web-search QA benchmarks, Qwen3.5 and GLM open models. Not coding agents. Needs a trained compressor and a frozen open agent. |
-| ASTC (2610.41291) | 2026-10-30 | Training-free. Up to 50.68% fewer attention pairs at equal or better accuracy. Reusable KV caches. | Needs a hybrid GDN-attention model. Attention pairs are compute, not billed cost. |
-| LOHA with ACD (2609.31430) | 2026-09-25 | Old observations become soft tokens, the last K stay text. K=3 cuts context per call 43 to 57% on SWE-bench Verified. | Resolve rate fell: 12.1 and 21.8% against 14.5 and 27.5% for the uncompressed bases. 4B models. |
-| ActKV (2609.31395) | 2026-09-25 | Keeps 98.53% of full-KV accuracy with 25.98% of peak KV memory. 3.97x token throughput. | Serving-side. Needs control of the inference engine. |
+| Coca-Cola, "Tools Need Not Speak in Text" (2611.06500) | 2026-11-04 | Tool observations compress into latent tokens injected into the agent's input embeddings. Tokens fell 70.01 to 89.24% and runtime fell 24.45 to 55.97%. Accuracy rose only against the vanilla baseline, with no variance or evaluation sizes. | Self-host only: needs embeddings and gradients, and one compressor trained per agent. Tested on 4 web-search question-answering benchmarks with Qwen3.5 and GLM, not coding. |
+| ASTC (2610.41291) | 2026-10-30 | 50.68% fewer attention pairs is the best case (OfficeBench, -1.05 points of accuracy). AppWorld gives 19.30% fewer pairs, and its accuracy gain is about 2 tasks. | "Training-free" still needs a calibrated reader per model and tuned thresholds, plus a hybrid GDN-attention model. Pairs are analytical compute counts, not billed cost. |
+| LOHA with ACD (2609.31430) | 2026-09-25 | Old observations become soft tokens and the last K stay text. K=3 cuts context per call 43% and 57%. Whole-trajectory decoder input falls only about 8% on Qwen3 (1.65M to 1.51M tokens), because calls rise from 37.9 to 60.9. | Resolve rate fell: 12.1 and 21.8% against 14.5 and 27.5% for the uncompressed bases. Plain masking matches it on Qwen3 (12.2%). The 1.9x throughput is against its own weakened agent, about 1.09x against the base. |
+| ActKV (2609.31395) | 2026-09-25 | 98.53% accuracy at 25.98% of peak KV memory is the mean of ALFWorld and WebShop with the adaptive budget (HotpotQA-Web: 96.81% at 35.08%). Token throughput 3.97x, task throughput 3.58x. | Needs custom vLLM kernels, so self-host only. Measured on one GPU, offline, on two open models. Not tested on coding. Absolute accuracies and intervals are not stated. |
 
 What it means here:
 
@@ -91,14 +100,15 @@ No peer-reviewed result gives a rule. Two leaderboards and Anthropic's own guida
 
 ## Changes to the plan
 
+
 | File | Change |
 |---|---|
-| 04-cost-formula.md | Add effective-dated price rows and the 12-hour cache write multiplier. Add a break-even rule per prefix: reuses needed before a 2.5x write pays off. |
-| 05-policy-router-budgets.md | Add per-step routing evidence (AgentRouter), the heavy-tail budget model, a security condition on routing, and per-role Pareto assignment. |
-| 06-context-guard.md | Make drop-only compaction the default. Prefer rule-based elision to LLM summarisation. Add latent compression as a self-hosted-only candidate. |
-| 07-observability-eval-rollout.md | Require per-run cost distributions, paired bootstrap with multiple-comparison correction, a metered-calls-per-task field, and a rule that no compression control ships on token count alone. |
-| 09-risks-and-open-questions.md | Record that no proven best-possible technique exists, and that several vendor numbers rest on third-party pages. |
-| 14-research-papers.md | Cite the new papers in the matching paper outlines. |
+| 04-cost-formula.md | Add effective-dated price rows and the 12-hour cache write multiplier. Add a break-even rule per prefix: the reuses needed before a 2.5x write pays off. |
+| 05-policy-router-budgets.md | Add per-step routing evidence (AgentRouter) with its qualifiers, the heavy-tail budget model, a security condition on routing, per-role Pareto assignment, and the COMPASS pool-size and router-cost caveats. |
+| 06-context-guard.md | Keep compaction a last resort and test drop-only against summarisation and a sliding window. Use a staged elision-then-summarisation mix, not elision alone. Add latent compression as a self-hosted-only candidate, and note TokenEconomizer is harness-side. |
+| 07-observability-eval-rollout.md | Require per-run cost distributions, a paired bootstrap with multiple-comparison correction, a metered-calls-per-task field, and the single-study scope of the variance result. Add a rule that no compression control ships on token count alone. |
+| 09-risks-and-open-questions.md | Record that no proven best-possible technique exists, that several vendor numbers rest on third-party pages, and that September to November figures were narrowed by full-text reading. |
+| 14-research-papers.md | Cite the new papers in the matching paper outlines, with the qualifiers found in full text. |
 
 ## What this search did not find
 

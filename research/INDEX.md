@@ -79,7 +79,7 @@ Part 1 = by topic (A/B). Part 2 = by vendor (round 2).
 | 2026-10 | paper | arXiv | [Which Model for Which Role? Cost-Efficient Pareto Recommendation for LLM Agentic Workflows](https://arxiv.org/abs/2610.26676) | [pdf](papers/arxiv/2610.26676__which-model-for-which-role-cost-efficient-pareto-recomm.pdf) |  |
 | 2026-10 | paper | arXiv | [COMPASS: Routing via Capability-Oriented Model Profiling with Adaptive Search, Selection, and Tool Use](https://arxiv.org/abs/2610.27822) | [pdf](papers/arxiv/2610.27822__compass-routing-via-capability-oriented-model-profiling.pdf) |  |
 
-## A6 Agent and CLI-agent cost (12)
+## A6 Agent and CLI-agent cost (13)
 
 | Date | Type | Org | Title | Local | Flag |
 |---|---|---|---|---|---|
@@ -95,6 +95,7 @@ Part 1 = by topic (A/B). Part 2 = by vendor (round 2).
 | 2026-09 | paper | arXiv | [CliffCompaction: Cost-Efficient Compaction for Long-Horizon Coding Agents](https://arxiv.org/abs/2609.26779) | [pdf](papers/arxiv/2609.26779__cliffcompaction-cost-efficient-compaction-for-long-hori.pdf) |  |
 | 2026-09 | paper | arXiv | [Beyond Token Savings: A Systematic Study of Context Compression in LLM Agents](https://arxiv.org/abs/2609.32961) | [pdf](papers/arxiv/2609.32961__beyond-token-savings-a-systematic-study-of-context-comp.pdf) |  |
 | 2026-09 | paper | arXiv | [An Empirical Study of Harness Design for Coding Agents](https://arxiv.org/abs/2609.20804) | [pdf](papers/arxiv/2609.20804__an-empirical-study-of-harness-design-for-coding-agents.pdf) |  |
+| 2026-10 | paper | arXiv | [TokenEconomizer: Experience-Driven Black-Box Cost Control for Coding Agents](https://arxiv.org/abs/2610.22732) | [pdf](papers/arxiv/2610.22732__tokeneconomizer-experience-driven-black-box-cost-contro.pdf) |  |
 
 ## A7 Pricing and token-market economics (10)
 

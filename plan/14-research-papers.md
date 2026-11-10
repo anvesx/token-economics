@@ -18,16 +18,16 @@ Most arXiv items were read at abstract level. "Not stated" means not on the abst
 
 ## Novelty recheck after the November 2026 update
 
-Fourteen papers dated 2026-09-17 to 2026-11-07 were read at abstract level (16-research-update-2026-11.md). Re-check these titles before drafting:
+Nineteen papers dated 2026-09-17 to 2026-11-07 were read in full text (16-research-update-2026-11.md). The overlap notes below carry the qualifiers found there. Re-check these titles before drafting:
 
 | Title | Overlap | Action |
 |---|---|---|
-| T3 Where the billed dollar goes | Total Cost of Agency (2609.23790), CliffCompaction (2609.26779) | Claim the per-harness decomposition from a gateway ledger |
-| T6 Paired, task-clustered evaluation | Identical Runs, Different Results (2609.33812), DeltaSelect (2609.19607) | Cite both. Claim cache isolation and non-inferiority margins |
-| T8 Router vs best single model | COMPASS (2610.27822), AgentRouter (2609.22951), Pathwise-Budgeted Routing (2611.05835) | Claim the overhead and cache-loss accounting only |
-| T9 Same compressor, different harness | Harness design study (2609.20804), Beyond Token Savings (2609.32961) | Replication only, as before |
-| T10 Stopping rules for retries | TokenEconomizer loop interruption (2610.22732) | Claim dollar-denominated rules |
-| T11 Strong-model share ceilings | SCRouter (2610.18566) | Claim the budget bound, not the security condition |
+| T3 Where the billed dollar goes | Total Cost of Agency (2609.23790), CliffCompaction (2609.26779) | Claim the per-harness decomposition from a gateway ledger. Total Cost of Agency is a synthetic workflow and CliffCompaction's 78% is one model, so neither covers coding traffic |
+| T6 Paired, task-clustered evaluation | Identical Runs, Different Results (2609.33812), DeltaSelect (2609.19607) | Cite both. Identical Runs' variance result is one 312-run study and DeltaSelect is 8 tasks (p=0.326). Claim cache isolation and non-inferiority margins |
+| T8 Router vs best single model | COMPASS (2610.27822), AgentRouter (2609.22951), Pathwise-Budgeted Routing (2611.05835) | Claim the overhead and cache-loss accounting only. COMPASS excludes router inference and needs a 28-configuration pool. AgentRouter's baseline is GPT-4o with no cache pricing |
+| T9 Same compressor, different harness | Harness design study (2609.20804), Beyond Token Savings (2609.32961) | Replication only, as before. The harness study found elision and summarisation about equal, and Beyond Token Savings costs are input-only estimates |
+| T10 Stopping rules for retries | TokenEconomizer loop interruption (2610.22732) | Claim dollar-denominated rules. TokenEconomizer is harness-side, learns from grader labels, and costs more for its first six tasks |
+| T11 Strong-model share ceilings | SCRouter (2610.18566) | Claim the budget bound, not the security condition. SCRouter's gain is mostly on security and shrinks out of distribution |
 | T13 Stale price books | Scheduled doublings and per-model multipliers in 2026 | Stronger case. Add the effective-date finding |
 
 Read the full text of each before final positioning.
