@@ -415,7 +415,7 @@ class SessionViews:
                 "agents": len(agents),
             },
             "tools": sorted(per_tool.values(), key=lambda t: -t["calls"]),
-            "files": sorted(files.values(), key=lambda f: (-f["edits"], -f["tokens"]))[:40],
+            "files": sorted(files.values(), key=lambda f: (-int(f["edits"]), -int(f["tokens"])))[:40],
             "largest_results": sorted(biggest, key=lambda b: -b["tokens"])[:15],
             "turns": turns,
             "timeline": timeline,
