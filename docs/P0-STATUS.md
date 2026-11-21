@@ -11,6 +11,19 @@ This is a first pass, not the P0 milestone. **The P0 exit gate is not met.**
 - Checks that pass locally: ruff, mypy --strict, 149 package and integration tests, 37 tool tests, layering
   (import-linter, 16 contracts), public surface, and every package installing and passing its tests alone.
 
+## Live check (2026-11-21)
+Two real `claude -p` requests (subscription login, Sonnet 5.5) went through the gateway, chained in front of an
+existing local proxy. Both replies were normal. Each produced one ledger row whose five buckets equal the usage Claude
+Code reported, and whose cost equals Claude Code's own figure ($0.106464 and $0.061003). The second request read
+11,714 tokens from cache, so the gateway did not break caching. Session id, `auth_mode = oauth`, response id and
+request id were all filled. Not covered: interactive sessions, tool calls, sub-agents, API-key login, other models.
+Each run also made one request no adapter matched (not a Messages call); the gateway forwards these but does not
+record what they were.
+
+A `ANTHROPIC_BASE_URL` in `~/.claude/settings.json` overrides the shell variable. Point Claude Code at the gateway
+with `claude --settings <file>` or by editing that setting, and set `TOKEN_ECONOMICS_UPSTREAM_ANTHROPIC` to chain an
+existing proxy behind the gateway.
+
 ## Exit gate (PHASES.md)
 | Gate line | Status |
 |---|---|
