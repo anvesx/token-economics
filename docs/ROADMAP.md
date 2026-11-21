@@ -1,16 +1,37 @@
 # What is left to build
 
-Written 2026-11-21 at the end of the first P0 pass. Read this first in a new session, then `CLAUDE.md` (how the repo
+Written 2026-11-21, updated after the first P1 pass. Read this first in a new session, then `CLAUDE.md` (how the repo
 works) and `docs/P0-STATUS.md` (card-by-card state of P0). The plan itself is in `plan/`; this file only lists what is
 not built yet and what was learned while building.
 
 ## Where things are
-- Repo: `anvesx/token-economics`. Local clone `~/HRMS/token-economics`, branch `feat/p0-working-core`, 16 local
-  commits, **not pushed**. `main` is blocked for the author; a senior dev merges.
+- Repo: `anvesx/token-economics`. Local clone `~/HRMS/token-economics`. **Nothing is pushed.** `main` is blocked for
+  the author; a senior dev merges.
+- Branches (each on top of the one before): `feat/p0-working-core` (P0 first pass), `feat/p1-working-core` (P1 first
+  pass, the tip). Start P2 from `feat/p1-working-core` on a new branch `feat/p2-working-core`.
+- State by phase: `docs/P0-STATUS.md`, `docs/P1-STATUS.md`. Decisions: `docs/adr/0001`, `0002`. Spike s2 is run
+  (`spikes/s2-claude-code-402`); s1, s3, s4 are not.
 - Sister repo: `~/HRMS/hermes-engine` (branch `m-agents`). Its leak detectors are vendored here unchanged from commit
   `43459d9`. The category audit behind them is `AUDIT-with-original-categories.md` in that repo.
 - Source of every gate: `plan/PHASES.md`. Package map: `plan/13-monorepo-layout.md` and `plan/model/layout.json`.
   The 154 cards are in `token-economics-phase-playbook.pdf` (repo root) and `plan/phase-playbook.html`.
+- The user's Mac: `~/.claude/settings.json` no longer routes Claude Code through `claudex` (backup beside it); the
+  user may have a gateway running on port 8787 with real state in `~/.token-economics`. Use another port and a
+  scratch `TOKEN_ECONOMICS_STATE_DIR` for tests.
+
+## Starting P2 in a new session
+1. Read this file, `CLAUDE.md`, both status files, then `plan/PHASES.md` (P2), `plan/06-context-guard.md`,
+   `plan/07-observability-eval-rollout.md`, `plan/05-policy-router-budgets.md` (routing ladder).
+2. Build order from the plan: eval harness first (`modules/stats`, `services/eval`, `evals/`), because nothing else
+   in P2 may ship without a paired result. Then cache planner, context guard, router, shadow runs.
+3. P2 features are `Feature`s like budgets: a factory `(env: FeatureEnv) -> Feature` under the
+   `token_economics.features` entry-point group, off by default, switched in `policy.json`. **The `Feature` port can
+   only allow or block today.** P2 features change the request (defer schemas, cap output, mask, route), so the port
+   needs a way to return a rewritten body, and the gateway must send it. That is the first contracts change of P2.
+4. Blockers to raise before coding: nothing sets `success` on ledger rows, so cost per successful task cannot be
+   computed (the eval harness must supply it); there is no real task set; row numbering is undecided.
+5. P3 wraps what P2 ships (canary, kill-switch, rollback). The three modes and the hot-reloaded policy file are the
+   start of a kill-switch; per-tenant switches are not built.
 
 ## 0. Test P0 before building more
 Nothing here has seen real traffic. Do these first; each can change the design.
