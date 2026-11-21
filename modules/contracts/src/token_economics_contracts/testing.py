@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from .ports import Adapter
-from .types import Capabilities, Identity
+from .types import Capabilities, Identity, RequestFacts
 
 
 def check_adapter(adapter: Adapter) -> None:
@@ -28,3 +28,7 @@ def check_adapter(adapter: Adapter) -> None:
     assert adapter.observe(200, {}, b"") is None
     assert adapter.observe(200, {"content-type": "application/json"}, b"{}") is None
     assert adapter.observe(500, {"content-type": "application/json"}, b'{"error": {"type": "overloaded"}}') is None
+
+    # facts() never raises and never guesses on input it does not understand
+    assert adapter.facts({}, b"") == RequestFacts() or isinstance(adapter.facts({}, b""), RequestFacts)
+    assert isinstance(adapter.facts({"content-type": "application/json"}, b"not json"), RequestFacts)

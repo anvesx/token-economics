@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -187,3 +188,88 @@ class DetectorCoverage(_Frozen):
     cost_estimate_usd: Decimal = Decimal(0)
     review: bool = False  # spend to review, not counted as waste
     note: str = ""
+
+
+# ---------------------------------------------------------------- P1: policy
+
+
+class PolicyMode(StrEnum):
+    """How a feature is switched. The default is OFF. ADVISORY records what it would do and blocks nothing."""
+
+    OFF = "off"
+    ADVISORY = "advisory"
+    ENFORCED = "enforced"
+
+
+class RequestFacts(_Frozen):
+    """What an adapter reads from one request body for the policy engine. Numbers and hashes only, never text."""
+
+    model: str = ""
+    max_tokens: int | None = None
+    stream: bool = False
+    turns: int = Field(default=0, ge=0)  # assistant messages already in the conversation
+    est_input_tokens: int = Field(default=0, ge=0)  # upper estimate of prompt tokens, from the body size
+    last_failure_signature: str = ""  # hash of tool name + input of the most recent failed tool call, "" if none
+    trailing_repeat_failures: int = Field(default=0, ge=0)  # times in a row that same call has just failed
+
+
+class RequestContext(_Frozen):
+    """One request as the policy engine sees it, before dispatch."""
+
+    request_id: str
+    ts: datetime
+    key_id: str = ""  # stable id of the virtual key (a hash), "" when the request carried none
+    key: KeyInfo
+    harness: str = ""
+    provider: str = ""
+    identity: Identity = Identity()
+    facts: RequestFacts = RequestFacts()
+
+
+class Decision(_Frozen):
+    """A feature's answer for one request. `allow=False` with mode ENFORCED stops the request at the gateway."""
+
+    allow: bool = True
+    feature: str = ""
+    status: int = 200  # HTTP status to return when blocked: 401, 402, 429
+    code: str = ""  # machine-readable reason, e.g. "budget_exhausted"
+    message: str = ""  # shown to the developer; never contains prompt text
+    retry_after_s: int | None = None
+    advisory: bool = False  # set by the engine: the feature would have blocked, but it is in advisory mode
+
+
+ALLOW = Decision()
+
+
+class FeatureEnv(_Frozen):
+    """What the policy service hands a feature factory. Features never import services; they get them here."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
+
+    state_dir: Path
+    config: dict[str, Any] = Field(default_factory=dict)  # this feature's own section of the policy file
+    pricebook: Any = None  # a PriceBook, when the feature prices requests
+    calculator: Any = None  # a CostCalculator
+
+
+class ResolvedKey(_Frozen):
+    """A presented virtual key, looked up. `status` is "unknown" for a key that was never issued."""
+
+    key_id: str = ""
+    info: KeyInfo
+    status: Literal["active", "revoked", "unknown", "none"] = "none"
+
+
+class BudgetStatus(_Frozen):
+    """One budget window as it stands now."""
+
+    scope: str  # "key:<id>", "caller:<name>", "team:<name>", "tenant:<name>"
+    window: Literal["day", "month", "total"]
+    limit_usd: Decimal
+    spent_usd: Decimal
+    reserved_usd: Decimal
+    period_start: datetime | None = None
+
+    @property
+    def used_share(self) -> Decimal:
+        return (self.spent_usd + self.reserved_usd) / self.limit_usd if self.limit_usd else Decimal(0)

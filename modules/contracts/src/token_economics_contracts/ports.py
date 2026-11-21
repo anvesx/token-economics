@@ -10,13 +10,18 @@ from typing import Any, Protocol, runtime_checkable
 
 from .types import (
     Buckets,
+    BudgetStatus,
     Capabilities,
+    Decision,
     DetectorCoverage,
     Finding,
     Identity,
     LedgerRow,
     Observation,
     PriceRow,
+    RequestContext,
+    RequestFacts,
+    ResolvedKey,
 )
 
 
@@ -38,6 +43,10 @@ class Adapter(Protocol):
 
     def identify(self, headers: Mapping[str, str], body: bytes) -> Identity:
         """Session, prompt and agent ids from one request. Never raises: unknown fields stay empty."""
+        ...
+
+    def facts(self, headers: Mapping[str, str], body: bytes) -> RequestFacts:
+        """Numbers and hashes the policy engine needs from one request body. Never raises; never returns text."""
         ...
 
     def observe(self, status: int, headers: Mapping[str, str], body: bytes) -> Observation | None:
@@ -131,3 +140,52 @@ class Detector(Protocol):
     name: str
 
     def run(self, since: datetime | None = None) -> tuple[Sequence[Finding], Sequence[DetectorCoverage]]: ...
+
+
+@runtime_checkable
+class Feature(Protocol):
+    """One policy capability behind a flag (budgets, turn cap, loop guard). Registered as a factory
+    `(env: FeatureEnv) -> Feature` under the entry-point group `token_economics.features`."""
+
+    name: str
+    fail_closed: bool  # True: if before() raises while the feature is enforced, the request is refused (budgets)
+
+    def before(self, ctx: RequestContext) -> Decision | None:
+        """Called before dispatch. None or an allowing Decision lets the request through."""
+        ...
+
+    def after(self, ctx: RequestContext, row: LedgerRow | None, status: int) -> None:
+        """Called once the response is over. `row` is the ledger row, or None when the response had no usage."""
+        ...
+
+
+@runtime_checkable
+class PolicyEngine(Protocol):
+    """Runs the features in order and applies their flags. Registered as SERVICES "policy"."""
+
+    def before(self, ctx: RequestContext) -> Decision: ...
+
+    def after(self, ctx: RequestContext, row: LedgerRow | None, status: int) -> None: ...
+
+
+@runtime_checkable
+class KeyResolver(Protocol):
+    """Virtual keys, hashed at rest. Registered as SERVICES "keys"."""
+
+    def resolve(self, presented: str) -> ResolvedKey: ...
+
+
+@runtime_checkable
+class HealthTracker(Protocol):
+    """Backend health and rate-limit tracking. Registered as SERVICES "health"."""
+
+    def record(self, provider: str, status: int, headers: Mapping[str, str]) -> None: ...
+
+    def snapshot(self) -> dict[str, Any]: ...
+
+
+@runtime_checkable
+class BudgetReader(Protocol):
+    """Read-only view of budgets for reports. Registered as SERVICES "budget_status" (a factory taking state_dir)."""
+
+    def status(self) -> Sequence[BudgetStatus]: ...

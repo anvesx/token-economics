@@ -8,6 +8,7 @@ from typing import Any
 ADAPTERS = "token_economics.adapters"
 NORMALISERS = "token_economics.normalisers"
 UPSTREAMS = "token_economics.upstreams"
+FEATURES = "token_economics.features"  # values are factories: (env: FeatureEnv) -> Feature
 SERVICES = "token_economics.services"  # names: "ledger", "pricebook", "cost", "detectors"; values are factories
 
 
