@@ -1,0 +1,206 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Works out which packages the change touches (plus their dependents) so the slow jobs run only on those.
+  # On a push to main every package runs.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      keys: ${{ steps.affected.outputs.keys }}
+      dirs: ${{ steps.affected.outputs.dirs }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: affected
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            arg="origin/$BASE_REF"
+          else
+            arg="--all"
+          fi
+          echo "keys=$(python3 tools/affected.py $arg | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
+          echo "dirs=$(python3 tools/affected.py $arg --dirs | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: uv run ruff check .
+
+  types:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: mypy --strict on each package src and on tools
+        run: |
+          status=0
+          for d in $(uv run python tools/affected.py --all --dirs); do
+            echo "::group::mypy $d"
+            uv run mypy --strict "$d/src" || status=1
+            echo "::endgroup::"
+          done
+          uv run mypy --strict tools || status=1
+          exit $status
+
+  unit:
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: pytest on the affected packages (must finish under 2 minutes)
+        timeout-minutes: 2
+        env:
+          DIRS: ${{ needs.changes.outputs.dirs }}
+        run: |
+          if [ -z "${DIRS// /}" ]; then echo "no package affected"; exit 0; fi
+          paths=""
+          for d in $DIRS; do [ -d "$d/tests" ] && paths="$paths $d/tests"; done
+          uv run pytest -q $paths
+      - name: tools tests
+        run: uv run pytest -q tools/tests
+
+  contract:
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: pytest tests/contract of the affected packages
+        env:
+          DIRS: ${{ needs.changes.outputs.dirs }}
+        run: |
+          paths=""
+          for d in $DIRS; do [ -d "$d/tests/contract" ] && paths="$paths $d/tests/contract"; done
+          if [ -z "$paths" ]; then echo "no contract tests affected"; exit 0; fi
+          uv run pytest -q -k contract $paths
+
+  layering:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: uv run python tools/check_layering.py
+      - name: .importlinter is up to date with layout.json
+        run: |
+          uv run python tools/check_layering.py --write-importlinter
+          git diff --exit-code .importlinter
+      - run: uv run lint-imports
+
+  extractable:
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: Each affected package passes its tests with only its declared dependencies
+        env:
+          KEYS: ${{ needs.changes.outputs.keys }}
+        run: |
+          if [ -z "${KEYS// /}" ]; then echo "no package affected"; exit 0; fi
+          uv run python tools/check_extractable.py $KEYS
+
+  surface:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: uv run python tools/check_surface.py
+
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: pytest tests/integration (if the folder exists)
+        run: |
+          if [ ! -d tests/integration ]; then echo "no tests/integration yet"; exit 0; fi
+          uv run pytest -q tests/integration
+
+  ledger-invariants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: uv run pytest -q services/ledger modules/metering modules/pricebook-core -k "ledger or bucket or price"
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # An organisation-owned repo also needs a GITLEAKS_LICENSE secret.
+
+  pr-title:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Conventional Commits title with a folder scope
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: python3 tools/check_pr_title.py "$PR_TITLE"
+
+  # The one required check. A job skipped on purpose (pr-title on a push) passes; a failed or cancelled one does not.
+  ci-gate:
+    if: always()
+    needs:
+      - changes
+      - lint
+      - types
+      - unit
+      - contract
+      - layering
+      - extractable
+      - surface
+      - replay
+      - ledger-invariants
+      - secret-scan
+      - pr-title
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any needed job failed or was cancelled
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+          FAILED: ${{ contains(needs.*.result, 'failure') }}
+          CANCELLED: ${{ contains(needs.*.result, 'cancelled') }}
+        run: |
+          echo "results: $RESULTS"
+          if [ "$FAILED" = "true" ] || [ "$CANCELLED" = "true" ]; then
+            echo "a required job failed or was cancelled"
+            exit 1
+          fi
