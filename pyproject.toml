@@ -1,0 +1,44 @@
+[project]
+name = "token-economics-workspace"
+version = "0.1.0"
+description = "Layer 0 of Company OS: price every model call, budget it, and report cost per successful task"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["apps/*", "services/*", "features/*", "modules/*"]
+
+[tool.uv.sources]
+token-economics-contracts = { workspace = true }
+token-economics-metering = { workspace = true }
+token-economics-pricebook-core = { workspace = true }
+token-economics-redaction = { workspace = true }
+token-economics-feat-upstream = { workspace = true }
+token-economics-feat-harness-adapters = { workspace = true }
+token-economics-svc-ledger = { workspace = true }
+token-economics-svc-pricebook = { workspace = true }
+token-economics-svc-insight = { workspace = true }
+token-economics-app-gateway = { workspace = true }
+token-economics-app-cli = { workspace = true }
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "hypothesis>=6", "ruff>=0.6", "mypy>=1.11", "import-linter>=2", "types-PyYAML"]
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["modules", "features", "services", "apps", "tests"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+# vendored, untyped, kept byte-identical to hermes-engine (see its VENDORED.md)
+exclude = ["services/insight/src/token_economics_svc_insight/hermes/"]
+
+[[tool.mypy.overrides]]
+module = ["brotli"]
+ignore_missing_imports = true
