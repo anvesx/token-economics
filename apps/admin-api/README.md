@@ -27,6 +27,12 @@ have a Refresh button (an analysis takes several seconds the first time). Only G
   steps of 50. A row opens `#session/<id>`.
 - `#session/<id>`: the session's facts, its tasks in order (cost and share, calls, edits, top tools, why a new task
   started) and its leaks. Says whether tasks were split by a model or by the simple rule.
+- `#task/<session id>/<n>`: one task in full, reached by clicking a task on the session page. Breadcrumb with previous
+  and next task; header (title, start, duration, models, why a new task started); tiles (cost and share of the session,
+  model calls, tool calls, failed calls, edits, peak context, cache hit rate, thinking tokens, and warning chips for
+  interrupted turns, compactions and cache rewrites after idle); where the tokens went (spend by token type with the raw
+  token counts, spend by model, main thread vs agents); a context-size chart; tool calls; the 15 largest tool results;
+  files; agents; the prompts; and a call timeline (first 100 rows, "Show more", costliest first or in order).
 - `#categories`: the curated leak categories (cost, share, findings, sessions, note), a group filter, "Spend to review",
   and the retired categories. Costs overlap, so they do not add up to the total.
 - `#gateway`: the original page. Headline tiles (spend, requests, cache hit rate, blocked requests, unpriced requests as a warning), spend per UTC day,
@@ -66,6 +72,7 @@ services. The `session_views` service is built once, on first use, with `state_d
 | `/api/summary?days=30` | the insight `dashboard_summary` as JSON (money as strings) plus `has_ledger`; `days` is 1 to 365 |
 | `/api/overview?days=30` | the `session_views` overview: sessions, categories, retired rows and spend by token type, model and project |
 | `/api/sessions/{id}?days=30` | one session with its tasks and leaks; 404 if unknown in the period (full id or first 8 characters) |
+| `/api/sessions/{id}/tasks/{n}?days=30` | one task in full (summary fields plus spend by token type and model, tools, files, largest results, turns, agents, context series, call timeline); 404 if the session or task is unknown or `n` is not a positive integer |
 | `/api/budgets` | list of budget windows (`scope`, `window`, `limit_usd`, `spent_usd`, `reserved_usd`, `used_share`) from the `budget_status` service; `[]` if it is not installed |
 | `/api/decisions?limit=200` | last N lines of `decisions.jsonl` as objects, oldest first |
 | `/api/alerts?limit=200` | same for `alerts.jsonl` |
@@ -73,7 +80,7 @@ services. The `session_views` service is built once, on first use, with `state_d
 | `/api/keys` | `key_id`, `tenant`, `team`, `caller`, `created_at`, `revoked_at` from the `keys` service; never plaintext or hashes |
 
 Missing files give `[]`; unparseable lines are skipped; `limit` is 1 to 1000. A bad number gives 400. If the insight
-service is not installed `/api/summary`, `/api/overview` and `/api/sessions/{id}` give 503.
+service is not installed `/api/summary`, `/api/overview`, `/api/sessions/{id}` and `/api/sessions/{id}/tasks/{n}` give 503.
 
 ## Not built
 

@@ -98,6 +98,18 @@ ul.log li:last-child { border-bottom: 0; }
 .task .cost { white-space: nowrap; text-align: right; }
 .sub { color: var(--mute); font-size: var(--fs-s); margin-top: 2px; }
 .sub.det { white-space: normal; overflow-wrap: anywhere; max-width: 70ch; }
+a.task { display: block; color: inherit; text-decoration: none; }
+a.task:hover, a.task:focus-visible { background: var(--hover); }
+.go { color: var(--accent); font-size: var(--fs-s); margin-top: 4px; }
+.crumbs { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--gap-s) var(--gap); align-items: center; margin: 0 0 var(--gap-s); }
+.crumbs .trail { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-width: 0; }
+.crumbs .pn { display: flex; gap: var(--gap); }
+.gapt { margin-top: var(--gap); }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: var(--fs-s); }
+.svgc { width: 100%; height: 140px; display: block; border-bottom: 1px solid var(--line); }
+.chips.inline { display: inline-flex; margin: 0; flex-wrap: nowrap; }
+.tlbar { display: flex; flex-wrap: wrap; gap: var(--gap-s); align-items: center; justify-content: space-between; margin-bottom: var(--gap-s); }
+.rowbar { min-width: 110px; }
 details summary { cursor: pointer; color: var(--mute); }
 footer { color: var(--mute); font-size: var(--fs-s); margin-top: var(--gap-s); }
 footer p { margin: 4px 0; }
@@ -144,6 +156,7 @@ var overviews = {};      // days -> overview JSON, kept so switching tabs is ins
 var inflight = {};       // days -> promise of the overview being fetched
 var sessionsUi = { q: "", project: "", sort: "newest", shown: PAGE };
 var catUi = { group: "" };
+var tasksCache = {};     // days|session|n -> task JSON
 var current = { name: "", token: 0 };
 var $ = function (id) { return document.getElementById(id); };
 
@@ -410,14 +423,15 @@ function renderSession(root, s) {
     var share = s.cost_usd ? t.cost_usd / s.cost_usd : 0;
     var chips = h("div", { "class": "chips" });
     (t.tools || []).forEach(function (x) { chips.appendChild(pill(x.name + " " + x.count)); });
-    tasks.appendChild(h("div", { "class": "task" },
+    tasks.appendChild(h("a", { "class": "task", href: "#task/" + encodeURIComponent(s.id) + "/" + t.n },
       h("div", { "class": "top" },
         h("div", { "class": "ttl" }, h("b", {}, t.n + ". "), t.title),
         h("div", { "class": "cost" }, dollars(t.cost_usd), h("span", { "class": "mute" }, " · " + pct(share)))),
       bar(share),
       h("div", { "class": "sub" }, when(t.started) + " · " + dur(t.duration_s) + " · " + num(t.calls) + " calls · " + num(t.tool_calls) + " tool calls · " + num(t.edits) + " edits in " + num(t.files_edited) + " files"),
       chips,
-      h("div", { "class": "sub" }, "Why a new task: " + t.how_text)));
+      h("div", { "class": "sub" }, "Why a new task: " + t.how_text),
+      h("div", { "class": "go" }, "Details →")));
   });
   if (!(s.tasks || []).length) { tasks.appendChild(h("div", { "class": "mute" }, "No tasks.")); }
   var all = s.leaks || [];
@@ -439,6 +453,244 @@ function renderSession(root, s) {
     ], leaks)));
   }
   put(root, h("p", {}, h("a", { href: "#sessions" }, "← Sessions")), head, tasks, leakBox);
+}
+
+
+// ---- task detail
+function clock(ts) { var d = new Date(ts); return isNaN(d) ? String(ts) : d.toLocaleTimeString(); }
+function stamp(ts) { return h("span", { title: when(ts) }, clock(ts)); }
+function shortModel(m) { return String(m || "").replace(/^claude-/, "").replace(/-\d{8}$/, ""); }
+function toolLabel(name) {
+  var m = /^mcp__([^_].*?)__(.+)$/.exec(String(name));
+  return m ? m[1] + " · " + m[2] : String(name);
+}
+function toolCell(name) { return h("span", { "class": "trunc mono", title: name }, toolLabel(name)); }
+function monoCell(text) { return h("span", { "class": "trunc mono", title: text }, text); }
+function none() { return h("div", { "class": "mute" }, "None in this task."); }
+function section(title, body, intro) {
+  return h("section", { "class": "card" }, h("h2", {}, title), intro ? h("div", { "class": "mute" }, intro) : null, body);
+}
+// The SVG namespace is an identifier, not a request; it is split so the page holds no URL literal.
+var SVG_NS = "http:" + "//www.w3.org/2000/svg";
+function svgEl(tag, attrs) {
+  var el = document.createElementNS(SVG_NS, tag);
+  for (var k in (attrs || {})) { el.setAttribute(k, attrs[k]); }
+  return el;
+}
+// at most `max` points: the largest value in each bucket, in order
+function downsample(series, max) {
+  if (series.length <= max) { return series.slice(); }
+  var out = [], size = series.length / max;
+  for (var b = 0; b < max; b++) {
+    var lo = Math.floor(b * size), hi = Math.max(lo + 1, Math.floor((b + 1) * size)), best = series[lo];
+    for (var i = lo; i < hi && i < series.length; i++) { if (series[i] > best) { best = series[i]; } }
+    out.push(best);
+  }
+  return out;
+}
+function contextChart(ctx) {
+  var series = ctx.series || [];
+  if (!series.length) { return none(); }
+  var pts = downsample(series, 300);
+  if (pts.length === 1) { pts = [pts[0], pts[0]]; }
+  var W = 600, H = 140, pad = 6;
+  var max = Math.max.apply(null, pts) || 1;
+  var xy = pts.map(function (v, i) {
+    return [(i / (pts.length - 1)) * W, H - pad - (v / max) * (H - 2 * pad)];
+  });
+  var line = xy.map(function (p, i) { return (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1); }).join(" ");
+  var area = line + " L" + W + " " + H + " L0 " + H + " Z";
+  var svg = svgEl("svg", { "class": "svgc", viewBox: "0 0 " + W + " " + H, preserveAspectRatio: "none", role: "img",
+    "aria-label": "Context size at each main-thread call, from " + compact(ctx.start) + " to a peak of " + compact(ctx.peak) + " and ending at " + compact(ctx.end) });
+  var a = svgEl("path", { d: area });
+  a.style.fill = "var(--accent)";
+  a.style.opacity = "0.18";
+  var l = svgEl("path", { d: line, fill: "none" });
+  l.style.stroke = "var(--accent)";
+  l.style.strokeWidth = "2";
+  l.setAttribute("vector-effect", "non-scaling-stroke");
+  svg.appendChild(a);
+  svg.appendChild(l);
+  return h("div", {}, svg, h("div", { "class": "axis" },
+    h("span", {}, "start " + compact(ctx.start)),
+    h("span", {}, "peak " + compact(ctx.peak) + " · " + series.length + " call" + (series.length === 1 ? "" : "s")),
+    h("span", {}, "end " + compact(ctx.end))));
+}
+
+function tokenTiles(t, d) {
+  var counts = t.counts || {}, cache = t.cache || {};
+  var tiles = h("div", { "class": "tiles" },
+    tile("Cost · " + pct(t.share_of_session) + " of the session", dollars(t.cost_usd)),
+    tile("Model calls (" + num(t.calls) + " main + " + num(t.agent_calls) + " agent)", num((t.calls || 0) + (t.agent_calls || 0))),
+    tile("Tool calls", num(t.tool_calls)),
+    tile("Failed tool calls", num(counts.failed_tool_calls), counts.failed_tool_calls > 0),
+    tile("Edits in " + num(t.files_edited) + " files", num(t.edits)),
+    tile("Peak context", compact((t.context || {}).peak)),
+    tile("Cache hit rate", pct(cache.hit_rate)),
+    tile("Thinking tokens", compact(t.thinking_tokens)));
+  return tiles;
+}
+function warnChips(t) {
+  var counts = t.counts || {}, cache = t.cache || {}, chips = h("div", { "class": "chips" });
+  if (counts.interrupted) { chips.appendChild(pill(num(counts.interrupted) + " interrupted turn" + (counts.interrupted === 1 ? "" : "s"), "warn")); }
+  if (counts.compactions) { chips.appendChild(pill(num(counts.compactions) + " compaction" + (counts.compactions === 1 ? "" : "s"), "warn")); }
+  if (cache.rewrites_after_idle) { chips.appendChild(pill(num(cache.rewrites_after_idle) + " cache rewrite" + (cache.rewrites_after_idle === 1 ? "" : "s") + " after idle", "warn")); }
+  return chips.firstChild ? chips : null;
+}
+
+function toolsTable(rows) {
+  if (!rows.length) { return none(); }
+  var total = 0;
+  rows.forEach(function (r) { total += r.result_tokens; });
+  return h("div", { "class": "scroll" }, table([
+    { label: "Tool", get: function (r) { return toolCell(r.name); } },
+    { label: "Calls", n: 1, get: function (r) { return num(r.calls); } },
+    { label: "Failed", n: 1, get: function (r) { return num(r.failed); } },
+    { label: "Result tokens", n: 1, get: function (r) { return num(r.result_tokens); } },
+    { label: "Input tokens", n: 1, get: function (r) { return num(r.input_tokens); } },
+    { label: "Share of results", get: function (r) { return h("div", { "class": "rowbar" }, bar(total ? r.result_tokens / total : 0)); } }
+  ], rows));
+}
+function resultsTable(rows) {
+  if (!rows.length) { return none(); }
+  return h("div", { "class": "scroll" }, table([
+    { label: "Tool", get: function (r) { return toolCell(r.tool); } },
+    { label: "Target", get: function (r) { return monoCell(r.target || ""); } },
+    { label: "Tokens", n: 1, get: function (r) { return num(r.tokens); } },
+    { label: "Time", get: function (r) { return stamp(r.at); } },
+    { label: "", get: function (r) {
+      var box = h("span", { "class": "chips inline" });
+      if (r.failed) { box.appendChild(pill("failed", "bad")); }
+      if (r.agent) { box.appendChild(pill("agent")); }
+      return box;
+    } }
+  ], rows));
+}
+function filesTable(rows) {
+  if (!rows.length) { return none(); }
+  return h("div", { "class": "scroll" }, table([
+    { label: "File", get: function (r) { return h("span", { "class": "trunc mono", title: r.path }, r.file); } },
+    { label: "Reads", n: 1, get: function (r) { return num(r.reads); } },
+    { label: "Edits", n: 1, get: function (r) { return num(r.edits); } },
+    { label: "Tokens returned", n: 1, get: function (r) { return num(r.tokens); } }
+  ], rows));
+}
+function agentsTable(rows) {
+  return h("div", { "class": "scroll" }, table([
+    { label: "Started", get: function (r) { return stamp(r.started); } },
+    { label: "Model", get: function (r) { return shortModel(r.model); } },
+    { label: "Calls", n: 1, get: function (r) { return num(r.calls); } },
+    { label: "Tool calls", n: 1, get: function (r) { return num(r.tool_calls); } },
+    { label: "Starting context", n: 1, get: function (r) { return compact(r.start_context); } },
+    { label: "Cost", n: 1, get: function (r) { return dollars(r.cost_usd); } }
+  ], rows));
+}
+function turnsList(rows) {
+  if (!rows.length) { return none(); }
+  var box = h("div", {});
+  rows.forEach(function (r) {
+    box.appendChild(h("div", { "class": "task" },
+      h("div", { "class": "top" },
+        h("div", { "class": "ttl" }, h("b", {}, r.n + ". "), r.title),
+        h("div", { "class": "cost" }, dollars(r.cost_usd))),
+      h("div", { "class": "sub" }, when(r.at) + " · " + num(r.calls) + " model calls · " + num(r.tool_calls) + " tool calls · " + num(r.output_tokens) + " output tokens")));
+  });
+  return box;
+}
+
+var TL_STEP = 100;
+function timelineRows(all, ui, tableBox, moreBox) {
+  var rows = ui.order === "cost" ? all.slice().sort(function (a, b) { return b.cost_usd - a.cost_usd; }) : all;
+  var shown = rows.slice(0, ui.shown);
+  put(tableBox, table([
+    { label: "Time", get: function (r) { return stamp(r.at); } },
+    { label: "Model", get: function (r) { return shortModel(r.model); } },
+    { label: "", get: function (r) { return r.agent ? pill("agent") : ""; } },
+    { label: "Context", n: 1, get: function (r) { return num(r.context); } },
+    { label: "Cache read", n: 1, get: function (r) { return num(r.cache_read); } },
+    { label: "Cache write", n: 1, get: function (r) { return num(r.cache_write); } },
+    { label: "Fresh input", n: 1, get: function (r) { return num(r.fresh_input); } },
+    { label: "Output", n: 1, get: function (r) { return num(r.output); } },
+    { label: "Thinking", n: 1, get: function (r) { return num(r.thinking); } },
+    { label: "Cost", n: 1, get: function (r) { return dollars(r.cost_usd); } },
+    { label: "Tools", get: function (r) {
+      var box = h("span", { "class": "chips inline" });
+      (r.tools || []).forEach(function (x) { box.appendChild(h("span", { "class": "pill mono", title: x.name }, toolLabel(x.name) + " ×" + x.count)); });
+      return box;
+    } }
+  ], shown));
+  clear(moreBox);
+  if (rows.length > shown.length) {
+    var b = h("button", { type: "button", "class": "plain" }, "Show " + Math.min(TL_STEP, rows.length - shown.length) + " more");
+    b.addEventListener("click", function () { ui.shown += TL_STEP; timelineRows(all, ui, tableBox, moreBox); });
+    moreBox.appendChild(b);
+  }
+}
+function timelineCard(all) {
+  if (!all.length) { return section("Call timeline", none()); }
+  var ui = { order: "time", shown: TL_STEP };
+  var tableBox = h("div", { "class": "scroll" }), moreBox = h("div", {});
+  var toggle = h("button", { type: "button", "class": "plain" }, "Costliest first");
+  toggle.addEventListener("click", function () {
+    ui.order = ui.order === "cost" ? "time" : "cost";
+    ui.shown = TL_STEP;
+    put(toggle, document.createTextNode(ui.order === "cost" ? "In order" : "Costliest first"));
+    timelineRows(all, ui, tableBox, moreBox);
+  });
+  var card = section("Call timeline", null);
+  card.appendChild(h("div", { "class": "tlbar" }, h("span", { "class": "mute" }, num(all.length) + " model calls, main thread and agents"), toggle));
+  card.appendChild(tableBox);
+  card.appendChild(moreBox);
+  timelineRows(all, ui, tableBox, moreBox);
+  return card;
+}
+
+function renderTask(root, t) {
+  var s = t.session || {};
+  var id = s.id || "";
+  var link = function (n) { return "#task/" + encodeURIComponent(id) + "/" + n; };
+  var pn = h("div", { "class": "pn" });
+  if (t.n > 1) { pn.appendChild(h("a", { href: link(t.n - 1) }, "← Previous task")); }
+  if (t.n < s.task_count) { pn.appendChild(h("a", { href: link(t.n + 1) }, "Next task →")); }
+  var crumbs = h("div", { "class": "crumbs" },
+    h("div", { "class": "trail" },
+      h("a", { href: "#sessions" }, "Sessions"), "›",
+      h("a", { href: "#session/" + encodeURIComponent(id), title: s.title || "" }, trunc(s.title || "Session")), "›",
+      h("span", {}, "Task " + t.n + " of " + s.task_count)),
+    pn);
+  var head = h("section", { "class": "card head" },
+    h("h2", {}, t.title),
+    h("div", { "class": "mute" }, "Started " + when(t.started)),
+    h("div", { "class": "facts" },
+      fact("Duration", dur(t.duration_s)),
+      fact("Models", (t.models || []).join(", ") || "-")),
+    h("div", { "class": "sub" }, "Why a new task: " + t.how_text));
+  var tk = t.tokens || {};
+  var typeTotal = Number(t.cost_usd) || 0;
+  if (!typeTotal) { (t.spend_by_token_type || []).forEach(function (x) { typeTotal += Number(x.usd); }); }
+  var rawTokens = table([
+    { label: "Token type", get: function (r) { return r[0]; } },
+    { label: "Tokens", n: 1, get: function (r) { return num(r[1]); } }
+  ], [["Fresh input", tk.fresh_input], ["Cache read", tk.cache_read], ["Cache write", tk.cache_write], ["Output", tk.output]]);
+  var where = section("Where the tokens went",
+    h("div", {},
+      h("div", { "class": "grid2" },
+        h("div", {}, h("h2", {}, "Spend by token type"), barList(t.spend_by_token_type || [], typeTotal)),
+        h("div", {}, h("h2", {}, "Tokens"), h("div", { "class": "scroll" }, rawTokens))),
+      h("h2", { "class": "gapt" }, "Spend by model"),
+      barList(t.spend_by_model || [], typeTotal),
+      h("div", { "class": "sub" }, "Main thread " + dollars(t.main_cost_usd) + " · agents " + dollars(t.agent_cost_usd))),
+    "Cache read is the conversation so far being re-read on every call; cache write is new content being stored; output is what the model wrote, including thinking.");
+  put(root,
+    crumbs, head, tokenTiles(t), warnChips(t),
+    where,
+    section("Context size over the task", contextChart(t.context || {})),
+    section("Tool calls", toolsTable(t.tools || [])),
+    section("Largest tool results", resultsTable(t.largest_results || [])),
+    section("Files", filesTable(t.files || [])),
+    (t.agents || []).length ? section("Agents", agentsTable(t.agents)) : null,
+    section("Prompts in this task", turnsList(t.turns || [])),
+    timelineCard(t.timeline || []));
 }
 
 // ---- categories
@@ -638,6 +890,7 @@ function parseRoute() {
   var name = parts[0] || "overview";
   var arg = parts.slice(1).join("/");
   if (name === "session" && arg) { return { name: "session", arg: decodeURIComponent(arg) }; }
+  if (name === "task" && parts.length === 3) { return { name: "task", arg: decodeURIComponent(parts[1]), n: parts[2] }; }
   if (VIEWS.some(function (v) { return v[0] === name; })) { return { name: name, arg: "" }; }
   return { name: "overview", arg: "" };
 }
@@ -646,7 +899,7 @@ function buildNav(active) {
   var nav = clear($("nav"));
   VIEWS.forEach(function (v) {
     var a = h("a", { href: "#" + v[0] }, v[1]);
-    if (v[0] === active || (active === "session" && v[0] === "sessions")) { a.setAttribute("aria-current", "page"); }
+    if (v[0] === active || ((active === "session" || active === "task") && v[0] === "sessions")) { a.setAttribute("aria-current", "page"); }
     nav.appendChild(a);
   });
 }
@@ -686,6 +939,34 @@ function showSession(id) {
   });
 }
 
+function showTask(sid, n) {
+  var token = ++current.token;
+  var root = $("view");
+  var back = h("p", {}, h("a", { href: "#session/" + encodeURIComponent(sid) }, "← Session"));
+  var key = days + "|" + sid + "|" + n;
+  var done = function (t) {
+    if (token !== current.token) { return; }
+    renderTask(root, t);
+    setStatus("Generated from your transcripts, last " + days + " days", false);
+  };
+  if (!/^[1-9][0-9]*$/.test(n)) {
+    put(root, back, stateBox("That task is not in the last " + days + " days."));
+    setStatus("Not found", false);
+    return Promise.resolve();
+  }
+  if (tasksCache[key]) { done(tasksCache[key]); return Promise.resolve(); }
+  put(root, stateBox("Loading task…"));
+  return get("/api/sessions/" + encodeURIComponent(sid) + "/tasks/" + n + "?days=" + days).then(function (t) {
+    tasksCache[key] = t;
+    done(t);
+  }, function (e) {
+    if (token !== current.token) { return; }
+    var missing = e.status === 404;
+    put(root, back, stateBox(missing ? "That task is not in the last " + days + " days." : errorText(e), missing ? "" : "err", missing ? null : route));
+    setStatus(missing ? "Not found" : "Could not load", !missing);
+  });
+}
+
 function route() {
   var r = parseRoute();
   current.name = r.name;
@@ -696,6 +977,7 @@ function route() {
   $("refresh").hidden = gateway;
   if (gateway) { current.token++; setStatus("Loading…", false); return refreshGateway(); }
   if (r.name === "session") { return showSession(r.arg); }
+  if (r.name === "task") { return showTask(r.arg, r.n); }
   if (r.name === "sessions") { return showTranscriptView(function (root, d) { renderSessions(root, d, sessionsUi); }); }
   if (r.name === "categories") { return showTranscriptView(function (root, d) { renderCategories(root, d, catUi); }); }
   return showTranscriptView(renderOverview);
@@ -717,6 +999,7 @@ function buildSelector() {
 
 $("refresh").addEventListener("click", function () {
   delete overviews[days];
+  tasksCache = {};
   route();
 });
 window.addEventListener("hashchange", route);

@@ -170,6 +170,22 @@ def create_app(
             return JSONResponse({"error": "session not found in this period"}, status_code=404)
         return JSONResponse(found)
 
+    def task_detail(request: Request) -> Response:
+        try:
+            days = _int_param(request, "days", 30, 1, 365)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        raw = request.path_params["n"]
+        if not raw.isascii() or not raw.isdigit() or int(raw) < 1:
+            return JSONResponse({"error": "task not found in this period"}, status_code=404)
+        views = session_views()
+        if views is None:
+            return JSONResponse({"error": "the insight service is not installed"}, status_code=503)
+        found = views.task(request.path_params["session_id"], int(raw), days)
+        if found is None:
+            return JSONResponse({"error": "task not found in this period"}, status_code=404)
+        return JSONResponse(found)
+
     def budgets(request: Request) -> Response:
         factory = service("budget_status")
         if factory is None:
@@ -211,6 +227,7 @@ def create_app(
         Route("/api/summary", summary, methods=["GET"]),
         Route("/api/overview", overview, methods=["GET"]),
         Route("/api/sessions/{session_id}", session_detail, methods=["GET"]),
+        Route("/api/sessions/{session_id}/tasks/{n}", task_detail, methods=["GET"]),
         Route("/api/budgets", budgets, methods=["GET"]),
         Route("/api/decisions", tail("decisions.jsonl", 200), methods=["GET"]),
         Route("/api/alerts", tail("alerts.jsonl", 200), methods=["GET"]),

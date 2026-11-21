@@ -315,6 +315,15 @@ OVERVIEW = {
 }
 
 
+TASK = {
+    "n": 1,
+    "title": INJECTION,
+    "session": {"id": SESSION["id"], "title": INJECTION, "task_count": 1},
+    "share_of_session": 1.0,
+    "timeline": [],
+}
+
+
 class _Views:
     made: list[tuple[str, str, bool]] = []
 
@@ -328,6 +337,10 @@ class _Views:
 
     def session(self, session_id: str, days: int) -> dict[str, Any] | None:
         return SESSION if SESSION["id"].startswith(session_id) else None
+
+    def task(self, session_id: str, n: int, days: int) -> dict[str, Any] | None:
+        self.asked.append(days)
+        return {**TASK, "days": days} if SESSION["id"].startswith(session_id) and n == 1 else None
 
 
 def views_client(tmp_path: Path, **kwargs: Any) -> TestClient:
@@ -344,6 +357,30 @@ def test_overview_and_session_come_from_the_session_views_service(tmp_path: Path
     assert c.get(f"/api/sessions/{SESSION['id']}").json()["title"] == INJECTION
     missing = c.get("/api/sessions/nope")
     assert missing.status_code == 404 and "error" in missing.json()
+
+
+def test_task_endpoint_returns_the_task_and_404s_for_unknown_or_non_numeric(tmp_path: Path) -> None:
+    # Given a fake session_views service with one task
+    c = views_client(tmp_path)
+    base = f"/api/sessions/{SESSION['id']}/tasks"
+    # When / Then
+    got = c.get(f"{base}/1?days=7").json()
+    assert got["title"] == INJECTION and got["days"] == 7
+    assert c.get("/api/sessions/abcdef12/tasks/1").status_code == 200
+    for bad in ("2", "0", "-1", "abc", "1.5", "%CE%A3"):
+        r = c.get(f"{base}/{bad}")
+        assert r.status_code == 404 and "error" in r.json(), bad
+    assert c.get("/api/sessions/nope/tasks/1").status_code == 404
+    assert c.get(f"{base}/1?days=x").status_code == 400
+    assert c.get(f"{base}/1").headers["cache-control"] == "no-store"
+    assert c.post(f"{base}/1").status_code == 405
+
+
+def test_task_endpoint_without_the_insight_service_is_503(tmp_path: Path) -> None:
+    def nothing(group: str, name: str) -> Any:
+        raise LookupError(name)
+
+    assert TestClient(create_app(tmp_path, nothing)).get("/api/sessions/abcdef12/tasks/1").status_code == 503
 
 
 def test_session_views_service_is_built_once_with_the_paths_and_flag(tmp_path: Path) -> None:
@@ -387,6 +424,10 @@ def test_page_has_the_views_no_external_urls_and_no_innerhtml(tmp_path: Path) ->
         '["categories"',
         '["gateway"',
         "#session/",
+        "#task/",
+        "renderTask",
+        "Call timeline",
+        "/tasks/",
         "/api/overview",
         "/api/sessions/",
     ):

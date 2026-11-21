@@ -7,6 +7,10 @@
 - The page now has views with hash routes (overview, sessions, session detail, categories, gateway). The gateway view is
   the previous page, unchanged in content; only it auto-refreshes.
 
+- Task detail: `GET /api/sessions/{id}/tasks/{n}` over `session_views.task`, and the page view `#task/<session id>/<n>`
+  (token spend, tools, largest results, files, agents, prompts, context chart, call timeline). Each task card on the
+  session page links to it.
+
 ## 0.1.0
 
 - First version (P0).
