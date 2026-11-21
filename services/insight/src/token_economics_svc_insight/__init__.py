@@ -13,6 +13,7 @@ from .dashboard import (
     dashboard_summary,
 )
 from .detectors import HermesDetectors, coverage_markdown
+from .sessions import SessionViews, open_session_views
 
 __all__ = [
     "BaselineReport",
@@ -23,12 +24,14 @@ __all__ = [
     "HermesDetectors",
     "RecentRequest",
     "SessionTotals",
+    "SessionViews",
     "TokenTotals",
     "baseline",
     "baseline_markdown",
     "coverage_markdown",
     "dashboard_summary",
     "open_detectors",
+    "open_session_views",
 ]
 
 
