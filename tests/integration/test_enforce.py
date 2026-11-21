@@ -71,10 +71,10 @@ def test_request_over_budget_is_refused_at_the_gateway_and_never_reaches_the_pro
     rig = rig_factory(budget_policy("0.01"))
     # When a request arrives
     resp = post(rig, body("msg_b1"))
-    # Then the gateway answers 429 in the provider's error shape, naming the budget, and nothing went upstream
-    assert resp.status_code == 429 and resp.headers["x-token-economics-blocked"] == "budget_exhausted"
+    # Then the gateway answers 402 in the provider's error shape, naming the budget, and nothing went upstream
+    assert resp.status_code == 402 and resp.headers["x-token-economics-blocked"] == "budget_exhausted"
     err = resp.json()
-    assert err["type"] == "error" and err["error"]["type"] == "rate_limit_error"
+    assert err["type"] == "error" and err["error"]["type"] == "billing_error"
     assert "caller:dhruv" in err["error"]["message"] and "$0.01" in err["error"]["message"]
     assert rig.provider.requests == []
     assert decisions(rig)[0]["action"] == "blocked" and decisions(rig)[0]["code"] == "budget_exhausted"
@@ -90,7 +90,7 @@ def test_key_never_exceeds_budget_by_more_than_measured_overshoot(rig_factory: A
     billed = sum((r.cost_estimate_usd or Decimal(0)) for r in rows)
     # Then total billed cost stays within budget plus the bound, and every passed request has exactly one row
     assert billed <= Decimal(1) + OVERSHOOT_BOUND
-    assert codes.count(200) == len(rows) and codes.count(429) == 50 - len(rows) and 0 < len(rows) < 50
+    assert codes.count(200) == len(rows) and codes.count(402) == 50 - len(rows) and 0 < len(rows) < 50
     assert billed == COST_PER_RESPONSE * len(rows)
     # And another caller's budget is untouched
     assert post(rig, body("msg_other"), key="vk-dev-2").status_code == 200

@@ -2,7 +2,7 @@
 Layer 0 of Company OS: price every model call, budget it, and report cost per successful task
 
 The plan is in [`plan/`](plan/README.md). Code follows [`plan/13-monorepo-layout.md`](plan/13-monorepo-layout.md).
-What is built and what is not: [`docs/P0-STATUS.md`](docs/P0-STATUS.md).
+What is built and what is not: [`docs/P0-STATUS.md`](docs/P0-STATUS.md), [`docs/P1-STATUS.md`](docs/P1-STATUS.md).
 
 ## Try it (P0: observe only, nothing is blocked or changed)
 
@@ -15,6 +15,12 @@ uv run token-economics-gateway --port 8787         # pass-through gateway
 uv run token-economics report                      # spend per developer, cache hit, from the ledger
 uv run token-economics detect --days 30            # 50-row leak coverage table from Claude Code transcripts
 uv run token-economics prices --stale              # price rows that need verifying
+uv run token-economics-admin                       # dashboard at http://127.0.0.1:8788
+
+# P1: limits (all off until switched on)
+uv run token-economics budget set --scope caller --match <name> --usd 20 --mode advisory
+uv run token-economics policy mode budgets enforced
+uv run token-economics key list
 ```
 
 State lives in `~/.token-economics` (`TOKEN_ECONOMICS_STATE_DIR` to change it). No prompt or response text is stored.

@@ -5,7 +5,7 @@ Guidance for Claude Code in this repository.
 ## What this is
 Token Economics: a gateway that prices every coding-agent model call, then budgets and optimises it. Four phases
 (P0 measure, P1 enforce, P2 optimise, P3 harden). Only a first pass of P0 is built. Start with `docs/ROADMAP.md`
-(what is left, lessons learned) and `docs/P0-STATUS.md`. The plan in `plan/` is the source of truth; do not edit
+(what is left, lessons learned), `docs/P0-STATUS.md` and `docs/P1-STATUS.md`. The plan in `plan/` is the source of truth; do not edit
 `plan/`, `research/` or `research-cli-agents/`.
 
 ## Commands
@@ -18,8 +18,9 @@ for d in modules/*/src features/*/src services/*/src apps/*/src tools; do uv run
 uv run python tools/check_layering.py [--write-importlinter] && uv run lint-imports
 uv run python tools/check_surface.py
 uv run python tools/check_extractable.py [layout-key ...]
-uv run token-economics init|report|detect|prices|replay
+uv run token-economics init|report|detect|prices|replay|key|budget|policy
 uv run token-economics-gateway --port 8787
+uv run token-economics-admin --port 8788     # local dashboard, read-only
 ```
 Use a scratch `TOKEN_ECONOMICS_STATE_DIR` when testing so `~/.token-economics` is not touched.
 
@@ -34,6 +35,8 @@ Use a scratch `TOKEN_ECONOMICS_STATE_DIR` when testing so `~/.token-economics` i
 - `services/insight/src/.../hermes/` is vendored from hermes-engine and must stay byte-identical; change it there and
   run `services/insight/tools/sync_hermes.py`.
 - Money is `Decimal`. Model ids match exactly.
+- Every policy feature is off by default and has three modes: off, advisory, enforced. A feature gets its services
+  through `FeatureEnv`, never by importing them. Only budgets fail closed.
 
 ## Working style
 - TDD as in the playbook: failing test first, named after the behaviour, with Given / When / Then comments.

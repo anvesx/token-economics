@@ -3,7 +3,7 @@
 Config (the feature's section of the policy file):
     {"limits": [{"scope": "caller", "match": "dhruv", "window": "day", "usd": "10"},
                 {"scope": "tenant", "match": "*", "window": "month", "usd": "500"}],
-     "status": 429, "alerts": ["0.75", "0.9", "1"], "reservation_ttl_s": 900,
+     "status": 402, "alerts": ["0.75", "0.9", "1"], "reservation_ttl_s": 900,
      "input_safety": "1.5", "default_max_tokens": 8192, "unpriced": "block"}
 Scopes: key, caller, team, tenant. Windows: day and month (UTC), total. A request counts against every limit it matches.
 """
@@ -87,7 +87,7 @@ class Budgets:
     def __init__(self, env: FeatureEnv) -> None:
         cfg = env.config
         self._limits = parse_limits(cfg)
-        self._status = int(cfg.get("status", 429))
+        self._status = int(cfg.get("status", 402))
         self._alerts = sorted(Decimal(str(a)) for a in cfg.get("alerts", ["0.75", "0.9", "1"]))
         self._ttl = float(cfg.get("reservation_ttl_s", 900))
         self._safety = Decimal(str(cfg.get("input_safety", "1.5")))

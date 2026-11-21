@@ -44,22 +44,15 @@ Nothing here has seen real traffic. Do these first; each can change the design.
 | Papers T1, T2 | Drafts, data, scripts | `papers/` (new) |
 | GitHub | Rulesets, required `ci-gate` check, labels (`.github/labels.yml`), milestones, project board, real CODEOWNERS and security address | on GitHub |
 
-## 2. P1: enforce (4 weeks, 20 cards)
-Limits move outside the agent. New packages: `features/budgets`, `turn-cap`, `loop-guard`, `max-tokens`,
-`headless-runner`; `services/health`, `policy`, `tenancy`, `insight` (dashboards), `reconciler`; `apps/admin-api`, `worker`.
-- Per-key budget: reserve the worst case, then true up; 402 or 429 at the gateway when over; alerts at 75, 90, 100%.
-- Turn cap at P75 of each model's own baseline (from the P0 baseline file, not a constant), with a remaining-turns reminder.
-- Loop guard: stop at the first repeated-failure signature.
-- Backend health, rate-limit tracking, fallback route.
-- Failure posture: observation fails open, budgets fail closed (`docs/adr/0002`).
-- Capability flags: no harness with `base_url` false is ever marked enforced.
-- Zero-risk guards for rows 15, 36, 42, each with a replay showing task success unchanged. **Row 15 is retired in
-  Hermes and row 42 dropped "briefs": agree the numbering with the plan owner first.**
-- Invoice reconciler with weekly canary; dashboard by tenant, caller, model with median and P95.
+## 2. P1: enforce — first pass built on branch `feat/p1-working-core`
+State and gaps: `docs/P1-STATUS.md`. Decisions: `docs/adr/0002`. Left to build:
+- Measure the budget overshoot on real traffic; make the reservation less pessimistic (it holds about $1.60 for a
+  Claude Code "hi"); a "require a key" switch so dropping the header cannot escape a budget.
+- Turn cap fed from the P0 baseline (`p75_caps`), remaining-turns reminder, loop-guard redirect, Codex facts.
+- Fallback route, gateway bypass when the gateway is down, max-tokens enforcer, headless runner.
+- Reconciler with weekly canary; alert delivery; admin write API with roles; YAML policy-as-code.
+- Zero-risk guards for rows 15, 36, 42 once the row numbering is agreed.
 - Papers T3, T4, T5.
-- Exit gate: a test key cannot exceed budget by more than the measured overshoot; fault injection (429, timeout,
-  stream cut) never double-counts or loses a row; both failure postures shown.
-- Depends on: the P0 baseline (turn cap), spike s2 (how to signal a spent budget), spike s1 (build or reuse LiteLLM).
 
 ## 3. P2: optimise (6 weeks, 59 cards)
 Every optimisation ships behind its own flag, off by default, and only after a paired win in cost per successful task.
@@ -93,6 +86,9 @@ Every optimisation ships behind its own flag, off by default, and only after a p
 5. How Hermes itself continues: stay a plugin feeding this system (paper T12), or fold in.
 
 ## Lessons from the first pass (keep these)
+- Check the port is free before a live test: a gateway the user started was already on 8787 and a test call went through it.
+- When running `claude -p` from a script, pass `stdin=DEVNULL`, or the script text becomes part of the prompt.
+- A feature that holds state (a budget reservation) must be released on every path: block by a later feature, upstream error, no usage, oversize body.
 - Apps import `contracts` only and find everything through entry points; after adding or changing an entry point run
   `uv sync --all-packages` or it will not resolve.
 - The gateway must send headers upstream as a list, not a dict: Claude Code repeats `anthropic-beta`.

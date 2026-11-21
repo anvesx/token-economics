@@ -100,7 +100,7 @@ def test_request_is_refused_when_spend_plus_reservation_would_pass_the_limit(tmp
     f.after(ctx("a"), row("0.95"), 200)
     # When a request that could cost $0.07 arrives  # Then it is refused with the budget named
     d = f.before(ctx("b"))
-    assert d is not None and not d.allow and d.status == 429 and d.code == "budget_exhausted"
+    assert d is not None and not d.allow and d.status == 402 and d.code == "budget_exhausted"
     assert "caller:dhruv" in d.message and "$0.95" in d.message and "$1.00" in d.message
     assert d.retry_after_s == 12 * 3600
     # And another caller still has their own budget
