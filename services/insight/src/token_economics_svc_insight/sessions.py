@@ -55,6 +55,20 @@ def _money(x: float) -> float:
     return round(float(x), 6)
 
 
+def _ratio(part: float, whole: float) -> float | None:
+    return round(part / whole, 4) if whole else None
+
+
+def _target(inp: Any) -> str:
+    """What a tool call was aimed at: a file name, a command or a pattern, shortened. Shown locally only."""
+    for key in ("file_path", "notebook_path", "command", "pattern", "url", "query", "description", "skill"):
+        value = inp.get(key)
+        if value:
+            text = Path(str(value)).name if key in ("file_path", "notebook_path") else " ".join(str(value).split())
+            return text if len(text) <= 80 else text[:79] + "…"
+    return ""
+
+
 class SessionViews:
     """Read-only views over a transcript tree. Results are cached for a minute, because an analysis takes seconds."""
 
@@ -159,7 +173,7 @@ class SessionViews:
         for s in sessions:
             full = self._session(report, s, leaks.get((s.project, s.sid[:8]), {}))
             details[s.sid] = full
-            out_sessions.append({k: v for k, v in full.items() if k not in ("tasks", "leaks")})
+            out_sessions.append({k: v for k, v in full.items() if k not in ("tasks", "leaks", "task_details")})
             by_project[full["project"]] += full["cost_usd"]
             for c in list(s.calls) + list(s.helper_calls):
                 by_model[c["model"]] += c["cost"]
@@ -197,6 +211,7 @@ class SessionViews:
         typed = [p for p in s.prompts if report.typed(p)]
         uses = sorted(s.tool_uses.values(), key=lambda u: u["t"])
         tasks = []
+        task_details: dict[int, dict[str, Any]] = {}
         for n, tsk in enumerate(s.tasks(), 1):
             end = tsk["end"]
             mine = tsk["calls"]
@@ -206,6 +221,7 @@ class SessionViews:
             edits = [u for u in tools if u["name"] in EDIT_TOOLS]
             last = max([c["t"] for c in mine + agent] or [tsk["start"]])
             cost = sum(c["cost"] for c in mine) + sum(c["cost"] for c in agent)
+            task_details[n] = self._task_detail(report, s, tsk, mine, agent, prompts)
             tasks.append(
                 {
                     "n": n,
@@ -263,6 +279,147 @@ class SessionViews:
             "top_leak": {"row": waste[0]["row"], "name": waste[0]["name"], "usd": waste[0]["usd"]} if waste else None,
             "tasks": tasks,
             "leaks": leak_rows,
+            "task_details": task_details,
+        }
+
+    def _task_detail(
+        self, report: Any, s: Any, tsk: Any, mine: list[Any], agent: list[Any], prompts: list[Any]
+    ) -> dict[str, Any]:
+        """Everything about one task beyond its summary line. Built from the same calls the summary counts."""
+        start, end = tsk["start"], tsk["end"]
+        every = sorted(mine + agent, key=lambda c: c["t"])
+        spend = {"fresh input": 0.0, "cache write": 0.0, "cache read": 0.0, "output": 0.0}
+        by_model: Counter[str] = Counter()
+        for c in every:
+            pi, po, pr = report.price(c["model"])
+            spend["fresh input"] += c["in"] * pi / 1e6
+            spend["cache write"] += c["cw"] * pi * c["wmult"] / 1e6
+            spend["cache read"] += c["cr"] * pr / 1e6
+            spend["output"] += c["out"] * po / 1e6
+            by_model[c["model"]] += c["cost"]
+
+        # tools: every call in the task (main thread and agents) with its result
+        results = {r["id"]: r for r in list(s.results) + list(s.helper_results) if start <= r["t"] < end}
+        uses = list(s.tool_uses.items()) + list(s.helper_tool_uses.items())
+        per_tool: dict[str, dict[str, Any]] = {}
+        files: dict[str, dict[str, Any]] = {}
+        biggest = []
+        for uid, u in uses:
+            if not start <= u["t"] < end:
+                continue
+            name, r = str(u["name"]), results.get(uid)
+            row = per_tool.setdefault(
+                name, {"name": name, "calls": 0, "failed": 0, "result_tokens": 0, "input_tokens": 0}
+            )
+            size = (r["tokens"] + r["image_tokens"]) if r else 0
+            row["calls"] += 1
+            row["failed"] += bool(r and r["is_error"])
+            row["result_tokens"] += size
+            row["input_tokens"] += s.tok(len(str(u["input"])))
+            path = str(u["input"].get("file_path") or u["input"].get("notebook_path") or "")
+            if path:
+                f = files.setdefault(path, {"file": Path(path).name, "path": path, "reads": 0, "edits": 0, "tokens": 0})
+                f["reads"] += name == "Read"
+                f["edits"] += name in EDIT_TOOLS
+                f["tokens"] += size
+            if r:
+                biggest.append(
+                    {
+                        "tool": name,
+                        "target": _target(u["input"]),
+                        "tokens": size,
+                        "failed": bool(r["is_error"]),
+                        "at": _iso(r["t"]),
+                        "agent": bool(r.get("agent")),
+                    }
+                )
+
+        # turns: one per typed prompt, with the model calls it started
+        marks = [p["t"] for p in prompts] + [end]
+        turns = []
+        for k, p in enumerate(prompts):
+            mc = [c for c in every if marks[k] <= c["t"] < marks[k + 1]]
+            turns.append(
+                {
+                    "n": k + 1,
+                    "at": _iso(p["t"]),
+                    "title": _title(p["text"]),
+                    "calls": len(mc),
+                    "tool_calls": sum(c["n_tools"] for c in mc),
+                    "output_tokens": sum(c["out"] for c in mc),
+                    "cost_usd": _money(sum(c["cost"] for c in mc)),
+                }
+            )
+
+        # timeline: one row per model call, in order
+        timeline = []
+        for c in every:
+            names = Counter(str(b.get("name")) for b in c["blocks"] if b.get("type") == "tool_use")
+            timeline.append(
+                {
+                    "at": _iso(c["t"]),
+                    "model": c["model"],
+                    "agent": bool(c["helper"]),
+                    "context": c["ctx"],
+                    "fresh_input": c["in"],
+                    "cache_read": c["cr"],
+                    "cache_write": c["cw"],
+                    "output": c["out"],
+                    "thinking": c["think"] or 0,
+                    "cost_usd": _money(c["cost"]),
+                    "tools": [{"name": k, "count": v} for k, v in names.items()],
+                }
+            )
+        agents = []
+        for calls in s.agents.values():
+            inside = [c for c in calls if start <= c["t"] < end]
+            if inside:
+                agents.append(
+                    {
+                        "started": _iso(inside[0]["t"]),
+                        "model": inside[0]["model"],
+                        "calls": len(inside),
+                        "tool_calls": sum(c["n_tools"] for c in inside),
+                        "start_context": inside[0]["ctx"],
+                        "cost_usd": _money(sum(c["cost"] for c in inside)),
+                    }
+                )
+        ctx = [c["ctx"] for c in mine]
+        gaps = [b["t"] - a["t"] for a, b in zip(mine, mine[1:], strict=False)]
+        rewrites = sum(
+            1 for c, g in zip(mine[1:], gaps, strict=False) if g >= self._ttl_s and c["cw"] > max(5_000, 0.5 * c["ctx"])
+        )
+        return {
+            "spend_by_token_type": [
+                {"name": k, "usd": _money(v)} for k, v in sorted(spend.items(), key=lambda kv: -kv[1])
+            ],
+            "spend_by_model": [{"name": k, "usd": _money(v)} for k, v in by_model.most_common()],
+            "main_cost_usd": _money(sum(c["cost"] for c in mine)),
+            "agent_cost_usd": _money(sum(c["cost"] for c in agent)),
+            "thinking_tokens": sum(c["think"] or 0 for c in every),
+            "context": {
+                "start": ctx[0] if ctx else 0,
+                "end": ctx[-1] if ctx else 0,
+                "peak": max(ctx, default=0),
+                "series": ctx,
+            },
+            "cache": {
+                "hit_rate": _ratio(sum(c["cr"] for c in every), sum(c["ctx"] for c in every)),
+                "rewrites_after_idle": rewrites,
+                "longest_idle_s": int(max(gaps, default=0)),
+            },
+            "counts": {
+                "failed_tool_calls": sum(t["failed"] for t in per_tool.values()),
+                "interrupted": sum(1 for t in s.interrupts if start <= t < end),
+                "compactions": sum(1 for t in s.comp_sorted if start <= t < end),
+                "agents": len(agents),
+            },
+            "tools": sorted(per_tool.values(), key=lambda t: -t["calls"]),
+            "files": sorted(files.values(), key=lambda f: (-f["edits"], -f["tokens"]))[:40],
+            "largest_results": sorted(biggest, key=lambda b: -b["tokens"])[:15],
+            "turns": turns,
+            "timeline": timeline,
+            "agents": sorted(agents, key=lambda a: -a["cost_usd"]),
         }
 
     # ---------------------------------------------------------------- views
@@ -273,6 +430,20 @@ class SessionViews:
 
     def session(self, session_id: str, days: int = 30) -> dict[str, Any] | None:
         """One session with its tasks and leak categories. Accepts the full id or its first 8 characters."""
+        found = self._find(session_id, days)
+        return {k: v for k, v in found.items() if k != "task_details"} if found else None
+
+    def task(self, session_id: str, n: int, days: int = 30) -> dict[str, Any] | None:
+        """One task of a session in full: spend by token type, tools, files, largest results, turns, call timeline."""
+        found = self._find(session_id, days)
+        if not found or n not in found["task_details"]:
+            return None
+        summary = next(t for t in found["tasks"] if t["n"] == n)
+        session = {k: found[k] for k in ("id", "short", "project", "title", "cost_usd", "task_count", "split_by")}
+        share = _ratio(summary["cost_usd"], found["cost_usd"])
+        return {**summary, **found["task_details"][n], "session": session, "share_of_session": share}
+
+    def _find(self, session_id: str, days: int) -> dict[str, Any] | None:
         details: dict[str, Any] = self._analysed(days)["details"]
         if session_id in details:
             return dict(details[session_id])

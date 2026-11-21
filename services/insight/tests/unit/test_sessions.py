@@ -59,3 +59,24 @@ def test_cached_labels_from_the_plugin_are_reused_and_nothing_else_is_written(
 def test_an_empty_tree_gives_an_empty_overview(tmp_path: Path) -> None:
     data = views(tmp_path / "none", tmp_path).overview()
     assert data["sessions"] == [] and data["total_usd"] == 0 and data["categories"] == []
+
+
+def test_task_detail_adds_up_to_its_summary_and_lists_tools_turns_and_calls(transcripts: Path, tmp_path: Path) -> None:
+    v = views(transcripts, tmp_path)
+    sid = ""
+    for summary in v.overview(days=36500)["sessions"]:
+        sid = summary["id"]
+        session = v.session(sid, days=36500)
+        assert session is not None and "task_details" not in session
+        for t in session["tasks"]:
+            d = v.task(sid, t["n"], days=36500)
+            assert d is not None and d["title"] == t["title"] and d["session"]["id"] == sid
+            # the four token types, the models, and main + agent all add up to the task's cost
+            for parts in (d["spend_by_token_type"], d["spend_by_model"]):
+                assert abs(sum(x["usd"] for x in parts) - t["cost_usd"]) < 1e-4
+            assert abs(d["main_cost_usd"] + d["agent_cost_usd"] - t["cost_usd"]) < 1e-4
+            assert len(d["timeline"]) == t["calls"] + t["agent_calls"]
+            assert abs(sum(c["cost_usd"] for c in d["timeline"]) - t["cost_usd"]) < 1e-4
+            assert sum(x["calls"] for x in d["tools"]) >= t["tool_calls"]
+            assert len(d["turns"]) == t["prompts"] and len(d["context"]["series"]) == t["calls"]
+    assert v.task(sid, 99, days=36500) is None and v.task("nope-nope", 1, days=36500) is None
