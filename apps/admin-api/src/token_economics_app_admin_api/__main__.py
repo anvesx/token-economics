@@ -20,11 +20,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="token-economics-admin", description=__doc__)
     p.add_argument("--host", default="127.0.0.1", help="default 127.0.0.1; there is no authentication")
     p.add_argument("--port", type=int, default=8788)
+    p.add_argument("--transcripts", type=Path, default=None, help="Claude Code transcripts, default ~/.claude/projects")
+    p.add_argument(
+        "--prompt-check",
+        action="store_true",
+        help="let a model (Sonnet, through your own Claude Code login) label prompts so tasks are split more "
+        "accurately; prompt text is sent to the model; off by default. Labels already cached by the Hermes plugin "
+        "are reused either way.",
+    )
     a = p.parse_args(argv)
     if a.host not in ("127.0.0.1", "localhost", "::1"):
         print(f"warning: {a.host} is not localhost and the dashboard has NO authentication", flush=True)
     print(f"dashboard: http://{a.host}:{a.port}/  (state directory {state_dir()})", flush=True)
-    uvicorn.run(create_app(state_dir()), host=a.host, port=a.port, log_level="warning", server_header=False)
+    uvicorn.run(
+        create_app(
+            state_dir(),
+            transcripts_root=a.transcripts.expanduser() if a.transcripts else None,
+            prompt_check=a.prompt_check,
+        ),
+        host=a.host,
+        port=a.port,
+        log_level="warning",
+        server_header=False,
+    )
     return 0
 
 

@@ -19,6 +19,17 @@ not built yet and what was learned while building.
   user may have a gateway running on port 8787 with real state in `~/.token-economics`. Use another port and a
   scratch `TOKEN_ECONOMICS_STATE_DIR` for tests.
 
+## Dashboard (branch `feat/dashboard-sessions`, on top of P1)
+- `token-economics-admin` now has Overview, Sessions, Session detail (tasks and leaks), Categories and Gateway views.
+  Sessions, tasks and categories come from Claude Code transcripts through `services/insight/sessions.py`; the gateway
+  view comes from the ledger. The two are not joined by session yet.
+- Tasks are split by the vendored `Session.tasks()` (model labels when cached or `--prompt-check`, else an idle-gap
+  rule). Not validated against a person's judgement. Each task shows why its boundary was drawn.
+- Never opened in a real browser by the builder or reviewer: layout is unchecked. The owner will supply the visual design.
+- Not built: the hosted version with login (the owner chose local-only first; when it comes, they are willing to send
+  session and task data including titles, visible to the owner and admins). Findings carry no timestamps, so leaks are
+  per session, not per task.
+
 ## Starting P2 in a new session
 1. Read this file, `CLAUDE.md`, both status files, then `plan/PHASES.md` (P2), `plan/06-context-guard.md`,
    `plan/07-observability-eval-rollout.md`, `plan/05-policy-router-budgets.md` (routing ladder).

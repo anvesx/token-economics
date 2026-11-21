@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
 from importlib.resources import files
@@ -91,14 +92,35 @@ def _field(record: Any, name: str) -> Any:
     return getattr(getattr(record, "info", None), name, None)
 
 
-def create_app(state_dir: Path, load: Loader = _registry_load) -> Starlette:
-    """The app for one state directory. `load(group, name)` finds services; tests inject a fake one."""
+def create_app(
+    state_dir: Path,
+    load: Loader = _registry_load,
+    transcripts_root: Path | None = None,
+    prompt_check: bool = False,
+) -> Starlette:
+    """The app for one state directory. `load(group, name)` finds services; tests inject a fake one.
+
+    The session views read Claude Code transcripts (default `~/.claude/projects`). Their service object is built once,
+    on first use, because an analysis is slow and the service caches it.
+    """
+    transcripts = transcripts_root if transcripts_root is not None else Path("~/.claude/projects").expanduser()
+    views_lock = threading.Lock()
+    views_box: list[Any] = []
 
     def service(name: str) -> Any | None:
         try:
             return load(SERVICES, name)
         except LookupError:
             return None
+
+    def session_views() -> Any | None:
+        with views_lock:
+            if not views_box:
+                factory = service("session_views")
+                if factory is None:
+                    return None
+                views_box.append(factory(str(transcripts), str(state_dir / "detectors"), prompt_check))
+            return views_box[0]
 
     def open_ledger() -> Any | None:
         path = state_dir / "ledger.sqlite"
@@ -124,6 +146,29 @@ def create_app(state_dir: Path, load: Loader = _registry_load) -> Starlette:
         data = build(rows, now=now, days=days).model_dump(mode="json")
         data["has_ledger"] = ledger is not None
         return JSONResponse(data)
+
+    def overview(request: Request) -> Response:
+        try:
+            days = _int_param(request, "days", 30, 1, 365)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        views = session_views()
+        if views is None:
+            return JSONResponse({"error": "the insight service is not installed"}, status_code=503)
+        return JSONResponse(views.overview(days))
+
+    def session_detail(request: Request) -> Response:
+        try:
+            days = _int_param(request, "days", 30, 1, 365)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        views = session_views()
+        if views is None:
+            return JSONResponse({"error": "the insight service is not installed"}, status_code=503)
+        found = views.session(request.path_params["session_id"], days)
+        if found is None:
+            return JSONResponse({"error": "session not found in this period"}, status_code=404)
+        return JSONResponse(found)
 
     def budgets(request: Request) -> Response:
         factory = service("budget_status")
@@ -164,6 +209,8 @@ def create_app(state_dir: Path, load: Loader = _registry_load) -> Starlette:
     routes = [
         Route("/", index, methods=["GET"]),
         Route("/api/summary", summary, methods=["GET"]),
+        Route("/api/overview", overview, methods=["GET"]),
+        Route("/api/sessions/{session_id}", session_detail, methods=["GET"]),
         Route("/api/budgets", budgets, methods=["GET"]),
         Route("/api/decisions", tail("decisions.jsonl", 200), methods=["GET"]),
         Route("/api/alerts", tail("alerts.jsonl", 200), methods=["GET"]),

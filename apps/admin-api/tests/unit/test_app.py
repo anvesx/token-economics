@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -281,3 +283,126 @@ def test_responses_are_no_store_and_only_get_is_allowed(tmp_path: Path) -> None:
 @pytest.mark.parametrize("path", ENDPOINTS)
 def test_every_endpoint_returns_json(path: str, tmp_path: Path) -> None:
     assert client(tmp_path).get(path).headers["content-type"].startswith("application/json")
+
+
+# ---- session views: the transcript-backed overview and session detail
+
+SESSION = {
+    "id": "abcdef1234567890",
+    "short": "abcdef12",
+    "project": "demo",
+    "title": INJECTION,
+    "started": "2026-11-20T10:00:00Z",
+    "duration_s": 600,
+    "task_count": 1,
+    "calls": 3,
+    "cost_usd": 1.5,
+    "leak_usd": 0.5,
+    "top_leak": {"row": 3, "name": "Re-read", "usd": 0.5},
+    "split_by": "heuristic",
+    "tasks": [{"n": 1, "title": "t", "how_text": "first prompt of the session", "cost_usd": 1.5}],
+    "leaks": [],
+}
+OVERVIEW = {
+    "days": 30,
+    "total_usd": 1.5,
+    "sessions": [{k: v for k, v in SESSION.items() if k not in ("tasks", "leaks")}],
+    "categories": [],
+    "retired": [],
+    "spend_by_token_type": [{"name": "output", "usd": 1.5}],
+    "spend_by_model": [],
+    "spend_by_project": [],
+}
+
+
+class _Views:
+    made: list[tuple[str, str, bool]] = []
+
+    def __init__(self, transcripts: str, state: str, prompt_check: bool) -> None:
+        _Views.made.append((transcripts, state, prompt_check))
+        self.asked: list[int] = []
+
+    def overview(self, days: int) -> dict[str, Any]:
+        self.asked.append(days)
+        return {**OVERVIEW, "days": days}
+
+    def session(self, session_id: str, days: int) -> dict[str, Any] | None:
+        return SESSION if SESSION["id"].startswith(session_id) else None
+
+
+def views_client(tmp_path: Path, **kwargs: Any) -> TestClient:
+    _Views.made = []
+    return TestClient(create_app(tmp_path, fake_loader(session_views=_Views), **kwargs))
+
+
+def test_overview_and_session_come_from_the_session_views_service(tmp_path: Path) -> None:
+    # Given a fake session_views service
+    c = views_client(tmp_path)
+    # When / Then
+    assert c.get("/api/overview?days=7").json() == {**OVERVIEW, "days": 7}
+    assert c.get("/api/overview").json()["days"] == 30
+    assert c.get(f"/api/sessions/{SESSION['id']}").json()["title"] == INJECTION
+    missing = c.get("/api/sessions/nope")
+    assert missing.status_code == 404 and "error" in missing.json()
+
+
+def test_session_views_service_is_built_once_with_the_paths_and_flag(tmp_path: Path) -> None:
+    # Given an app with explicit transcripts and prompt check on
+    c = views_client(tmp_path, transcripts_root=tmp_path / "t", prompt_check=True)
+    # When several requests are made
+    for _ in range(3):
+        c.get("/api/overview")
+        c.get("/api/sessions/abcdef12")
+    # Then the factory ran once, with the transcripts, the detectors directory and the flag
+    assert _Views.made == [(str(tmp_path / "t"), str(tmp_path / "detectors"), True)]
+
+
+def test_session_views_defaults_to_claude_projects_and_no_prompt_check(tmp_path: Path) -> None:
+    views_client(tmp_path).get("/api/overview")
+    assert _Views.made == [(str(Path("~/.claude/projects").expanduser()), str(tmp_path / "detectors"), False)]
+
+
+def test_session_views_validate_days_and_missing_service_is_503(tmp_path: Path) -> None:
+    c = views_client(tmp_path)
+    assert c.get("/api/overview?days=abc").status_code == 400
+    assert c.get("/api/sessions/abcdef12?days=x").status_code == 400
+
+    def nothing(group: str, name: str) -> Any:
+        raise LookupError(name)
+
+    bare = TestClient(create_app(tmp_path, nothing))
+    assert bare.get("/api/overview").status_code == 503
+    assert bare.get("/api/sessions/abcdef12").status_code == 503
+    assert "error" in bare.get("/api/overview").json()
+    assert views_client(tmp_path).post("/api/overview").status_code == 405
+
+
+def test_page_has_the_views_no_external_urls_and_no_innerhtml(tmp_path: Path) -> None:
+    # Given the page as served (it needs no service)
+    page = client(tmp_path, fake_loader()).get("/").text
+    # Then it has every view, the footer, no external URL and never assigns markup
+    for text in (
+        '["overview"',
+        '["sessions"',
+        '["categories"',
+        '["gateway"',
+        "#session/",
+        "/api/overview",
+        "/api/sessions/",
+    ):
+        assert text in page
+    assert "Titles are read from your own transcripts" in page
+    assert not re.search(r"https?://", page)
+    assert not re.search(r"innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(", page)
+
+
+def test_page_script_is_valid_javascript(tmp_path: Path) -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = client(tmp_path, fake_loader()).get("/").text
+    script = page.split("<script>", 1)[1].split("</script>", 1)[0]
+    path = tmp_path / "page.js"
+    path.write_text(script)
+    done = subprocess.run([node, "--check", str(path)], capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
