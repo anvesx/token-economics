@@ -1,16 +1,33 @@
 """Attribution, baseline report and the leak detectors in alert mode."""
+
 from pathlib import Path as _Path
 
 from .baseline import BaselineReport, DeveloperBaseline, baseline, baseline_markdown
+from .dashboard import (
+    DashboardSummary,
+    DayTotals,
+    GroupTotals,
+    RecentRequest,
+    SessionTotals,
+    TokenTotals,
+    dashboard_summary,
+)
 from .detectors import HermesDetectors, coverage_markdown
 
 __all__ = [
     "BaselineReport",
+    "DashboardSummary",
+    "DayTotals",
     "DeveloperBaseline",
+    "GroupTotals",
     "HermesDetectors",
+    "RecentRequest",
+    "SessionTotals",
+    "TokenTotals",
     "baseline",
     "baseline_markdown",
     "coverage_markdown",
+    "dashboard_summary",
     "open_detectors",
 ]
 

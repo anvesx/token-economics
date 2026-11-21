@@ -12,14 +12,29 @@ _ids = count(1)
 
 
 def row(
-    day: int, cost: str | None, *, caller: str = "ann", agent: str = "", model: str = "m1",
-    source: CostSource = CostSource.GATEWAY, success: bool | None = None, hour: int = 10, **buckets: int,
+    day: int,
+    cost: str | None,
+    *,
+    caller: str = "ann",
+    agent: str = "",
+    model: str = "m1",
+    source: CostSource = CostSource.GATEWAY,
+    success: bool | None = None,
+    hour: int = 10,
+    **buckets: int,
 ) -> LedgerRow:
     return LedgerRow(
-        provider="anthropic", response_id=f"r{next(_ids)}", ts=datetime(2026, 11, day, hour, tzinfo=UTC),
-        caller=caller, agent=agent, model=model, buckets=Buckets(**buckets),
+        provider="anthropic",
+        response_id=f"r{next(_ids)}",
+        ts=datetime(2026, 11, day, hour, tzinfo=UTC),
+        caller=caller,
+        agent=agent,
+        model=model,
+        buckets=Buckets(**buckets),
         cost_estimate_usd=None if cost is None else Decimal(cost),
-        cost_source=source, price_row_id="" if cost is None else "p1", success=success,
+        cost_source=source,
+        price_row_id="" if cost is None else "p1",
+        success=success,
     )
 
 
@@ -77,8 +92,10 @@ def test_developer_falls_back_from_caller_to_agent_to_unknown() -> None:
 
 def test_cache_hit_is_cache_read_over_all_prompt_buckets_per_caller() -> None:
     # Given ann: read 600 of (100 fresh + 600 read + 200 write 5m + 100 write 1h) = 1000; bob has no prompt tokens
-    rows = [row(1, "1", fresh_input=100, cache_read=600, cache_write_5m=200, cache_write_1h=100, output=999),
-            row(1, "1", caller="bob", output=50)]
+    rows = [
+        row(1, "1", fresh_input=100, cache_read=600, cache_write_5m=200, cache_write_1h=100, output=999),
+        row(1, "1", caller="bob", output=50),
+    ]
     report = baseline(rows)
     # Then
     assert dev(report, "ann").cache_hit_rate == Decimal("0.6000")
@@ -87,8 +104,14 @@ def test_cache_hit_is_cache_read_over_all_prompt_buckets_per_caller() -> None:
 
 def test_failed_run_share_counts_only_rows_with_a_known_outcome() -> None:
     # Given 1 failed (cost 3), 3 succeeded (cost 1 each) and 2 rows with no outcome
-    rows = [row(1, "3", success=False), row(1, "1", success=True), row(1, "1", success=True), row(1, "1", success=True),
-            row(1, "100"), row(1, "100")]
+    rows = [
+        row(1, "3", success=False),
+        row(1, "1", success=True),
+        row(1, "1", success=True),
+        row(1, "1", success=True),
+        row(1, "100"),
+        row(1, "100"),
+    ]
     report = baseline(rows)
     # Then 1/4 by count and 3/6 by spend
     assert report.known_outcome_requests == 4
@@ -106,8 +129,11 @@ def test_failed_run_share_is_none_when_no_row_has_an_outcome_and_the_text_says_s
 
 def test_period_total_model_and_cost_source_shares() -> None:
     # Given three rows across two models and two cost sources
-    rows = [row(1, "1", model="a", hour=8), row(3, "2", model="b", source=CostSource.CLIENT, hour=20),
-            row(3, "4", model="a")]
+    rows = [
+        row(1, "1", model="a", hour=8),
+        row(3, "2", model="b", source=CostSource.CLIENT, hour=20),
+        row(3, "4", model="a"),
+    ]
     report = baseline(rows)
     # Then
     assert report.period_start == datetime(2026, 11, 1, 8, tzinfo=UTC)

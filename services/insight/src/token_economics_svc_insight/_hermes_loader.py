@@ -14,6 +14,7 @@ gets its own set of modules (the setting is read once at import), cached for the
 This is the one place where untyped legacy code enters this package: everything on `HermesModules`
 is `Any`. Keep other code from reaching into the vendored modules except through `detectors.py`.
 """
+
 from __future__ import annotations
 
 import importlib

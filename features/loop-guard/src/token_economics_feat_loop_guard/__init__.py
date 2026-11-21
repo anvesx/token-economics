@@ -1,3 +1,5 @@
 """Stop at the first repeated-failure signature."""
 
-__all__: list[str] = []
+from .loop_guard import LoopGuard, create
+
+__all__ = ["LoopGuard", "create"]

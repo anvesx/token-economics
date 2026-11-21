@@ -1,3 +1,5 @@
 """Backend health and rate-limit tracking."""
 
-__all__: list[str] = []
+from .tracker import InMemoryHealth, open_health
+
+__all__ = ["InMemoryHealth", "open_health"]

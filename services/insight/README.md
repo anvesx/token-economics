@@ -15,6 +15,9 @@ Kind: service. Phase: P0 (detectors and baseline). May import: token-economics-c
   P95 per day), cache hit per caller, failed-run share, period, spend by model and share of rows per `cost_source`.
   The conventions (UTC days, nearest-rank P95, unpriced rows left out of spend) are in the `baseline.py` docstring.
   In P0 nothing sets `LedgerRow.success`, so the failed-run share is `None` and the text says so.
+- **Dashboard** (`dashboard_summary(rows, now=, days=30)`): spend by UTC day (zero-filled), tenant, caller, model and
+  harness (requests, spend, share, tokens, cache hit, median and P95 per active day), top 20 sessions and the 50 newest
+  requests, for the admin dashboard. Same conventions as the baseline; see the `dashboard.py` docstring.
 
 The estimate ranks work to look at first. It does not predict savings.
 

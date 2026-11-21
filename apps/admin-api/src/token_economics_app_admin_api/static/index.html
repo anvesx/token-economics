@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Token Economics</title>
+<style>
+:root {
+  --bg: #f6f7f9; --card: #ffffff; --ink: #1b1f27; --mute: #5d6675; --line: #e1e5eb;
+  --accent: #2f6fdb; --ok: #1f8f55; --warn: #b7791f; --bad: #c0392b; --warn-bg: #fff6e0;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12151b; --card: #1b2029; --ink: #e8ebf0; --mute: #98a2b3; --line: #2b3240;
+    --accent: #6ea0ff; --ok: #4cc38a; --warn: #e5b04d; --bad: #ef7a6c; --warn-bg: #3a2f14;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+h1 { font-size: 20px; margin: 0; }
+h2 { font-size: 15px; margin: 0 0 8px; }
+.mute { color: var(--mute); font-size: 12px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { background: var(--card); color: var(--ink); border: 0; padding: 6px 12px; cursor: pointer; font: inherit; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; min-width: 0; }
+.tiles .card { margin: 0; }
+.tile .v { font-size: 24px; font-weight: 600; }
+.tile .l { color: var(--mute); font-size: 12px; }
+.tile.warn { background: var(--warn-bg); border-color: var(--warn); }
+.tile.warn .v { color: var(--warn); }
+.banner { background: var(--warn-bg); border: 1px solid var(--warn); border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; white-space: nowrap; }
+th, td { text-align: left; padding: 5px 10px 5px 0; border-bottom: 1px solid var(--line); }
+th { color: var(--mute); font-weight: 500; font-size: 12px; }
+td.n, th.n { text-align: right; padding-right: 12px; font-variant-numeric: tabular-nums; }
+tr:last-child td { border-bottom: 0; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.grid2 .card { margin-bottom: 0; }
+.bar { height: 10px; background: var(--line); border-radius: 5px; overflow: hidden; margin: 4px 0 2px; }
+.bar > span { display: block; height: 100%; background: var(--ok); }
+.bar > span.w75 { background: var(--warn); }
+.bar > span.w90 { background: #d9822b; }
+.bar > span.w100 { background: var(--bad); }
+.budget { margin-bottom: 12px; }
+.budget:last-child { margin-bottom: 0; }
+.pill { display: inline-block; padding: 0 8px; border-radius: 10px; font-size: 12px; border: 1px solid var(--line); }
+.pill.bad { color: var(--bad); border-color: var(--bad); }
+.pill.warn { color: var(--warn); border-color: var(--warn); }
+.chart { display: flex; align-items: flex-end; gap: 2px; height: 150px; border-bottom: 1px solid var(--line); }
+.chart .col { flex: 1 1 0; min-width: 1px; height: 100%; display: flex; align-items: flex-end; }
+.chart .b { width: 100%; background: var(--accent); border-radius: 2px 2px 0 0; min-height: 0; }
+.chart .col:hover .b { opacity: .75; }
+.axis { display: flex; justify-content: space-between; color: var(--mute); font-size: 11px; margin-top: 2px; }
+ul.log { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow-y: auto; }
+ul.log li { padding: 4px 0; border-bottom: 1px solid var(--line); word-break: break-word; }
+ul.log li:last-child { border-bottom: 0; }
+footer { color: var(--mute); font-size: 12px; margin-top: 8px; }
+.err { color: var(--bad); }
+@media (max-width: 520px) { main { padding: 12px; } .tile .v { font-size: 20px; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div><h1>Token Economics</h1><div class="mute" id="status">Loading...</div></div>
+    <div class="seg" id="days" role="group" aria-label="Period in days"></div>
+  </header>
+  <div id="empty" class="banner" hidden>No traffic yet: point Claude Code at the gateway.</div>
+  <div class="tiles" id="tiles"></div>
+  <section class="card"><h2>Spend per day (UTC)</h2><div id="chart"></div></section>
+  <section class="card"><h2>By caller</h2><div class="scroll" id="t-caller"></div></section>
+  <section class="card"><h2>By model</h2><div class="scroll" id="t-model"></div></section>
+  <section class="card"><h2>By tenant</h2><div class="scroll" id="t-tenant"></div></section>
+  <section class="card"><h2>Budgets</h2><div id="budgets"></div></section>
+  <div class="grid2">
+    <section class="card"><h2>Policy decisions</h2><ul class="log" id="decisions"></ul></section>
+    <section class="card"><h2>Budget alerts</h2><ul class="log" id="alerts"></ul></section>
+  </div>
+  <section class="card" style="margin-top:16px"><h2>Top sessions</h2><div class="scroll" id="t-session"></div></section>
+  <section class="card"><h2>Recent requests</h2><div class="scroll" id="t-recent"></div></section>
+  <footer>Costs are estimates at price-book rates (cost_source = gateway), not bills. No prompt or response text is stored.</footer>
+</main>
+<script>
+"use strict";
+// Every value from the server goes into the page with textContent or setAttribute, never as markup.
+var DAYS = [1, 7, 30];
+var days = 30;
+var $ = function (id) { return document.getElementById(id); };
+
+function h(tag, attrs) {
+  var el = document.createElement(tag);
+  for (var k in (attrs || {})) { el.setAttribute(k, attrs[k]); }
+  for (var i = 2; i < arguments.length; i++) {
+    var c = arguments[i];
+    if (c === null || c === undefined) { continue; }
+    el.appendChild(typeof c === "object" ? c : document.createTextNode(String(c)));
+  }
+  return el;
+}
+function fill(id) {
+  var el = $(id);
+  while (el.firstChild) { el.removeChild(el.firstChild); }
+  for (var i = 1; i < arguments.length; i++) { if (arguments[i]) { el.appendChild(arguments[i]); } }
+  return el;
+}
+function usd(s) {
+  if (s === null || s === undefined) { return "-"; }
+  var n = Number(s);
+  return "$" + (n !== 0 && Math.abs(n) < 0.01 ? n.toFixed(4) : n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+}
+function pct(s) { return s === null || s === undefined ? "-" : (Number(s) * 100).toFixed(1) + "%"; }
+function num(n) { return Number(n || 0).toLocaleString(); }
+function when(ts) { var d = new Date(ts); return isNaN(d) ? String(ts) : d.toLocaleString(); }
+function tot(t) { return t.fresh_input + t.cache_read + t.cache_write_5m + t.cache_write_1h + t.output; }
+
+function get(path) {
+  return fetch(path, { cache: "no-store" }).then(function (r) {
+    if (!r.ok) { throw new Error(path + " " + r.status); }
+    return r.json();
+  });
+}
+
+function tile(label, value, warn) {
+  return h("div", { "class": "card tile" + (warn ? " warn" : "") }, h("div", { "class": "v" }, value), h("div", { "class": "l" }, label));
+}
+
+function table(cols, rows) {
+  var head = h("tr", {});
+  cols.forEach(function (c) { head.appendChild(h("th", { "class": c.n ? "n" : "" }, c.label)); });
+  var body = h("tbody", {});
+  rows.forEach(function (r) {
+    var tr = h("tr", {});
+    cols.forEach(function (c) { tr.appendChild(h("td", { "class": c.n ? "n" : "" }, c.get(r))); });
+    body.appendChild(tr);
+  });
+  if (!rows.length) { return h("div", { "class": "mute" }, "Nothing in this period."); }
+  return h("table", {}, h("thead", {}, head), body);
+}
+
+function groupTable(rows, label) {
+  return table([
+    { label: label, get: function (g) { return g.name; } },
+    { label: "Requests", n: 1, get: function (g) { return num(g.requests); } },
+    { label: "Spend", n: 1, get: function (g) { return usd(g.spend_usd); } },
+    { label: "Share", n: 1, get: function (g) { return pct(g.share_of_spend); } },
+    { label: "Cache hit", n: 1, get: function (g) { return pct(g.cache_hit_rate); } },
+    { label: "Median/day", n: 1, get: function (g) { return usd(g.median_daily_usd); } },
+    { label: "P95/day", n: 1, get: function (g) { return usd(g.p95_daily_usd); } }
+  ], rows);
+}
+
+function chart(byDay) {
+  var max = 0;
+  byDay.forEach(function (d) { max = Math.max(max, Number(d.spend_usd)); });
+  var bars = h("div", { "class": "chart", role: "img", "aria-label": "Spend per day" });
+  byDay.forEach(function (d) {
+    var v = Number(d.spend_usd);
+    var bar = h("div", { "class": "b" });
+    bar.style.height = (max ? Math.max(v / max * 100, v > 0 ? 1 : 0) : 0).toFixed(1) + "%";
+    bars.appendChild(h("div", { "class": "col", title: d.day + ": " + usd(d.spend_usd) + ", " + d.requests + " requests" }, bar));
+  });
+  var n = byDay.length;
+  return h("div", {}, bars, h("div", { "class": "axis" },
+    h("span", {}, n ? byDay[0].day : ""), h("span", {}, "max " + usd(max)), h("span", {}, n ? byDay[n - 1].day : "")));
+}
+
+function renderSummary(s, decisions) {
+  $("empty").hidden = s.has_ledger && s.requests > 0;
+  $("empty").textContent = s.has_ledger ? "No requests in this period." : "No traffic yet: point Claude Code at the gateway.";
+  var start = new Date(s.period_start).getTime();
+  var blocked = 0, wouldBlock = 0;
+  decisions.forEach(function (d) {
+    if (new Date(d.ts).getTime() >= start) {
+      if (d.action === "blocked") { blocked++; } else if (d.action === "would_block") { wouldBlock++; }
+    }
+  });
+  fill("tiles",
+    tile("Spend, last " + s.days + " d", usd(s.spend_usd)),
+    tile("Requests", num(s.requests)),
+    tile("Cache hit rate", pct(s.cache_hit_rate)),
+    tile("Blocked requests" + (wouldBlock ? " (+" + wouldBlock + " would block)" : ""), num(blocked)),
+    tile("Unpriced requests" + (s.unpriced_requests ? ": not in spend" : ""), num(s.unpriced_requests), s.unpriced_requests > 0));
+  fill("chart", chart(s.by_day));
+  fill("t-caller", groupTable(s.by_caller, "Caller"));
+  fill("t-model", groupTable(s.by_model, "Model"));
+  fill("t-tenant", groupTable(s.by_tenant, "Tenant"));
+  fill("t-session", table([
+    { label: "Session", get: function (x) { return x.session_id; } },
+    { label: "Caller", get: function (x) { return x.caller; } },
+    { label: "Models", get: function (x) { return x.models.join(", "); } },
+    { label: "Requests", n: 1, get: function (x) { return num(x.requests); } },
+    { label: "Spend", n: 1, get: function (x) { return usd(x.spend_usd); } },
+    { label: "First", get: function (x) { return when(x.first_ts); } },
+    { label: "Last", get: function (x) { return when(x.last_ts); } }
+  ], s.by_session));
+  fill("t-recent", table([
+    { label: "Time", get: function (x) { return when(x.ts); } },
+    { label: "Caller", get: function (x) { return x.caller; } },
+    { label: "Harness", get: function (x) { return x.harness; } },
+    { label: "Model", get: function (x) { return x.model; } },
+    { label: "Fresh", n: 1, get: function (x) { return num(x.tokens.fresh_input); } },
+    { label: "Cache read", n: 1, get: function (x) { return num(x.tokens.cache_read); } },
+    { label: "Write 5m", n: 1, get: function (x) { return num(x.tokens.cache_write_5m); } },
+    { label: "Write 1h", n: 1, get: function (x) { return num(x.tokens.cache_write_1h); } },
+    { label: "Output", n: 1, get: function (x) { return num(x.tokens.output); } },
+    { label: "Cost", n: 1, get: function (x) { return usd(x.cost_usd); } },
+    { label: "Source", get: function (x) { return x.cost_source; } },
+    { label: "HTTP", n: 1, get: function (x) { return x.http_status; } }
+  ], s.recent));
+}
+
+function renderBudgets(list) {
+  if (!list.length) { fill("budgets", h("div", { "class": "mute" }, "No budgets configured.")); return; }
+  fill("budgets");
+  list.forEach(function (b) {
+    var used = Number(b.spent_usd) + Number(b.reserved_usd), limit = Number(b.limit_usd);
+    var share = limit ? used / limit : 0;
+    var cls = share >= 1 ? "w100" : share >= 0.9 ? "w90" : share >= 0.75 ? "w75" : "";
+    var fillBar = h("span", { "class": cls });
+    fillBar.style.width = Math.min(100, share * 100).toFixed(1) + "%";
+    $("budgets").appendChild(h("div", { "class": "budget" },
+      h("div", {}, b.scope + " (" + b.window + "): " + usd(used) + " of " + usd(b.limit_usd) + ", " + (share * 100).toFixed(0) + "%"),
+      h("div", { "class": "bar" }, fillBar),
+      h("div", { "class": "mute" }, "spent " + usd(b.spent_usd) + " + reserved " + usd(b.reserved_usd))));
+  });
+}
+
+function renderLog(id, items, line) {
+  var ul = $(id);
+  while (ul.firstChild) { ul.removeChild(ul.firstChild); }
+  if (!items.length) { ul.appendChild(h("li", { "class": "mute" }, "None yet.")); return; }
+  items.slice().reverse().forEach(function (it) { ul.appendChild(line(it)); });
+}
+function decisionLine(d) {
+  var bad = d.action === "blocked";
+  return h("li", {}, h("span", { "class": "pill " + (bad ? "bad" : "warn") }, d.action || "?"), " ", when(d.ts), " ",
+    [d.feature, d.code, d.mode].filter(Boolean).join(" / "), " ",
+    h("span", { "class": "mute" }, [d.tenant, d.caller, d.model].filter(Boolean).join(" / ")));
+}
+function alertLine(a) {
+  var t = a.threshold !== undefined ? Math.round(Number(a.threshold) * 100) + "%" : "?";
+  return h("li", {}, h("span", { "class": "pill warn" }, t), " ", when(a.ts), " ", a.scope || "", " (", a.window || "", "): ",
+    pct(a.used_share), " of ", usd(a.limit_usd));
+}
+
+function refresh() {
+  var names = ["/api/summary?days=" + days, "/api/budgets", "/api/decisions?limit=200", "/api/alerts?limit=200"];
+  Promise.allSettled(names.map(get)).then(function (r) {
+    var failed = r.filter(function (x) { return x.status === "rejected"; });
+    var dec = r[2].status === "fulfilled" ? r[2].value : [];
+    if (r[0].status === "fulfilled") { renderSummary(r[0].value, dec); }
+    if (r[1].status === "fulfilled") { renderBudgets(r[1].value); }
+    if (r[2].status === "fulfilled") { renderLog("decisions", dec, decisionLine); }
+    if (r[3].status === "fulfilled") { renderLog("alerts", r[3].value, alertLine); }
+    var st = $("status");
+    st.className = failed.length ? "mute err" : "mute";
+    st.textContent = failed.length
+      ? "Could not load: " + failed.map(function (x) { return x.reason.message; }).join("; ")
+      : "Updated " + new Date().toLocaleTimeString() + ", refreshes every 10 s";
+  });
+}
+
+function buildSelector() {
+  var box = $("days");
+  DAYS.forEach(function (d) {
+    var b = h("button", { type: "button", "aria-pressed": String(d === days) }, d === 1 ? "1 day" : d + " days");
+    b.addEventListener("click", function () {
+      days = d;
+      Array.prototype.forEach.call(box.children, function (c) { c.setAttribute("aria-pressed", String(c === b)); });
+      refresh();
+    });
+    box.appendChild(b);
+  });
+}
+
+buildSelector();
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>

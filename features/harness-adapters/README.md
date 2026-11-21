@@ -8,13 +8,15 @@ Run alone: `uv run --package token-economics-feat-harness-adapters pytest featur
 
 ## What it does
 
-One file per harness under `src/token_economics_feat_harness_adapters/providers/`. Each defines `ADAPTER`, an object implementing the `Adapter` port from contracts (`name`, `provider`, `capabilities`, and the five functions `route`, `matches`, `identify`, `observe`, `cap`, `replay`). Wire parsing is shared in the private modules `_anthropic_wire.py` (Messages API) and `_responses_wire.py` (OpenAI Responses), with SSE parsing in `_sse.py`.
+One file per harness under `src/token_economics_feat_harness_adapters/providers/`. Each defines `ADAPTER`, an object implementing the `Adapter` port from contracts (`name`, `provider`, `capabilities`, and the functions `route`, `matches`, `identify`, `facts`, `observe`, `cap`, `replay`). Wire parsing is shared in the private modules `_anthropic_wire.py` (Messages API) and `_responses_wire.py` (OpenAI Responses), with SSE parsing in `_sse.py`.
 
 | Adapter | Provider | Route | Notes |
 |---|---|---|---|
 | `claude_code` | anthropic | `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS: x-token-economics-key: <key>` | cap maps `budget_usd`, `max_turns` to `--max-budget-usd`, `--max-turns`; replay reads a transcript JSONL |
 | `sdk` | anthropic | `ANTHROPIC_BASE_URL`, `TOKEN_ECONOMICS_KEY` (client must send it as header `x-token-economics-key`) | fallback match for any POST to `/v1/messages` |
 | `codex` | openai | `model_providers.token-economics.*` config keys, `/v1` appended | Responses wire only |
+
+`facts(headers, body)` returns a `RequestFacts` for the policy engine: numbers and hashes only, never prompt, tool or response text. It never raises; an unparseable body gives `RequestFacts()`. Anthropic Messages (`claude_code`, `sdk`): `model`, `max_tokens`, `stream`, `turns` (assistant messages in `messages`), `est_input_tokens` (`len(body) // 3`, a rough upper estimate from body size), and the loop-guard fields. Each failed `tool_result` (`is_error` true) is signed as the first 16 hex chars of sha256 over `name + NUL + canonical JSON input` of its matching `tool_use`. `last_failure_signature` is the most recent failing call's signature; `trailing_repeat_failures` counts how many of the latest tool results in a row failed with that same signature (0 when the latest result succeeded; a success or a different failing call ends the run). Results with no matching `tool_use` in the body are ignored. Codex (Responses body): `model`, `max_tokens` from `max_output_tokens`, `stream`, `est_input_tokens`; turns and failure fields stay 0 and empty: not built.
 
 `observe` is called once with the complete, decompressed response body (JSON or SSE). It never raises and returns None for non-2xx, empty, unparseable or usage-less bodies. The provider's `usage` object passes through raw; Anthropic streams merge each `message_delta` usage over `message_start`'s, so final `output_tokens` replace the placeholder. A stream cut before any `message_delta` still reports `message_start`.
 

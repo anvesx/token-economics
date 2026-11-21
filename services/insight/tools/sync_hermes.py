@@ -5,6 +5,7 @@
 
 Standard library only; the --check form needs no other repository.
 """
+
 from __future__ import annotations
 
 import argparse

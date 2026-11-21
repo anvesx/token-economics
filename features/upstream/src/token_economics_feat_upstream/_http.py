@@ -1,4 +1,5 @@
 """Header and URL rules shared by every provider file. Header values are never stored or logged."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping

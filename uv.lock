@@ -883,11 +883,38 @@ name = "token-economics-app-admin-api"
 version = "0.1.0"
 source = { editable = "apps/admin-api" }
 dependencies = [
+    { name = "starlette" },
     { name = "token-economics-contracts" },
+    { name = "uvicorn" },
+]
+
+[package.optional-dependencies]
+all = [
+    { name = "token-economics-feat-budgets" },
+    { name = "token-economics-svc-insight" },
+    { name = "token-economics-svc-ledger" },
+    { name = "token-economics-svc-tenancy" },
+]
+test = [
+    { name = "httpx" },
+    { name = "token-economics-svc-insight" },
+    { name = "token-economics-svc-ledger" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "token-economics-contracts", editable = "modules/contracts" }]
+requires-dist = [
+    { name = "httpx", marker = "extra == 'test'", specifier = ">=0.27" },
+    { name = "starlette", specifier = ">=0.40" },
+    { name = "token-economics-contracts", editable = "modules/contracts" },
+    { name = "token-economics-feat-budgets", marker = "extra == 'all'", editable = "features/budgets" },
+    { name = "token-economics-svc-insight", marker = "extra == 'all'", editable = "services/insight" },
+    { name = "token-economics-svc-insight", marker = "extra == 'test'", editable = "services/insight" },
+    { name = "token-economics-svc-ledger", marker = "extra == 'all'", editable = "services/ledger" },
+    { name = "token-economics-svc-ledger", marker = "extra == 'test'", editable = "services/ledger" },
+    { name = "token-economics-svc-tenancy", marker = "extra == 'all'", editable = "services/tenancy" },
+    { name = "uvicorn", specifier = ">=0.30" },
+]
+provides-extras = ["all", "test"]
 
 [[package]]
 name = "token-economics-app-cli"
@@ -899,21 +926,25 @@ dependencies = [
 
 [package.optional-dependencies]
 all = [
+    { name = "token-economics-feat-budgets" },
     { name = "token-economics-feat-harness-adapters" },
     { name = "token-economics-metering" },
     { name = "token-economics-svc-insight" },
     { name = "token-economics-svc-ledger" },
     { name = "token-economics-svc-pricebook" },
+    { name = "token-economics-svc-tenancy" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "token-economics-contracts", editable = "modules/contracts" },
+    { name = "token-economics-feat-budgets", marker = "extra == 'all'", editable = "features/budgets" },
     { name = "token-economics-feat-harness-adapters", marker = "extra == 'all'", editable = "features/harness-adapters" },
     { name = "token-economics-metering", marker = "extra == 'all'", editable = "modules/metering" },
     { name = "token-economics-svc-insight", marker = "extra == 'all'", editable = "services/insight" },
     { name = "token-economics-svc-ledger", marker = "extra == 'all'", editable = "services/ledger" },
     { name = "token-economics-svc-pricebook", marker = "extra == 'all'", editable = "services/pricebook" },
+    { name = "token-economics-svc-tenancy", marker = "extra == 'all'", editable = "services/tenancy" },
 ]
 provides-extras = ["all"]
 
@@ -931,11 +962,17 @@ dependencies = [
 
 [package.optional-dependencies]
 all = [
+    { name = "token-economics-feat-budgets" },
     { name = "token-economics-feat-harness-adapters" },
+    { name = "token-economics-feat-loop-guard" },
+    { name = "token-economics-feat-turn-cap" },
     { name = "token-economics-feat-upstream" },
     { name = "token-economics-metering" },
+    { name = "token-economics-svc-health" },
     { name = "token-economics-svc-ledger" },
+    { name = "token-economics-svc-policy" },
     { name = "token-economics-svc-pricebook" },
+    { name = "token-economics-svc-tenancy" },
 ]
 
 [package.metadata]
@@ -944,11 +981,17 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "starlette", specifier = ">=0.40" },
     { name = "token-economics-contracts", editable = "modules/contracts" },
+    { name = "token-economics-feat-budgets", marker = "extra == 'all'", editable = "features/budgets" },
     { name = "token-economics-feat-harness-adapters", marker = "extra == 'all'", editable = "features/harness-adapters" },
+    { name = "token-economics-feat-loop-guard", marker = "extra == 'all'", editable = "features/loop-guard" },
+    { name = "token-economics-feat-turn-cap", marker = "extra == 'all'", editable = "features/turn-cap" },
     { name = "token-economics-feat-upstream", marker = "extra == 'all'", editable = "features/upstream" },
     { name = "token-economics-metering", marker = "extra == 'all'", editable = "modules/metering" },
+    { name = "token-economics-svc-health", marker = "extra == 'all'", editable = "services/health" },
     { name = "token-economics-svc-ledger", marker = "extra == 'all'", editable = "services/ledger" },
+    { name = "token-economics-svc-policy", marker = "extra == 'all'", editable = "services/policy" },
     { name = "token-economics-svc-pricebook", marker = "extra == 'all'", editable = "services/pricebook" },
+    { name = "token-economics-svc-tenancy", marker = "extra == 'all'", editable = "services/tenancy" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]
 provides-extras = ["all"]
@@ -970,18 +1013,14 @@ version = "0.1.0"
 source = { editable = "features/budgets" }
 dependencies = [
     { name = "token-economics-contracts" },
-    { name = "token-economics-metering" },
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "token-economics-contracts", editable = "modules/contracts" },
-    { name = "token-economics-metering", editable = "modules/metering" },
-]
+requires-dist = [{ name = "token-economics-contracts", editable = "modules/contracts" }]
 
 [[package]]
 name = "token-economics-feat-harness-adapters"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "features/harness-adapters" }
 dependencies = [
     { name = "token-economics-contracts" },
@@ -1121,14 +1160,10 @@ version = "0.1.0"
 source = { editable = "services/tenancy" }
 dependencies = [
     { name = "token-economics-contracts" },
-    { name = "token-economics-redaction" },
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "token-economics-contracts", editable = "modules/contracts" },
-    { name = "token-economics-redaction", editable = "modules/redaction" },
-]
+requires-dist = [{ name = "token-economics-contracts", editable = "modules/contracts" }]
 
 [[package]]
 name = "token-economics-workspace"

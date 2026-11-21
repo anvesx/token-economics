@@ -67,36 +67,37 @@ class Observer:
 
     def record(
         self, adapter: Adapter, key: KeyInfo, identity: Identity, status: int, headers: Mapping[str, str], body: bytes
-    ) -> None:
-        """Observe one complete response. Never raises."""
+    ) -> LedgerRow | None:
+        """Observe one complete response and return the ledger row it wrote, if any. Never raises."""
         try:
-            self._record(adapter, key, identity, status, headers, body)
+            return self._record(adapter, key, identity, status, headers, body)
         except Exception as exc:  # fail open: observation must never break a response
             self._reject({"reason": "observer_error", "error": type(exc).__name__, "harness": adapter.name})
             self._count("observer_errors")
+            return None
 
     def _record(
         self, adapter: Adapter, key: KeyInfo, identity: Identity, status: int, headers: Mapping[str, str], body: bytes
-    ) -> None:
+    ) -> LedgerRow | None:
         decoded = decode_body(body, headers.get("content-encoding", ""))
         if decoded is None:
             self._count("unreadable_encoding")
-            return
+            return None
         obs = adapter.observe(status, headers, decoded)
         if obs is None:
             self._count("no_usage")
-            return
+            return None
         if not obs.response_id:
             self._reject({"reason": "no_response_id", "provider": obs.provider, "model": obs.model})
             self._count("no_response_id")
-            return
+            return None
         if not self.deduper.first_time(obs.provider, obs.response_id):
             self._count("duplicates")
-            return
+            return None
         normaliser = self.normalisers.get(obs.provider)
         if normaliser is None:
             self._count("no_normaliser")
-            return
+            return None
         try:
             buckets = normaliser.normalise(obs.usage)
         except UnknownUsageKey as exc:
@@ -110,7 +111,7 @@ class Observer:
                 }
             )
             self._count("unknown_usage_key")
-            return
+            return None
         except ValueError as exc:
             self._reject(
                 {
@@ -122,7 +123,7 @@ class Observer:
                 }
             )
             self._count("bad_usage")
-            return
+            return None
         now = datetime.now(UTC)
         cost: Decimal | None
         try:
@@ -157,7 +158,9 @@ class Observer:
             auth_mode=identity.auth_mode,
             http_status=status,
         )
-        self._count("rows" if self.ledger.write(row) else "duplicates")
+        written = self.ledger.write(row)
+        self._count("rows" if written else "duplicates")
+        return row if written else None
 
     def _count(self, name: str) -> None:
         with self._lock:

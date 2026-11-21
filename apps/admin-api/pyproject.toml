@@ -4,15 +4,26 @@ version = "0.1.0"
 description = "Reports and the local dashboard over HTTP."
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["token-economics-contracts"]
+dependencies = ["token-economics-contracts", "starlette>=0.40", "uvicorn>=0.30"]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
+# Everything under the package directory ships, including static/index.html.
 packages = ["src/token_economics_app_admin_api"]
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"
 testpaths = ["tests"]
+
+[project.optional-dependencies]
+# The app finds these at runtime through entry points; it never imports them.
+all = ["token-economics-svc-ledger", "token-economics-svc-insight", "token-economics-feat-budgets",
+       "token-economics-svc-tenancy"]
+# Starlette's TestClient needs httpx; the tests also write a real ledger and read the real summary.
+test = ["httpx>=0.27", "token-economics-svc-ledger", "token-economics-svc-insight"]
+
+[project.scripts]
+token-economics-admin = "token_economics_app_admin_api.__main__:main"

@@ -1,3 +1,5 @@
 """Reports and the local dashboard over HTTP."""
 
-__all__: list[str] = []
+from .app import create_app
+
+__all__ = ["create_app"]

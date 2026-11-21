@@ -6,6 +6,7 @@ adapter: it runs the vendored analysis over Claude Code transcripts, turns each 
 Costs are estimates from transcript usage at API list prices, so `cost_source` is always CLIENT, and
 they rank work; they do not predict savings (plan/11).
 """
+
 from __future__ import annotations
 
 import threading
@@ -111,12 +112,24 @@ def _join(*parts: Any) -> str:
 
 
 def _line(
-    cats: Any, n: int, name: str, group: str, status: Literal["fired", "not_fired", "unmeasurable"], fired: int,
-    cost: Decimal, note: str,
+    cats: Any,
+    n: int,
+    name: str,
+    group: str,
+    status: Literal["fired", "not_fired", "unmeasurable"],
+    fired: int,
+    cost: Decimal,
+    note: str,
 ) -> DetectorCoverage:
     return DetectorCoverage(
-        row=n, name=name, group=group, status=status, fired=fired, cost_estimate_usd=cost,
-        review=n in cats.REVIEW, note=note,
+        row=n,
+        name=name,
+        group=group,
+        status=status,
+        fired=fired,
+        cost_estimate_usd=cost,
+        review=n in cats.REVIEW,
+        note=note,
     )
 
 
@@ -177,9 +190,21 @@ def coverage_markdown(coverage: Sequence[DetectorCoverage], total_usd: Decimal |
     )
     if total_usd is not None:
         md.append(f"Spend read: ${total_usd:,.2f} (API list prices, estimated from transcript usage).")
-    md += ["", *_table(leaks), "", "## Spend to review", "",
-           "Normal spend that is sometimes avoidable. Not counted as waste.", "", *_table(review), "",
-           "Costs overlap (one leaked tool result can sit in several rows), so do not add them up. They rank "
-           "work to look at first; they do not predict savings.", "", "## Retired", ""]
+    md += [
+        "",
+        *_table(leaks),
+        "",
+        "## Spend to review",
+        "",
+        "Normal spend that is sometimes avoidable. Not counted as waste.",
+        "",
+        *_table(review),
+        "",
+        "Costs overlap (one leaked tool result can sit in several rows), so do not add them up. They rank "
+        "work to look at first; they do not predict savings.",
+        "",
+        "## Retired",
+        "",
+    ]
     md += [f"- {c.row} {c.name}: {c.note}" for c in retired]
     return "\n".join(md) + "\n"

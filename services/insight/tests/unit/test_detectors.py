@@ -130,12 +130,17 @@ def test_prompt_check_on_is_the_only_way_to_reach_the_model(
     # Given a session with several typed prompts, so the check has something to label
     call, prompt, write_session = synth.call, synth.prompt, synth.write_session
     root = tmp_path / "projects"
-    write_session(root, "-work-demo", "s-talk", [
-        prompt("s-talk", 0, "first synthetic prompt"),
-        call("s-talk", 1, 1, cache_read=0, cache_write=20_000),
-        prompt("s-talk", 5, "second synthetic prompt"),
-        call("s-talk", 6, 2, cache_read=20_000, cache_write=100),
-    ])
+    write_session(
+        root,
+        "-work-demo",
+        "s-talk",
+        [
+            prompt("s-talk", 0, "first synthetic prompt"),
+            call("s-talk", 1, 1, cache_read=0, cache_write=20_000),
+            prompt("s-talk", 5, "second synthetic prompt"),
+            call("s-talk", 6, 2, cache_read=20_000, cache_write=100),
+        ],
+    )
     calls: list[list[str]] = []
 
     def fake(cmd: list[str], **k: Any) -> subprocess.CompletedProcess[str]:

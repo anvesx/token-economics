@@ -1,4 +1,5 @@
 """Server-sent-events parsing shared by both wire formats. Pure functions, never raise."""
+
 from __future__ import annotations
 
 import contextlib

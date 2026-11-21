@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
+import uuid
 from collections.abc import AsyncIterator, Mapping
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -22,7 +25,14 @@ from token_economics_contracts import (
     SERVICES,
     UPSTREAMS,
     Adapter,
+    Decision,
+    HealthTracker,
     Identity,
+    KeyResolver,
+    PolicyEngine,
+    RequestContext,
+    RequestFacts,
+    ResolvedKey,
     Upstream,
     load,
     load_all,
@@ -61,6 +71,41 @@ def build_observer(settings: Settings) -> Observer:
     )
 
 
+ERROR_TYPES = {401: "authentication_error", 402: "billing_error", 403: "permission_error", 429: "rate_limit_error"}
+
+
+def optional(name: str, *args: Any) -> Any:
+    """A registered service, or None when its package is not installed (P0 runs without the P1 packages)."""
+    try:
+        return load(SERVICES, name)(*args)
+    except LookupError:
+        return None
+
+
+class LegacyKeys:
+    """P0 key file: used only when the tenancy service is not installed."""
+
+    def __init__(self, settings: Settings) -> None:
+        self._keys = load_keys(settings.keys_path)
+
+    def resolve(self, presented: str) -> ResolvedKey:
+        if not presented:
+            return ResolvedKey(info=UNKNOWN, status="none")
+        info = self._keys.get(presented)
+        return ResolvedKey(info=info, status="active") if info else ResolvedKey(info=UNKNOWN, status="unknown")
+
+
+def refusal(provider: str, decision: Decision) -> Response:
+    """A blocked request, in the error shape the harness's provider uses, so the harness shows the message."""
+    kind = ERROR_TYPES.get(decision.status, "api_error")
+    if provider == "openai":
+        payload: dict[str, Any] = {"error": {"message": decision.message, "type": kind, "code": decision.code}}
+    else:
+        payload = {"type": "error", "error": {"type": kind, "message": decision.message}}
+    headers = {"x-token-economics-blocked": decision.code or "blocked", "x-should-retry": "false"}
+    return Response(json.dumps(payload), status_code=decision.status, media_type="application/json", headers=headers)
+
+
 def create_app(
     settings: Settings | None = None,
     *,
@@ -68,14 +113,21 @@ def create_app(
     adapters: Mapping[str, Adapter] | None = None,
     upstreams: Mapping[str, Upstream] | None = None,
     client: httpx.AsyncClient | None = None,
+    policy: PolicyEngine | None = None,
+    keys: KeyResolver | None = None,
+    health: HealthTracker | None = None,
 ) -> Starlette:
     settings = settings or Settings()
     observer = observer or build_observer(settings)
+    state = str(settings.state_dir)
+    engine: PolicyEngine | None = policy or optional("policy", state, observer.pricebook, observer.calculator)
+    resolver: KeyResolver = keys or optional("keys", state) or LegacyKeys(settings)
+    tracker: HealthTracker | None = health or optional("health")
+    audit = optional("audit", state)
     registered = dict(adapters) if adapters is not None else load_all(ADAPTERS)
     ordered = [registered[n] for n in ADAPTER_ORDER if n in registered]
     ordered += [a for n, a in registered.items() if n not in ADAPTER_ORDER]
     ups = dict(upstreams) if upstreams is not None else load_all(UPSTREAMS)
-    keys = load_keys(settings.keys_path)
     http = client or httpx.AsyncClient(
         timeout=httpx.Timeout(settings.upstream_timeout_s, connect=30.0), follow_redirects=False
     )
@@ -98,6 +150,46 @@ def create_app(
             return JSONResponse({"error": "token-economics gateway: no upstream registered"}, status_code=502)
         observer.stats["requests"] += 1
 
+        # Who is asking. A revoked key is refused; a missing or unknown key is still observed as tenant "unknown".
+        resolved = resolver.resolve(headers.get(KEY_HEADER, ""))
+        provider = adapter.provider if adapter is not None else upstream.provider
+        if resolved.status == "revoked":
+            observer.stats["revoked_key"] += 1
+            if audit is not None:
+                with contextlib.suppress(Exception):
+                    audit.record("revoked_key_refused", resolved.key_id, {"harness": adapter.name if adapter else ""})
+            revoked = Decision(
+                allow=False,
+                status=401,
+                code="key_revoked",
+                message="Token Economics: this virtual key has been revoked.",
+            )
+            return refusal(provider, revoked)
+        key = resolved.info
+        identity = adapter.identify(headers, body) if adapter is not None else Identity()
+
+        # Policy runs before dispatch, only for model calls an adapter understands. With no policy file it does nothing.
+        ctx: RequestContext | None = None
+        if engine is not None and adapter is not None:
+            ctx = RequestContext(
+                request_id=uuid.uuid4().hex,
+                ts=datetime.now(UTC),
+                key_id=resolved.key_id,
+                key=key,
+                harness=adapter.name,
+                provider=provider,
+                identity=identity,
+                facts=_facts(adapter, headers, body),
+            )
+            decision = await asyncio.to_thread(engine.before, ctx)
+            if not decision.allow:
+                observer.stats["blocked"] += 1
+                return refusal(provider, decision)
+
+        def settle(row: Any, status: int) -> None:
+            if ctx is not None and engine is not None:
+                engine.after(ctx, row, status)
+
         # Send every header upstream as it arrived (order, casing, repeats), minus hop-by-hop and the virtual key.
         allowed = {name.lower() for name in upstream.forward_headers(headers)}
         out_headers = [(k, v) for k, v in raw_headers if k.lower() in allowed]
@@ -109,13 +201,22 @@ def create_app(
             resp = await http.send(req, stream=True)
         except httpx.HTTPError as exc:
             observer.stats["upstream_errors"] += 1
+            await asyncio.to_thread(settle, None, 502)
             return JSONResponse(
                 {"error": f"token-economics gateway: upstream unreachable ({type(exc).__name__})"}, status_code=502
             )
 
-        key = keys.get(headers.get(KEY_HEADER, ""), UNKNOWN)
-        identity = adapter.identify(headers, body) if adapter is not None else Identity()
         resp_headers = dict(resp.headers)
+        if tracker is not None:
+            with contextlib.suppress(Exception):
+                tracker.record(provider, resp.status_code, resp_headers)
+
+        def observe_and_settle(captured: bytes | None) -> None:
+            row = None
+            if captured is not None and adapter is not None:
+                row = observer.record(adapter, key, identity, resp.status_code, resp_headers, captured)
+            settle(row, resp.status_code)
+
         chunks: list[bytes] = []
         size = 0
 
@@ -131,26 +232,30 @@ def create_app(
                 complete = True
             finally:
                 await resp.aclose()
-                if adapter is not None and size <= settings.max_observed_bytes and (complete or chunks):
-                    captured = b"".join(chunks)
-                    task = asyncio.create_task(
-                        asyncio.to_thread(
-                            observer.record, adapter, key, identity, resp.status_code, resp_headers, captured
-                        )
-                    )
+                observable = adapter is not None and size <= settings.max_observed_bytes and (complete or chunks)
+                if adapter is not None and not observable:
+                    observer.stats["too_large"] += 1
+                if observable or ctx is not None:
+                    captured = b"".join(chunks) if observable else None
+                    task = asyncio.create_task(asyncio.to_thread(observe_and_settle, captured))
                     pending.add(task)
                     task.add_done_callback(pending.discard)
-                elif adapter is not None:
-                    observer.stats["too_large"] += 1
 
         passthrough = [(k, v) for k, v in resp.headers.raw if k.decode("latin-1").lower() not in HOP_BY_HOP]
         out = StreamingResponse(tee(), status_code=resp.status_code)
         out.raw_headers = passthrough
         return out
 
-    async def health(_: Request) -> Response:
+    async def health_view(_: Request) -> Response:
         return JSONResponse(
-            {"status": "ok", "mode": "observe", "adapters": [a.name for a in ordered], "upstreams": sorted(ups)}
+            {
+                "status": "ok",
+                "adapters": [a.name for a in ordered],
+                "upstreams": sorted(ups),
+                "policy": getattr(engine, "modes", dict)() if engine is not None else {},
+                "policy_problems": list(getattr(engine, "problems", [])),
+                "backends": tracker.snapshot() if tracker is not None else {},
+            }
         )
 
     async def stats(_: Request) -> Response:
@@ -170,7 +275,7 @@ def create_app(
 
     app = Starlette(
         routes=[
-            Route("/_te/health", health),
+            Route("/_te/health", health_view),
             Route("/_te/stats", stats),
             Route("/{path:path}", proxy, methods=METHODS),
         ],
@@ -178,6 +283,13 @@ def create_app(
     )
     app.state.observer, app.state.drain, app.state.settings = observer, drain, settings
     return app
+
+
+def _facts(adapter: Adapter, headers: Mapping[str, str], body: bytes) -> RequestFacts:
+    try:
+        return adapter.facts(headers, body)
+    except Exception:
+        return RequestFacts()
 
 
 def app_factory() -> Any:

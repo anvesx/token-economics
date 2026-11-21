@@ -8,6 +8,7 @@ Conventions (stated here so the numbers can be reproduced by hand):
 - Rows with `cost_estimate_usd` None are counted as unpriced and left out of every spend figure.
 - Shares and the hit rate are Decimals rounded to four places.
 """
+
 from __future__ import annotations
 
 import math

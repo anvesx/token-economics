@@ -1,11 +1,12 @@
 """Codex CLI: model_providers base URL, Responses wire."""
+
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from token_economics_contracts.types import Capabilities, Identity, Observation
+from token_economics_contracts.types import Capabilities, Identity, Observation, RequestFacts
 
 from .. import _responses_wire
 from .._sse import header
@@ -35,6 +36,9 @@ class CodexAdapter:
             return Identity(session_id=header(headers, "session_id") or header(headers, "conversation_id"))
         except Exception:  # noqa: BLE001
             return Identity()
+
+    def facts(self, headers: Mapping[str, str], body: bytes) -> RequestFacts:
+        return _responses_wire.facts(body)
 
     def observe(self, status: int, headers: Mapping[str, str], body: bytes) -> Observation | None:
         return _responses_wire.observe(status, headers, body)

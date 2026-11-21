@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import gzip
 import json
 import socket
@@ -91,6 +92,25 @@ class FakeProvider:
             return Response(
                 b'{"type":"error","error":{"type":"overloaded_error"}}', status_code=529, media_type="application/json"
             )
+        if scenario == "rate_limited":
+            return Response(
+                b'{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}',
+                status_code=429,
+                media_type="application/json",
+                headers={"retry-after": "30"},
+            )
+        if scenario == "server_error":
+            return Response(b'{"type":"error","error":{"type":"api_error"}}', status_code=500)
+        if scenario == "slow":
+            await asyncio.sleep(3)
+        if scenario == "cut":
+
+            async def cut_iter() -> Any:
+                yield stream_chunks(message_id)[0]
+                await asyncio.sleep(0.05)
+                raise RuntimeError("provider dropped the connection")
+
+            return StreamingResponse(cut_iter(), media_type="text/event-stream")
         if scenario == "gzip_json":
             payload = json.dumps(
                 {
@@ -182,21 +202,37 @@ class Rig:
 
 
 @pytest.fixture
-def rig(tmp_path: Path) -> Iterator[Rig]:
-    provider = FakeProvider()
-    state = tmp_path / "state"
-    state.mkdir()
-    (state / "keys.json").write_text(
-        json.dumps({"vk-dev-1": {"tenant": "devx", "team": "platform", "caller": "dhruv"}})
-    )
-    settings = Settings(state_dir=state)
-    with Served(provider.app()) as up:
+def rig_factory(tmp_path: Path) -> Iterator[Any]:
+    """Build a rig with a given policy file and settings. Keys: vk-dev-1 (dhruv), vk-dev-2 (asha)."""
+    stack = contextlib.ExitStack()
+
+    def make(policy: dict[str, Any] | None = None, **settings_kw: Any) -> Rig:
+        provider = FakeProvider()
+        state = tmp_path / f"state{len(list(tmp_path.iterdir()))}"
+        state.mkdir()
+        keys = {
+            "vk-dev-1": {"tenant": "devx", "team": "platform", "caller": "dhruv"},
+            "vk-dev-2": {"tenant": "devx", "team": "platform", "caller": "asha"},
+        }
+        (state / "keys.json").write_text(json.dumps(keys))
+        if policy is not None:
+            (state / "policy.json").write_text(json.dumps(policy))
+        settings = Settings(state_dir=state, **settings_kw)
+        up = stack.enter_context(Served(provider.app()))
         app = create_app(
             settings,
             upstreams={"anthropic": AnthropicUpstream(base_url=up.url), "openai": OpenAIUpstream(base_url=up.url)},
         )
-        with Served(app) as gw:
-            yield Rig(provider, up.url, gw.url, settings, app)
+        gw = stack.enter_context(Served(app))
+        return Rig(provider, up.url, gw.url, settings, app)
+
+    with stack:
+        yield make
+
+
+@pytest.fixture
+def rig(rig_factory: Any) -> Rig:
+    return rig_factory()  # type: ignore[no-any-return]
 
 
 @pytest.fixture

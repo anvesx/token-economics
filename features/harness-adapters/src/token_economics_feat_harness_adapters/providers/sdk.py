@@ -1,11 +1,12 @@
 """Agent SDK and plain Messages API clients: base URL only."""
+
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from token_economics_contracts.types import Capabilities, Identity, Observation
+from token_economics_contracts.types import Capabilities, Identity, Observation, RequestFacts
 
 from .. import _anthropic_wire
 
@@ -30,6 +31,9 @@ class SdkAdapter:
             return Identity(session_id=_anthropic_wire.session_from_metadata(body))
         except Exception:  # noqa: BLE001
             return Identity()
+
+    def facts(self, headers: Mapping[str, str], body: bytes) -> RequestFacts:
+        return _anthropic_wire.facts(body)
 
     def observe(self, status: int, headers: Mapping[str, str], body: bytes) -> Observation | None:
         return _anthropic_wire.observe(status, headers, body)

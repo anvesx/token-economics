@@ -1,12 +1,14 @@
 """Anthropic Messages wire format: observe a response, read the session id from a request."""
+
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Mapping
 from typing import Any
 
-from token_economics_contracts.types import Observation
+from token_economics_contracts.types import Observation, RequestFacts
 
 from ._sse import events, header, is_sse, loads_object
 
@@ -78,3 +80,64 @@ def session_from_metadata(body: bytes) -> str:
         return found.group(1) if found else ""
     except Exception:  # noqa: BLE001
         return ""
+
+
+def _signature(name: Any, tool_input: Any) -> str:
+    """First 16 hex chars of sha256 over the tool name and its canonical JSON input: a hash, never text."""
+    raw = f"{name}\0{json.dumps(tool_input, sort_keys=True, separators=(',', ':'))}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _blocks(message: Any) -> list[dict[str, Any]]:
+    """The content blocks of a message; a plain string content has none."""
+    content = message.get("content") if isinstance(message, dict) else None
+    return [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
+
+
+def _tool_results(messages: list[Any]) -> list[tuple[str, bool]]:
+    """(signature, failed) for every tool result, in conversation order."""
+    calls: dict[str, str] = {}
+    results: list[tuple[str, bool]] = []
+    for message in messages:
+        role = message.get("role") if isinstance(message, dict) else None
+        for block in _blocks(message):
+            if role == "assistant" and block.get("type") == "tool_use" and isinstance(block.get("id"), str):
+                calls[block["id"]] = _signature(block.get("name"), block.get("input"))
+            elif role == "user" and block.get("type") == "tool_result":
+                signature = calls.get(str(block.get("tool_use_id")))
+                if signature is not None:  # a result with no matching call in the body cannot be compared
+                    results.append((signature, block.get("is_error") is True))
+    return results
+
+
+def facts(body: bytes) -> RequestFacts:
+    """Never raises; RequestFacts() for anything unparseable. Numbers and hashes only, never text.
+
+    `est_input_tokens` is len(body) // 3: a rough upper estimate from the body size, not a token count.
+    """
+    try:
+        parsed = loads_object(body)
+        if parsed is None:
+            return RequestFacts()
+        messages = parsed.get("messages")
+        messages = messages if isinstance(messages, list) else []
+        turns = sum(1 for m in messages if isinstance(m, dict) and m.get("role") == "assistant")
+        results = _tool_results(messages)
+        last_failure = next((sig for sig, failed in reversed(results) if failed), "")
+        repeats = 0
+        for sig, failed in reversed(results):
+            if not failed or sig != last_failure:
+                break
+            repeats += 1
+        model, max_tokens = parsed.get("model"), parsed.get("max_tokens")
+        return RequestFacts(
+            model=model if isinstance(model, str) else "",
+            max_tokens=max_tokens if isinstance(max_tokens, int) and not isinstance(max_tokens, bool) else None,
+            stream=parsed.get("stream") is True,
+            turns=turns,
+            est_input_tokens=len(body) // 3,
+            last_failure_signature=last_failure,
+            trailing_repeat_failures=repeats,
+        )
+    except Exception:  # noqa: BLE001  (facts must never break the request path)
+        return RequestFacts()
