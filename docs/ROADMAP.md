@@ -8,7 +8,8 @@ not built yet and what was learned while building.
 - Repo: `anvesx/token-economics`. Local clone `~/HRMS/token-economics`. **Nothing is pushed.** `main` is blocked for
   the author; a senior dev merges.
 - Branches (each on top of the one before): `feat/p0-working-core` (P0 first pass), `feat/p1-working-core` (P1 first
-  pass, the tip). Start P2 from `feat/p1-working-core` on a new branch `feat/p2-working-core`.
+  pass), `feat/dashboard-sessions` (dashboard, the tip). Start P2 from `feat/dashboard-sessions` on a new branch
+  `feat/p2-working-core`. At the tip: 295 tests, ruff, mypy, layering, extractable and surface checks pass.
 - State by phase: `docs/P0-STATUS.md`, `docs/P1-STATUS.md`. Decisions: `docs/adr/0001`, `0002`. Spike s2 is run
   (`spikes/s2-claude-code-402`); s1, s3, s4 are not.
 - Sister repo: `~/HRMS/hermes-engine` (branch `m-agents`). Its leak detectors are vendored here unchanged from commit
@@ -20,9 +21,15 @@ not built yet and what was learned while building.
   scratch `TOKEN_ECONOMICS_STATE_DIR` for tests.
 
 ## Dashboard (branch `feat/dashboard-sessions`, on top of P1)
-- `token-economics-admin` now has Overview, Sessions, Session detail (tasks and leaks), Categories and Gateway views.
-  Sessions, tasks and categories come from Claude Code transcripts through `services/insight/sessions.py`; the gateway
-  view comes from the ledger. The two are not joined by session yet.
+- `token-economics-admin` now has Overview, Sessions, Session detail (tasks and leaks), Task detail, Categories and
+  Gateway views (hash routes in one `static/index.html`). Sessions, tasks and categories come from Claude Code
+  transcripts through `services/insight/sessions.py` (`SessionViews.overview/session/task`); the gateway view comes
+  from the ledger. The two are not joined by session yet.
+- Task detail (`/api/sessions/{id}/tasks/{n}`): spend by token type and model, main versus agent cost, context growth,
+  cache behaviour, tool calls, files, largest tool results, turns, a call timeline and agents.
+- Four categories and the task split depend on model labels (12, 22, 26, 10; see hermes `prompt_check.py`). The
+  dashboard makes no model calls by default: it copies the labels cached in `~/.claude/metrics/prompt_checks.json`.
+  The session page does not yet show whether a session was split by labels or by the rule.
 - Tasks are split by the vendored `Session.tasks()` (model labels when cached or `--prompt-check`, else an idle-gap
   rule). Not validated against a person's judgement. Each task shows why its boundary was drawn.
 - Never opened in a real browser by the builder or reviewer: layout is unchecked. The owner will supply the visual design.
@@ -118,6 +125,11 @@ Every optimisation ships behind its own flag, off by default, and only after a p
 5. How Hermes itself continues: stay a plugin feeding this system (paper T12), or fold in.
 
 ## Lessons from the first pass (keep these)
+- A running `token-economics-admin` or gateway keeps its old Python code; the page file is read from disk, so a new
+  page against an old server shows "not found" for new endpoints. Restart after a change. Do not stop a server the
+  user started: ask them to restart it, and test on your own port.
+- `env.ANTHROPIC_BASE_URL` in `~/.claude/settings.json` overrides the shell variable; check it when a call seems to
+  skip the gateway.
 - Check the port is free before a live test: a gateway the user started was already on 8787 and a test call went through it.
 - When running `claude -p` from a script, pass `stdin=DEVNULL`, or the script text becomes part of the prompt.
 - A feature that holds state (a budget reservation) must be released on every path: block by a later feature, upstream error, no usage, oversize body.
