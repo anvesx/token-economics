@@ -4,7 +4,8 @@ Guidance for Claude Code in this repository.
 
 ## What this is
 Token Economics: a gateway that prices every coding-agent model call, then budgets and optimises it. Four phases
-(P0 measure, P1 enforce, P2 optimise, P3 harden). Only a first pass of P0 is built. Start with `docs/ROADMAP.md`
+(P0 measure, P1 enforce, P2 optimise, P3 harden). First passes of P0 and P1 and a local dashboard are built (tip: branch `feat/dashboard-sessions`); neither phase has
+met its exit gate, and P2 and P3 are not started. Start with `docs/ROADMAP.md`
 (what is left, lessons learned), `docs/P0-STATUS.md` and `docs/P1-STATUS.md`. The plan in `plan/` is the source of truth; do not edit
 `plan/`, `research/` or `research-cli-agents/`.
 
