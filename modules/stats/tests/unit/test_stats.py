@@ -120,3 +120,15 @@ def test_geometric_sd_is_one_without_spread() -> None:
     assert geometric_sd([2, 2, 2]) == 1.0
     assert abs(geometric_sd([1, 100]) - math.exp(math.log(100) / math.sqrt(2))) < 1e-9
     assert geometric_sd([1.0]) == 1.0
+
+
+def test_mean_interval_brackets_the_mean_and_is_the_same_for_the_same_seed() -> None:
+    from token_economics_stats import mean_interval
+
+    # Given a sample with a known mean
+    values = [float(i % 10) for i in range(100)]
+    # When the interval is drawn twice with one seed
+    a, b = mean_interval(values, seed=3), mean_interval(values, seed=3)
+    # Then it is identical, brackets the mean, and an empty sample has none
+    assert a == b and a is not None and a[0] < 4.5 < a[1]
+    assert mean_interval([]) is None

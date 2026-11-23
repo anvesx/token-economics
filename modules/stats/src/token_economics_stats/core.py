@@ -65,6 +65,47 @@ def _interval(values: list[float], level: float) -> tuple[float, float] | None:
     return _percentile(values, tail), _percentile(values, 1 - tail)
 
 
+def mean_interval(
+    values: Sequence[float], level: float = 0.95, n_boot: int = 1000, seed: int = 0
+) -> tuple[float, float] | None:
+    """Percentile bootstrap interval for the mean of one sample (unpaired, resampling items). Seeded, so the same input
+    gives the same interval. None for an empty sample."""
+    if not values:
+        return None
+    rng = random.Random(seed)
+    n = len(values)
+    means = [sum(values[rng.randrange(n)] for _ in range(n)) / n for _ in range(n_boot)]
+    return _interval(means, level)
+
+
+def mean_diff_interval(
+    a: Sequence[float], b: Sequence[float], level: float = 0.95, n_boot: int = 1000, seed: int = 0
+) -> tuple[float, float] | None:
+    """Percentile bootstrap interval for mean(a) - mean(b), two independent samples, each resampled on its own. Seeded.
+    None when either sample is empty. Use it to ask "is a really above b", which needs both samples' noise."""
+    if not a or not b:
+        return None
+    rng = random.Random(seed)
+    na, nb = len(a), len(b)
+    diffs = [
+        sum(a[rng.randrange(na)] for _ in range(na)) / na - sum(b[rng.randrange(nb)] for _ in range(nb)) / nb
+        for _ in range(n_boot)
+    ]
+    return _interval(diffs, level)
+
+
+def two_proportion_p(x1: int, n1: int, x2: int, n2: int) -> float:
+    """One-sided p-value that proportion 1 is above proportion 2 (pooled two-proportion z-test). 1.0 when undefined."""
+    if n1 == 0 or n2 == 0:
+        return 1.0
+    pooled = (x1 + x2) / (n1 + n2)
+    se = math.sqrt(pooled * (1 - pooled) * (1 / n1 + 1 / n2))
+    if se == 0:
+        return 1.0
+    z = (x1 / n1 - x2 / n2) / se
+    return 0.5 * math.erfc(z / math.sqrt(2))
+
+
 @dataclass
 class _Cell:
     """One cluster's totals for both arms."""
