@@ -34,6 +34,8 @@ from token_economics_contracts import (
     RequestContext,
     RequestFacts,
     ResolvedKey,
+    RewrittenRequest,
+    ShadowSampler,
     Upstream,
     load,
     load_all,
@@ -83,6 +85,28 @@ def optional(name: str, *args: Any) -> Any:
         return None
 
 
+def optional_quiet(name: str, *args: Any) -> Any:
+    """Like `optional`, but any failure to build the service means it is absent (shadow runs are never required)."""
+    try:
+        return load(SERVICES, name)(*args)
+    except Exception:
+        return None
+
+
+def build_shadow_observer(settings: Settings, primary: Observer) -> Observer:
+    """Write isolation for shadow runs: its own ledger, dedupe and rejects under `<state>/shadow/`."""
+    folder = settings.state_dir / "shadow"
+    folder.mkdir(parents=True, exist_ok=True)
+    return Observer(
+        ledger=load(SERVICES, "ledger")(str(folder / "ledger.sqlite")),
+        pricebook=primary.pricebook,
+        calculator=primary.calculator,
+        deduper=load(SERVICES, "dedupe")(),
+        normalisers=primary.normalisers,
+        rejects_path=folder / "rejects.jsonl",
+    )
+
+
 class LegacyKeys:
     """P0 key file: used only when the tenancy service is not installed."""
 
@@ -117,6 +141,9 @@ def create_app(
     policy: PolicyEngine | None = None,
     keys: KeyResolver | None = None,
     health: HealthTracker | None = None,
+    shadow: ShadowSampler | None = None,
+    shadow_policy: PolicyEngine | None = None,
+    shadow_observer: Observer | None = None,
 ) -> Starlette:
     settings = settings or Settings()
     observer = observer or build_observer(settings)
@@ -125,6 +152,17 @@ def create_app(
     resolver: KeyResolver = keys or optional("keys", state) or LegacyKeys(settings)
     tracker: HealthTracker | None = health or optional("health")
     audit = optional("audit", state)
+    # Shadow runs (P2): off unless the rollout service is installed and its config enables sampling.
+    sampler: ShadowSampler | None = shadow or optional_quiet("shadow", state)
+    shadow_engine: PolicyEngine | None = None
+    shadow_obs: Observer | None = None
+    if sampler is not None:
+        shadow_dir = str(settings.state_dir / "shadow")
+        shadow_engine = shadow_policy or optional_quiet("policy", shadow_dir, observer.pricebook, observer.calculator)
+        try:
+            shadow_obs = shadow_observer or build_shadow_observer(settings, observer)
+        except Exception:
+            sampler = None
     registered = dict(adapters) if adapters is not None else load_all(ADAPTERS)
     ordered = [registered[n] for n in ADAPTER_ORDER if n in registered]
     ordered += [a for n, a in registered.items() if n not in ADAPTER_ORDER]
@@ -187,6 +225,13 @@ def create_app(
                 observer.stats["blocked"] += 1
                 return refusal(provider, decision)
 
+        mirror = False
+        if ctx is not None and sampler is not None:
+            try:
+                mirror = bool(sampler.sample(ctx))
+            except Exception:
+                mirror = False
+
         # P2: features may rewrite an allowed request (caps, masking, routing). Never a compressed body; any failure
         # sends the original bytes, so a broken optimisation costs a saving, never a request.
         send, extra_headers = body, []
@@ -204,16 +249,52 @@ def create_app(
         def settle(row: Any, status: int) -> None:
             if ctx is not None and engine is not None:
                 engine.after(ctx, row, status)
+            if mirror and ctx is not None and sampler is not None:
+                with contextlib.suppress(Exception):
+                    sampler.record(ctx, "primary", row, status)
 
         # Send every header upstream as it arrived (order, casing, repeats), minus hop-by-hop and the virtual key.
         allowed = {name.lower() for name in upstream.forward_headers(headers)}
-        out_headers = [(k, v) for k, v in raw_headers if k.lower() in allowed]
-        if send is not body:  # httpx sets the length of the new body
-            out_headers = [(k, v) for k, v in out_headers if k.lower() != "content-length"] + extra_headers
-        req = http.build_request(request.method, upstream.url(path, query), headers=out_headers, content=send)
-        sent = {k.lower() for k, _ in out_headers} | {"host", "content-length", "transfer-encoding"}
-        for name in [n for n in req.headers if n.lower() not in sent]:
-            del req.headers[name]  # httpx defaults (accept, accept-encoding, user-agent) the client did not send
+        client_headers = [(k, v) for k, v in raw_headers if k.lower() in allowed]
+
+        def build(content: bytes, extra: list[tuple[str, str]]) -> httpx.Request:
+            out_headers = client_headers
+            if content is not body:  # httpx sets the length of the new body
+                out_headers = [(k, v) for k, v in client_headers if k.lower() != "content-length"] + extra
+            req = http.build_request(request.method, upstream.url(path, query), headers=out_headers, content=content)
+            sent = {k.lower() for k, _ in out_headers} | {"host", "content-length", "transfer-encoding"}
+            for name in [n for n in req.headers if n.lower() not in sent]:
+                del req.headers[name]  # httpx defaults (accept, accept-encoding, user-agent) the client did not send
+            return req
+
+        async def run_mirror() -> None:
+            """Send the request again through the candidate policy; its response goes to the shadow ledger only."""
+            assert ctx is not None and sampler is not None and shadow_obs is not None and adapter is not None
+            row, status = None, 599
+            try:
+                changed: RewrittenRequest | None = None
+                if shadow_engine is not None and "content-encoding" not in headers:
+                    changed = await asyncio.to_thread(shadow_engine.rewrite, ctx, body)
+                content = changed.body if changed is not None else bytes(body)  # a copy, so build() drops the length
+                mresp = await http.send(build(content, list(changed.add_headers) if changed else []), stream=True)
+                try:
+                    captured = b"".join([c async for c in mresp.aiter_raw()])
+                finally:
+                    await mresp.aclose()
+                status = mresp.status_code
+                row = await asyncio.to_thread(
+                    shadow_obs.record, adapter, key, identity, status, dict(mresp.headers), captured
+                )
+                observer.stats["shadow_sent"] += 1
+            except Exception:
+                observer.stats["shadow_errors"] += 1
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(sampler.record, ctx, "shadow", row, status)
+            if shadow_engine is not None:
+                with contextlib.suppress(Exception):
+                    await asyncio.to_thread(shadow_engine.after, ctx, row, status)
+
+        req = build(send, extra_headers)
         try:
             resp = await http.send(req, stream=True)
         except httpx.HTTPError as exc:
@@ -222,6 +303,11 @@ def create_app(
             return JSONResponse(
                 {"error": f"token-economics gateway: upstream unreachable ({type(exc).__name__})"}, status_code=502
             )
+
+        if mirror:
+            mtask = asyncio.create_task(run_mirror())
+            pending.add(mtask)
+            mtask.add_done_callback(pending.discard)
 
         resp_headers = dict(resp.headers)
         if tracker is not None:

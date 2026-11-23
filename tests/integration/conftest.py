@@ -207,8 +207,14 @@ def rig_factory(tmp_path: Path) -> Iterator[Any]:
     """Build a rig with a given policy file and settings. Keys: vk-dev-1 (dhruv), vk-dev-2 (asha)."""
     stack = contextlib.ExitStack()
 
-    def make(policy: dict[str, Any] | None = None, features: dict[str, Any] | None = None, **settings_kw: Any) -> Rig:
-        """`features` maps a feature name to an object, instead of the ones registered by entry point."""
+    def make(
+        policy: dict[str, Any] | None = None,
+        features: dict[str, Any] | None = None,
+        app_kw: dict[str, Any] | None = None,
+        **settings_kw: Any,
+    ) -> Rig:
+        """`features` maps a feature name to an object, instead of the ones registered by entry point. `app_kw` goes
+        to create_app; a callable value is called with the state dir first."""
         provider = FakeProvider()
         state = tmp_path / f"state{len(list(tmp_path.iterdir()))}"
         state.mkdir()
@@ -228,6 +234,7 @@ def rig_factory(tmp_path: Path) -> Iterator[Any]:
             settings,
             upstreams={"anthropic": AnthropicUpstream(base_url=up.url), "openai": OpenAIUpstream(base_url=up.url)},
             policy=engine,
+            **{k: (v(state) if callable(v) else v) for k, v in (app_kw or {}).items()},
         )
         gw = stack.enter_context(Served(app))
         return Rig(provider, up.url, gw.url, settings, app)
