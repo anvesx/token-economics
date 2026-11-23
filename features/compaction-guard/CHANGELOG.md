@@ -2,4 +2,4 @@
 
 ## 0.1.0
 
-- First version (P2).
+- First version (P2): counts compactions per session from prompt-token drops; refuses at the third. Heuristic detection.

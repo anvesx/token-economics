@@ -1,5 +1,5 @@
 """Count compactions per session and recommend a restart at the third."""
 
-from ._stub import create
+from .compaction_guard import CompactionGuard, create
 
-__all__ = ["create"]
+__all__ = ["CompactionGuard", "create"]
