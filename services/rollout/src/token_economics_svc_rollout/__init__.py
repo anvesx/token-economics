@@ -1,5 +1,5 @@
 """Shadow runs on mirrored traffic with write isolation; later canary, kill-switch and rollback."""
 
-from ._stub import open_shadow
+from .shadow import Shadow, open_shadow
 
-__all__ = ["open_shadow"]
+__all__ = ["Shadow", "open_shadow"]
