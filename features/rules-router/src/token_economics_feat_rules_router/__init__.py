@@ -1,5 +1,5 @@
 """Route a session to a model by rules, at session start, and keep it there."""
 
-from ._stub import create
+from .rules_router import RulesRouter, create
 
-__all__ = ["create"]
+__all__ = ["RulesRouter", "create"]
