@@ -8,8 +8,8 @@ not built yet and what was learned while building.
 - Repo: `anvesx/token-economics`. Local clone `~/HRMS/token-economics`. **Nothing is pushed.** `main` is blocked for
   the author; a senior dev merges.
 - Branches (each on top of the one before): `feat/p0-working-core` (P0 first pass), `feat/p1-working-core` (P1 first
-  pass), `feat/dashboard-sessions` (dashboard), `feat/p2-working-core` (P2 first pass), then `feat/p3-working-core`.
-  State of P2: `docs/P2-STATUS.md`; decisions `docs/adr/0003`.
+  pass), `feat/dashboard-sessions` (dashboard), `feat/p2-working-core` (P2 first pass), `feat/p3-working-core` (P3
+  first pass, the tip). State: `docs/P2-STATUS.md`, `docs/P3-STATUS.md`; decisions `docs/adr/0003`, `0004`.
 - State by phase: `docs/P0-STATUS.md`, `docs/P1-STATUS.md`. Decisions: `docs/adr/0001`, `0002`. Spike s2 is run
   (`spikes/s2-claude-code-402`); s1, s3, s4 are not.
 - Sister repo: `~/HRMS/hermes-engine` (branch `m-agents`). Its leak detectors are vendored here unchanged from commit
@@ -110,7 +110,9 @@ Every optimisation ships behind its own flag, off by default, and only after a p
 - Papers T6-T9.
 - Needs something to set `success` on ledger rows; nothing does today, so cost per successful task cannot be computed.
 
-## 4. P3: harden (4 weeks, 26 cards)
+## 4. P3: harden (4 weeks, 26 cards) — first pass built on branch `feat/p3-working-core`
+State and gaps: `docs/P3-STATUS.md`. Left: named alert owners, a second-person security review, the reconciler, a
+latency budget confirmed by the owner, papers, v1.0.0. The plan text below is kept for reference.
 - Canary stage and kill-switch per optimisation and tenant; with a switch off, responses match the P1 baseline byte for byte.
 - Auto-rollback when success falls below the floor, cost per success rises above the baseline interval, cache hit
   rate drops, or billed cost diverges from the estimate. One drill per trigger, no deploy.
@@ -156,3 +158,7 @@ Every optimisation ships behind its own flag, off by default, and only after a p
 - (P2) A miss is the previous call's cached prompt not read back, not "fresh plus write": a growing conversation
   writes its new turn every time.
 - (P2) Run `ruff format` on your own folders only; a repo-wide run reformats untouched files (services/ledger).
+- (P3) A rollback check that compares the canary mean with the control's interval ignores the canary's own noise
+  and kills about a third of healthy 5% canaries; bootstrap the difference instead.
+- (P3) Run `tools/check_extractable.py` before committing a phase: P2's eval CLI tests needed a package the CLI does
+  not declare, and only the per-package install caught it.

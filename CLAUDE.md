@@ -4,9 +4,9 @@ Guidance for Claude Code in this repository.
 
 ## What this is
 Token Economics: a gateway that prices every coding-agent model call, then budgets and optimises it. Four phases
-(P0 measure, P1 enforce, P2 optimise, P3 harden). First passes of P0, P1, a local dashboard and P2 are built (branch `feat/p2-working-core`); no phase has met its exit
-gate. Start with `docs/ROADMAP.md` (what is left, lessons learned), then `docs/P0-STATUS.md`, `docs/P1-STATUS.md`,
-`docs/P2-STATUS.md`. The plan in `plan/` is the source of truth; do not edit
+(P0 measure, P1 enforce, P2 optimise, P3 harden). First passes of P0, P1, a local dashboard, P2 and P3 are built (tip: branch `feat/p3-working-core`); no phase has met
+its exit gate. Start with `docs/ROADMAP.md` (what is left, lessons learned), then `docs/P0-STATUS.md` to
+`docs/P3-STATUS.md`. The plan in `plan/` is the source of truth; do not edit
 `plan/`, `research/` or `research-cli-agents/`.
 
 ## Commands
@@ -19,7 +19,10 @@ for d in modules/*/src features/*/src services/*/src apps/*/src tools; do uv run
 uv run python tools/check_layering.py [--write-importlinter] && uv run lint-imports
 uv run python tools/check_surface.py
 uv run python tools/check_extractable.py [layout-key ...]
-uv run token-economics init|report|detect|prices|replay|key|budget|policy|eval
+uv run token-economics init|report|detect|prices|replay|key|budget|policy|eval|rollout|shadow
+uv run token-economics-worker --once           # rollback check and retention
+uv run python tools/check_alerts.py && uv run python tools/loadtest.py --requests 1000 --concurrency 5
+uv run python tools/backup.py backup|verify|restore ...
 uv run token-economics-gateway --port 8787
 uv run token-economics-admin --port 8788     # local dashboard, read-only
 ```
