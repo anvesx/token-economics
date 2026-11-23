@@ -13,6 +13,7 @@ from .ports import (
     Ledger,
     PolicyEngine,
     PriceBook,
+    Rewriter,
     Upstream,
     UsageNormaliser,
 )
@@ -38,6 +39,7 @@ from .types import (
     RequestContext,
     RequestFacts,
     ResolvedKey,
+    Rewrite,
 )
 
 __all__ = [
@@ -77,6 +79,8 @@ __all__ = [
     "RequestContext",
     "RequestFacts",
     "ResolvedKey",
+    "Rewrite",
+    "Rewriter",
     "SERVICES",
     "TokenEconomicsError",
     "UPSTREAMS",

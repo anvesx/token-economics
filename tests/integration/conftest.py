@@ -23,6 +23,7 @@ from starlette.routing import Route
 from token_economics_app_gateway import Settings, create_app
 from token_economics_feat_upstream.providers.anthropic import AnthropicUpstream
 from token_economics_feat_upstream.providers.openai import OpenAIUpstream
+from token_economics_svc_policy import PolicyService
 
 USAGE_START = {
     "input_tokens": 12,
@@ -206,7 +207,8 @@ def rig_factory(tmp_path: Path) -> Iterator[Any]:
     """Build a rig with a given policy file and settings. Keys: vk-dev-1 (dhruv), vk-dev-2 (asha)."""
     stack = contextlib.ExitStack()
 
-    def make(policy: dict[str, Any] | None = None, **settings_kw: Any) -> Rig:
+    def make(policy: dict[str, Any] | None = None, features: dict[str, Any] | None = None, **settings_kw: Any) -> Rig:
+        """`features` maps a feature name to an object, instead of the ones registered by entry point."""
         provider = FakeProvider()
         state = tmp_path / f"state{len(list(tmp_path.iterdir()))}"
         state.mkdir()
@@ -219,9 +221,13 @@ def rig_factory(tmp_path: Path) -> Iterator[Any]:
             (state / "policy.json").write_text(json.dumps(policy))
         settings = Settings(state_dir=state, **settings_kw)
         up = stack.enter_context(Served(provider.app()))
+        engine = None
+        if features is not None:
+            engine = PolicyService(state, factories={n: (lambda env, f=f: f) for n, f in features.items()})
         app = create_app(
             settings,
             upstreams={"anthropic": AnthropicUpstream(base_url=up.url), "openai": OpenAIUpstream(base_url=up.url)},
+            policy=engine,
         )
         gw = stack.enter_context(Served(app))
         return Rig(provider, up.url, gw.url, settings, app)

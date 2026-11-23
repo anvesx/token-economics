@@ -6,6 +6,11 @@ Policy file `policy.json` in the state directory:
 Every feature is off unless the file says otherwise. `advisory` records what the feature would have done and blocks
 nothing. The file is re-read when it changes, so a budget set from the CLI applies without a restart.
 
+Rewrites (P2): after every `before` has allowed a request, features that also implement `rewrite` may change the
+body, in policy order. Enforced rewrites are sent; advisory ones are logged as `would_rewrite` and the original is sent.
+A rewriter that raises is skipped (rewrites always fail open) and each one gets its own copy, so a broken one cannot
+corrupt the request. With no rewrite applied the original bytes go upstream untouched.
+
 Failure posture (plan/08): a feature that raises is skipped (fail open), unless it is enforced and declares
 `fail_closed` (budgets), in which case the request is refused. Every block, would-block and failure is appended to
 `decisions.jsonl` as metadata only.
@@ -13,6 +18,7 @@ Failure posture (plan/08): a feature that raises is skipped (fail open), unless 
 
 from __future__ import annotations
 
+import copy
 import json
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
@@ -29,6 +35,7 @@ from token_economics_contracts import (
     LedgerRow,
     PolicyMode,
     RequestContext,
+    Rewriter,
     load_all,
 )
 
@@ -154,6 +161,37 @@ class PolicyService:
             return decision.model_copy(update={"feature": decision.feature or feature.name})
         return ALLOW
 
+    def rewrite(self, ctx: RequestContext, body: bytes) -> bytes | None:
+        rewriters = [(f, m) for f, m in self._features() if isinstance(f, Rewriter)]
+        if not rewriters:
+            return None
+        try:
+            current = json.loads(body)
+        except ValueError:
+            return None
+        if not isinstance(current, dict):
+            return None
+        applied = False
+        for feature, mode in rewriters:
+            try:
+                result = feature.rewrite(ctx, copy.deepcopy(current))
+            except Exception as exc:
+                self._log_decision(
+                    ctx, feature.name, mode, "rewrite_error", "failed_open", 0, detail=type(exc).__name__
+                )
+                continue
+            if result is None or result.body == current:
+                continue
+            changes = [c[:200] for c in result.changes]
+            if mode is PolicyMode.ADVISORY:
+                self._log_decision(ctx, feature.name, mode, "rewrite", "would_rewrite", 0, changes=changes)
+                continue
+            current, applied = result.body, True
+            self._log_decision(ctx, feature.name, mode, "rewrite", "rewritten", 0, changes=changes)
+        if not applied:
+            return None
+        return json.dumps(current, ensure_ascii=False, separators=(",", ":")).encode()
+
     def after(self, ctx: RequestContext, row: LedgerRow | None, status: int) -> None:
         self._release([f for f, _ in self._features()], ctx, status, row)
 
@@ -174,6 +212,7 @@ class PolicyService:
         action: str,
         status: int,
         detail: str = "",
+        changes: list[str] | None = None,
     ) -> None:
         self._log(
             {
@@ -190,6 +229,7 @@ class PolicyService:
                 "model": ctx.facts.model,
                 "request_id": ctx.request_id,
                 **({"detail": detail} if detail else {}),
+                **({"changes": changes} if changes else {}),
             }
         )
 

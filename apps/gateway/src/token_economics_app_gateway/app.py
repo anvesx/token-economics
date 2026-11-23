@@ -1,6 +1,7 @@
 """The request path: a pass-through proxy in observe mode.
 
-Requests go upstream unchanged and responses come back byte for byte. A copy of each response is handed to the observer
+Requests go upstream unchanged unless an enforced policy feature rewrites them (P2), and responses come back byte for
+byte. A copy of each response is handed to the observer
 after the last byte has been sent, so the client is never delayed and nothing is blocked (P0: measure only).
 """
 
@@ -186,6 +187,20 @@ def create_app(
                 observer.stats["blocked"] += 1
                 return refusal(provider, decision)
 
+        # P2: features may rewrite an allowed request (caps, masking, routing). Never a compressed body; any failure
+        # sends the original bytes, so a broken optimisation costs a saving, never a request.
+        send = body
+        rewrite = getattr(engine, "rewrite", None)
+        if ctx is not None and rewrite is not None and "content-encoding" not in headers:
+            try:
+                changed = await asyncio.to_thread(rewrite, ctx, body)
+            except Exception:
+                changed = None
+                observer.stats["rewrite_errors"] += 1
+            if changed is not None:
+                send = changed
+                observer.stats["rewritten"] += 1
+
         def settle(row: Any, status: int) -> None:
             if ctx is not None and engine is not None:
                 engine.after(ctx, row, status)
@@ -193,7 +208,9 @@ def create_app(
         # Send every header upstream as it arrived (order, casing, repeats), minus hop-by-hop and the virtual key.
         allowed = {name.lower() for name in upstream.forward_headers(headers)}
         out_headers = [(k, v) for k, v in raw_headers if k.lower() in allowed]
-        req = http.build_request(request.method, upstream.url(path, query), headers=out_headers, content=body)
+        if send is not body:  # httpx sets the length of the new body
+            out_headers = [(k, v) for k, v in out_headers if k.lower() != "content-length"]
+        req = http.build_request(request.method, upstream.url(path, query), headers=out_headers, content=send)
         sent = {k.lower() for k, _ in out_headers} | {"host", "content-length", "transfer-encoding"}
         for name in [n for n in req.headers if n.lower() not in sent]:
             del req.headers[name]  # httpx defaults (accept, accept-encoding, user-agent) the client did not send

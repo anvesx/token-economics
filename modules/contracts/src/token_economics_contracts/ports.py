@@ -22,6 +22,7 @@ from .types import (
     RequestContext,
     RequestFacts,
     ResolvedKey,
+    Rewrite,
 )
 
 
@@ -160,10 +161,25 @@ class Feature(Protocol):
 
 
 @runtime_checkable
+class Rewriter(Protocol):
+    """A feature that may change a request before dispatch (P2: caps, masking, routing, cache plan). Optional: a
+    Feature that also has `rewrite` is one. It must not mutate `body`; it returns a Rewrite with the new body, or None
+    to leave the request alone. It runs only after every feature's `before` has allowed the request."""
+
+    name: str
+
+    def rewrite(self, ctx: RequestContext, body: dict[str, Any]) -> Rewrite | None: ...
+
+
+@runtime_checkable
 class PolicyEngine(Protocol):
     """Runs the features in order and applies their flags. Registered as SERVICES "policy"."""
 
     def before(self, ctx: RequestContext) -> Decision: ...
+
+    def rewrite(self, ctx: RequestContext, body: bytes) -> bytes | None:
+        """The request body to send instead of `body`, or None to send it unchanged. Never raises."""
+        ...
 
     def after(self, ctx: RequestContext, row: LedgerRow | None, status: int) -> None: ...
 

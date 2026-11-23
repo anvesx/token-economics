@@ -241,6 +241,14 @@ class Decision(_Frozen):
 ALLOW = Decision()
 
 
+class Rewrite(_Frozen):
+    """A feature's change to one request body (P2). `body` is the whole new body; `changes` are short metadata notes
+    such as "max_tokens 64000->8192" for the decisions log, never prompt, tool or response text."""
+
+    body: dict[str, Any]
+    changes: tuple[str, ...] = ()
+
+
 class FeatureEnv(_Frozen):
     """What the policy service hands a feature factory. Features never import services; they get them here."""
 
