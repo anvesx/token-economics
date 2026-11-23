@@ -1,7 +1,14 @@
-"""The read-only admin API and the dashboard page. Optional services are found through entry points only."""
+"""The admin API and the dashboard page. Optional services are found through entry points only.
+
+Authentication: once any admin token exists (or with `require_auth`), every `/api` route needs
+`Authorization: Bearer <admin token>` and a role that is high enough: viewer reads, operator also changes kill
+switches, admin also proposes and decides changes and manages admin tokens. With no tokens the app is the local
+read-only dashboard and every write route is refused.
+"""
 
 from __future__ import annotations
 
+import inspect
 import json
 import threading
 from collections.abc import Callable
@@ -11,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from starlette.applications import Starlette
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
@@ -27,6 +35,16 @@ PAGE_CSP = (
     "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'"
 )
 _TAIL_BLOCK = 64 * 1024
+_ROLES = ("viewer", "operator", "admin")  # lowest first
+_FORBIDDEN = ("vk-", "sk-ant", "adm-")  # text that looks like a key or token is never accepted into a write
+
+
+class _Refused(Exception):
+    """A request body the write routes will not accept."""
+
+
+class _Unavailable(Exception):
+    """A service the route needs is not installed."""
 
 
 class _NoStore(BaseHTTPMiddleware):
@@ -97,6 +115,7 @@ def create_app(
     load: Loader = _registry_load,
     transcripts_root: Path | None = None,
     prompt_check: bool = False,
+    require_auth: bool = False,
 ) -> Starlette:
     """The app for one state directory. `load(group, name)` finds services; tests inject a fake one.
 
@@ -218,20 +237,216 @@ def create_app(
             out.append({f: _plain(_field(k, f)) for f in KEY_FIELDS})
         return JSONResponse(out)
 
+    cache_lock = threading.Lock()
+    cached: dict[str, Any] = {}
+
+    def store(name: str) -> Any | None:
+        """A service object built once per name. Building one may create files, so only when the state dir exists."""
+        with cache_lock:
+            if name not in cached:
+                factory = service(name)
+                if factory is None or not state_dir.is_dir():
+                    return None
+                cached[name] = factory(str(state_dir))
+            return cached[name]
+
+    def auth_store() -> Any | None:
+        if not require_auth and not (state_dir / "tenancy.sqlite").is_file():
+            return None  # no token database yet: do not create one just to look
+        return store("admin_auth")
+
+    def guard(role: str, handler: Callable[[Request], Any], *, write: bool = False) -> Callable[[Request], Any]:
+        """Check the bearer token and role, then run the handler. A refusal never echoes what was presented."""
+
+        async def wrapper(request: Request) -> Response:
+            auth = auth_store()
+            enforced = require_auth or (auth is not None and auth.has_tokens())
+            if not enforced:
+                if write:
+                    return JSONResponse({"error": "write routes need admin tokens; none exist yet"}, status_code=403)
+            else:
+                if auth is None:
+                    return JSONResponse({"error": "authentication is required but unavailable"}, status_code=503)
+                scheme, _, presented = request.headers.get("authorization", "").partition(" ")
+                who = auth.resolve(presented.strip()) if scheme.lower() == "bearer" else None
+                if who is None:
+                    return JSONResponse(
+                        {"error": "a valid admin token is required"},
+                        status_code=401,
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+                if _ROLES.index(who.role) < _ROLES.index(role):
+                    return JSONResponse({"error": f"this needs the {role} role"}, status_code=403)
+                request.state.admin = who
+            if inspect.iscoroutinefunction(handler):
+                return await handler(request)  # type: ignore[no-any-return]
+            return await run_in_threadpool(handler, request)
+
+        return wrapper
+
+    def actor(request: Request) -> str:
+        return f"admin:{request.state.admin.name}"
+
+    async def body_of(request: Request) -> dict[str, Any]:
+        try:
+            data = await request.json()
+        except ValueError:
+            raise _Refused("the body must be a JSON object") from None
+        if not isinstance(data, dict):
+            raise _Refused("the body must be a JSON object")
+        return data
+
+    def text_field(data: dict[str, Any], name: str, default: str | None = None, limit: int = 200) -> str:
+        value = data.get(name, default)
+        if not isinstance(value, str) or (default is None and not value.strip()) or len(value) > limit:
+            raise _Refused(f"{name} must be a text value of at most {limit} characters")
+        if any(bad in value for bad in _FORBIDDEN):
+            raise _Refused(f"{name} looks like a key or token and was refused")
+        return value
+
+    def refusal(e: Exception) -> Response:
+        status = getattr(e, "status", None)  # ChangeError from the tenancy service carries its HTTP status
+        if isinstance(e, _Refused):
+            return JSONResponse({"error": str(e)}, status_code=400)
+        if isinstance(status, int):
+            return JSONResponse({"error": str(e)}, status_code=status)
+        raise e
+
+    def need(name: str) -> Any:
+        found = store(name)
+        if found is None:
+            raise _Unavailable(name)
+        return found
+
+    def unavailable(e: _Unavailable) -> Response:
+        return JSONResponse({"error": f"the {e} service is not installed"}, status_code=503)
+
+    def kills_list(request: Request) -> Response:
+        try:
+            switches = need("kill")
+        except _Unavailable as e:
+            return unavailable(e)
+        return JSONResponse([_plain(k) for k in switches.list()])
+
+    async def kills_add(request: Request) -> Response:
+        try:
+            data = await body_of(request)
+            feature, tenant = text_field(data, "feature"), text_field(data, "tenant", "*")
+            reason = text_field(data, "reason", "", 500)
+            changed = need("kill").add(feature, tenant, reason, actor(request))
+        except _Unavailable as e:
+            return unavailable(e)
+        except _Refused as e:
+            return refusal(e)
+        return JSONResponse({"changed": bool(changed)})
+
+    async def kills_remove(request: Request) -> Response:
+        try:
+            data = await body_of(request)
+            feature, tenant = text_field(data, "feature"), text_field(data, "tenant", "*")
+            changed = need("kill").remove(feature, tenant, actor(request))
+        except _Unavailable as e:
+            return unavailable(e)
+        except _Refused as e:
+            return refusal(e)
+        return JSONResponse({"changed": bool(changed)})
+
+    def audit_list(request: Request) -> Response:
+        try:
+            limit = _int_param(request, "limit", 200, 1, 1000)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        log = store("audit")
+        return JSONResponse([_plain(x) for x in log.entries()[-limit:]] if log is not None else [])
+
+    def changes_list(request: Request) -> Response:
+        try:
+            changes = need("changes")
+        except _Unavailable as e:
+            return unavailable(e)
+        return JSONResponse([_plain(c) for c in changes.list()])
+
+    async def change_propose(request: Request) -> Response:
+        try:
+            data = await body_of(request)
+            payload = data.get("payload")
+            if not isinstance(payload, dict):
+                raise _Refused("payload must be a JSON object")
+            made = need("changes").propose(text_field(data, "kind"), payload, request.state.admin.name)
+        except _Unavailable as e:
+            return unavailable(e)
+        except Exception as e:
+            return refusal(e)
+        return JSONResponse({"change_id": made}, status_code=201)
+
+    def decide(verb: str) -> Callable[[Request], Response]:
+        def handler(request: Request) -> Response:
+            try:
+                done = getattr(need("changes"), verb)(request.path_params["change_id"], request.state.admin.name)
+            except _Unavailable as e:
+                return unavailable(e)
+            except Exception as e:
+                return refusal(e)
+            return JSONResponse(_plain(done))
+
+        return handler
+
+    def tokens_list(request: Request) -> Response:
+        try:
+            auth = need("admin_auth")
+        except _Unavailable as e:
+            return unavailable(e)
+        return JSONResponse([_plain(t) for t in auth.list()])
+
+    async def token_issue(request: Request) -> Response:
+        try:
+            data = await body_of(request)
+            plaintext, token_id = need("admin_auth").issue(
+                text_field(data, "name"), text_field(data, "role"), actor=actor(request)
+            )
+        except _Unavailable as e:
+            return unavailable(e)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        except _Refused as e:
+            return refusal(e)
+        return JSONResponse({"token": plaintext, "token_id": token_id}, status_code=201)  # shown once, never stored
+
+    def token_revoke(request: Request) -> Response:
+        try:
+            done = need("admin_auth").revoke(request.path_params["token_id"], actor=actor(request))
+        except _Unavailable as e:
+            return unavailable(e)
+        return JSONResponse({"revoked": bool(done)})
+
     def index(request: Request) -> Response:
         page = (files("token_economics_app_admin_api") / "static" / "index.html").read_text(encoding="utf-8")
         return HTMLResponse(page, headers={"Content-Security-Policy": PAGE_CSP})
 
+    def api(path: str, handler: Callable[[Request], Any], methods: list[str], role: str = "viewer") -> Route:
+        return Route(path, guard(role, handler, write=methods != ["GET"]), methods=methods)
+
     routes = [
         Route("/", index, methods=["GET"]),
-        Route("/api/summary", summary, methods=["GET"]),
-        Route("/api/overview", overview, methods=["GET"]),
-        Route("/api/sessions/{session_id}", session_detail, methods=["GET"]),
-        Route("/api/sessions/{session_id}/tasks/{n}", task_detail, methods=["GET"]),
-        Route("/api/budgets", budgets, methods=["GET"]),
-        Route("/api/decisions", tail("decisions.jsonl", 200), methods=["GET"]),
-        Route("/api/alerts", tail("alerts.jsonl", 200), methods=["GET"]),
-        Route("/api/rejects", tail("rejects.jsonl", 100), methods=["GET"]),
-        Route("/api/keys", keys, methods=["GET"]),
+        api("/api/summary", summary, ["GET"]),
+        api("/api/overview", overview, ["GET"]),
+        api("/api/sessions/{session_id}", session_detail, ["GET"]),
+        api("/api/sessions/{session_id}/tasks/{n}", task_detail, ["GET"]),
+        api("/api/budgets", budgets, ["GET"]),
+        api("/api/decisions", tail("decisions.jsonl", 200), ["GET"]),
+        api("/api/alerts", tail("alerts.jsonl", 200), ["GET"]),
+        api("/api/rejects", tail("rejects.jsonl", 100), ["GET"]),
+        api("/api/keys", keys, ["GET"]),
+        api("/api/kills", kills_list, ["GET"]),
+        api("/api/kills", kills_add, ["POST"], "operator"),
+        api("/api/kills", kills_remove, ["DELETE"], "operator"),
+        api("/api/audit", audit_list, ["GET"]),
+        api("/api/changes", changes_list, ["GET"]),
+        api("/api/changes", change_propose, ["POST"], "admin"),
+        api("/api/changes/{change_id}/approve", decide("approve"), ["POST"], "admin"),
+        api("/api/changes/{change_id}/reject", decide("reject"), ["POST"], "admin"),
+        api("/api/admin-tokens", tokens_list, ["GET"], "admin"),
+        api("/api/admin-tokens", token_issue, ["POST"], "admin"),
+        api("/api/admin-tokens/{token_id}", token_revoke, ["DELETE"], "admin"),
     ]
     return Starlette(routes=routes, middleware=[Middleware(_NoStore)])

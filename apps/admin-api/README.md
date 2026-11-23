@@ -8,11 +8,27 @@ through entry points; if one is not installed, the part of the page that needs i
 Run alone: `uv run --package token-economics-app-admin-api pytest apps/admin-api`
 (the tests that need a real ledger and the insight summary skip themselves unless the `test` extra is installed).
 
-## NO AUTHENTICATION: keep it on localhost
+## Authentication and roles
 
-This app has no login, no roles and no TLS. It binds to `127.0.0.1` by default and warns if you pick another host.
-Never expose it to a network. Everything it shows (callers, tenants, spend, key ids) is readable by anyone who can
-reach the port.
+By default (no admin tokens, no `--require-auth`) this is the local read-only dashboard: no login, no TLS, bound to
+`127.0.0.1`, every write route refused with 403. Never expose it to a network in that mode.
+
+Once any admin token exists, or with `--require-auth`, every `/api` route needs `Authorization: Bearer <admin token>`
+(401 if missing, wrong or revoked; 403 if the role is too low). The static page at `/` holds no data and stays open.
+Revoking every token does not reopen the API. Tokens are never echoed in a response, a log line or the audit log.
+
+| Role | May |
+|---|---|
+| viewer | every GET: the dashboard routes, `GET /api/kills`, `/api/audit`, `/api/changes` |
+| operator | also `POST /api/kills` `{feature, tenant, reason}` and `DELETE /api/kills` `{feature, tenant}` (recorded as `admin:<name>`) |
+| admin | also `POST /api/changes` `{kind: "policy"|"price_book", payload}`, `POST /api/changes/{id}/approve` and `/reject`, `GET/POST/DELETE /api/admin-tokens` (issue `{name, role}` shows the token once) |
+
+A change needs a second approver: the admin who proposed it cannot approve it (403), and a change is decided once (409).
+Approving a policy change writes `policy.json`. Approving a price-book change only records the approval; the price book
+is append-only and has its own path, so nothing is applied. Canary share has no route yet.
+
+First token: `token-economics-admin --issue-admin-token ann` (role admin; `--role` for others). It needs file access to
+the state directory, which is the trust boundary. The page has no section for these routes; use the API.
 
 ## What the page shows
 

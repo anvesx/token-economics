@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Roles and the second approver (P3): `Authorization: Bearer <admin token>` on every `/api` route once any admin token
+  exists or with `--require-auth`. New routes `GET/POST/DELETE /api/kills`, `GET /api/audit`,
+  `GET/POST /api/changes`, `POST /api/changes/{id}/approve|reject`, `GET/POST/DELETE /api/admin-tokens`.
+  `--issue-admin-token NAME [--role R]` prints a first token once. Without tokens the app is unchanged and read-only,
+  and write routes are refused.
+
 - Transcript views: `/api/overview` and `/api/sessions/{id}` over the insight `session_views` service (built once, lazily);
   `create_app(..., transcripts_root, prompt_check)`; flags `--transcripts` and `--prompt-check`.
 - The page now has views with hash routes (overview, sessions, session detail, categories, gateway). The gateway view is
