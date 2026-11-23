@@ -1,5 +1,5 @@
 """Ask the provider to clear old tool uses server-side (context management)."""
 
-from ._stub import create
+from .context_clearing import ContextClearing, create
 
-__all__ = ["create"]
+__all__ = ["ContextClearing", "create"]
