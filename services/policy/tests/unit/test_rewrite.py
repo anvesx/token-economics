@@ -102,3 +102,24 @@ def test_rewrites_chain_in_policy_order(tmp_path: Path) -> None:
 def test_a_body_that_is_not_a_json_object_is_never_rewritten(tmp_path: Path) -> None:
     s = svc(tmp_path, {"max_tokens": Capper("max_tokens", 1)}, {"max_tokens": "enforced"})
     assert s.rewrite(CTX, b"not json") is None and s.rewrite(CTX, b"[1]") is None
+
+
+def test_a_broken_feature_package_breaks_only_itself(tmp_path: Path, monkeypatch: Any) -> None:
+    # Given two switched-on features where one package cannot even be imported
+    import token_economics_svc_policy.engine as engine
+
+    def fake_load(group: str, name: str) -> Any:
+        if name == "broken":
+            raise ModuleNotFoundError("no module named broken._stub")
+        return lambda env: Capper(name, 8192)
+
+    monkeypatch.setattr(engine, "load", fake_load)
+    (tmp_path / "policy.json").write_text(
+        json.dumps({"features": {"broken": {"mode": "advisory"}, "max_tokens": {"mode": "enforced"}}})
+    )
+    s = PolicyService(tmp_path)
+    # When a request is checked and rewritten
+    allowed, out = s.before(CTX).allow, s.rewrite(CTX, BODY)
+    # Then the broken one is reported and fails open (advisory), and the good one still works
+    assert allowed and out is not None and json.loads(out.body)["max_tokens"] == 8192
+    assert any(p.startswith("broken:") for p in s.problems)

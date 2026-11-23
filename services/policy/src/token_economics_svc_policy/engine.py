@@ -37,7 +37,7 @@ from token_economics_contracts import (
     RequestContext,
     Rewriter,
     RewrittenRequest,
-    load_all,
+    load,
 )
 
 POLICY_NAME, DECISIONS_NAME = "policy.json", "decisions.jsonl"
@@ -96,7 +96,6 @@ class PolicyService:
             raw = policy.get("features")
             sections: dict[str, Any] = raw if isinstance(raw, dict) else {}
             wanted = {n: s for n, s in sections.items() if isinstance(s, dict) and mode_of(s) is not PolicyMode.OFF}
-            factories = dict(self._factories) if self._factories is not None else (load_all(FEATURES) if wanted else {})
             order = [n for n in (policy.get("order") or DEFAULT_ORDER) if n in wanted]
             order += sorted(n for n in wanted if n not in order)
             active, problems = [], []
@@ -104,12 +103,17 @@ class PolicyService:
                 section, mode = wanted[name], mode_of(wanted[name])
                 config = {k: v for k, v in section.items() if k != "mode"}
                 try:
-                    if name not in factories:
+                    # Only switched-on features are loaded, one at a time: a broken package breaks itself, not all.
+                    if self._factories is None:
+                        factory = load(FEATURES, name)
+                    elif name in self._factories:
+                        factory = self._factories[name]
+                    else:
                         raise LookupError(f"no feature registered as {name!r}")
                     env = FeatureEnv(
                         state_dir=self._state, config=config, pricebook=self._pricebook, calculator=self._calculator
                     )
-                    active.append((factories[name](env), mode))
+                    active.append((factory(env), mode))
                 except Exception as exc:
                     # A feature that cannot start is a problem to show, never a silent pass for an enforced budget.
                     problems.append(f"{name}: {type(exc).__name__}: {exc}")
