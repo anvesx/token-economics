@@ -68,6 +68,7 @@ def test_detect_keeps_the_prompt_check_off_unless_asked() -> None:
 
 
 def test_eval_selftest_passes_on_a_known_no_op(capsys: pytest.CaptureFixture[str]) -> None:
+    pytest.importorskip("token_economics_svc_eval")  # the CLI finds the harness by entry point
     # Given two identical synthetic arms When the self-test runs Then it reports no difference and exits 0
     assert main(["eval", "selftest"]) == 0
     assert "PASSED" in capsys.readouterr().out
@@ -76,6 +77,7 @@ def test_eval_selftest_passes_on_a_known_no_op(capsys: pytest.CaptureFixture[str
 def test_eval_run_refuses_an_uncommitted_spec_with_a_clear_message(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    pytest.importorskip("token_economics_svc_eval")  # the CLI finds the harness by entry point
     spec = tmp_path / "spec.json"
     spec.write_text("{}")
     assert main(["eval", "run", str(spec), "--out", str(tmp_path / "out")]) == 2
@@ -83,6 +85,7 @@ def test_eval_run_refuses_an_uncommitted_spec_with_a_clear_message(
 
 
 def test_eval_report_reanalyses_a_result_folder(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    pytest.importorskip("token_economics_svc_eval")  # the CLI finds the harness by entry point
     # Given a folder with a spec and four attempts, two tasks in each of two arms
     (tmp_path / "spec.json").write_text(
         json.dumps(
