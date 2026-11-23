@@ -1,5 +1,5 @@
 """Cache hit rate and miss events per caller."""
 
-from ._stub import create
+from .monitor import CacheHitMonitor, create
 
-__all__ = ["create"]
+__all__ = ["CacheHitMonitor", "create"]
