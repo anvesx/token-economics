@@ -17,6 +17,7 @@ from .types import (
     DetectorCoverage,
     Finding,
     Identity,
+    KillEntry,
     LedgerRow,
     Observation,
     PriceRow,
@@ -239,3 +240,34 @@ class BudgetReader(Protocol):
     """Read-only view of budgets for reports. Registered as SERVICES "budget_status" (a factory taking state_dir)."""
 
     def status(self) -> Sequence[BudgetStatus]: ...
+
+
+@runtime_checkable
+class KillSwitches(Protocol):
+    """Read and write `kill.json`. Registered as SERVICES "kill" (a factory taking state_dir). Changes are audited."""
+
+    def list(self) -> Sequence[KillEntry]: ...
+
+    def add(self, feature: str, tenant: str = "*", reason: str = "", by: str = "") -> bool:
+        """False when that switch was already off."""
+        ...
+
+    def remove(self, feature: str, tenant: str = "*", by: str = "") -> bool:
+        """False when there was no such switch."""
+        ...
+
+
+@runtime_checkable
+class RollbackChecker(Protocol):
+    """Auto-rollback (plan/07). Registered as SERVICES "rollback", a factory taking state_dir. `check` compares canary
+    with control traffic and kills a feature whose trigger fires; it returns what it did."""
+
+    def check(self, now: datetime | None = None) -> Sequence[dict[str, Any]]: ...
+
+
+@runtime_checkable
+class Retention(Protocol):
+    """Drops metadata log lines older than a tenant's retention. Registered as SERVICES "retention" (state_dir).
+    Never touches the ledger or the price book, which are append-only."""
+
+    def apply(self, now: datetime | None = None) -> dict[str, Any]: ...
