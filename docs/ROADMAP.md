@@ -8,8 +8,8 @@ not built yet and what was learned while building.
 - Repo: `anvesx/token-economics`. Local clone `~/HRMS/token-economics`. **Nothing is pushed.** `main` is blocked for
   the author; a senior dev merges.
 - Branches (each on top of the one before): `feat/p0-working-core` (P0 first pass), `feat/p1-working-core` (P1 first
-  pass), `feat/dashboard-sessions` (dashboard, the tip). Start P2 from `feat/dashboard-sessions` on a new branch
-  `feat/p2-working-core`. At the tip: 295 tests, ruff, mypy, layering, extractable and surface checks pass.
+  pass), `feat/dashboard-sessions` (dashboard), `feat/p2-working-core` (P2 first pass), then `feat/p3-working-core`.
+  State of P2: `docs/P2-STATUS.md`; decisions `docs/adr/0003`.
 - State by phase: `docs/P0-STATUS.md`, `docs/P1-STATUS.md`. Decisions: `docs/adr/0001`, `0002`. Spike s2 is run
   (`spikes/s2-claude-code-402`); s1, s3, s4 are not.
 - Sister repo: `~/HRMS/hermes-engine` (branch `m-agents`). Its leak detectors are vendored here unchanged from commit
@@ -93,7 +93,9 @@ State and gaps: `docs/P1-STATUS.md`. Decisions: `docs/adr/0002`. Left to build:
 - Zero-risk guards for rows 15, 36, 42 once the row numbering is agreed.
 - Papers T3, T4, T5.
 
-## 3. P2: optimise (6 weeks, 59 cards)
+## 3. P2: optimise (6 weeks, 59 cards) — first pass built on branch `feat/p2-working-core`
+State and gaps: `docs/P2-STATUS.md`. The first thing left is a real private task set and a pilot run to size the bound.
+
 Every optimisation ships behind its own flag, off by default, and only after a paired win in cost per successful task.
 - Eval harness first: private task set, 80-task Lite subset, paired task-clustered bootstrap, non-inferiority bound
   committed before each run, isolated cache per arm, a no-op change must report no difference. `modules/stats`,
@@ -147,3 +149,10 @@ Every optimisation ships behind its own flag, off by default, and only after a p
   `_hermes_loader.py`. The model prompt check is off unless asked.
 - `tools/check_surface.py` fails on anything public bound in a package `__init__.py` that is not in `__all__`; keep
   `__init__.py` to re-exports.
+- (P2) A rewrite must give the same bytes for the same history, and any state that changes the output (TTL choice,
+  tool deferral, route) must be frozen per session; otherwise the prompt cache is lost on every turn.
+- (P2) The policy engine used to load every registered feature; one half-built package broke all of them. It now
+  loads only the switched-on ones, one at a time.
+- (P2) A miss is the previous call's cached prompt not read back, not "fresh plus write": a growing conversation
+  writes its new turn every time.
+- (P2) Run `ruff format` on your own folders only; a repo-wide run reformats untouched files (services/ledger).
