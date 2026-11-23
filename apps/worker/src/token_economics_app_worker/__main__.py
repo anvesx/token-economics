@@ -1,5 +1,8 @@
-"""Placeholder until the worker is built."""
+"""`python -m token_economics_app_worker` and the `token-economics-worker` script."""
 
+import sys
 
-def main() -> None:
-    raise SystemExit("token-economics-worker is not built yet")
+from .worker import main
+
+if __name__ == "__main__":
+    sys.exit(main())

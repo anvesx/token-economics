@@ -1,3 +1,5 @@
 """Scheduled jobs: auto-rollback checks, retention and backups."""
 
-__all__: list[str] = []
+from .worker import main, tick
+
+__all__ = ["main", "tick"]
