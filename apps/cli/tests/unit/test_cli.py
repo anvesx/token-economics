@@ -64,3 +64,45 @@ def test_report_without_a_ledger_says_what_to_do(
 def test_detect_keeps_the_prompt_check_off_unless_asked() -> None:
     assert build_parser().parse_args(["detect"]).prompt_check is False
     assert build_parser().parse_args(["detect", "--prompt-check"]).prompt_check is True
+
+
+def test_eval_selftest_passes_on_a_known_no_op(capsys: pytest.CaptureFixture[str]) -> None:
+    # Given two identical synthetic arms When the self-test runs Then it reports no difference and exits 0
+    assert main(["eval", "selftest"]) == 0
+    assert "PASSED" in capsys.readouterr().out
+
+
+def test_eval_run_refuses_an_uncommitted_spec_with_a_clear_message(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    spec = tmp_path / "spec.json"
+    spec.write_text("{}")
+    assert main(["eval", "run", str(spec), "--out", str(tmp_path / "out")]) == 2
+    assert "token-economics eval:" in capsys.readouterr().err
+
+
+def test_eval_report_reanalyses_a_result_folder(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # Given a folder with a spec and four attempts, two tasks in each of two arms
+    (tmp_path / "spec.json").write_text(
+        json.dumps(
+            {
+                "name": "t",
+                "tasks": "x",
+                "baseline": "b",
+                "arms": {"b": {}, "c": {}},
+                "bound": {"success_pp": 5},
+                "n_boot": 100,
+            }
+        )
+    )
+    rows = [
+        {"task_id": t, "arm": arm, "seed": 0, "success": True, "cost_usd": cost}
+        for t in ("a", "b")
+        for arm, cost in (("b", "2"), ("c", "1"))
+    ]
+    (tmp_path / "attempts.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    # When reported Then the table has both arms and a verdict
+    assert main(["eval", "report", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "| c |" in out and "verdict" in out
+    assert main(["eval", "report", str(tmp_path / "missing")]) == 1

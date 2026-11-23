@@ -14,7 +14,16 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from token_economics_contracts import ADAPTERS, NORMALISERS, SERVICES, NoPriceRow, TokenEconomicsError, load, load_all
+from token_economics_contracts import (
+    ADAPTERS,
+    NORMALISERS,
+    SERVICES,
+    Attempt,
+    NoPriceRow,
+    TokenEconomicsError,
+    load,
+    load_all,
+)
 
 
 def state_dir() -> Path:
@@ -285,6 +294,74 @@ def cmd_replay(a: argparse.Namespace) -> int:
     return 0
 
 
+def _pct(v: float | None) -> str:
+    return "n/a" if v is None else f"{v * 100:.1f}%"
+
+
+def _eval_table(result: dict[str, Any]) -> str:
+    """The per-arm summary and the paired verdicts of one analysis, as markdown tables."""
+    lines = [
+        f"{result['name']}: baseline {result['baseline']}, bound {result['bound_pp']} pp, alpha {result['alpha']}",
+        "",
+        "| arm | attempts | success | total cost | CPS | failed-run waste | errors |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for arm, s in result["arms"].items():
+        cps = "n/a" if s["cps_usd"] is None else f"${Decimal(s['cps_usd']):,.4f}"
+        lines.append(
+            f"| {arm} | {s['attempts']} | {_pct(s['success_rate'])} | ${Decimal(s['total_cost_usd']):,.4f} | {cps} "
+            f"| {_pct(s['failed_waste_share'])} | {s['errors']} |"
+        )
+    lines += [
+        "",
+        "| candidate | CPS ratio (CI) | success diff pp (CI) | adjusted p | verdict |",
+        "|---|---|---|---|---|",
+    ]
+    for arm, c in result["comparisons"].items():
+        ci, sci = c["ratio_ci"], c["success_diff_ci"]
+        ratio = "n/a" if ci is None or c["ratio"] is None else f"{c['ratio']:.3f} ({ci[0]:.3f} to {ci[1]:.3f})"
+        diff = "n/a" if sci is None else f"{c['success_diff'] * 100:+.1f} ({sci[0] * 100:+.1f} to {sci[1] * 100:+.1f})"
+        lines.append(f"| {arm} | {ratio} | {diff} | {c['adjusted_p']:.4f} | {c['verdict']}: {c['reason']} |")
+    return "\n".join(lines)
+
+
+def cmd_eval(a: argparse.Namespace) -> int:
+    """Run a preregistered eval spec, re-read a result folder, or run the no-op self-test."""
+    harness = load(SERVICES, "eval")()
+    if a.action == "selftest":
+        out = harness.selftest(a.seed)
+        print(_eval_table(out["analysis"]))
+        print(f"\nno-op self-test: {'PASSED' if out['passed'] else 'FAILED'} ({out['verdict']}: {out['reason']})")
+        return 0 if out["passed"] else 1
+    if a.action == "report":
+        folder = Path(a.result_dir).expanduser()
+        try:
+            spec = json.loads((folder / "spec.json").read_text())
+            attempts = [
+                Attempt.model_validate_json(line)
+                for line in (folder / "attempts.jsonl").read_text().splitlines()
+                if line.strip()
+            ]
+        except (OSError, ValueError) as exc:
+            print(f"cannot read the result folder {folder}: {exc}")
+            return 1
+        print(_eval_table(harness.analyse(attempts, spec)))
+        return 0
+    try:
+        folder = harness.run(
+            Path(a.spec).expanduser(), Path(a.out).expanduser() if a.out else None, allow_dirty=a.allow_dirty
+        )
+    except (
+        RuntimeError,
+        ValueError,
+    ) as exc:  # not preregistered, a bad spec or task file, a harness that skips the gateway
+        print(f"token-economics eval: {exc}", file=sys.stderr)
+        return 2
+    print(f"results in {folder}\n")
+    print((folder / "REPORT.md").read_text())
+    return 0
+
+
 def _emit(text: str, md: str | None) -> None:
     print(text)
     if md:
@@ -355,6 +432,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("path")
     p.add_argument("--harness", default="claude_code")
     p.set_defaults(fn=cmd_replay)
+    p = sub.add_parser("eval", help="eval harness: run a preregistered spec, re-read a result, self-test")
+    esub = p.add_subparsers(dest="action", required=True)
+    k = esub.add_parser("run", help="run a spec: baseline and candidate arms, paired, with a verdict each")
+    k.add_argument("spec")
+    k.add_argument("--out", help="result folder (default evals/results/<name>/<UTC time>; rerun into one to resume)")
+    k.add_argument("--allow-dirty", action="store_true", help="run a spec that is not committed (marked as such)")
+    k = esub.add_parser("report", help="re-analyse a result folder and print the table and verdicts")
+    k.add_argument("result_dir")
+    k = esub.add_parser("selftest", help="two identical arms must report no difference")
+    k.add_argument("--seed", type=int, default=0)
+    p.set_defaults(fn=cmd_eval)
     return ap
 
 
