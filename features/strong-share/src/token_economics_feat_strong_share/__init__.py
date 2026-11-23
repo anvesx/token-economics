@@ -1,5 +1,5 @@
 """Cap each tenant's share of strong-model calls and alert on drift."""
 
-from ._stub import create
+from .strong_share import StrongShare, create
 
-__all__ = ["create"]
+__all__ = ["StrongShare", "create"]
