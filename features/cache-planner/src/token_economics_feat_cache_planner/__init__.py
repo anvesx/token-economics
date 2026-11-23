@@ -1,5 +1,5 @@
 """Pick the 5-minute or 1-hour cache TTL from the observed reuse gap."""
 
-from ._stub import create
+from .planner import CachePlanner, create
 
-__all__ = ["create"]
+__all__ = ["CachePlanner", "create"]
