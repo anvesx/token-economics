@@ -1,5 +1,5 @@
-"""Defer tool schemas above a threshold, with a server-side tool search recovery path."""
+"""Defer tool schemas when there are many tools, keeping a server-side search path."""
 
-from ._stub import create
+from .schema_deferral import SchemaDeferral, create
 
-__all__ = ["create"]
+__all__ = ["SchemaDeferral", "create"]
