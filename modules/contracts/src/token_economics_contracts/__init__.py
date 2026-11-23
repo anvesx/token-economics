@@ -7,6 +7,7 @@ from .ports import (
     CostCalculator,
     Deduper,
     Detector,
+    EvalHarness,
     Feature,
     HealthTracker,
     KeyResolver,
@@ -14,12 +15,14 @@ from .ports import (
     PolicyEngine,
     PriceBook,
     Rewriter,
+    ShadowSampler,
     Upstream,
     UsageNormaliser,
 )
 from .registry import ADAPTERS, FEATURES, NORMALISERS, SERVICES, UPSTREAMS, load, load_all
 from .types import (
     ALLOW,
+    Attempt,
     Buckets,
     BudgetStatus,
     Capabilities,
@@ -40,12 +43,14 @@ from .types import (
     RequestFacts,
     ResolvedKey,
     Rewrite,
+    RewrittenRequest,
 )
 
 __all__ = [
     "ADAPTERS",
     "ALLOW",
     "Adapter",
+    "Attempt",
     "Buckets",
     "BudgetReader",
     "BudgetStatus",
@@ -56,6 +61,7 @@ __all__ = [
     "Deduper",
     "Detector",
     "DetectorCoverage",
+    "EvalHarness",
     "FEATURES",
     "Feature",
     "FeatureEnv",
@@ -81,7 +87,9 @@ __all__ = [
     "ResolvedKey",
     "Rewrite",
     "Rewriter",
+    "RewrittenRequest",
     "SERVICES",
+    "ShadowSampler",
     "TokenEconomicsError",
     "UPSTREAMS",
     "UnknownUsageKey",

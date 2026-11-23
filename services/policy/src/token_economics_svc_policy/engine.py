@@ -36,6 +36,7 @@ from token_economics_contracts import (
     PolicyMode,
     RequestContext,
     Rewriter,
+    RewrittenRequest,
     load_all,
 )
 
@@ -161,7 +162,7 @@ class PolicyService:
             return decision.model_copy(update={"feature": decision.feature or feature.name})
         return ALLOW
 
-    def rewrite(self, ctx: RequestContext, body: bytes) -> bytes | None:
+    def rewrite(self, ctx: RequestContext, body: bytes) -> RewrittenRequest | None:
         rewriters = [(f, m) for f, m in self._features() if isinstance(f, Rewriter)]
         if not rewriters:
             return None
@@ -171,7 +172,8 @@ class PolicyService:
             return None
         if not isinstance(current, dict):
             return None
-        applied = False
+        applied: list[str] = []
+        headers: list[tuple[str, str]] = []
         for feature, mode in rewriters:
             try:
                 result = feature.rewrite(ctx, copy.deepcopy(current))
@@ -186,11 +188,17 @@ class PolicyService:
             if mode is PolicyMode.ADVISORY:
                 self._log_decision(ctx, feature.name, mode, "rewrite", "would_rewrite", 0, changes=changes)
                 continue
-            current, applied = result.body, True
+            current = result.body
+            applied.append(feature.name)
+            headers += [(k, v) for k, v in result.add_headers if (k, v) not in headers]
             self._log_decision(ctx, feature.name, mode, "rewrite", "rewritten", 0, changes=changes)
         if not applied:
             return None
-        return json.dumps(current, ensure_ascii=False, separators=(",", ":")).encode()
+        return RewrittenRequest(
+            body=json.dumps(current, ensure_ascii=False, separators=(",", ":")).encode(),
+            add_headers=tuple(headers),
+            features=tuple(applied),
+        )
 
     def after(self, ctx: RequestContext, row: LedgerRow | None, status: int) -> None:
         self._release([f for f, _ in self._features()], ctx, status, row)

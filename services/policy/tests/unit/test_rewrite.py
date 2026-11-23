@@ -38,7 +38,11 @@ class Capper:
             raise ValueError("bad")
         if body.get("max_tokens", 0) <= self.cap:
             return None
-        return Rewrite(body={**body, "max_tokens": self.cap}, changes=(f"max_tokens {body['max_tokens']}->{self.cap}",))
+        return Rewrite(
+            body={**body, "max_tokens": self.cap},
+            changes=(f"max_tokens {body['max_tokens']}->{self.cap}",),
+            add_headers=(("anthropic-beta", "cap-1"),),
+        )
 
 
 def svc(tmp_path: Path, features: dict[str, Capper], modes: dict[str, str]) -> PolicyService:
@@ -55,7 +59,7 @@ def test_an_enforced_rewriter_changes_the_body_and_logs_only_the_change_note(tmp
     # When the engine rewrites a request asking for 64000
     out = s.rewrite(CTX, BODY)
     # Then the new body carries the cap and the log has the note, not the body
-    assert out is not None and json.loads(out)["max_tokens"] == 8192
+    assert out is not None and json.loads(out.body)["max_tokens"] == 8192
     (rec,) = decisions(tmp_path)
     assert rec["action"] == "rewritten" and rec["changes"] == ["max_tokens 64000->8192"]
     assert "messages" not in json.dumps(rec)
@@ -78,7 +82,7 @@ def test_a_failing_or_mutating_rewriter_fails_open_and_cannot_corrupt_the_next_o
     s = svc(tmp_path, {"bad": bad, "good": good}, {"bad": "enforced", "good": "enforced"})
     out = s.rewrite(CTX, BODY)
     # Then the bad change is dropped and the good one applies to the original body
-    assert out is not None and json.loads(out)["max_tokens"] == 8192
+    assert out is not None and json.loads(out.body)["max_tokens"] == 8192
     assert [r["action"] for r in decisions(tmp_path)] == ["failed_open", "rewritten"]
 
 
@@ -89,7 +93,9 @@ def test_rewrites_chain_in_policy_order(tmp_path: Path) -> None:
         {"a": "enforced", "b": "enforced"},
     )
     out = s.rewrite(CTX, BODY)
-    assert out is not None and json.loads(out)["max_tokens"] == 4096
+    assert out is not None and json.loads(out.body)["max_tokens"] == 4096
+    # And a header two rewriters both ask for is sent once
+    assert out.add_headers == (("anthropic-beta", "cap-1"),) and out.features == ("a", "b")
     assert [r["changes"] for r in decisions(tmp_path)] == [["max_tokens 64000->20000"], ["max_tokens 20000->4096"]]
 
 

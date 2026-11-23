@@ -26,7 +26,11 @@ class Cap:
         return None
 
     def rewrite(self, ctx: RequestContext, body: dict[str, Any]) -> Rewrite | None:
-        return Rewrite(body={**body, "max_tokens": 8192}, changes=("max_tokens 64000->8192",))
+        return Rewrite(
+            body={**body, "max_tokens": 8192},
+            changes=("max_tokens 64000->8192",),
+            add_headers=(("anthropic-beta", "context-management-2025-06-27"),),
+        )
 
 
 def run(rig_factory: Any, mode: str, n: int) -> tuple[Any, httpx.Response]:
@@ -44,6 +48,8 @@ def test_an_enforced_rewrite_reaches_the_provider_with_a_correct_length(rig_fact
     assert resp.status_code == 200 and json.loads(got["body"])["max_tokens"] == 8192
     lengths = [v for k, v in got["headers"] if k.lower() == "content-length"]
     assert lengths == [str(len(got["body"]))]
+    # And the header the rewrite asked for was added to the client's own
+    assert ("anthropic-beta", "context-management-2025-06-27") in got["headers"]
 
 
 def test_with_the_feature_advisory_or_off_the_provider_gets_the_original_bytes(rig_factory: Any) -> None:

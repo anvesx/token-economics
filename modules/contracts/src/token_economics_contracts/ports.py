@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from .types import (
+    Attempt,
     Buckets,
     BudgetStatus,
     Capabilities,
@@ -23,6 +24,7 @@ from .types import (
     RequestFacts,
     ResolvedKey,
     Rewrite,
+    RewrittenRequest,
 )
 
 
@@ -177,11 +179,43 @@ class PolicyEngine(Protocol):
 
     def before(self, ctx: RequestContext) -> Decision: ...
 
-    def rewrite(self, ctx: RequestContext, body: bytes) -> bytes | None:
-        """The request body to send instead of `body`, or None to send it unchanged. Never raises."""
+    def rewrite(self, ctx: RequestContext, body: bytes) -> RewrittenRequest | None:
+        """The request to send instead of `body`, or None to send the original bytes unchanged. Never raises."""
         ...
 
     def after(self, ctx: RequestContext, row: LedgerRow | None, status: int) -> None: ...
+
+
+@runtime_checkable
+class EvalHarness(Protocol):
+    """The eval harness (plan/07). Registered as SERVICES "eval", a factory taking no arguments."""
+
+    def run(self, spec: Path, out_dir: Path | None = None, allow_dirty: bool = False) -> Path:
+        """Run a preregistered spec; returns the result folder. Refuses a spec not committed to git unless allowed."""
+        ...
+
+    def analyse(self, attempts: Sequence[Attempt], spec: Mapping[str, Any]) -> dict[str, Any]:
+        """Paired verdicts for each candidate arm against the baseline arm, from attempts already run."""
+        ...
+
+    def selftest(self, seed: int = 0) -> dict[str, Any]:
+        """A synthetic no-op run: two identical arms. It must report no difference."""
+        ...
+
+
+@runtime_checkable
+class ShadowSampler(Protocol):
+    """Shadow runs (plan/07, Rollout). Registered as SERVICES "shadow", a factory taking state_dir. The gateway asks
+    whether to mirror a request, sends the mirror through the candidate policy to a separate ledger, and reports both
+    sides. A shadow response never reaches the client and never touches a budget."""
+
+    def sample(self, ctx: RequestContext) -> bool: ...
+
+    def record(self, ctx: RequestContext, side: str, row: LedgerRow | None, status: int) -> None:
+        """`side` is "primary" or "shadow"."""
+        ...
+
+    def report(self) -> dict[str, Any]: ...
 
 
 @runtime_checkable

@@ -247,6 +247,36 @@ class Rewrite(_Frozen):
 
     body: dict[str, Any]
     changes: tuple[str, ...] = ()
+    add_headers: tuple[tuple[str, str], ...] = ()  # appended upstream, e.g. ("anthropic-beta", "context-management-…")
+
+
+class RewrittenRequest(_Frozen):
+    """What the policy engine hands the gateway when at least one enforced rewrite applied."""
+
+    body: bytes
+    add_headers: tuple[tuple[str, str], ...] = ()
+    features: tuple[str, ...] = ()  # names of the features whose rewrite was sent
+
+
+# ---------------------------------------------------------------- P2: evaluation
+
+
+class Attempt(_Frozen):
+    """One eval attempt: the unit of plan/07 is (task, arm, seed). Cost includes failed attempts and any overhead
+    (router, probe, classifier) the arm spent on the task. Metadata only."""
+
+    task_id: str
+    arm: str
+    seed: int = Field(ge=0)
+    success: bool
+    cost_usd: Decimal = Field(ge=0)
+    repo: str = ""  # cluster key above the task, when tasks share a repository
+    calls: int = Field(default=0, ge=0)
+    buckets: Buckets = Buckets()
+    duration_s: float = Field(default=0.0, ge=0)
+    session_id: str = ""
+    fired: tuple[str, ...] = ()  # features whose rewrite was applied during the attempt
+    error: str = ""  # harness failure (timeout, crash); the attempt still counts as a failure and its cost counts
 
 
 class FeatureEnv(_Frozen):

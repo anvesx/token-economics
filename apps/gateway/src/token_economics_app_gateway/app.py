@@ -189,7 +189,7 @@ def create_app(
 
         # P2: features may rewrite an allowed request (caps, masking, routing). Never a compressed body; any failure
         # sends the original bytes, so a broken optimisation costs a saving, never a request.
-        send = body
+        send, extra_headers = body, []
         rewrite = getattr(engine, "rewrite", None)
         if ctx is not None and rewrite is not None and "content-encoding" not in headers:
             try:
@@ -198,7 +198,7 @@ def create_app(
                 changed = None
                 observer.stats["rewrite_errors"] += 1
             if changed is not None:
-                send = changed
+                send, extra_headers = changed.body, list(changed.add_headers)
                 observer.stats["rewritten"] += 1
 
         def settle(row: Any, status: int) -> None:
@@ -209,7 +209,7 @@ def create_app(
         allowed = {name.lower() for name in upstream.forward_headers(headers)}
         out_headers = [(k, v) for k, v in raw_headers if k.lower() in allowed]
         if send is not body:  # httpx sets the length of the new body
-            out_headers = [(k, v) for k, v in out_headers if k.lower() != "content-length"]
+            out_headers = [(k, v) for k, v in out_headers if k.lower() != "content-length"] + extra_headers
         req = http.build_request(request.method, upstream.url(path, query), headers=out_headers, content=send)
         sent = {k.lower() for k, _ in out_headers} | {"host", "content-length", "transfer-encoding"}
         for name in [n for n in req.headers if n.lower() not in sent]:
