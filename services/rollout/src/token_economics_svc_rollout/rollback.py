@@ -106,8 +106,10 @@ def _jsonl(path: Path, problems: list[str]) -> list[dict[str, Any]]:
 
 
 class Rollback:
-    def __init__(self, state_dir: Path, kills: Any = None) -> None:
+    def __init__(self, state_dir: Path, kills: Any = None, ledger: Any = None) -> None:
+        """`ledger`: any object with `rows(since, until)`; by default the registered ledger service on the state dir."""
         self._dir = state_dir
+        self._ledger = ledger
         self._kills = kills if kills is not None else open_kill(str(state_dir))
 
     # ------------------------------------------------------------ inputs
@@ -147,10 +149,11 @@ class Rollback:
 
     def _rows(self, since: datetime, now: datetime, problems: list[str]) -> list[LedgerRow]:
         path = self._dir / "ledger.sqlite"
-        if not path.exists():
+        if self._ledger is None and not path.exists():
             return []
         try:
-            return list(load(SERVICES, "ledger")(str(path)).rows(since, now))
+            ledger = self._ledger if self._ledger is not None else load(SERVICES, "ledger")(str(path))
+            return list(ledger.rows(since, now))
         except Exception as exc:  # a locked or damaged ledger must not stop the other checks
             problems.append(f"ledger: {exc}")
             return []

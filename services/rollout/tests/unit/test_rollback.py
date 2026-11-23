@@ -15,7 +15,7 @@ from token_economics_contracts import (
     canary_slot,
     load,
 )
-from token_economics_svc_rollout import open_rollback
+from token_economics_svc_rollout import Rollback, open_rollback
 
 NOW = datetime(2026, 11, 23, 12, 0, tzinfo=UTC)
 FEATURE, SHARE = "output_cap", 0.5
@@ -33,13 +33,27 @@ def split(n_canary: int, n_control: int, feature: str = FEATURE) -> tuple[list[s
     return canary[:n_canary], control[:n_control]
 
 
+class MemoryLedger:
+    """Just enough of the Ledger port, so these tests run with only this package's declared dependencies."""
+
+    def __init__(self) -> None:
+        self._rows: list[LedgerRow] = []
+
+    def write(self, row: LedgerRow) -> bool:
+        self._rows.append(row)
+        return True
+
+    def rows(self, since: datetime | None = None, until: datetime | None = None) -> list[LedgerRow]:
+        return [r for r in self._rows if (since is None or r.ts >= since) and (until is None or r.ts < until)]
+
+
 class World:
     def __init__(self, tmp: Path, policy: dict[str, Any] | None = None) -> None:
         self.tmp = tmp
         self.n = 0
         section = {"mode": "enforced", "canary": {"share": SHARE}}
         (tmp / "policy.json").write_text(json.dumps({"features": {FEATURE: section}} if policy is None else policy))
-        self.ledger = load(SERVICES, "ledger")(str(tmp / "ledger.sqlite"))
+        self.ledger = MemoryLedger()
 
     def add(
         self, session: str, cost: str = "1.00", status: int = 200, cache_read: int = 0, tenant: str = "acme"
@@ -70,7 +84,7 @@ class World:
             self.add(s, **canary)
 
     def check(self) -> list[dict[str, Any]]:
-        return list(open_rollback(str(self.tmp)).check(NOW))
+        return list(Rollback(self.tmp, ledger=self.ledger).check(NOW))
 
     def killed(self) -> KillFile:
         try:
