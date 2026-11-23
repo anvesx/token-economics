@@ -5,8 +5,7 @@ works) and `docs/P0-STATUS.md` (card-by-card state of P0). The plan itself is in
 not built yet and what was learned while building.
 
 ## Where things are
-- Repo: `anvesx/token-economics`. Local clone `~/HRMS/token-economics`. **Nothing is pushed.** `main` is blocked for
-  the author; a senior dev merges.
+- Repo: `anvesx/token-economics`. Local clone `~/HRMS/token-economics`.
 - Branches (each on top of the one before): `feat/p0-working-core` (P0 first pass), `feat/p1-working-core` (P1 first
   pass), `feat/dashboard-sessions` (dashboard), `feat/p2-working-core` (P2 first pass), `feat/p3-working-core` (P3
   first pass, the tip). State: `docs/P2-STATUS.md`, `docs/P3-STATUS.md`; decisions `docs/adr/0003`, `0004`.
