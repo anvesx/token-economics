@@ -1,5 +1,5 @@
-"""Spend anomaly alerts per caller against its own trailing baseline."""
+"""Alert on a caller's spend that breaks from its own trailing baseline."""
 
-from ._stub import create
+from .anomaly import Anomaly, create
 
-__all__ = ["create"]
+__all__ = ["Anomaly", "create"]
