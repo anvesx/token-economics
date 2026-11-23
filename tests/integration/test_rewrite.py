@@ -56,3 +56,16 @@ def test_with_the_feature_advisory_or_off_the_provider_gets_the_original_bytes(r
     for i, mode in enumerate(("advisory", "off")):
         provider, resp = run(rig_factory, mode, 10 + i)
         assert resp.status_code == 200 and provider.requests[0]["body"] == ORIGINAL % (10 + i)
+
+
+def test_a_killed_feature_sends_the_original_bytes_without_a_restart(rig_factory: Any) -> None:
+    # Given an enforced rewrite on a running gateway
+    rig = rig_factory({"features": {"max_tokens": {"mode": "enforced"}}}, features={"max_tokens": Cap()})
+    url = f"{rig.gateway_url}/v1/messages"
+    httpx.post(url, content=ORIGINAL % 20, headers=HEADERS, timeout=30)
+    # When the kill switch is written (as the CLI or auto-rollback would)
+    (rig.settings.state_dir / "kill.json").write_text(json.dumps({"kills": [{"feature": "max_tokens"}]}))
+    httpx.post(url, content=ORIGINAL % 21, headers=HEADERS, timeout=30)
+    # Then the next request reaches the provider byte for byte as the client sent it
+    first, second = rig.provider.requests
+    assert json.loads(first["body"])["max_tokens"] == 8192 and second["body"] == ORIGINAL % 21

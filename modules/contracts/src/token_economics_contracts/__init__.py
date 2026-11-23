@@ -22,6 +22,7 @@ from .ports import (
 from .registry import ADAPTERS, FEATURES, NORMALISERS, SERVICES, UPSTREAMS, load, load_all
 from .types import (
     ALLOW,
+    KILL_FILE,
     Attempt,
     Buckets,
     BudgetStatus,
@@ -33,6 +34,8 @@ from .types import (
     Finding,
     Identity,
     KeyInfo,
+    KillEntry,
+    KillFile,
     LedgerRow,
     Multiplier,
     Observation,
@@ -44,6 +47,7 @@ from .types import (
     ResolvedKey,
     Rewrite,
     RewrittenRequest,
+    canary_slot,
 )
 
 __all__ = [
@@ -69,7 +73,10 @@ __all__ = [
     "HealthTracker",
     "Identity",
     "KeyInfo",
+    "KILL_FILE",
     "KeyResolver",
+    "KillEntry",
+    "KillFile",
     "Ledger",
     "LedgerRow",
     "Multiplier",
@@ -95,6 +102,7 @@ __all__ = [
     "UnknownUsageKey",
     "Upstream",
     "UsageNormaliser",
+    "canary_slot",
     "load",
     "load_all",
 ]

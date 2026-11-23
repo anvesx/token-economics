@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
@@ -311,3 +312,34 @@ class BudgetStatus(_Frozen):
     @property
     def used_share(self) -> Decimal:
         return (self.spent_usd + self.reserved_usd) / self.limit_usd if self.limit_usd else Decimal(0)
+
+
+# ---------------------------------------------------------------- P3: canary and kill-switch
+
+KILL_FILE = "kill.json"  # in the state dir, beside policy.json; written by people (CLI, admin API) and by auto-rollback
+
+
+class KillEntry(_Frozen):
+    """One kill-switch: `feature` is off for `tenant` ("*" = every tenant) until the entry is removed. A killed feature
+    leaves requests exactly as the client sent them."""
+
+    feature: str
+    tenant: str = "*"
+    reason: str = ""
+    by: str = ""  # "cli:<user>", "admin:<user>", "rollback:<trigger>"
+    ts: datetime | None = None
+
+
+class KillFile(_Frozen):
+    kills: tuple[KillEntry, ...] = ()
+
+    def killed(self, feature: str, tenant: str) -> bool:
+        return any(k.feature == feature and k.tenant in ("*", tenant) for k in self.kills)
+
+
+def canary_slot(key: str, feature: str) -> float:
+    """A stable place in [0, 1) for a session (or request) and a feature. A canary at share s covers the slots below s,
+    so a whole session is in or out, and different features draw different slices. Auto-rollback recomputes it to split
+    canary from control traffic."""
+    digest = hashlib.sha256(f"{feature}\x00{key}".encode()).digest()
+    return int.from_bytes(digest[:8], "big") / 2**64
