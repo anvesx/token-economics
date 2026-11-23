@@ -29,8 +29,30 @@ CREATE TABLE IF NOT EXISTS audit (
     detail TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS audit_ts ON audit (ts);
+CREATE TABLE IF NOT EXISTS admin_tokens (
+    token_id TEXT PRIMARY KEY,
+    token_hash BLOB NOT NULL UNIQUE,
+    name TEXT NOT NULL UNIQUE,
+    role TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS admin_revocations (
+    token_id TEXT PRIMARY KEY,
+    revoked_at TEXT NOT NULL,
+    actor TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS change_events (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    change_id TEXT NOT NULL,
+    event TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    ts TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT '',
+    payload TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS change_events_id ON change_events (change_id);
 """
-_TABLES = ("keys", "revocations", "audit")
+_TABLES = ("keys", "revocations", "audit", "admin_tokens", "admin_revocations", "change_events")
 
 
 def _triggers() -> str:

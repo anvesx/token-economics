@@ -1,11 +1,14 @@
-"""Entry-point factories registered under `token_economics.services` as `keys` and `audit`."""
+"""Entry-point factories registered under `token_economics.services`: keys, audit, admin_auth, changes, retention."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
+from .admin import AdminAuth
 from .audit import AuditLog
+from .changes import ChangeStore
 from .keys import KeyStore
+from .retention import FileRetention
 
 
 def open_keys(state_dir: str) -> KeyStore:
@@ -19,3 +22,15 @@ def open_keys(state_dir: str) -> KeyStore:
 
 def open_audit(state_dir: str) -> AuditLog:
     return AuditLog.open(state_dir)
+
+
+def open_admin_auth(state_dir: str) -> AdminAuth:
+    return AdminAuth.open(state_dir)
+
+
+def open_changes(state_dir: str) -> ChangeStore:
+    return ChangeStore.open(state_dir)
+
+
+def open_retention(state_dir: str) -> FileRetention:
+    return FileRetention(state_dir)
