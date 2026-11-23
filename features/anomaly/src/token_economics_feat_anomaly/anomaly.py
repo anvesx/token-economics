@@ -8,8 +8,9 @@ by the one bad day an anomaly detector exists to find. When MAD is 0 (very stead
 and `min_usd` is what stops a trivial rise from alerting. A session that alone spends over `session_usd` is a second,
 independent trigger. This is a first pick, to be checked against the P0 baseline (see README).
 
-Also today > min_ratio (default 1.25) x median, so a caller with very steady spend (MAD 0) does not alert on a few cents.
-Config: {"baseline_days": 14, "k": 5, "min_usd": 5, "min_ratio": 1.25, "min_days": 7, "session_usd": null, "block": false}
+Also today > min_ratio (default 1.25) x median, so very steady spend (MAD 0) does not alert on a few cents.
+Config: {"baseline_days": 14, "k": 5, "min_usd": 5, "min_ratio": 1.25, "min_days": 7, "session_usd": null,
+         "block": false}
 Alerts go to `alerts.jsonl` (`kind: "spend_anomaly"`, `trigger: "daily" | "session"`), once per caller per trigger per
 UTC day. With `block` true, further calls from the caller are refused with 429 `spend_anomaly` for the rest of that day.
 State: daily totals per caller (bounded), today's per-session totals; numbers only.
