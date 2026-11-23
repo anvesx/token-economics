@@ -135,9 +135,52 @@ def _section(policy: dict[str, Any], feature: str) -> dict[str, Any]:
     return section
 
 
+def _actor() -> str:
+    return "cli:" + os.environ.get("USER", "unknown")
+
+
+def _kill_switches() -> Any:
+    return _optional("kill", str(state_dir()))
+
+
+def cmd_policy_kill(a: argparse.Namespace) -> int:
+    """kill, unkill and kills: switches in kill.json, applied on the next request with no deploy."""
+    kills = _kill_switches()
+    if kills is None:
+        print("the rollout service is not installed")
+        return 2
+    if a.action == "kill":
+        done = kills.add(a.feature, a.tenant, reason=a.reason, by=_actor())
+        print(f"{a.feature} is off for {a.tenant}" if done else f"{a.feature} was already off for {a.tenant}")
+        return 0 if done else 1
+    if a.action == "unkill":
+        done = kills.remove(a.feature, a.tenant, by=_actor())
+        print(f"{a.feature} is back on for {a.tenant}" if done else f"no kill switch for {a.feature} on {a.tenant}")
+        return 0 if done else 1
+    print("| feature | tenant | by | since | reason |\n|---|---|---|---|---|")
+    for k in kills.list():
+        since = f"{k.ts:%Y-%m-%d %H:%M}" if k.ts else ""
+        print(f"| {k.feature} | {k.tenant} | {k.by} | {since} | {k.reason} |")
+    return 0
+
+
 def cmd_policy(a: argparse.Namespace) -> int:
+    if a.action in ("kill", "unkill", "kills"):
+        return cmd_policy_kill(a)
     policy = _read_policy()
-    if a.action == "mode":
+    if a.action == "canary":
+        section = _section(policy, a.feature)
+        if a.off:
+            section.pop("canary", None)
+        else:
+            if a.share is None or not 0 <= a.share <= 1:
+                print("--share must be between 0 and 1 (or use --off)")
+                return 2
+            tenants = [t for t in a.tenants.split(",") if t] if a.tenants else []
+            section["canary"] = {"share": a.share, **({"tenants": tenants} if tenants else {})}
+        _write_policy(policy)
+        _audit("policy_canary_changed", a.feature, {"canary": section.get("canary")})
+    elif a.action == "mode":
         before = _section(policy, a.feature)["mode"]
         _section(policy, a.feature)["mode"] = a.mode
         _write_policy(policy)
@@ -159,6 +202,40 @@ def cmd_policy(a: argparse.Namespace) -> int:
         rest = {k: v for k, v in section.items() if k != "mode"}
         print(f"| {name} | {section.get('mode', 'off')} | {json.dumps(rest) if rest else ''} |")
     print("\noff: not applied. advisory: logged as would_block, nothing blocked. enforced: blocked at the gateway.")
+    return 0
+
+
+def cmd_rollout(a: argparse.Namespace) -> int:
+    """rollout check: run auto-rollback now. A trigger that fires kills the feature, exactly as the worker would."""
+    checker = _optional("rollback", str(state_dir()))
+    if checker is None:
+        print("the rollout service is not installed")
+        return 2
+    results = list(checker.check())
+    print("| feature | canary / control sessions | triggers | action |\n|---|---|---|---|")
+    notes: list[str] = []
+    for r in results:
+        sess = r.get("sessions") or {}
+        triggers = ", ".join(f"{n}: {t['status']}" for n, t in (r.get("triggers") or {}).items())
+        print(f"| {r['feature']} | {sess.get('canary', 0)} / {sess.get('control', 0)} | {triggers} | {r['action']} |")
+        notes += [str(p) for p in r.get("problems", [])]
+        if r.get("latency"):
+            latency = str(r["latency"])
+            if latency not in notes:
+                notes.append(latency)
+    if not results:
+        print("(no feature has a canary)")
+    for n in dict.fromkeys(notes):
+        print(f"note: {n}")
+    return 0
+
+
+def cmd_shadow(a: argparse.Namespace) -> int:
+    shadow = _optional("shadow", str(state_dir()))
+    if shadow is None:
+        print("the rollout service is not installed")
+        return 2
+    print(json.dumps(shadow.report(), indent=2, default=str))
     return 0
 
 
@@ -398,7 +475,28 @@ def build_parser() -> argparse.ArgumentParser:
     k.add_argument("feature")
     k.add_argument("key")
     k.add_argument("value")
+    k = psub.add_parser("kill", help="switch a feature off now, for every tenant or one, with no deploy")
+    k.add_argument("feature")
+    k.add_argument("--tenant", default="*")
+    k.add_argument("--reason", default="")
+    k = psub.add_parser("unkill", help="remove a kill switch")
+    k.add_argument("feature")
+    k.add_argument("--tenant", default="*")
+    psub.add_parser("kills", help="list kill switches")
+    k = psub.add_parser("canary", help="give a feature to a share of sessions (and tenants), or --off")
+    k.add_argument("feature")
+    k.add_argument("--share", type=float, help="0 to 1, e.g. 0.05")
+    k.add_argument("--tenants", help="comma-separated; default every tenant")
+    k.add_argument("--off", action="store_true", help="remove the canary: the feature's mode applies to everyone")
     p.set_defaults(fn=cmd_policy, action="show")
+    p = sub.add_parser("rollout", help="auto-rollback")
+    rsub = p.add_subparsers(dest="action", required=True)
+    rsub.add_parser("check", help="compare canary with control now and kill a feature whose trigger fires")
+    p.set_defaults(fn=cmd_rollout)
+    p = sub.add_parser("shadow", help="shadow runs")
+    ssub = p.add_subparsers(dest="action", required=True)
+    ssub.add_parser("report", help="primary against shadow: cost ratio, latency, status mismatches")
+    p.set_defaults(fn=cmd_shadow)
     p = sub.add_parser("budget", help="budgets per key, caller, team or tenant")
     bsub = p.add_subparsers(dest="action")
     bsub.add_parser("list")

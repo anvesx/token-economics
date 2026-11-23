@@ -1,3 +1,4 @@
+import importlib
 import json
 from pathlib import Path
 
@@ -106,3 +107,95 @@ def test_eval_report_reanalyses_a_result_folder(tmp_path: Path, capsys: pytest.C
     out = capsys.readouterr().out
     assert "| c |" in out and "verdict" in out
     assert main(["eval", "report", str(tmp_path / "missing")]) == 1
+
+
+def test_policy_kill_and_unkill_switch_a_feature_off_through_kill_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pytest.importorskip("token_economics_svc_rollout")
+    monkeypatch.setenv("TOKEN_ECONOMICS_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("USER", "dhruv")
+    # Given a feature, when it is killed for one tenant with a reason
+    assert main(["policy", "kill", "output_cap", "--tenant", "acme", "--reason", "drill"]) == 0
+    # Then kill.json holds it, attributed to the CLI user, and `kills` lists it
+    (entry,) = json.loads((tmp_path / "kill.json").read_text())["kills"]
+    assert (entry["feature"], entry["tenant"], entry["reason"], entry["by"]) == (
+        "output_cap",
+        "acme",
+        "drill",
+        "cli:dhruv",
+    )
+    capsys.readouterr()
+    assert main(["policy", "kills"]) == 0 and "output_cap" in capsys.readouterr().out
+    # And killing it again says so, and unkill removes it
+    assert main(["policy", "kill", "output_cap", "--tenant", "acme"]) == 1
+    assert main(["policy", "unkill", "output_cap", "--tenant", "acme"]) == 0
+    assert json.loads((tmp_path / "kill.json").read_text())["kills"] == []
+    assert main(["policy", "unkill", "output_cap", "--tenant", "acme"]) == 1
+
+
+def test_policy_canary_sets_a_share_and_tenants_and_off_removes_it_keeping_the_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TOKEN_ECONOMICS_STATE_DIR", str(tmp_path))
+    assert main(["policy", "mode", "output_cap", "enforced"]) == 0
+    # When a canary is set
+    assert main(["policy", "canary", "output_cap", "--share", "0.05", "--tenants", "acme,devx"]) == 0
+    section = json.loads((tmp_path / "policy.json").read_text())["features"]["output_cap"]
+    # Then the section has it beside the mode
+    assert section == {"mode": "enforced", "canary": {"share": 0.05, "tenants": ["acme", "devx"]}}
+    # And a share outside 0..1 is refused, and --off removes the canary only
+    assert main(["policy", "canary", "output_cap", "--share", "1.5"]) == 2
+    assert main(["policy", "canary", "output_cap", "--off"]) == 0
+    assert json.loads((tmp_path / "policy.json").read_text())["features"]["output_cap"] == {"mode": "enforced"}
+
+
+def test_rollout_check_prints_a_row_per_feature(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Given a rollback checker that reports one feature
+    class Fake:
+        def __init__(self, state: str) -> None: ...
+
+        def check(self) -> list[dict[str, object]]:
+            return [
+                {
+                    "feature": "output_cap",
+                    "status": "breach",
+                    "action": "killed",
+                    "sessions": {"canary": 40, "control": 40},
+                    "triggers": {"cost": {"status": "breach"}, "errors": {"status": "ok"}},
+                    "latency": "p95 latency is not measurable: the ledger has no latency",
+                }
+            ]
+
+    monkeypatch.setenv("TOKEN_ECONOMICS_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        importlib.import_module("token_economics_app_cli.main"),
+        "_optional",
+        lambda name, *a: Fake(*a) if name == "rollback" else None,
+    )
+    # When rollout check runs
+    assert main(["rollout", "check"]) == 0
+    # Then the table names the feature, the breaching trigger and the action, and says latency is not measured
+    out = capsys.readouterr().out
+    assert "| output_cap |" in out and "cost" in out and "killed" in out and "not measurable" in out
+
+
+def test_shadow_report_prints_the_service_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class Fake:
+        def __init__(self, state: str) -> None: ...
+
+        def report(self) -> dict[str, object]:
+            return {"pairs": 12}
+
+    monkeypatch.setenv("TOKEN_ECONOMICS_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        importlib.import_module("token_economics_app_cli.main"),
+        "_optional",
+        lambda name, *a: Fake(*a) if name == "shadow" else None,
+    )
+    assert main(["shadow", "report"]) == 0
+    assert '"pairs": 12' in capsys.readouterr().out
