@@ -1,5 +1,5 @@
 """One model per session: flag or undo a mid-session model change."""
 
-from ._stub import create
+from .sticky_model import StickyModel, create
 
-__all__ = ["create"]
+__all__ = ["StickyModel", "create"]
