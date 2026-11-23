@@ -1,5 +1,5 @@
 """Hard cap on max_tokens per model."""
 
-from ._stub import create
+from .max_tokens import MaxTokens, create
 
-__all__ = ["create"]
+__all__ = ["MaxTokens", "create"]
