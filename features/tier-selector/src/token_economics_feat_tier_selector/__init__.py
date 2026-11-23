@@ -1,5 +1,5 @@
-"""Pick the service tier per workload (batch, priority, standard) by rule."""
+"""Pick the service tier per workload by rule."""
 
-from ._stub import create
+from .selector import TierSelector, create
 
-__all__ = ["create"]
+__all__ = ["TierSelector", "create"]
